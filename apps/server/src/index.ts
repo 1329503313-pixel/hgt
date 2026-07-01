@@ -11,7 +11,6 @@ import { initDatabase, pool } from "./db.js";
 import type { PublicUser } from "./types.js";
 
 const app = express();
-app.set("trust proxy", 1);
 const MySQLStore = mysqlSessionFactory(session);
 const maxAge = 1000 * 60 * 60 * 24 * 30;
 
