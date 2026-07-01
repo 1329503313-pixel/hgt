@@ -28,7 +28,7 @@ import type {
   SoupDetail,
   SoupSummary,
   ViewRequestItem
-} from "../../shared/src";
+} from "@hgt/shared";
 import { api, MeResponse, NotificationsResponse, PasswordResponse, RequestsResponse, SoupResponse, SoupsResponse, UsersResponse } from "./api";
 import { RadarChart } from "./RadarChart";
 

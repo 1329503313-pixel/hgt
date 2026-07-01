@@ -15,7 +15,8 @@
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",
     "react-chartjs-2": "^5.3.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@hgt/shared": "file:../../packages/shared"
   },
   "devDependencies": {
     "@types/react": "^19.0.8",

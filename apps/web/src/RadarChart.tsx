@@ -9,7 +9,7 @@ import {
   Tooltip
 } from "chart.js";
 import { Radar } from "react-chartjs-2";
-import type { RadarStats } from "../../../packages/shared/src";
+import type { RadarStats } from "@hgt/shared";
 
 ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
