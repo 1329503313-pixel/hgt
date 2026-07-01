@@ -273,7 +273,6 @@ export default function App() {
     };
     const result = await api<{ id?: string }>(path, { method, body: payload });
     setShowSoupForm(false);
-    setToast(editingSoupId ? "已更新海龟汤" : "已发布海龟汤");
     await loadSoups(false);
     await loadDetail(editingSoupId ?? result.id!);
   }
@@ -1280,13 +1279,13 @@ function ContentCard({
 }) {
   return (
     <div className="card p-4">
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-3">
         <h2 className="font-black text-ink">{title}</h2>
-        {children}
       </div>
       <div className="rounded-lg bg-white p-4">
         <div className="content-block text-[15px] leading-7 text-ink">{text}</div>
       </div>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">{children}</div>
     </div>
   );
 }
