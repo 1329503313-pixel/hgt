@@ -53,12 +53,12 @@ app.use(
     store: sessionStore,
     cookie: {
       httpOnly: true,
-      sameSite: config.nodeEnv === "production" ? "none" : "lax",
-      secure: config.nodeEnv === "production",
+      sameSite: "none",
+      secure: true,
       maxAge,
-      partitioned: config.nodeEnv === "production"
+      partitioned: true
     },
-    proxy: config.nodeEnv === "production"
+    proxy: true
   })
 );
 
