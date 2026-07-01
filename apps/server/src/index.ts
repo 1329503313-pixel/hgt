@@ -39,12 +39,10 @@ app.use(
     store: sessionStore,
     cookie: {
       httpOnly: true,
-      sameSite: config.nodeEnv === "production" ? "none" : "lax",
+      sameSite: "lax",
       secure: config.nodeEnv === "production",
-      maxAge,
-      partitioned: true
-    },
-    proxy: config.nodeEnv === "production"
+      maxAge
+    }
   })
 );
 
