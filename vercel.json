@@ -1,4 +1,7 @@
 {
+  "installCommand": "npm install",
+  "buildCommand": "cd apps/web && npx vite build",
+  "outputDirectory": "apps/web/dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
