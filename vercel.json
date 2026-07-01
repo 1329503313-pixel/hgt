@@ -4,18 +4,12 @@
   "outputDirectory": "apps/web/dist",
   "rewrites": [
     {
+      "source": "/api/(.*)",
+      "destination": "https://hgt-986q.onrender.com/api/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "https://hgt-986q.onrender.com/api/$1",
-      "headers": {
-        "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Allow-Origin": "https://hgt-server.vercel.app"
-      }
     }
   ]
 }
