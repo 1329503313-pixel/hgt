@@ -11,6 +11,7 @@ import { initDatabase, pool } from "./db.js";
 import type { PublicUser } from "./types.js";
 
 const app = express();
+app.set("trust proxy", 1);
 const MySQLStore = mysqlSessionFactory(session);
 const maxAge = 1000 * 60 * 60 * 24 * 30;
 
@@ -42,7 +43,8 @@ app.use(
       sameSite: config.nodeEnv === "production" ? "none" : "lax",
       secure: config.nodeEnv === "production",
       maxAge
-    }
+    },
+    proxy: config.nodeEnv === "production"
   })
 );
 
