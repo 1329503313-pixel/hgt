@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "start": "npm run build && node dist/index.js",
+    "start": "npm run build && node dist/index.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
