@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build -w packages/shared && npm run build -w apps/web",
+  "installCommand": "npm install --legacy-peer-deps --include=dev",
+  "outputDirectory": "apps/web/dist",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -452,8 +452,7 @@ export default function App() {
           </button>
           <div className="flex items-center gap-2">
             {user && (
-              <button className="btn btn-secondary relative px-3" onClick={() => setView(view === "messages" ? "home" : "messages")}>
-                <Bell size={18} />
+              <button className="btn btn-secondary relative px-3" onClick={() => setView("messages")}>                <Bell size={18} />
                 {unread > 0 && (
                   <span className="absolute -right-1 -top-1 rounded-full bg-warning px-1.5 text-xs text-white">
                   {unread}
