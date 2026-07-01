@@ -1,7 +1,7 @@
 {
   "installCommand": "npm install --production=false --legacy-peer-deps",
+  "buildCommand": "cd apps/web && npx vite build",
   "outputDirectory": "apps/web/dist",
-  "framework": "vite",
   "rewrites": [
     {
       "source": "/(.*)",

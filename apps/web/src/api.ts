@@ -4,7 +4,7 @@ import type {
   SoupDetail,
   SoupSummary,
   ViewRequestItem
-} from "@hgt/shared";
+} from "./shared/types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
