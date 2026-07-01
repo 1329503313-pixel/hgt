@@ -2,7 +2,20 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
 import mysqlSessionFactory from "express-mysql-session";
-import session from "express-session";
+import session, { Cookie } from "express-session";
+
+// Force Cookie.serialize to support partitioned cookies
+const origSerialize = Cookie.prototype.serialize;
+(Cookie.prototype as any).serialize = function (name: string, val: string) {
+  const opts: Record<string, unknown> = { path: this.path, expires: this._expires, originalMaxAge: this.originalMaxAge };
+  if (this.httpOnly) (opts as any).httpOnly = true;
+  if (this.domain) (opts as any).domain = this.domain;
+  if (this.sameSite) (opts as any).sameSite = this.sameSite;
+  if (this.secure) (opts as any).secure = true;
+  if ((this as any).partitioned) (opts as any).partitioned = true;
+  const cookieModule = require("cookie");
+  return cookieModule.serialize(name, val, opts);
+};
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -11,6 +24,7 @@ import { initDatabase, pool } from "./db.js";
 import type { PublicUser } from "./types.js";
 
 const app = express();
+app.set("trust proxy", 1);
 const MySQLStore = mysqlSessionFactory(session);
 const maxAge = 1000 * 60 * 60 * 24 * 30;
 
@@ -43,7 +57,8 @@ app.use(
       secure: config.nodeEnv === "production",
       maxAge,
       partitioned: config.nodeEnv === "production"
-    }
+    },
+    proxy: config.nodeEnv === "production"
   })
 );
 
