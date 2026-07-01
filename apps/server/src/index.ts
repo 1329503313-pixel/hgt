@@ -42,7 +42,8 @@ app.use(
       httpOnly: true,
       sameSite: config.nodeEnv === "production" ? "none" : "lax",
       secure: config.nodeEnv === "production",
-      maxAge
+      maxAge,
+      partitioned: true
     },
     proxy: config.nodeEnv === "production"
   })
