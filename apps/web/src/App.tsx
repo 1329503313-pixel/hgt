@@ -445,11 +445,18 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-page">
-      {view !== "home" && view !== "messages" && view !== "mine" && <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
+    <div className="app-shell min-h-screen bg-page">
+      {view !== "home" && view !== "messages" && view !== "mine" && <header className="fixed inset-x-0 top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          <button className="flex min-h-11 items-center text-left" onClick={() => setView("home")}>
-            <div className="text-base font-black text-ink">海龟汤</div>
+          <button className="flex min-h-11 items-center gap-2 text-left text-base font-black text-ink" onClick={() => setView("home")}>
+            {view === "detail" ? (
+              <>
+                <ArrowLeft size={18} />
+                <span>返回列表</span>
+              </>
+            ) : (
+              <span>海龟汤</span>
+            )}
           </button>
           <div className="flex items-center gap-2">
             {user && (
@@ -471,14 +478,17 @@ export default function App() {
               </button>
             )}
             {user ? (
-              <>
-                <span className="inline-flex min-h-11 max-w-24 items-center truncate rounded-lg bg-white px-3 text-sm font-bold text-ink sm:max-w-32">
+              <details className="user-menu">
+                <summary className="inline-flex min-h-11 max-w-24 cursor-pointer list-none items-center truncate rounded-lg bg-white px-3 text-sm font-bold text-ink sm:max-w-32">
                   {(user.nickname || user.username).slice(0, 8)}
-                </span>
-                <button className="btn btn-secondary px-3" onClick={logout}>
-                  <LogOut size={18} />
-                </button>
-              </>
+                </summary>
+                <div className="user-menu-panel right-0 top-[calc(100%+8px)]">
+                  <button className="user-menu-item" onClick={logout}>
+                    <LogOut size={17} />
+                    退出登录
+                  </button>
+                </div>
+              </details>
             ) : (
               <button className="btn btn-primary" onClick={() => { setAuthError(""); setAuthMode("login"); }}>
                 登录
@@ -488,7 +498,7 @@ export default function App() {
         </div>
       </header>}
 
-      <main className={`mx-auto max-w-6xl px-4 ${view === "detail" ? "pb-24" : "pb-28"} ${view === "home" || view === "messages" || view === "mine" ? "pt-3" : "py-4"}`}>
+      <main className={`mx-auto max-w-6xl px-4 ${view === "detail" ? "pb-24" : "pb-28"} ${view === "home" || view === "messages" || view === "mine" ? "pt-24" : "pb-4 pt-24"}`}>
         {toast && (
           <div className="mb-4 flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-primary">
             {toast}
@@ -520,7 +530,6 @@ export default function App() {
             soup={selected}
             user={user}
             ownEvaluation={ownEvaluation}
-            onBack={() => setView("home")}
             onEdit={() => openEdit(selected)}
             onDelete={() => deleteSoup(selected.id)}
             onEvaluate={openEval}
@@ -649,44 +658,50 @@ function PageTopBar({
   onLogout: () => void;
 }) {
   return (
-    <div className="flex min-h-14 items-center justify-between gap-2">
-      <button className="min-h-11 min-w-0 shrink-0 text-left" type="button">
-        <h1 className="truncate text-[24px] font-black leading-none text-ink sm:text-[28px]">{title}</h1>
-      </button>
-      <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
-        {user ? (
-          <>
-            <div className="flex min-h-11 min-w-0 items-center rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
-              <div className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary sm:grid">
-                {(user.nickname || user.username).slice(0, 1)}
-              </div>
-              <span className="max-w-[52px] truncate text-[13px] font-semibold text-ink sm:max-w-24 sm:text-sm">
-                {(user.nickname || user.username).slice(0, 8)}
-              </span>
-            </div>
-            <button className="relative grid h-11 w-11 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={onMessages} aria-label="消息">
-              <Bell size={21} />
-              {unread > 0 && (
-                <span className="absolute right-1.5 top-0 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
-                  {unread > 99 ? "99+" : unread}
-                </span>
-              )}
-            </button>
-            {user.role === "admin" && (
-              <button className="hidden h-11 w-11 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={onAdmin} aria-label="后台">
-                <Shield size={20} />
+    <div className="top-nav-shell">
+      <div className="mx-auto flex min-h-14 max-w-6xl items-center justify-between gap-2 px-4 py-4">
+        <button className="min-h-11 min-w-0 shrink-0 text-left" type="button">
+          <h1 className="truncate text-[24px] font-black leading-none text-ink sm:text-[28px]">{title}</h1>
+        </button>
+        <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
+          {user ? (
+            <>
+              <details className="user-menu">
+                <summary className="flex min-h-11 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
+                  <div className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary sm:grid">
+                    {(user.nickname || user.username).slice(0, 1)}
+                  </div>
+                  <span className="max-w-[52px] truncate text-[13px] font-semibold text-ink sm:max-w-24 sm:text-sm">
+                    {(user.nickname || user.username).slice(0, 8)}
+                  </span>
+                </summary>
+                <div className="user-menu-panel left-0 top-[calc(100%+8px)] sm:left-auto sm:right-0">
+                  <button className="user-menu-item" onClick={onLogout}>
+                    <LogOut size={17} />
+                    退出登录
+                  </button>
+                </div>
+              </details>
+              <button className="relative grid h-11 w-11 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={onMessages} aria-label="消息">
+                <Bell size={21} />
+                {unread > 0 && (
+                  <span className="absolute right-1.5 top-0 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
+                    {unread > 99 ? "99+" : unread}
+                  </span>
+                )}
               </button>
-            )}
-            <button className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-transparent px-1.5 text-[13px] font-semibold text-ink sm:gap-1.5 sm:px-1 sm:text-sm" onClick={onLogout}>
-              <LogOut size={17} />
-              退出登录
+              {user.role === "admin" && (
+                <button className="hidden h-11 w-11 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={onAdmin} aria-label="后台">
+                  <Shield size={20} />
+                </button>
+              )}
+            </>
+          ) : (
+            <button className="btn btn-primary rounded-full px-5" onClick={onLogin}>
+              登录
             </button>
-          </>
-        ) : (
-          <button className="btn btn-primary rounded-full px-5" onClick={onLogin}>
-            登录
-          </button>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1085,7 +1100,6 @@ function DetailView({
   soup,
   user,
   ownEvaluation,
-  onBack,
   onEdit,
   onDelete,
   onEvaluate,
@@ -1095,7 +1109,6 @@ function DetailView({
   soup: SoupDetail;
   user: PublicUser | null;
   ownEvaluation: unknown;
-  onBack: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onEvaluate: () => void;
@@ -1114,9 +1127,6 @@ function DetailView({
 
   return (
     <section className="space-y-4">
-      <button className="btn btn-secondary" onClick={onBack}>
-        返回列表
-      </button>
       <div className="card p-4">
         {soup.coverImage && (
           <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage} alt={`${soup.title} 封面`} />

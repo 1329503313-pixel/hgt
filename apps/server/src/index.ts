@@ -1,66 +1,51 @@
 import bcrypt from "bcryptjs";
+import cookieParser from "cookie-parser";
 import cors from "cors";
-import express from "express";
-import mysqlSessionFactory from "express-mysql-session";
-import session, { Cookie } from "express-session";
-
-// Force Cookie.serialize to support partitioned cookies
-const origSerialize = Cookie.prototype.serialize;
-(Cookie.prototype as any).serialize = function (name: string, val: string) {
-  const opts: Record<string, unknown> = { path: this.path, expires: this._expires, originalMaxAge: this.originalMaxAge };
-  if (this.httpOnly) (opts as any).httpOnly = true;
-  if (this.domain) (opts as any).domain = this.domain;
-  if (this.sameSite) (opts as any).sameSite = this.sameSite;
-  if (this.secure) (opts as any).secure = true;
-  if ((this as any).partitioned) (opts as any).partitioned = true;
-  const cookieModule = require("cookie");
-  return cookieModule.serialize(name, val, opts);
-};
+import express, { Request, Response, NextFunction } from "express";
 import mysql from "mysql2/promise";
+import jwt from "jsonwebtoken";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
-import type { PublicUser } from "./types.js";
+import { PublicUser } from "./types.js";
+
+const JWT_SECRET = process.env.JWT_SECRET || "jwt-fallback-secret-change-in-production";
 
 const app = express();
 app.set("trust proxy", 1);
-const MySQLStore = mysqlSessionFactory(session);
-const maxAge = 1000 * 60 * 60 * 24 * 30;
 
-const sessionStore = new MySQLStore({
-  ...config.db,
-  createDatabaseTable: true,
-  schema: {
-    tableName: "sessions",
-    columnNames: {
-      session_id: "sid",
-      expires: "expired",
-      data: "sess"
-    }
+// ---------- JWT 认证中间件 ----------
+function signToken(payload: PublicUser): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: "30d" });
+}
+
+function verifyToken(token: string): PublicUser | null {
+  try {
+    return jwt.verify(token, JWT_SECRET) as PublicUser;
+  } catch {
+    return null;
   }
-});
+}
+
+// 从请求中提取用户身份
+function extractAuth(req: Request): PublicUser | null {
+  // 方式 1: Cookie 中的 JWT
+  const cookieToken = req.cookies?.hgt_token;
+  if (cookieToken) return verifyToken(cookieToken);
+
+  // 方式 2: Authorization 头 (Bearer)
+  const auth = req.headers.authorization;
+  if (auth && auth.startsWith("Bearer ")) {
+    return verifyToken(auth.slice(7));
+  }
+
+  return null;
+}
 
 app.use(cors({ origin: config.webOrigin, credentials: true }));
 app.use(express.json({ limit: "6mb" }));
-app.use(
-  session({
-    name: "hgt.sid",
-    secret: config.sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    rolling: true,
-    store: sessionStore,
-    cookie: {
-      httpOnly: true,
-      sameSite: "none",
-      secure: true,
-      maxAge,
-      partitioned: true
-    },
-    proxy: true
-  })
-);
+app.use(cookieParser());
 
 const text = z.string().trim().min(1);
 const optionalText = z.string().trim().optional().default("");
@@ -111,7 +96,7 @@ function sendError(res: express.Response, status: number, message: string) {
 }
 
 function currentUser(req: express.Request): PublicUser | null {
-  return req.session.user ?? null;
+  return extractAuth(req);
 }
 
 function requireAuth(req: express.Request, res: express.Response): PublicUser | null {
@@ -272,8 +257,15 @@ app.post("/api/auth/register", async (req, res) => {
   ]);
 
   const user: PublicUser = { id, username, nickname, role: "user", createdAt: new Date().toISOString() };
-  req.session.user = user;
-  res.json({ user });
+  const token = signToken(user);
+  res.cookie("hgt_token", token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+    path: "/"
+  });
+  res.json({ user, token });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -291,15 +283,20 @@ app.post("/api/auth/login", async (req, res) => {
   if (!ok) return sendError(res, 401, "账号或密码错误");
 
   const user = toUser(row);
-  req.session.user = user;
-  res.json({ user });
+  const token = signToken(user);
+  res.cookie("hgt_token", token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+    path: "/"
+  });
+  res.json({ user, token });
 });
 
-app.post("/api/auth/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie("hgt.sid");
-    res.json({ ok: true });
-  });
+app.post("/api/auth/logout", (_req, res) => {
+  res.clearCookie("hgt_token");
+  res.json({ ok: true });
 });
 
 app.post("/api/auth/password", async (req, res) => {

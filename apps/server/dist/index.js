@@ -1,43 +1,43 @@
 import bcrypt from "bcryptjs";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import mysqlSessionFactory from "express-mysql-session";
-import session from "express-session";
+import jwt from "jsonwebtoken";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
+const JWT_SECRET = process.env.JWT_SECRET || "jwt-fallback-secret-change-in-production";
 const app = express();
-const MySQLStore = mysqlSessionFactory(session);
-const maxAge = 1000 * 60 * 60 * 24 * 30;
-const sessionStore = new MySQLStore({
-    ...config.db,
-    createDatabaseTable: true,
-    schema: {
-        tableName: "sessions",
-        columnNames: {
-            session_id: "sid",
-            expires: "expired",
-            data: "sess"
-        }
+app.set("trust proxy", 1);
+// ---------- JWT 认证中间件 ----------
+function signToken(payload) {
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: "30d" });
+}
+function verifyToken(token) {
+    try {
+        return jwt.verify(token, JWT_SECRET);
     }
-});
+    catch {
+        return null;
+    }
+}
+// 从请求中提取用户身份
+function extractAuth(req) {
+    // 方式 1: Cookie 中的 JWT
+    const cookieToken = req.cookies?.hgt_token;
+    if (cookieToken)
+        return verifyToken(cookieToken);
+    // 方式 2: Authorization 头 (Bearer)
+    const auth = req.headers.authorization;
+    if (auth && auth.startsWith("Bearer ")) {
+        return verifyToken(auth.slice(7));
+    }
+    return null;
+}
 app.use(cors({ origin: config.webOrigin, credentials: true }));
 app.use(express.json({ limit: "6mb" }));
-app.use(session({
-    name: "hgt.sid",
-    secret: config.sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    rolling: true,
-    store: sessionStore,
-    cookie: {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: config.nodeEnv === "production",
-        maxAge
-    }
-}));
+app.use(cookieParser());
 const text = z.string().trim().min(1);
 const optionalText = z.string().trim().optional().default("");
 const optionalTextList = z
@@ -83,7 +83,7 @@ function sendError(res, status, message) {
     return res.status(status).json({ error: message });
 }
 function currentUser(req) {
-    return req.session.user ?? null;
+    return extractAuth(req);
 }
 function requireAuth(req, res) {
     const user = currentUser(req);
@@ -227,8 +227,15 @@ app.post("/api/auth/register", async (req, res) => {
         nickname
     ]);
     const user = { id, username, nickname, role: "user", createdAt: new Date().toISOString() };
-    req.session.user = user;
-    res.json({ user });
+    const token = signToken(user);
+    res.cookie("hgt_token", token, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: false,
+        maxAge: 1000 * 60 * 60 * 24 * 30,
+        path: "/"
+    });
+    res.json({ user, token });
 });
 app.post("/api/auth/login", async (req, res) => {
     const parsed = z.object({ username: text, password: z.string().min(1) }).safeParse(req.body);
@@ -242,14 +249,19 @@ app.post("/api/auth/login", async (req, res) => {
     if (!ok)
         return sendError(res, 401, "账号或密码错误");
     const user = toUser(row);
-    req.session.user = user;
-    res.json({ user });
-});
-app.post("/api/auth/logout", (req, res) => {
-    req.session.destroy(() => {
-        res.clearCookie("hgt.sid");
-        res.json({ ok: true });
+    const token = signToken(user);
+    res.cookie("hgt_token", token, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: false,
+        maxAge: 1000 * 60 * 60 * 24 * 30,
+        path: "/"
     });
+    res.json({ user, token });
+});
+app.post("/api/auth/logout", (_req, res) => {
+    res.clearCookie("hgt_token");
+    res.json({ ok: true });
 });
 app.post("/api/auth/password", async (req, res) => {
     const user = requireAuth(req, res);

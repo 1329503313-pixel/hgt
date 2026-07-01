@@ -1,4 +1,3 @@
-# 海龟汤评价管理系统 Docker 部署
 services:
   hgt:
     build: .
@@ -9,13 +8,13 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=4000
-      - WEB_ORIGIN=https://hgt-server.vercel.app
-      - SESSION_SECRET=change-me-to-a-long-random-string
-      - ADMIN_DEFAULT_PASSWORD=change-me
+      - WEB_ORIGIN=http://47.239.5.69:4000
+      - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-long-random-string}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-change-me}
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_USER=hgt
-      - DB_PASSWORD=hgt_password
+      - DB_PASSWORD=${DB_PASSWORD:-hgt_password}
       - DB_NAME=hgt
     depends_on:
       mysql:
@@ -26,10 +25,10 @@ services:
     container_name: hgt-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
       MYSQL_DATABASE: hgt
       MYSQL_USER: hgt
-      MYSQL_PASSWORD: hgt_password
+      MYSQL_PASSWORD: ${DB_PASSWORD:-hgt_password}
     ports:
       - "3306:3306"
     volumes:

@@ -9,10 +9,11 @@ COPY apps/web/vite.config.ts apps/web/
 COPY apps/web/postcss.config.js apps/web/
 COPY apps/web/tailwind.config.ts apps/web/
 COPY apps/web/index.html apps/web/
-RUN npm install --legacy-peer-deps
+RUN npm ci --legacy-peer-deps
 COPY apps/web/src apps/web/src
 COPY apps/web/public apps/web/public
-RUN npx vite build apps/web --outDir /app/apps/web/dist
+# Vite build 时不要指定 --outDir，用 vite.config.ts 的默认值
+RUN cd apps/web && npx vite build
 
 # ============================================
 # 阶段 2: 构建后端 (TypeScript)
@@ -22,7 +23,7 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY apps/server/package.json apps/server/
 COPY apps/server/tsconfig.json apps/server/
-RUN npm install --legacy-peer-deps
+RUN npm ci --legacy-peer-deps
 COPY apps/server/src apps/server/src
 RUN npx tsc -p apps/server/tsconfig.json
 
