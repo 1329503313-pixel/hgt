@@ -1,8 +1,4 @@
 {
-  "framework": null,
-  "installCommand": null,
-  "buildCommand": null,
-  "outputDirectory": "apps/web/dist",
   "rewrites": [
     {
       "source": "/(.*)",
