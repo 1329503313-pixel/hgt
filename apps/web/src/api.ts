@@ -6,9 +6,7 @@ import type {
   ViewRequestItem
 } from "./shared/types";
 
-const API_URL = import.meta.env.PROD
-  ? "https://hgt-986q.onrender.com"
-  : "http://localhost:4000";
+const API_URL = import.meta.env.PROD ? "" : "http://localhost:4000";
 
 type ApiOptions = Omit<RequestInit, "body"> & { body?: BodyInit | object | null };
 
