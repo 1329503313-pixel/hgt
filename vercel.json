@@ -1,8 +1,9 @@
 {
-  "installCommand": "npm install",
-  "buildCommand": "cd apps/web && npx vite build",
-  "outputDirectory": "apps/web/dist",
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://hgt-986q.onrender.com/api/$1"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
