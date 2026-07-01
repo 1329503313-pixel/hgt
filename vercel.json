@@ -1,5 +1,5 @@
 {
-  "installCommand": "npm install --production=false",
+  "buildCommand": null,
   "outputDirectory": "apps/web/dist",
   "rewrites": [
     {
