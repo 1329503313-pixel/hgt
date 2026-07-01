@@ -181,6 +181,7 @@ export default function App() {
     const data = await api<SoupResponse>(`/api/soups/${id}`);
     setSelected(data.soup);
     setView("detail");
+    requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
   }
 
   useEffect(() => {
@@ -1102,6 +1103,16 @@ function DetailView({
   onRequest: () => void;
   onExport: (text: string, name: string, sectionTitle?: string) => void;
 }) {
+  const hasRadarData = [
+    soup.radar.writing,
+    soup.radar.logic,
+    soup.radar.share,
+    soup.radar.mechanism,
+    soup.radar.twist,
+    soup.radar.depth
+  ].some((value) => value != null);
+  const hasEvaluations = soup.evaluations.length > 0;
+
   return (
     <section className="space-y-4">
       <button className="btn btn-secondary" onClick={onBack}>
@@ -1194,20 +1205,24 @@ function DetailView({
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-        <div className="card flex h-[360px] flex-col p-3">
-          <h2 className="mb-3 font-black text-ink">六维雷达图</h2>
-          <div className="min-h-0 flex-1">
-            <RadarChart radar={soup.radar} />
+      <div className={hasRadarData ? "grid gap-4 lg:grid-cols-[360px_1fr]" : "grid gap-4"}>
+        {hasRadarData && (
+          <div className="card flex h-[360px] flex-col p-3">
+            <h2 className="mb-3 font-black text-ink">六维雷达图</h2>
+            <div className="min-h-0 flex-1">
+              <RadarChart radar={soup.radar} />
+            </div>
           </div>
-        </div>
+        )}
         <div className="card p-4">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="font-black text-ink">评价</h2>
-            <button className="btn btn-primary" onClick={onEvaluate}>
-              <Star size={18} />
-              {ownEvaluation ? "编辑我的评价" : "添加评价"}
-            </button>
+            {hasEvaluations && (
+              <button className="btn btn-primary" onClick={onEvaluate}>
+                <Star size={18} />
+                {ownEvaluation ? "编辑我的评价" : "添加评价"}
+              </button>
+            )}
           </div>
           <div className="space-y-3">
             {soup.evaluations.map((item) => (
@@ -1226,7 +1241,15 @@ function DetailView({
                 </div>
               </div>
             ))}
-            {soup.evaluations.length === 0 && <p className="text-sm text-muted">还没有评价。</p>}
+            {!hasEvaluations && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted">还没有评价。</p>
+                <button className="btn btn-primary w-full sm:w-auto" onClick={onEvaluate}>
+                  <Star size={18} />
+                  {ownEvaluation ? "编辑我的评价" : "添加评价"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
