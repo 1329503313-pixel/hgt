@@ -8,7 +8,8 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   namedPlaceholders: true,
-  timezone: "Z"
+  timezone: "Z",
+  ssl: config.db.host !== "127.0.0.1" && config.db.host !== "localhost" ? { rejectUnauthorized: false } : undefined
 });
 
 export const db = drizzle(pool);
