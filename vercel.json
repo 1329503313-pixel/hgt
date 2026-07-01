@@ -1,7 +1,6 @@
 {
   "installCommand": "npm install --production=false",
-  "buildCommand": "cd apps/web && npx vite build",
-  "outputDirectory": "apps/web/dist",
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/(.*)",
