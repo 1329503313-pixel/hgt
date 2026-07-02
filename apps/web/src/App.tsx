@@ -518,7 +518,7 @@ export default function App() {
         </div>
       </header>}
 
-      <main className={`mx-auto max-w-6xl px-4 ${view === "detail" ? "pb-24" : "pb-28"} ${view === "home" || view === "messages" || view === "mine" ? "pt-24" : "pb-4 pt-24"}`}>
+      <main className={`mx-auto max-w-6xl px-4 ${view === "detail" ? "pb-24" : "pb-28"} ${view === "home" || view === "messages" || view === "mine" ? "pt-[72px]" : "pb-4 pt-[72px]"}`}>
         {toast && (
           <div className="mb-4 flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-primary">
             {toast}
