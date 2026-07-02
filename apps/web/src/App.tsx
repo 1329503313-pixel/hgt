@@ -1313,6 +1313,8 @@ function DetailView({
           </button>
         </div>
       )}
+      {/* 有悬浮编辑按钮时留出足够空间，避免被遮挡 */}
+      {soup.canEdit && <div className="h-20" />}
     </section>
   );
 }
