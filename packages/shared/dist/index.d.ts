@@ -28,6 +28,7 @@ export type SoupSummary = {
     isOriginal: boolean;
     creatorId: string;
     creatorName: string;
+    creatorAvatar: string | null;
     isSurfacePublic: boolean;
     isBottomPublic: boolean;
     viewCount: number;

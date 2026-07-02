@@ -133,6 +133,9 @@ export default function App() {
   }, [toast]);
   const [exportReady, setExportReady] = useState<{ url: string; name: string } | null>(null);
 
+  const submittingSoupRef = useRef(false);
+  const submittingEvalRef = useRef(false);
+
   const unread = notifications.filter((item) => !item.isRead).length;
 
   async function loadMe() {
@@ -307,18 +310,24 @@ export default function App() {
 
   async function submitSoup(event: FormEvent) {
     event.preventDefault();
-    const method = editingSoupId ? "PUT" : "POST";
-    const path = editingSoupId ? `/api/soups/${editingSoupId}` : "/api/soups";
-    const payload = {
-      ...soupForm,
-      supplementalSurfaces: soupForm.supplementalSurfaces.map((item) => item.trim()).filter(Boolean),
-      supplementalBottoms: soupForm.supplementalBottoms.map((item) => item.trim()).filter(Boolean),
-      author: soupForm.isOriginal ? soupForm.author : "佚名"
-    };
-    const result = await api<{ id?: string }>(path, { method, body: payload });
-    setShowSoupForm(false);
-    await loadSoups(false);
-    await loadDetail(editingSoupId ?? result.id!);
+    if (submittingSoupRef.current) return;
+    submittingSoupRef.current = true;
+    try {
+      const method = editingSoupId ? "PUT" : "POST";
+      const path = editingSoupId ? `/api/soups/${editingSoupId}` : "/api/soups";
+      const payload = {
+        ...soupForm,
+        supplementalSurfaces: soupForm.supplementalSurfaces.map((item) => item.trim()).filter(Boolean),
+        supplementalBottoms: soupForm.supplementalBottoms.map((item) => item.trim()).filter(Boolean),
+        author: soupForm.isOriginal ? soupForm.author : "佚名"
+      };
+      const result = await api<{ id?: string }>(path, { method, body: payload });
+      setShowSoupForm(false);
+      await loadSoups(false);
+      await loadDetail(editingSoupId ?? result.id!);
+    } finally {
+      submittingSoupRef.current = false;
+    }
   }
 
   async function deleteSoup(id: string) {
@@ -331,15 +340,20 @@ export default function App() {
 
   async function submitEvaluation(event: FormEvent) {
     event.preventDefault();
-    if (!selected) return;
-    await api(`/api/soups/${selected.id}/evaluations`, {
-      method: "POST",
-      body: evalForm
-    });
-    setShowEvalForm(false);
-    setToast("评价已保存");
-    await loadDetail(selected.id);
-    await loadSoups(false);
+    if (!selected || submittingEvalRef.current) return;
+    submittingEvalRef.current = true;
+    try {
+      await api(`/api/soups/${selected.id}/evaluations`, {
+        method: "POST",
+        body: evalForm
+      });
+      setShowEvalForm(false);
+      setToast("评价已保存");
+      await loadDetail(selected.id);
+      await loadSoups(false);
+    } finally {
+      submittingEvalRef.current = false;
+    }
   }
 
   async function requestAccess() {
@@ -1107,7 +1121,11 @@ function SoupCard({
       <div className="p-3">
         <h2 className="line-clamp-2 text-[16px] font-black leading-snug text-ink">{soup.title}</h2>
         <p className="mt-1 flex items-center gap-1.5 truncate text-[13px] text-muted">
-          <User size={14} />
+          {soup.creatorAvatar ? (
+            <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
+          ) : (
+            <User size={14} />
+          )}
           {soup.author || soup.creatorName}
         </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1272,7 +1290,12 @@ function DetailView({
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
               <span className="pill bg-slate-100 text-muted">{soup.evaluationCount} 条评价</span>
             </div>
-            <p className="mt-3 text-sm text-muted">
+            <p className="mt-3 flex items-center gap-1.5 text-sm text-muted">
+              {soup.creatorAvatar ? (
+                <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
+              ) : (
+                <User size={14} />
+              )}
               作者 {soup.author} · 发布者 {soup.creatorName} · 评分 {soup.averageTotal ?? "-"}
             </p>
           </div>
@@ -1899,7 +1922,10 @@ function SoupLinkList({
             )}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-base font-semibold text-ink">{soup.title}</span>
-              <span className="mt-1 block truncate text-xs text-muted">
+              <span className="mt-1 flex items-center gap-1 truncate text-xs text-muted">
+                {soup.creatorAvatar ? (
+                  <img className="h-3.5 w-3.5 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
+                ) : null}
                 {soup.author || soup.creatorName} · {formatViews(soup.viewCount)} 浏览 · {soup.evaluationCount} 评
               </span>
             </span>

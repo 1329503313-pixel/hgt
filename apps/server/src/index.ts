@@ -205,6 +205,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     isOriginal: bool(row.is_original ?? 1),
     creatorId: row.creator_id,
     creatorName: row.creator_name,
+    creatorAvatar: row.creator_avatar ? String(row.creator_avatar) : null,
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
     viewCount: Number(row.view_count ?? 0),
@@ -395,7 +396,7 @@ app.get("/api/me/soups", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*,
+    SELECT s.*, u.avatar AS creator_avatar,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -406,6 +407,7 @@ app.get("/api/me/soups", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.creator_id = ?
     GROUP BY s.id
     ORDER BY s.created_at DESC
@@ -437,7 +439,7 @@ app.get("/api/me/favorites", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*,
+    SELECT s.*, u.avatar AS creator_avatar,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -449,6 +451,7 @@ app.get("/api/me/favorites", async (req, res) => {
     FROM soups s
     INNER JOIN soup_favorites f ON f.soup_id = s.id
     LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     WHERE f.user_id = ?
     GROUP BY s.id
     ORDER BY f.created_at DESC
@@ -463,7 +466,7 @@ app.get("/api/me/evaluations", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*,
+    SELECT s.*, u.avatar AS creator_avatar,
       COUNT(e2.id) AS evaluation_count,
       AVG(e2.total) AS average_total,
       AVG(e2.writing) AS avg_writing,
@@ -475,6 +478,7 @@ app.get("/api/me/evaluations", async (req, res) => {
     FROM soups s
     INNER JOIN evaluations my ON my.soup_id = s.id
     LEFT JOIN evaluations e2 ON e2.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     WHERE my.reviewer_id = ?
     GROUP BY s.id
     ORDER BY my.created_at DESC
@@ -525,7 +529,7 @@ app.get("/api/soups", async (req, res) => {
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*,
+    SELECT s.*, u.avatar AS creator_avatar,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -536,6 +540,7 @@ app.get("/api/soups", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     GROUP BY s.id
     ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
@@ -608,7 +613,7 @@ app.get("/api/soups/:id", async (req, res) => {
 
   const [statsRows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*,
+    SELECT s.*, u.avatar AS creator_avatar,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -619,6 +624,7 @@ app.get("/api/soups/:id", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.id = ?
     GROUP BY s.id
     LIMIT 1
