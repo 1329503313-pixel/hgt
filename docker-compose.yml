@@ -11,33 +11,14 @@ services:
       - WEB_ORIGIN=http://47.239.5.69:4000
       - JWT_SECRET=${JWT_SECRET:?生产环境必须设置 JWT_SECRET，例如 openssl rand -hex 32}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-change-me}
-      - DB_HOST=mysql
+      - DB_HOST=mysql-docker-mysql-1
       - DB_PORT=3306
       - DB_USER=hgt
       - DB_PASSWORD=${DB_PASSWORD:-hgt_password}
       - DB_NAME=hgt
-    depends_on:
-      mysql:
-        condition: service_healthy
+    networks:
+      - mysql-docker_default
 
-  mysql:
-    image: mysql:8.4
-    container_name: hgt-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
-      MYSQL_DATABASE: hgt
-      MYSQL_USER: hgt
-      MYSQL_PASSWORD: ${DB_PASSWORD:-hgt_password}
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-volumes:
-  mysql-data:
+networks:
+  mysql-docker_default:
+    external: true
