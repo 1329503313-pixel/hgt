@@ -151,6 +151,7 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
     id: row.id,
     username: row.username,
     nickname: row.nickname,
+    avatar: row.avatar ? String(row.avatar) : null,
     role: row.role,
     createdAt: new Date(row.created_at).toISOString()
   };
@@ -284,7 +285,7 @@ app.post("/api/auth/register", async (req, res) => {
     nickname
   ]);
 
-  const user: PublicUser = { id, username, nickname, role: "user", createdAt: new Date().toISOString() };
+  const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString() };
   const token = signToken(user);
   res.cookie("hgt_token", token, {
     httpOnly: true,
@@ -370,6 +371,25 @@ app.patch("/api/me/nickname", async (req, res) => {
   res.json({ ok: true, nickname: parsed.data.nickname });
 });
 
+app.patch("/api/me/avatar", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const parsed = z
+    .object({
+      avatar: z
+        .string()
+        .optional()
+        .default("")
+        .refine((value) => !value || /^data:image\/(png|jpeg);base64,/.test(value), "头像仅支持 JPG 或 PNG")
+    })
+    .safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "头像格式不正确");
+
+  const avatar = parsed.data.avatar || null;
+  await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
+  res.json({ ok: true, avatar });
+});
+
 app.get("/api/me/soups", async (req, res) => {
   const user = requireAuth(req, res);
   if (!user) return;
@@ -389,6 +409,75 @@ app.get("/api/me/soups", async (req, res) => {
     WHERE s.creator_id = ?
     GROUP BY s.id
     ORDER BY s.created_at DESC
+    `,
+    [user.id]
+  );
+  res.json({ soups: rows.map(mapSoupSummary) });
+});
+
+app.get("/api/me/stats", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+
+  const [[soupRows], [favRows], [evalRows]] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [user.id]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [user.id]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(DISTINCT soup_id) AS count FROM evaluations WHERE reviewer_id = ?", [user.id])
+  ]);
+
+  res.json({
+    soupCount: Number(soupRows[0]?.count ?? 0),
+    favoriteCount: Number(favRows[0]?.count ?? 0),
+    evaluationCount: Number(evalRows[0]?.count ?? 0)
+  });
+});
+
+app.get("/api/me/favorites", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `
+    SELECT s.*,
+      COUNT(e.id) AS evaluation_count,
+      AVG(e.total) AS average_total,
+      AVG(e.writing) AS avg_writing,
+      AVG(e.logic) AS avg_logic,
+      AVG(e.share) AS avg_share,
+      AVG(e.mechanism) AS avg_mechanism,
+      AVG(e.twist) AS avg_twist,
+      AVG(e.depth) AS avg_depth
+    FROM soups s
+    INNER JOIN soup_favorites f ON f.soup_id = s.id
+    LEFT JOIN evaluations e ON e.soup_id = s.id
+    WHERE f.user_id = ?
+    GROUP BY s.id
+    ORDER BY f.created_at DESC
+    `,
+    [user.id]
+  );
+  res.json({ soups: rows.map(mapSoupSummary) });
+});
+
+app.get("/api/me/evaluations", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `
+    SELECT s.*,
+      COUNT(e2.id) AS evaluation_count,
+      AVG(e2.total) AS average_total,
+      AVG(e2.writing) AS avg_writing,
+      AVG(e2.logic) AS avg_logic,
+      AVG(e2.share) AS avg_share,
+      AVG(e2.mechanism) AS avg_mechanism,
+      AVG(e2.twist) AS avg_twist,
+      AVG(e2.depth) AS avg_depth
+    FROM soups s
+    INNER JOIN evaluations my ON my.soup_id = s.id
+    LEFT JOIN evaluations e2 ON e2.soup_id = s.id
+    WHERE my.reviewer_id = ?
+    GROUP BY s.id
+    ORDER BY my.created_at DESC
     `,
     [user.id]
   );
@@ -548,6 +637,13 @@ app.get("/api/soups/:id", async (req, res) => {
           [req.params.id, user.id]
         )
       : [[] as mysql.RowDataPacket[]];
+  const [favoriteRows] =
+    user
+      ? await pool.query<mysql.RowDataPacket[]>(
+          "SELECT id FROM soup_favorites WHERE soup_id = ? AND user_id = ? LIMIT 1",
+          [req.params.id, user.id]
+        )
+      : [[] as mysql.RowDataPacket[]];
 
   res.json({
     soup: {
@@ -559,10 +655,33 @@ app.get("/api/soups/:id", async (req, res) => {
       manual: full ? soup.host_manual : null,
       canViewFull: full,
       canEdit: Boolean(user && (user.role === "admin" || user.id === soup.creator_id)),
+      isFavorited: favoriteRows.length > 0,
       pendingRequestId: requestRows[0]?.id ?? null,
       evaluations: evalRows.map(mapEvaluation)
     }
   });
+});
+
+app.post("/api/soups/:id/favorite", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+
+  const soup = await getSoupRaw(req.params.id);
+  if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
+
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id FROM soup_favorites WHERE soup_id = ? AND user_id = ? LIMIT 1",
+    [req.params.id, user.id]
+  );
+  if (rows.length > 0) {
+    await pool.query("DELETE FROM soup_favorites WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
+    res.json({ isFavorited: false });
+    return;
+  }
+
+  await pool.query("INSERT INTO soup_favorites (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+  res.status(201).json({ isFavorited: true });
 });
 
 app.put("/api/soups/:id", async (req, res) => {

@@ -32,10 +32,10 @@ import type {
   SoupSummary,
   ViewRequestItem
 } from "./shared/types";
-import { api, MeResponse, NotificationsResponse, PasswordResponse, RequestsResponse, SoupResponse, SoupsResponse, UsersResponse, NicknameResponse } from "./api";
+import { api, MeResponse, NotificationsResponse, PasswordResponse, RequestsResponse, SoupResponse, SoupsResponse, StatsResponse, UsersResponse, NicknameResponse, AvatarResponse } from "./api";
 import { RadarChart } from "./RadarChart";
 
-type View = "home" | "detail" | "messages" | "allNotifications" | "allRequests" | "admin" | "mine";
+type View = "home" | "detail" | "messages" | "allNotifications" | "allRequests" | "admin" | "mine" | "mySoups" | "myFavorites" | "myEvaluations";
 type AuthMode = "login" | "register" | null;
 type SoupForm = {
   title: string;
@@ -109,6 +109,9 @@ export default function App() {
   const [requests, setRequests] = useState<ViewRequestItem[]>([]);
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [mySoups, setMySoups] = useState<SoupSummary[]>([]);
+  const [myFavorites, setMyFavorites] = useState<SoupSummary[]>([]);
+  const [myEvaluations, setMyEvaluations] = useState<SoupSummary[]>([]);
+  const [myStats, setMyStats] = useState({ soupCount: 0, favoriteCount: 0, evaluationCount: 0 });
   const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
   const [showSoupForm, setShowSoupForm] = useState(false);
   const [editingSoupId, setEditingSoupId] = useState<string | null>(null);
@@ -122,6 +125,12 @@ export default function App() {
     bottomPublic: "all"
   });
   const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
   const [exportReady, setExportReady] = useState<{ url: string; name: string } | null>(null);
 
   const unread = notifications.filter((item) => !item.isRead).length;
@@ -191,6 +200,24 @@ export default function App() {
     setMySoups(data.soups);
   }
 
+  async function loadMyFavorites() {
+    if (!user) return;
+    const data = await api<SoupsResponse>("/api/me/favorites");
+    setMyFavorites(data.soups);
+  }
+
+  async function loadMyEvaluations() {
+    if (!user) return;
+    const data = await api<SoupsResponse>("/api/me/evaluations");
+    setMyEvaluations(data.soups);
+  }
+
+  async function loadMyStats() {
+    if (!user) return;
+    const data = await api<StatsResponse>("/api/me/stats");
+    setMyStats(data);
+  }
+
   async function loadDetail(id: string) {
     const data = await api<SoupResponse>(`/api/soups/${id}`);
     setSelected(data.soup);
@@ -211,10 +238,13 @@ export default function App() {
     loadRequests().catch(() => undefined);
     loadUsers().catch(() => undefined);
     loadMySoups().catch(() => undefined);
+    loadMyFavorites().catch(() => undefined);
+    loadMyEvaluations().catch(() => undefined);
+    loadMyStats().catch(() => undefined);
   }, [user]);
 
   async function refreshAll() {
-    await Promise.all([loadSoups(false), loadNotifications(), loadRequests(), loadUsers(), loadMySoups()]);
+    await Promise.all([loadSoups(false), loadNotifications(), loadRequests(), loadUsers(), loadMySoups(), loadMyFavorites(), loadMyEvaluations(), loadMyStats()]);
     if (selected) await loadDetail(selected.id);
   }
 
@@ -322,6 +352,20 @@ export default function App() {
     await api(`/api/soups/${selected.id}/access-requests`, { method: "POST" });
     setToast("申请已发送，作者和管理员会收到提醒");
     await loadDetail(selected.id);
+  }
+
+  async function toggleFavorite() {
+    if (!selected) return;
+    if (!user) {
+      setAuthError("");
+      setAuthMode("login");
+      return;
+    }
+    const data = await api<{ isFavorited: boolean }>(`/api/soups/${selected.id}/favorite`, { method: "POST" });
+    setSelected((old) => (old ? { ...old, isFavorited: data.isFavorited } : old));
+    loadMyFavorites().catch(() => undefined);
+    loadMyStats().catch(() => undefined);
+    setToast(data.isFavorited ? "已收藏" : "已取消收藏");
   }
 
   async function decideRequest(id: string, decision: "approved" | "rejected") {
@@ -437,6 +481,12 @@ export default function App() {
     setToast("昵称已更新，相关海龟汤和评价的作者名已同步修改");
   }
 
+  async function updateAvatar(dataUrl: string) {
+    const data = await api<AvatarResponse>("/api/me/avatar", { method: "PATCH", body: { avatar: dataUrl } });
+    setUser((prev) => prev ? { ...prev, avatar: data.avatar } : prev);
+    setToast(data.avatar ? "头像已更新" : "头像已移除");
+  }
+
   const ownEvaluation = useMemo(() => {
     if (!selected || !user) return null;
     return selected.evaluations.find((item) => item.reviewerId === user.id) ?? null;
@@ -466,7 +516,7 @@ export default function App() {
 
   return (
     <div className="app-shell min-h-screen bg-page">
-      {view !== "home" && view !== "messages" && view !== "mine" && <header className="fixed inset-x-0 top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
+      {view !== "home" && view !== "messages" && view !== "mine" && view !== "mySoups" && view !== "myFavorites" && view !== "myEvaluations" && <header className="fixed inset-x-0 top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <button className="flex min-h-11 items-center gap-2 text-left text-base font-black text-ink" onClick={() => setView("home")}>
             {view === "detail" ? (
@@ -518,7 +568,7 @@ export default function App() {
         </div>
       </header>}
 
-      <main className={`mx-auto max-w-6xl px-4 ${view === "detail" ? "pb-24" : "pb-28"} ${view === "home" || view === "messages" || view === "mine" ? "pt-[72px]" : "pb-4 pt-[72px]"}`}>
+      <main className={`mx-auto max-w-6xl px-4 ${view === "detail" ? "pb-24" : "pb-28"} ${view === "home" || view === "messages" || view === "mine" || view === "mySoups" || view === "myFavorites" || view === "myEvaluations" ? "pt-[72px]" : "pb-4 pt-[72px]"}`}>
         {toast && (
           <div className="mb-4 flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-primary">
             {toast}
@@ -555,6 +605,7 @@ export default function App() {
             onEvaluate={openEval}
             onRequest={requestAccess}
             onExport={exportText}
+            onFavorite={toggleFavorite}
           />
         )}
         {view === "messages" && (
@@ -593,7 +644,7 @@ export default function App() {
         {view === "mine" && (
           <MineView
             user={user}
-            mySoups={mySoups}
+            stats={myStats}
             unread={unread}
             passwordForm={passwordForm}
             setPasswordForm={setPasswordForm}
@@ -607,6 +658,32 @@ export default function App() {
             onAdmin={() => setView("admin")}
             onLogout={logout}
             onUpdateNickname={updateNickname}
+            onUpdateAvatar={updateAvatar}
+            onToast={setToast}
+            onGoSoups={() => setView("mySoups")}
+            onGoFavorites={() => setView("myFavorites")}
+            onGoEvaluations={() => setView("myEvaluations")}
+          />
+        )}
+        {view === "mySoups" && (
+          <MySoupsListView
+            soups={mySoups}
+            onOpenSoup={loadDetail}
+            onBack={() => setView("mine")}
+          />
+        )}
+        {view === "myFavorites" && (
+          <MyFavoritesListView
+            soups={myFavorites}
+            onOpenSoup={loadDetail}
+            onBack={() => setView("mine")}
+          />
+        )}
+        {view === "myEvaluations" && (
+          <MyEvaluationsListView
+            soups={myEvaluations}
+            onOpenSoup={loadDetail}
+            onBack={() => setView("mine")}
           />
         )}
         {view === "admin" && user?.role === "admin" && (
@@ -1143,7 +1220,8 @@ function DetailView({
   onDelete,
   onEvaluate,
   onRequest,
-  onExport
+  onExport,
+  onFavorite
 }: {
   soup: SoupDetail;
   user: PublicUser | null;
@@ -1153,6 +1231,7 @@ function DetailView({
   onEvaluate: () => void;
   onRequest: () => void;
   onExport: (text: string, name: string, sectionTitle?: string) => void;
+  onFavorite: () => void;
 }) {
   const hasRadarData = [
     soup.radar.writing,
@@ -1171,8 +1250,23 @@ function DetailView({
           <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage} alt={`${soup.title} 封面`} />
         )}
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
-            <h1 className="text-2xl font-black text-ink">{soup.title}</h1>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="min-w-0 flex-1 break-words text-2xl font-black text-ink">{soup.title}</h1>
+              <button
+                className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${
+                  soup.isFavorited
+                    ? "border-amber-200 bg-amber-50 text-amber-500"
+                    : "border-line bg-white text-muted hover:border-amber-200 hover:text-amber-500"
+                }`}
+                type="button"
+                onClick={onFavorite}
+                aria-pressed={soup.isFavorited}
+              >
+                <Star className={soup.isFavorited ? "fill-amber-400 text-amber-400" : "text-muted"} size={15} />
+                收藏
+              </button>
+            </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
@@ -1455,7 +1549,7 @@ function NotificationList({
 
 function MineView({
   user,
-  mySoups,
+  stats,
   unread,
   passwordForm,
   setPasswordForm,
@@ -1465,10 +1559,15 @@ function MineView({
   onMessages,
   onAdmin,
   onLogout,
-  onUpdateNickname
+  onUpdateNickname,
+  onUpdateAvatar,
+  onGoSoups,
+  onGoFavorites,
+  onGoEvaluations,
+  onToast
 }: {
   user: PublicUser | null;
-  mySoups: SoupSummary[];
+  stats: { soupCount: number; favoriteCount: number; evaluationCount: number };
   unread: number;
   passwordForm: { newPassword: string; confirmPassword: string };
   setPasswordForm: (next: { newPassword: string; confirmPassword: string }) => void;
@@ -1479,15 +1578,20 @@ function MineView({
   onAdmin: () => void;
   onLogout: () => void;
   onUpdateNickname: (nickname: string) => Promise<void>;
+  onUpdateAvatar: (dataUrl: string) => Promise<void>;
+  onToast: (message: string) => void;
+  onGoSoups: () => void;
+  onGoFavorites: () => void;
+  onGoEvaluations: () => void;
 }) {
   const [passwordOpen, setPasswordOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [editNickname, setEditNickname] = useState(false);
   const [nicknameValue, setNicknameValue] = useState(user?.nickname ?? "");
   const [nicknameSaving, setNicknameSaving] = useState(false);
   const [nicknameError, setNicknameError] = useState("");
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  // 同步昵称到编辑框
   useEffect(() => {
     if (user) setNicknameValue(user.nickname);
   }, [user?.nickname]);
@@ -1532,77 +1636,107 @@ function MineView({
     <section className="space-y-3">
       <PageTopBar title="我的" user={user} unread={unread} onMessages={onMessages} onAdmin={onAdmin} onLogin={onLogin} onLogout={onLogout} />
 
-      {/* 我的资料卡片 */}
+      {/* 聚合资料卡片 */}
       <div className="card p-4">
-        {!profileOpen ? (
-          <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => setProfileOpen(true)}>
-            <span>
-              <span className="block text-base font-semibold text-ink">我的资料</span>
-              <span className="mt-1 block text-xs text-muted">查看和编辑个人信息</span>
-            </span>
-            <ChevronRight size={18} className="text-primary" />
+        <div className="flex items-center gap-4">
+          <button
+            className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-xl font-black text-primary"
+            type="button"
+            disabled={avatarSaving}
+            onClick={() => avatarInputRef.current?.click()}
+            title="点击更换头像"
+          >
+            {user.avatar ? (
+              <img className="h-full w-full object-cover" src={user.avatar} alt="" />
+            ) : (
+              (user.nickname || user.username).slice(0, 1)
+            )}
+            <div className="absolute inset-0 flex items-end justify-center rounded-full bg-black/25 pb-1 opacity-0 transition hover:opacity-100">
+              <ImagePlus size={16} className="text-white" />
+            </div>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/jpeg,image/png"
+              className="hidden"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                if (!["image/jpeg", "image/png"].includes(file.type)) {
+                  onToast("头像仅支持 JPG 或 PNG");
+                  return;
+                }
+                if (file.size > 1 * 1024 * 1024) {
+                  onToast("头像请控制在 1MB 以内");
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = async () => {
+                  setAvatarSaving(true);
+                  try {
+                    await onUpdateAvatar(String(reader.result));
+                  } catch (e) {
+                    onToast(e instanceof Error ? e.message : "头像更新失败");
+                  } finally {
+                    setAvatarSaving(false);
+                  }
+                };
+                reader.readAsDataURL(file);
+              }}
+            />
           </button>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex min-h-11 items-center justify-between gap-3">
-              <h2 className="text-base font-semibold text-ink">我的资料</h2>
-              <button
-                className="text-sm font-semibold text-muted"
-                type="button"
-                onClick={() => { setProfileOpen(false); setEditNickname(false); }}
-              >
-                返回
-              </button>
-            </div>
-
-            {/* 昵称 — 可编辑 */}
-            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
-              <span className="text-sm text-muted shrink-0">昵称</span>
-              {editNickname ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    className="field h-9 w-28 text-sm"
-                    value={nicknameValue}
-                    maxLength={8}
-                    onChange={(e) => setNicknameValue(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") saveNickname(); }}
-                    autoFocus
-                  />
-                  <button className="btn btn-primary h-9 px-2 text-xs" onClick={saveNickname} disabled={nicknameSaving}>
-                    {nicknameSaving ? "..." : "保存"}
-                  </button>
-                  <button className="btn btn-secondary h-9 px-2 text-xs" onClick={() => { setEditNickname(false); setNicknameValue(user.nickname); setNicknameError(""); }}>
-                    取消
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-ink">{user.nickname}</span>
-                  <button className="text-primary" onClick={() => setEditNickname(true)}>
-                    <Pencil size={14} />
-                  </button>
-                </div>
-              )}
-            </div>
-            {nicknameError && <p className="text-xs font-semibold text-danger">{nicknameError}</p>}
-
-            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
-              <span className="text-sm text-muted">账号</span>
-              <span className="truncate text-sm font-semibold text-ink">{user.username}</span>
-            </div>
-            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
-              <span className="text-sm text-muted">角色</span>
-              <span className="truncate text-sm font-semibold text-ink">{user.role === "admin" ? "管理员" : "普通用户"}</span>
-            </div>
-            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
-              <span className="text-sm text-muted">加入时间</span>
-              <span className="truncate text-sm font-semibold text-ink">{new Date(user.createdAt).toLocaleDateString()}</span>
-            </div>
+          <div className="min-w-0 flex-1">
+            {editNickname ? (
+              <div className="flex items-center gap-2">
+                <input
+                  className="field h-9 w-28 text-sm"
+                  value={nicknameValue}
+                  maxLength={8}
+                  onChange={(e) => setNicknameValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveNickname(); }}
+                  autoFocus
+                />
+                <button className="btn btn-primary h-9 px-2 text-xs" onClick={saveNickname} disabled={nicknameSaving}>
+                  {nicknameSaving ? "..." : "保存"}
+                </button>
+                <button className="btn btn-secondary h-9 px-2 text-xs" onClick={() => { setEditNickname(false); setNicknameValue(user.nickname); setNicknameError(""); }}>
+                  取消
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-black text-ink">{user.nickname}</span>
+                <button className="text-primary" onClick={() => setEditNickname(true)}>
+                  <Pencil size={14} />
+                </button>
+              </div>
+            )}
+            {nicknameError && <p className="mt-1 text-xs font-semibold text-danger">{nicknameError}</p>}
+            <p className="text-xs text-muted">@{user.username}</p>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* 修改密码 — 移到资料下面 */}
+      {/* 统计数字行 */}
+      <div className="grid grid-cols-3 gap-2">
+        <button className="card flex flex-col items-center p-3 transition hover:bg-blue-50" onClick={onGoSoups}>
+          <span className="text-2xl font-black text-ink">{stats.soupCount}</span>
+          <span className="mt-0.5 text-xs font-semibold text-muted">我发布的</span>
+          <ChevronRight size={14} className="mt-1 text-muted/40" />
+        </button>
+        <button className="card flex flex-col items-center p-3 transition hover:bg-amber-50" onClick={onGoFavorites}>
+          <span className="text-2xl font-black text-ink">{stats.favoriteCount}</span>
+          <span className="mt-0.5 text-xs font-semibold text-muted">我收藏的</span>
+          <ChevronRight size={14} className="mt-1 text-muted/40" />
+        </button>
+        <button className="card flex flex-col items-center p-3 transition hover:bg-emerald-50" onClick={onGoEvaluations}>
+          <span className="text-2xl font-black text-ink">{stats.evaluationCount}</span>
+          <span className="mt-0.5 text-xs font-semibold text-muted">我评价的</span>
+          <ChevronRight size={14} className="mt-1 text-muted/40" />
+        </button>
+      </div>
+
+      {/* 修改密码 */}
       <div className="card p-4">
         {!passwordOpen ? (
           <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => setPasswordOpen(true)}>
@@ -1653,31 +1787,6 @@ function MineView({
           </form>
         )}
       </div>
-
-      <div className="card p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-ink">我发布的海龟汤</h2>
-          <span className="text-sm text-muted">{mySoups.length} 条</span>
-        </div>
-        <div className="space-y-3">
-          {mySoups.map((soup) => (
-            <button
-              key={soup.id}
-              className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-line bg-white p-3 text-left"
-              onClick={() => onOpenSoup(soup.id)}
-            >
-              {soup.coverImage && <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-base font-semibold text-ink">{soup.title}</span>
-                <span className="mt-1 block truncate text-xs text-muted">
-                  {formatViews(soup.viewCount)} 浏览 · {soup.evaluationCount} 评 · {soup.isBottomPublic ? "汤底公开" : soup.isSurfacePublic ? "汤面公开" : "不公开"}
-                </span>
-              </span>
-            </button>
-          ))}
-          {mySoups.length === 0 && <p className="rounded-lg bg-slate-50 p-4 text-center text-sm text-muted">还没有发布海龟汤。</p>}
-        </div>
-      </div>
     </section>
   );
 }
@@ -1687,6 +1796,116 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
       <span className="text-sm text-muted">{label}</span>
       <span className="truncate text-sm font-semibold text-ink">{value}</span>
+    </div>
+  );
+}
+
+function MySoupsListView({
+  soups,
+  onOpenSoup,
+  onBack
+}: {
+  soups: SoupSummary[];
+  onOpenSoup: (id: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button className="btn btn-secondary px-3" onClick={onBack}>
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="text-xl font-black text-ink">我发布的海龟汤</h1>
+      </div>
+      <SoupLinkList soups={soups} onOpen={onOpenSoup} emptyHint="还没有发布海龟汤。" />
+    </section>
+  );
+}
+
+function MyFavoritesListView({
+  soups,
+  onOpenSoup,
+  onBack
+}: {
+  soups: SoupSummary[];
+  onOpenSoup: (id: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button className="btn btn-secondary px-3" onClick={onBack}>
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="text-xl font-black text-ink">我收藏的海龟汤</h1>
+      </div>
+      <SoupLinkList soups={soups} onOpen={onOpenSoup} emptyHint="还没有收藏海龟汤。" />
+    </section>
+  );
+}
+
+function MyEvaluationsListView({
+  soups,
+  onOpenSoup,
+  onBack
+}: {
+  soups: SoupSummary[];
+  onOpenSoup: (id: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button className="btn btn-secondary px-3" onClick={onBack}>
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="text-xl font-black text-ink">我评价的海龟汤</h1>
+      </div>
+      <SoupLinkList soups={soups} onOpen={onOpenSoup} emptyHint="还没有评价海龟汤。" />
+    </section>
+  );
+}
+
+function SoupLinkList({
+  soups,
+  onOpen,
+  emptyHint
+}: {
+  soups: SoupSummary[];
+  onOpen: (id: string) => void;
+  emptyHint: string;
+}) {
+  if (soups.length === 0) {
+    return <div className="card p-4 text-center text-sm text-muted">{emptyHint}</div>;
+  }
+  return (
+    <div className="card p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-sm text-muted">{soups.length} 条</span>
+      </div>
+      <div className="space-y-3">
+        {soups.map((soup) => (
+          <button
+            key={soup.id}
+            className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-line bg-white p-3 text-left"
+            onClick={() => onOpen(soup.id)}
+          >
+            {soup.coverImage ? (
+              <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />
+            ) : (
+              <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-slate-100 text-muted">
+                <Eye size={20} />
+              </div>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-base font-semibold text-ink">{soup.title}</span>
+              <span className="mt-1 block truncate text-xs text-muted">
+                {soup.author || soup.creatorName} · {formatViews(soup.viewCount)} 浏览 · {soup.evaluationCount} 评
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

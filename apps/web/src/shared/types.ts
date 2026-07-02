@@ -7,6 +7,7 @@ export type PublicUser = {
   id: string;
   username: string;
   nickname: string;
+  avatar: string | null;
   role: UserRole;
   createdAt: string;
 };
@@ -62,6 +63,7 @@ export type SoupDetail = SoupSummary & {
   manual: string | null;
   canViewFull: boolean;
   canEdit: boolean;
+  isFavorited: boolean;
   pendingRequestId: string | null;
   evaluations: Evaluation[];
 };

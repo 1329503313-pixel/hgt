@@ -106,6 +106,19 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS soup_favorites (
+      id VARCHAR(64) PRIMARY KEY,
+      soup_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_favorite_soup_user (soup_id, user_id),
+      INDEX idx_favorites_user_time (user_id, created_at),
+      CONSTRAINT fk_favorite_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
+      CONSTRAINT fk_favorite_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS notifications (
       id VARCHAR(64) PRIMARY KEY,
       user_id VARCHAR(64) NOT NULL,
@@ -127,6 +140,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "supplemental_surfaces", "supplemental_surfaces JSON NULL AFTER surface");
   await ensureColumn("soups", "supplemental_bottoms", "supplemental_bottoms JSON NULL AFTER bottom");
   await ensureColumn("soups", "view_count", "view_count INT NOT NULL DEFAULT 0 AFTER is_bottom_public");
+  await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
   await migrateSoupViewsColumn();
   await seedAdmin();
 }
@@ -158,7 +172,7 @@ async function migrateSoupViewsColumn() {
     CREATE TABLE soup_views (
       id VARCHAR(64) PRIMARY KEY,
       soup_id VARCHAR(64) NOT NULL,
-      user_identifier VARCHAR(128) NOT NULL,
+      user_identifier VARCHAR(191) NOT NULL,
       viewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_views_soup_uid_time (soup_id, user_identifier, viewed_at),
       CONSTRAINT fk_view_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE
