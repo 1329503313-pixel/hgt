@@ -97,6 +97,7 @@ export default function App() {
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [soupsHasMore, setSoupsHasMore] = useState(true);
   const [soupsLoading, setSoupsLoading] = useState(false);
+  const soupsLoadingRef = useRef(false);
   const soupsOffsetRef = useRef(0);
   const [selected, setSelected] = useState<SoupDetail | null>(null);
   const [view, setView] = useState<View>("home");
@@ -129,24 +130,35 @@ export default function App() {
   }
 
   async function loadSoups(append = false) {
-    if (append && (soupsLoading || !soupsHasMore)) return;
+    // 用 ref 做并发保护，避免 state 闭包延迟导致重复请求
+    if (soupsLoadingRef.current) return;
+    if (append && !soupsHasMore) return;
+    soupsLoadingRef.current = true;
     setSoupsLoading(true);
-    const params = new URLSearchParams();
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value && value !== "all") params.set(key, value);
-    });
-    params.set("limit", "10");
-    params.set("offset", String(append ? soupsOffsetRef.current : 0));
-    const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
-    if (append) {
-      setSoups((old) => [...old, ...data.soups]);
-      soupsOffsetRef.current += data.soups.length;
-    } else {
-      setSoups(data.soups);
-      soupsOffsetRef.current = data.soups.length;
+    try {
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value && value !== "all") params.set(key, value);
+      });
+      params.set("limit", "10");
+      params.set("offset", String(append ? soupsOffsetRef.current : 0));
+      const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
+      if (append) {
+        setSoups((old) => {
+          const seen = new Set(old.map((item) => item.id));
+          const next = data.soups.filter((item) => !seen.has(item.id));
+          soupsOffsetRef.current += next.length;
+          return [...old, ...next];
+        });
+      } else {
+        setSoups(data.soups);
+        soupsOffsetRef.current = data.soups.length;
+      }
+      setSoupsHasMore(data.hasMore);
+    } finally {
+      soupsLoadingRef.current = false;
+      setSoupsLoading(false);
     }
-    setSoupsHasMore(data.hasMore);
-    setSoupsLoading(false);
   }
 
   async function loadMoreSoups() {
