@@ -59,7 +59,8 @@ app.use(cookieParser());
 
 // 生产环境：serve Vite 构建产物
 if (config.nodeEnv === "production") {
-  const frontendDist = new URL("../../web/dist", import.meta.url).pathname;
+  const path = await import("node:path");
+  const frontendDist = path.resolve(process.cwd(), "apps/web/dist");
   app.use(express.static(frontendDist, { index: false }));
   app.get("*", (_req, res, next) => {
     if (_req.path.startsWith("/api/")) return next();
