@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { Request, Response, NextFunction } from "express";
+import { createHash } from "node:crypto";
 import mysql from "mysql2/promise";
 import jwt from "jsonwebtoken";
 import { nanoid } from "nanoid";
@@ -118,6 +119,12 @@ function sendError(res: express.Response, status: number, message: string) {
 
 function currentUser(req: express.Request): PublicUser | null {
   return extractAuth(req);
+}
+
+function viewIdentifier(req: express.Request, user: PublicUser | null) {
+  if (user) return `user:${user.id}`;
+  const raw = `${req.ip ?? "0"}|${req.headers["user-agent"] ?? ""}`;
+  return `guest:${createHash("sha256").update(raw).digest("hex")}`;
 }
 
 function requireAuth(req: express.Request, res: express.Response): PublicUser | null {
@@ -282,7 +289,7 @@ app.post("/api/auth/register", async (req, res) => {
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: config.nodeEnv === "production",
+    secure: config.cookieSecure,
     maxAge: 1000 * 60 * 60 * 24 * 30,
     path: "/"
   });
@@ -308,7 +315,7 @@ app.post("/api/auth/login", async (req, res) => {
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: config.nodeEnv === "production",
+    secure: config.cookieSecure,
     maxAge: 1000 * 60 * 60 * 24 * 30,
     path: "/"
   });
@@ -475,7 +482,7 @@ app.get("/api/soups/:id", async (req, res) => {
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
 
-  const identifier = user?.id ?? `${req.ip ?? "0"}|${(req.headers["user-agent"] ?? "").slice(0, 120)}`;
+  const identifier = viewIdentifier(req, user);
   const [recent] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT viewed_at FROM soup_views WHERE soup_id = ? AND user_identifier = ? ORDER BY viewed_at DESC LIMIT 1",
     [req.params.id, identifier]
