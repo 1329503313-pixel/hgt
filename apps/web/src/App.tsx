@@ -1,8 +1,10 @@
 import { toPng } from "html-to-image";
 import {
   ArrowLeft,
+  ArrowRight,
   Bell,
   Check,
+  ChevronRight,
   Download,
   Eye,
   ImagePlus,
@@ -33,7 +35,7 @@ import type {
 import { api, MeResponse, NotificationsResponse, PasswordResponse, RequestsResponse, SoupResponse, SoupsResponse, UsersResponse } from "./api";
 import { RadarChart } from "./RadarChart";
 
-type View = "home" | "detail" | "messages" | "admin" | "mine";
+type View = "home" | "detail" | "messages" | "allNotifications" | "allRequests" | "admin" | "mine";
 type AuthMode = "login" | "register" | null;
 type SoupForm = {
   title: string;
@@ -562,6 +564,24 @@ export default function App() {
             onAdmin={() => setView("admin")}
             onLogin={() => { setAuthError(""); setAuthMode("login"); }}
             onLogout={logout}
+            onAllNotifications={() => setView("allNotifications")}
+            onAllRequests={() => setView("allRequests")}
+          />
+        )}
+        {view === "allNotifications" && (
+          <AllNotificationsView
+            notifications={notifications}
+            onRead={markRead}
+            onOpenSoup={loadDetail}
+            onBack={() => setView("messages")}
+          />
+        )}
+        {view === "allRequests" && (
+          <AllRequestsView
+            requests={requests}
+            onDecision={decideRequest}
+            onOpenSoup={loadDetail}
+            onBack={() => setView("messages")}
           />
         )}
         {view === "mine" && (
@@ -1323,7 +1343,9 @@ function MessagesView({
   onMessages,
   onAdmin,
   onLogin,
-  onLogout
+  onLogout,
+  onAllNotifications,
+  onAllRequests
 }: {
   notifications: NotificationItem[];
   requests: ViewRequestItem[];
@@ -1336,38 +1358,89 @@ function MessagesView({
   onAdmin: () => void;
   onLogin: () => void;
   onLogout: () => void;
+  onAllNotifications: () => void;
+  onAllRequests: () => void;
 }) {
+
   return (
     <section className="space-y-4">
       <PageTopBar title="消息" user={user} unread={unread} onMessages={onMessages} onAdmin={onAdmin} onLogin={onLogin} onLogout={onLogout} />
-      <div className="grid gap-4 lg:grid-cols-2">
+
+      {/* 站内消息区域 */}
       <div className="card p-4">
-        <h1 className="mb-3 text-xl font-black text-ink">站内消息</h1>
-        <div className="space-y-3">
-          {notifications.map((item) => (
-            <div key={item.id} className="rounded-lg border border-line bg-white p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-bold text-ink">{item.title}</h2>
-                  <p className="mt-1 text-sm text-muted">{item.content}</p>
-                </div>
-                {!item.isRead && (
-                  <button className="btn btn-secondary px-3" onClick={() => onRead(item.id)}>
-                    <Check size={16} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-          {notifications.length === 0 && <p className="text-sm text-muted">暂无消息。</p>}
+        <div className="mb-3 flex items-center justify-between">
+          <h1 className="text-lg font-black text-ink">站内消息</h1>
+          {notifications.length > 3 && (
+            <button className="btn btn-secondary px-3 text-xs" onClick={onAllNotifications}>
+              更多 <ChevronRight size={14} />
+            </button>
+          )}
         </div>
+        <NotificationList notifications={notifications} onRead={onRead} onOpenSoup={onOpenSoup} max={3} />
       </div>
+
+      {/* 查看申请区域 */}
       <div className="card p-4">
-        <h1 className="mb-3 text-xl font-black text-ink">查看申请</h1>
-        <RequestList requests={requests} onDecision={onDecision} onOpenSoup={onOpenSoup} />
-      </div>
+        <div className="mb-3 flex items-center justify-between">
+          <h1 className="text-lg font-black text-ink">查看申请</h1>
+          {requests.length > 3 && (
+            <button className="btn btn-secondary px-3 text-xs" onClick={onAllRequests}>
+              更多 <ChevronRight size={14} />
+            </button>
+          )}
+        </div>
+        <RequestList requests={requests} onDecision={onDecision} onOpenSoup={onOpenSoup} max={3} />
       </div>
     </section>
+  );
+}
+
+function NotificationList({
+  notifications,
+  onRead,
+  onOpenSoup,
+  max
+}: {
+  notifications: NotificationItem[];
+  onRead: (id: string) => void;
+  onOpenSoup: (id: string) => void;
+  max?: number;
+}) {
+  const visible = max ? notifications.slice(0, max) : notifications;
+
+  if (notifications.length === 0) {
+    return <p className="text-sm text-muted">暂无消息。</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {visible.map((item) => (
+        <div
+          key={item.id}
+          className={`rounded-lg border border-line bg-white p-3 ${item.relatedId ? "cursor-pointer hover:border-primary/40 hover:shadow-sm" : ""}`}
+          onClick={() => {
+            if (item.relatedId) {
+              if (!item.isRead) onRead(item.id);
+              onOpenSoup(item.relatedId);
+            }
+          }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-bold text-ink truncate">{item.title}</h2>
+              <p className="mt-1 text-sm text-muted line-clamp-2">{item.content}</p>
+              <p className="mt-1 text-xs text-muted/60">{new Date(item.createdAt).toLocaleString()}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              {!item.isRead && (
+                <span className="h-2 w-2 rounded-full bg-primary" />
+              )}
+              {item.relatedId && <ChevronRight size={16} className="text-muted/40" />}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1566,15 +1639,23 @@ function AdminView({
 function RequestList({
   requests,
   onDecision,
-  onOpenSoup
+  onOpenSoup,
+  max
 }: {
   requests: ViewRequestItem[];
   onDecision: (id: string, decision: "approved" | "rejected") => void;
   onOpenSoup?: (id: string) => void;
+  max?: number;
 }) {
+  const visible = max ? requests.slice(0, max) : requests;
+
+  if (requests.length === 0) {
+    return <p className="text-sm text-muted">暂无申请。</p>;
+  }
+
   return (
     <div className="space-y-3">
-      {requests.map((item) => (
+      {visible.map((item) => (
         <div key={item.id} className="rounded-lg border border-line bg-white p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -1601,8 +1682,59 @@ function RequestList({
           )}
         </div>
       ))}
-      {requests.length === 0 && <p className="text-sm text-muted">暂无申请。</p>}
     </div>
+  );
+}
+
+function AllNotificationsView({
+  notifications,
+  onRead,
+  onOpenSoup,
+  onBack
+}: {
+  notifications: NotificationItem[];
+  onRead: (id: string) => void;
+  onOpenSoup: (id: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button className="btn btn-secondary px-3" onClick={onBack}>
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="text-xl font-black text-ink">全部站内消息</h1>
+      </div>
+      <div className="card p-4">
+        <NotificationList notifications={notifications} onRead={onRead} onOpenSoup={onOpenSoup} />
+      </div>
+    </section>
+  );
+}
+
+function AllRequestsView({
+  requests,
+  onDecision,
+  onOpenSoup,
+  onBack
+}: {
+  requests: ViewRequestItem[];
+  onDecision: (id: string, decision: "approved" | "rejected") => void;
+  onOpenSoup: (id: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button className="btn btn-secondary px-3" onClick={onBack}>
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="text-xl font-black text-ink">全部查看申请</h1>
+      </div>
+      <div className="card p-4">
+        <RequestList requests={requests} onDecision={onDecision} onOpenSoup={onOpenSoup} />
+      </div>
+    </section>
   );
 }
 
