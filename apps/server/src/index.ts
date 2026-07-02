@@ -10,19 +10,29 @@ import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
 import { PublicUser } from "./types.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "jwt-fallback-secret-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  if (config.nodeEnv === "production") {
+    console.error("FATAL: JWT_SECRET 环境变量未设置，服务拒绝启动。请设置一个随机长字符串。");
+    process.exit(1);
+  }
+  console.warn("⚠ 未设置 JWT_SECRET，使用开发 fallback。生产环境请务必设置 JWT_SECRET。");
+}
+
+const JWT_SECRET_FINAL: string = JWT_SECRET || "dev-jwt-fallback-not-for-production";
 
 const app = express();
 app.set("trust proxy", 1);
 
 // ---------- JWT 认证中间件 ----------
 function signToken(payload: PublicUser): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "30d" });
+  return jwt.sign(payload, JWT_SECRET_FINAL, { expiresIn: "30d" });
 }
 
 function verifyToken(token: string): PublicUser | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as PublicUser;
+    return jwt.verify(token, JWT_SECRET_FINAL) as PublicUser;
   } catch {
     return null;
   }
@@ -261,7 +271,7 @@ app.post("/api/auth/register", async (req, res) => {
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure: config.nodeEnv === "production",
     maxAge: 1000 * 60 * 60 * 24 * 30,
     path: "/"
   });
@@ -287,7 +297,7 @@ app.post("/api/auth/login", async (req, res) => {
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure: config.nodeEnv === "production",
     maxAge: 1000 * 60 * 60 * 24 * 30,
     path: "/"
   });

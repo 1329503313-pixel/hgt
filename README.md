@@ -39,7 +39,7 @@ docker compose ps
 
 | 变量 | 说明 |
 |------|------|
-| `SESSION_SECRET` | 改成随机长字符串 |
+| `JWT_SECRET` | **必填**，JWT 签名密钥（`openssl rand -hex 32`） |
 | `ADMIN_DEFAULT_PASSWORD` | 管理员初始密码 |
 | `DB_PASSWORD` | MySQL 密码 |
 | `WEB_ORIGIN` | 前端域名（替换为实际域名） |
