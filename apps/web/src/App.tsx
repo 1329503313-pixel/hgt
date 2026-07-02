@@ -32,7 +32,7 @@ import type {
   SoupSummary,
   ViewRequestItem
 } from "./shared/types";
-import { api, MeResponse, NotificationsResponse, PasswordResponse, RequestsResponse, SoupResponse, SoupsResponse, UsersResponse } from "./api";
+import { api, MeResponse, NotificationsResponse, PasswordResponse, RequestsResponse, SoupResponse, SoupsResponse, UsersResponse, NicknameResponse } from "./api";
 import { RadarChart } from "./RadarChart";
 
 type View = "home" | "detail" | "messages" | "allNotifications" | "allRequests" | "admin" | "mine";
@@ -431,6 +431,12 @@ export default function App() {
     }
   }
 
+  async function updateNickname(nickname: string) {
+    const data = await api<NicknameResponse>("/api/me/nickname", { method: "PATCH", body: { nickname } });
+    setUser((prev) => prev ? { ...prev, nickname: data.nickname } : prev);
+    setToast("昵称已更新，相关海龟汤和评价的作者名已同步修改");
+  }
+
   const ownEvaluation = useMemo(() => {
     if (!selected || !user) return null;
     return selected.evaluations.find((item) => item.reviewerId === user.id) ?? null;
@@ -600,6 +606,7 @@ export default function App() {
             onMessages={() => setView("messages")}
             onAdmin={() => setView("admin")}
             onLogout={logout}
+            onUpdateNickname={updateNickname}
           />
         )}
         {view === "admin" && user?.role === "admin" && (
@@ -691,16 +698,16 @@ function PageTopBar({
 }) {
   return (
     <div className="top-nav-shell">
-      <div className="mx-auto flex min-h-14 max-w-6xl items-center justify-between gap-2 px-4 py-4">
-        <button className="min-h-11 min-w-0 shrink-0 text-left" type="button">
-          <h1 className="truncate text-[24px] font-black leading-none text-ink sm:text-[28px]">{title}</h1>
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
+        <button className="min-h-10 min-w-0 shrink-0 text-left" type="button">
+          <h1 className="truncate text-[22px] font-black leading-none text-ink sm:text-[24px]">{title}</h1>
         </button>
         <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
           {user ? (
             <>
               <details className="user-menu">
-                <summary className="flex min-h-11 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
-                  <div className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary sm:grid">
+                <summary className="flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
+                  <div className="hidden h-7 w-7 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary sm:grid">
                     {(user.nickname || user.username).slice(0, 1)}
                   </div>
                   <span className="max-w-[52px] truncate text-[13px] font-semibold text-ink sm:max-w-24 sm:text-sm">
@@ -714,8 +721,8 @@ function PageTopBar({
                   </button>
                 </div>
               </details>
-              <button className="relative grid h-11 w-11 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={onMessages} aria-label="消息">
-                <Bell size={21} />
+              <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={onMessages} aria-label="消息">
+                <Bell size={20} />
                 {unread > 0 && (
                   <span className="absolute right-1.5 top-0 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
                     {unread > 99 ? "99+" : unread}
@@ -723,8 +730,8 @@ function PageTopBar({
                 )}
               </button>
               {user.role === "admin" && (
-                <button className="hidden h-11 w-11 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={onAdmin} aria-label="后台">
-                  <Shield size={20} />
+                <button className="hidden h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={onAdmin} aria-label="后台">
+                  <Shield size={19} />
                 </button>
               )}
             </>
@@ -775,7 +782,7 @@ function HomeView({
   const submitSearch = () => setFilters((old: any) => ({ ...old, keyword: searchKeyword.trim() }));
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <PageTopBar
         title="海龟汤"
         user={user}
@@ -1455,7 +1462,8 @@ function MineView({
   onOpenSoup,
   onMessages,
   onAdmin,
-  onLogout
+  onLogout,
+  onUpdateNickname
 }: {
   user: PublicUser | null;
   mySoups: SoupSummary[];
@@ -1468,12 +1476,23 @@ function MineView({
   onMessages: () => void;
   onAdmin: () => void;
   onLogout: () => void;
+  onUpdateNickname: (nickname: string) => Promise<void>;
 }) {
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [editNickname, setEditNickname] = useState(false);
+  const [nicknameValue, setNicknameValue] = useState(user?.nickname ?? "");
+  const [nicknameSaving, setNicknameSaving] = useState(false);
+  const [nicknameError, setNicknameError] = useState("");
+
+  // 同步昵称到编辑框
+  useEffect(() => {
+    if (user) setNicknameValue(user.nickname);
+  }, [user?.nickname]);
 
   if (!user) {
     return (
-      <section className="space-y-4">
+      <section className="space-y-3">
         <PageTopBar title="我的" user={user} unread={unread} onMessages={onMessages} onAdmin={onAdmin} onLogin={onLogin} onLogout={onLogout} />
         <div className="card p-4 text-center">
           <p className="mt-2 text-sm text-muted">登录后可查看个人信息和发布记录。</p>
@@ -1485,18 +1504,103 @@ function MineView({
     );
   }
 
+  async function saveNickname() {
+    const trimmed = nicknameValue.trim();
+    if (!trimmed) {
+      setNicknameError("昵称不能为空");
+      return;
+    }
+    if (trimmed.length > 8) {
+      setNicknameError("昵称不超过 8 个字符");
+      return;
+    }
+    setNicknameSaving(true);
+    setNicknameError("");
+    try {
+      await onUpdateNickname(trimmed);
+      setEditNickname(false);
+    } catch (e) {
+      setNicknameError(e instanceof Error ? e.message : "修改失败");
+    } finally {
+      setNicknameSaving(false);
+    }
+  }
+
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <PageTopBar title="我的" user={user} unread={unread} onMessages={onMessages} onAdmin={onAdmin} onLogin={onLogin} onLogout={onLogout} />
+
+      {/* 我的资料卡片 */}
       <div className="card p-4">
-        <div className="grid gap-3">
-          <InfoRow label="昵称" value={user.nickname} />
-          <InfoRow label="账号" value={user.username} />
-          <InfoRow label="角色" value={user.role === "admin" ? "管理员" : "普通用户"} />
-          <InfoRow label="加入时间" value={new Date(user.createdAt).toLocaleDateString()} />
-        </div>
+        {!profileOpen ? (
+          <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => setProfileOpen(true)}>
+            <span>
+              <span className="block text-base font-semibold text-ink">我的资料</span>
+              <span className="mt-1 block text-xs text-muted">查看和编辑个人信息</span>
+            </span>
+            <ChevronRight size={18} className="text-primary" />
+          </button>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex min-h-11 items-center justify-between gap-3">
+              <h2 className="text-base font-semibold text-ink">我的资料</h2>
+              <button
+                className="text-sm font-semibold text-muted"
+                type="button"
+                onClick={() => { setProfileOpen(false); setEditNickname(false); }}
+              >
+                返回
+              </button>
+            </div>
+
+            {/* 昵称 — 可编辑 */}
+            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
+              <span className="text-sm text-muted shrink-0">昵称</span>
+              {editNickname ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    className="field h-9 w-28 text-sm"
+                    value={nicknameValue}
+                    maxLength={8}
+                    onChange={(e) => setNicknameValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveNickname(); }}
+                    autoFocus
+                  />
+                  <button className="btn btn-primary h-9 px-2 text-xs" onClick={saveNickname} disabled={nicknameSaving}>
+                    {nicknameSaving ? "..." : "保存"}
+                  </button>
+                  <button className="btn btn-secondary h-9 px-2 text-xs" onClick={() => { setEditNickname(false); setNicknameValue(user.nickname); setNicknameError(""); }}>
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-ink">{user.nickname}</span>
+                  <button className="text-primary" onClick={() => setEditNickname(true)}>
+                    <Pencil size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+            {nicknameError && <p className="text-xs font-semibold text-danger">{nicknameError}</p>}
+
+            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
+              <span className="text-sm text-muted">账号</span>
+              <span className="truncate text-sm font-semibold text-ink">{user.username}</span>
+            </div>
+            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
+              <span className="text-sm text-muted">角色</span>
+              <span className="truncate text-sm font-semibold text-ink">{user.role === "admin" ? "管理员" : "普通用户"}</span>
+            </div>
+            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3">
+              <span className="text-sm text-muted">加入时间</span>
+              <span className="truncate text-sm font-semibold text-ink">{new Date(user.createdAt).toLocaleDateString()}</span>
+            </div>
+          </div>
+        )}
       </div>
 
+      {/* 修改密码 — 移到资料下面 */}
       <div className="card p-4">
         {!passwordOpen ? (
           <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => setPasswordOpen(true)}>
@@ -1504,7 +1608,7 @@ function MineView({
               <span className="block text-base font-semibold text-ink">修改密码</span>
               <span className="mt-1 block text-xs text-muted">进入后设置新密码</span>
             </span>
-            <Pencil size={18} className="text-primary" />
+            <ChevronRight size={18} className="text-primary" />
           </button>
         ) : (
           <form className="space-y-3" onSubmit={onPasswordSubmit}>

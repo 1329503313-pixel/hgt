@@ -6,9 +6,7 @@ import type {
   ViewRequestItem
 } from "./shared/types";
 
-const API_URL = import.meta.env.PROD
-  ? ""
-  : "http://localhost:4000";
+const API_URL = "";
 
 type ApiOptions = Omit<RequestInit, "body"> & { body?: BodyInit | object | null };
 
@@ -41,3 +39,4 @@ export type NotificationsResponse = { notifications: NotificationItem[] };
 export type RequestsResponse = { requests: ViewRequestItem[] };
 export type UsersResponse = { users: PublicUser[] };
 export type PasswordResponse = { ok: boolean };
+export type NicknameResponse = { ok: boolean; nickname: string };

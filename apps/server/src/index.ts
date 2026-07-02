@@ -349,6 +349,27 @@ app.get("/api/auth/me", (req, res) => {
   res.json({ user: currentUser(req) });
 });
 
+app.patch("/api/me/nickname", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const parsed = z.object({ nickname: text.max(8, "昵称不超过 8 个字符") }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "昵称信息不正确");
+
+  // 更新用户昵称
+  await pool.query("UPDATE users SET nickname = ? WHERE id = ?", [parsed.data.nickname, user.id]);
+
+  // 同步更新该用户作为原创作者的 soups 中的 creator_name 和 author
+  await pool.query(
+    "UPDATE soups SET creator_name = ?, author = ? WHERE creator_id = ? AND is_original = TRUE",
+    [parsed.data.nickname, parsed.data.nickname, user.id]
+  );
+
+  // 同步更新 evaluations 中的 reviewer
+  await pool.query("UPDATE evaluations SET reviewer = ? WHERE reviewer_id = ?", [parsed.data.nickname, user.id]);
+
+  res.json({ ok: true, nickname: parsed.data.nickname });
+});
+
 app.get("/api/me/soups", async (req, res) => {
   const user = requireAuth(req, res);
   if (!user) return;
