@@ -57,6 +57,16 @@ app.use(cors({ origin: config.webOrigin, credentials: true }));
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
 
+// 生产环境：serve Vite 构建产物
+if (config.nodeEnv === "production") {
+  const frontendDist = new URL("../../web/dist", import.meta.url).pathname;
+  app.use(express.static(frontendDist, { index: false }));
+  app.get("*", (_req, res, next) => {
+    if (_req.path.startsWith("/api/")) return next();
+    res.sendFile("index.html", { root: frontendDist });
+  });
+}
+
 const text = z.string().trim().min(1);
 const optionalText = z.string().trim().optional().default("");
 const optionalTextList = z
