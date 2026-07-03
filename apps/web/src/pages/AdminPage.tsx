@@ -21,7 +21,7 @@ export default function AdminPage() {
   }, [user, loadingUser]);
 
   if (loadingUser) {
-    return <div className="flex items-center justify-center py-20 text-sm text-muted"><img src="/loading.gif" alt="加载中" className="mx-auto w-20 h-20 object-contain" /></div>;
+    return <div className="flex items-center justify-center py-20 text-sm text-muted">正在喝汤中……</div>;
   }
 
   async function updateRole(item: PublicUser, role: "admin" | "user") {

@@ -139,7 +139,7 @@ export default function HomePage() {
       {soups.length === 0 && !loading && (
         <div className="card p-8 text-center text-sm text-muted">{user ? "暂无符合条件的海龟汤" : "暂无公开海龟汤"}</div>
       )}
-      {loading && <div className="flex items-center justify-center py-8 text-sm text-muted"><img src="/loading.gif" alt="加载中" className="mx-auto w-20 h-20 object-contain" /></div>}
+      {loading && <div className="flex items-center justify-center py-8 text-sm text-muted">正在喝汤中……</div>}
     </section>
   );
 }

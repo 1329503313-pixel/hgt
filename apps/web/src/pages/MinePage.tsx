@@ -34,7 +34,7 @@ export default function MinePage() {
       <section className="space-y-3">
         <PageTopBar title="我的" />
         <div className="card flex items-center justify-center p-8">
-          <p className="text-sm text-muted"><img src="/loading.gif" alt="加载中" className="mx-auto w-20 h-20 object-contain" /></p>
+          <p className="text-sm text-muted">正在喝汤中……</p>
         </div>
       </section>
     );
