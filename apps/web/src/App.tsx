@@ -2364,12 +2364,13 @@ function SoupEditor({
           </label>
         </div>
 
-        <label className="space-y-2">
-          <span className="text-xs font-bold text-muted">是否涉黄赌毒暴恐</span>
+        <label className="space-y-2 md:col-span-2">
+          <span className="text-xs font-bold text-muted"><span className="text-danger">*</span> 是否涉黄赌毒暴恐</span>
           <select
             className="field"
             value={value.isSensitive ? "yes" : "no"}
             onChange={(event) => patch({ isSensitive: event.target.value === "yes" })}
+            required
           >
             <option value="no">否</option>
             <option value="yes">是</option>
@@ -2379,7 +2380,7 @@ function SoupEditor({
           )}
         </label>
 
-        <label className="space-y-2 pb-2">
+        <label className="space-y-2">
           <span className="text-xs font-bold text-muted">封面</span>
           <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
             {value.coverImage ? (

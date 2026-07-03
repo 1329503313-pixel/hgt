@@ -95,7 +95,7 @@ const soupSchema = z.object({
     .default("")
     .refine((value) => !value || /^data:image\/(png|jpeg);base64,/.test(value), "封面仅支持 JPG 或 PNG"),
   isOriginal: z.boolean().default(true),
-  isSensitive: z.boolean().default(false),
+  isSensitive: z.boolean(),
   surface: text,
   supplementalSurfaces: optionalTextList,
   bottom: text,
