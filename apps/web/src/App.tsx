@@ -18,6 +18,7 @@ import {
   Shield,
   SlidersHorizontal,
   Star,
+  ThumbsUp,
   Trash2,
   User,
   X
@@ -35,7 +36,7 @@ import type {
 import { api, MeResponse, NotificationsResponse, PasswordResponse, RequestsResponse, SoupResponse, SoupsResponse, StatsResponse, UsersResponse, NicknameResponse, AvatarResponse } from "./api";
 import { RadarChart } from "./RadarChart";
 
-type View = "home" | "detail" | "messages" | "allNotifications" | "allRequests" | "admin" | "mine" | "mySoups" | "myFavorites" | "myEvaluations";
+type View = "home" | "detail" | "messages" | "allNotifications" | "allRequests" | "admin" | "mine" | "mySoups" | "myFavorites" | "myEvaluations" | "myLikes";
 type AuthMode = "login" | "register" | null;
 type SoupForm = {
   title: string;
@@ -111,7 +112,8 @@ export default function App() {
   const [mySoups, setMySoups] = useState<SoupSummary[]>([]);
   const [myFavorites, setMyFavorites] = useState<SoupSummary[]>([]);
   const [myEvaluations, setMyEvaluations] = useState<SoupSummary[]>([]);
-  const [myStats, setMyStats] = useState({ soupCount: 0, favoriteCount: 0, evaluationCount: 0 });
+  const [myLikes, setMyLikes] = useState<SoupSummary[]>([]);
+  const [myStats, setMyStats] = useState({ soupCount: 0, favoriteCount: 0, evaluationCount: 0, likeCount: 0 });
   const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
   const [showSoupForm, setShowSoupForm] = useState(false);
   const [editingSoupId, setEditingSoupId] = useState<string | null>(null);
@@ -215,6 +217,12 @@ export default function App() {
     setMyEvaluations(data.soups);
   }
 
+  async function loadMyLikes() {
+    if (!user) return;
+    const data = await api<SoupsResponse>("/api/me/likes");
+    setMyLikes(data.soups);
+  }
+
   async function loadMyStats() {
     if (!user) return;
     const data = await api<StatsResponse>("/api/me/stats");
@@ -243,11 +251,12 @@ export default function App() {
     loadMySoups().catch(() => undefined);
     loadMyFavorites().catch(() => undefined);
     loadMyEvaluations().catch(() => undefined);
+    loadMyLikes().catch(() => undefined);
     loadMyStats().catch(() => undefined);
   }, [user]);
 
   async function refreshAll() {
-    await Promise.all([loadSoups(false), loadNotifications(), loadRequests(), loadUsers(), loadMySoups(), loadMyFavorites(), loadMyEvaluations(), loadMyStats()]);
+    await Promise.all([loadSoups(false), loadNotifications(), loadRequests(), loadUsers(), loadMySoups(), loadMyFavorites(), loadMyEvaluations(), loadMyLikes(), loadMyStats()]);
     if (selected) await loadDetail(selected.id);
   }
 
@@ -379,7 +388,19 @@ export default function App() {
     setSelected((old) => (old ? { ...old, isFavorited: data.isFavorited } : old));
     loadMyFavorites().catch(() => undefined);
     loadMyStats().catch(() => undefined);
-    setToast(data.isFavorited ? "已收藏" : "已取消收藏");
+  }
+
+  async function toggleLike() {
+    if (!selected) return;
+    if (!user) {
+      setAuthError("");
+      setAuthMode("login");
+      return;
+    }
+    const data = await api<{ isLiked: boolean }>(`/api/soups/${selected.id}/like`, { method: "POST" });
+    setSelected((old) => (old ? { ...old, isLiked: data.isLiked } : old));
+    loadMyLikes().catch(() => undefined);
+    loadMyStats().catch(() => undefined);
   }
 
   async function decideRequest(id: string, decision: "approved" | "rejected") {
@@ -530,17 +551,64 @@ export default function App() {
 
   return (
     <div className="app-shell min-h-screen bg-page">
-      {view !== "home" && view !== "messages" && view !== "mine" && view !== "mySoups" && view !== "myFavorites" && view !== "myEvaluations" && <header className="fixed inset-x-0 top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
+      {view === "detail" && (
+        <header className="top-nav-shell">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
+            <button className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink" onClick={() => setView("home")}>
+              <ArrowLeft size={18} />
+              <span>返回列表</span>
+            </button>
+            <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
+              {user ? (
+                <>
+                  <details className="user-menu">
+                    <summary className="flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
+                      {user.avatar ? (
+                        <img className="h-7 w-7 shrink-0 rounded-full object-cover" src={user.avatar} alt="" />
+                      ) : (
+                        <div className="hidden h-7 w-7 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary sm:grid">
+                          {(user.nickname || user.username).slice(0, 1)}
+                        </div>
+                      )}
+                      <span className="max-w-[52px] truncate text-[13px] font-semibold text-ink sm:max-w-24 sm:text-sm">
+                        {(user.nickname || user.username).slice(0, 8)}
+                      </span>
+                    </summary>
+                    <div className="user-menu-panel left-0 top-[calc(100%+8px)] sm:left-auto sm:right-0">
+                      <button className="user-menu-item" onClick={logout}>
+                        <LogOut size={17} />
+                        退出登录
+                      </button>
+                    </div>
+                  </details>
+                  <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => setView("messages")} aria-label="消息">
+                    <Bell size={20} />
+                    {unread > 0 && (
+                      <span className="absolute right-1.5 top-0 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
+                        {unread > 99 ? "99+" : unread}
+                      </span>
+                    )}
+                  </button>
+                  {user.role === "admin" && (
+                    <button className="hidden h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={() => setView("admin")} aria-label="后台">
+                      <Shield size={19} />
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button className="btn btn-primary rounded-full px-5" onClick={() => { setAuthError(""); setAuthMode("login"); }}>
+                  登录
+                </button>
+              )}
+            </div>
+          </div>
+        </header>
+      )}
+      {view !== "home" && view !== "messages" && view !== "mine" && view !== "mySoups" && view !== "myFavorites" && view !== "myEvaluations" && view !== "detail" && <header className="fixed inset-x-0 top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <button className="flex min-h-11 items-center gap-2 text-left text-base font-black text-ink" onClick={() => setView("home")}>
-            {view === "detail" ? (
-              <>
-                <ArrowLeft size={18} />
-                <span>返回列表</span>
-              </>
-            ) : (
-              <span>海龟汤</span>
-            )}
+            <ArrowLeft size={18} />
+            <span>返回列表</span>
           </button>
           <div className="flex items-center gap-2">
             {user && (
@@ -620,6 +688,7 @@ export default function App() {
             onRequest={requestAccess}
             onExport={exportText}
             onFavorite={toggleFavorite}
+            onLike={toggleLike}
           />
         )}
         {view === "messages" && (
@@ -677,27 +746,67 @@ export default function App() {
             onGoSoups={() => setView("mySoups")}
             onGoFavorites={() => setView("myFavorites")}
             onGoEvaluations={() => setView("myEvaluations")}
+            onGoLikes={() => setView("myLikes")}
           />
         )}
         {view === "mySoups" && (
-          <MySoupsListView
+          <SubListPage
+            title="我发布的"
             soups={mySoups}
+            user={user}
+            unread={unread}
             onOpenSoup={loadDetail}
             onBack={() => setView("mine")}
+            onMessages={() => setView("messages")}
+            onAdmin={() => setView("admin")}
+            onLogin={() => { setAuthError(""); setAuthMode("login"); }}
+            onLogout={logout}
+            emptyHint="还没有发布海龟汤。"
           />
         )}
         {view === "myFavorites" && (
-          <MyFavoritesListView
+          <SubListPage
+            title="我收藏的"
             soups={myFavorites}
+            user={user}
+            unread={unread}
             onOpenSoup={loadDetail}
             onBack={() => setView("mine")}
+            onMessages={() => setView("messages")}
+            onAdmin={() => setView("admin")}
+            onLogin={() => { setAuthError(""); setAuthMode("login"); }}
+            onLogout={logout}
+            emptyHint="还没有收藏海龟汤。"
           />
         )}
         {view === "myEvaluations" && (
-          <MyEvaluationsListView
+          <SubListPage
+            title="我评价的"
             soups={myEvaluations}
+            user={user}
+            unread={unread}
             onOpenSoup={loadDetail}
             onBack={() => setView("mine")}
+            onMessages={() => setView("messages")}
+            onAdmin={() => setView("admin")}
+            onLogin={() => { setAuthError(""); setAuthMode("login"); }}
+            onLogout={logout}
+            emptyHint="还没有评价海龟汤。"
+          />
+        )}
+        {view === "myLikes" && (
+          <SubListPage
+            title="我点赞的"
+            soups={myLikes}
+            user={user}
+            unread={unread}
+            onOpenSoup={loadDetail}
+            onBack={() => setView("mine")}
+            onMessages={() => setView("messages")}
+            onAdmin={() => setView("admin")}
+            onLogin={() => { setAuthError(""); setAuthMode("login"); }}
+            onLogout={logout}
+            emptyHint="还没有点赞海龟汤。"
           />
         )}
         {view === "admin" && user?.role === "admin" && (
@@ -1239,7 +1348,8 @@ function DetailView({
   onEvaluate,
   onRequest,
   onExport,
-  onFavorite
+  onFavorite,
+  onLike
 }: {
   soup: SoupDetail;
   user: PublicUser | null;
@@ -1250,6 +1360,7 @@ function DetailView({
   onRequest: () => void;
   onExport: (text: string, name: string, sectionTitle?: string) => void;
   onFavorite: () => void;
+  onLike: () => void;
 }) {
   const hasRadarData = [
     soup.radar.writing,
@@ -1269,21 +1380,38 @@ function DetailView({
         )}
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-end justify-between gap-3">
               <h1 className="min-w-0 flex-1 break-words text-2xl font-black text-ink">{soup.title}</h1>
-              <button
-                className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${
-                  soup.isFavorited
-                    ? "border-amber-200 bg-amber-50 text-amber-500"
-                    : "border-line bg-white text-muted hover:border-amber-200 hover:text-amber-500"
-                }`}
-                type="button"
-                onClick={onFavorite}
-                aria-pressed={soup.isFavorited}
-              >
-                <Star className={soup.isFavorited ? "fill-amber-400 text-amber-400" : "text-muted"} size={15} />
-                收藏
-              </button>
+              <div className="flex shrink-0 items-end gap-2" style={{ height: "calc(1.5lh * 0.75)" }}>
+                <button
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${
+                    soup.isLiked
+                      ? "border-red-200 bg-red-50 text-red-500"
+                      : "border-line bg-white text-muted hover:border-red-200 hover:text-red-500"
+                  }`}
+                  style={{ height: "calc(1.5lh * 0.75)" }}
+                  type="button"
+                  onClick={onLike}
+                  aria-pressed={soup.isLiked}
+                >
+                  <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : "text-muted"} size={15} />
+                  点赞
+                </button>
+                <button
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${
+                    soup.isFavorited
+                      ? "border-amber-200 bg-amber-50 text-amber-500"
+                      : "border-line bg-white text-muted hover:border-amber-200 hover:text-amber-500"
+                  }`}
+                  style={{ height: "calc(1.5lh * 0.75)" }}
+                  type="button"
+                  onClick={onFavorite}
+                  aria-pressed={soup.isFavorited}
+                >
+                  <Star className={soup.isFavorited ? "fill-amber-400 text-amber-400" : "text-muted"} size={15} />
+                  收藏
+                </button>
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
@@ -1587,10 +1715,11 @@ function MineView({
   onGoSoups,
   onGoFavorites,
   onGoEvaluations,
+  onGoLikes,
   onToast
 }: {
   user: PublicUser | null;
-  stats: { soupCount: number; favoriteCount: number; evaluationCount: number };
+  stats: { soupCount: number; favoriteCount: number; evaluationCount: number; likeCount: number };
   unread: number;
   passwordForm: { newPassword: string; confirmPassword: string };
   setPasswordForm: (next: { newPassword: string; confirmPassword: string }) => void;
@@ -1606,6 +1735,7 @@ function MineView({
   onGoSoups: () => void;
   onGoFavorites: () => void;
   onGoEvaluations: () => void;
+  onGoLikes: () => void;
 }) {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [editNickname, setEditNickname] = useState(false);
@@ -1741,7 +1871,7 @@ function MineView({
       </div>
 
       {/* 统计数字行 */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         <button className="card flex flex-col items-center p-3 transition hover:bg-blue-50" onClick={onGoSoups}>
           <span className="text-2xl font-black text-ink">{stats.soupCount}</span>
           <span className="mt-0.5 text-xs font-semibold text-muted">我发布的</span>
@@ -1750,6 +1880,11 @@ function MineView({
         <button className="card flex flex-col items-center p-3 transition hover:bg-amber-50" onClick={onGoFavorites}>
           <span className="text-2xl font-black text-ink">{stats.favoriteCount}</span>
           <span className="mt-0.5 text-xs font-semibold text-muted">我收藏的</span>
+          <ChevronRight size={14} className="mt-1 text-muted/40" />
+        </button>
+        <button className="card flex flex-col items-center p-3 transition hover:bg-red-50" onClick={onGoLikes}>
+          <span className="text-2xl font-black text-ink">{stats.likeCount}</span>
+          <span className="mt-0.5 text-xs font-semibold text-muted">我点赞的</span>
           <ChevronRight size={14} className="mt-1 text-muted/40" />
         </button>
         <button className="card flex flex-col items-center p-3 transition hover:bg-emerald-50" onClick={onGoEvaluations}>
@@ -1823,68 +1958,41 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MySoupsListView({
+function SubListPage({
+  title,
   soups,
+  user,
+  unread,
   onOpenSoup,
-  onBack
+  onBack,
+  onMessages,
+  onAdmin,
+  onLogin,
+  onLogout,
+  emptyHint
 }: {
+  title: string;
   soups: SoupSummary[];
+  user: PublicUser | null;
+  unread: number;
   onOpenSoup: (id: string) => void;
   onBack: () => void;
+  onMessages: () => void;
+  onAdmin: () => void;
+  onLogin: () => void;
+  onLogout: () => void;
+  emptyHint: string;
 }) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
+      <PageTopBar title="我的" user={user} unread={unread} onMessages={onMessages} onAdmin={onAdmin} onLogin={onLogin} onLogout={onLogout} />
       <div className="flex items-center gap-3">
         <button className="btn btn-secondary px-3" onClick={onBack}>
           <ArrowLeft size={18} />
         </button>
-        <h1 className="text-xl font-black text-ink">我发布的海龟汤</h1>
+        <h1 className="text-xl font-black text-ink">{title}</h1>
       </div>
-      <SoupLinkList soups={soups} onOpen={onOpenSoup} emptyHint="还没有发布海龟汤。" />
-    </section>
-  );
-}
-
-function MyFavoritesListView({
-  soups,
-  onOpenSoup,
-  onBack
-}: {
-  soups: SoupSummary[];
-  onOpenSoup: (id: string) => void;
-  onBack: () => void;
-}) {
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center gap-3">
-        <button className="btn btn-secondary px-3" onClick={onBack}>
-          <ArrowLeft size={18} />
-        </button>
-        <h1 className="text-xl font-black text-ink">我收藏的海龟汤</h1>
-      </div>
-      <SoupLinkList soups={soups} onOpen={onOpenSoup} emptyHint="还没有收藏海龟汤。" />
-    </section>
-  );
-}
-
-function MyEvaluationsListView({
-  soups,
-  onOpenSoup,
-  onBack
-}: {
-  soups: SoupSummary[];
-  onOpenSoup: (id: string) => void;
-  onBack: () => void;
-}) {
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center gap-3">
-        <button className="btn btn-secondary px-3" onClick={onBack}>
-          <ArrowLeft size={18} />
-        </button>
-        <h1 className="text-xl font-black text-ink">我评价的海龟汤</h1>
-      </div>
-      <SoupLinkList soups={soups} onOpen={onOpenSoup} emptyHint="还没有评价海龟汤。" />
+      <SoupLinkList soups={soups} onOpen={onOpenSoup} emptyHint={emptyHint} />
     </section>
   );
 }

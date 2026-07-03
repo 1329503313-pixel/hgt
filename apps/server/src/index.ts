@@ -388,6 +388,16 @@ app.patch("/api/me/avatar", async (req, res) => {
 
   const avatar = parsed.data.avatar || null;
   await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
+
+  const updated = { ...user, avatar };
+  const token = signToken(updated);
+  res.cookie("hgt_token", token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: config.cookieSecure,
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+    path: "/"
+  });
   res.json({ ok: true, avatar });
 });
 
@@ -421,16 +431,18 @@ app.get("/api/me/stats", async (req, res) => {
   const user = requireAuth(req, res);
   if (!user) return;
 
-  const [[soupRows], [favRows], [evalRows]] = await Promise.all([
+  const [[soupRows], [favRows], [evalRows], [likeRows]] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [user.id]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [user.id]),
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(DISTINCT soup_id) AS count FROM evaluations WHERE reviewer_id = ?", [user.id])
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(DISTINCT soup_id) AS count FROM evaluations WHERE reviewer_id = ?", [user.id]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_likes WHERE user_id = ?", [user.id])
   ]);
 
   res.json({
     soupCount: Number(soupRows[0]?.count ?? 0),
     favoriteCount: Number(favRows[0]?.count ?? 0),
-    evaluationCount: Number(evalRows[0]?.count ?? 0)
+    evaluationCount: Number(evalRows[0]?.count ?? 0),
+    likeCount: Number(likeRows[0]?.count ?? 0)
   });
 });
 
@@ -650,6 +662,13 @@ app.get("/api/soups/:id", async (req, res) => {
           [req.params.id, user.id]
         )
       : [[] as mysql.RowDataPacket[]];
+  const [likeRows] =
+    user
+      ? await pool.query<mysql.RowDataPacket[]>(
+          "SELECT id FROM soup_likes WHERE soup_id = ? AND user_id = ? LIMIT 1",
+          [req.params.id, user.id]
+        )
+      : [[] as mysql.RowDataPacket[]];
 
   res.json({
     soup: {
@@ -662,10 +681,60 @@ app.get("/api/soups/:id", async (req, res) => {
       canViewFull: full,
       canEdit: Boolean(user && (user.role === "admin" || user.id === soup.creator_id)),
       isFavorited: favoriteRows.length > 0,
+      isLiked: likeRows.length > 0,
       pendingRequestId: requestRows[0]?.id ?? null,
       evaluations: evalRows.map(mapEvaluation)
     }
   });
+});
+
+app.post("/api/soups/:id/like", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+
+  const soup = await getSoupRaw(req.params.id);
+  if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
+
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id FROM soup_likes WHERE soup_id = ? AND user_id = ? LIMIT 1",
+    [req.params.id, user.id]
+  );
+  if (rows.length > 0) {
+    await pool.query("DELETE FROM soup_likes WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
+    res.json({ isLiked: false });
+    return;
+  }
+
+  await pool.query("INSERT INTO soup_likes (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+  res.status(201).json({ isLiked: true });
+});
+
+app.get("/api/me/likes", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `
+    SELECT s.*, u2.avatar AS creator_avatar,
+      COUNT(e.id) AS evaluation_count,
+      AVG(e.total) AS average_total,
+      AVG(e.writing) AS avg_writing,
+      AVG(e.logic) AS avg_logic,
+      AVG(e.share) AS avg_share,
+      AVG(e.mechanism) AS avg_mechanism,
+      AVG(e.twist) AS avg_twist,
+      AVG(e.depth) AS avg_depth
+    FROM soups s
+    INNER JOIN soup_likes lk ON lk.soup_id = s.id
+    LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u2 ON u2.id = s.creator_id
+    WHERE lk.user_id = ?
+    GROUP BY s.id
+    ORDER BY lk.created_at DESC
+    `,
+    [user.id]
+  );
+  res.json({ soups: rows.map(mapSoupSummary) });
 });
 
 app.post("/api/soups/:id/favorite", async (req, res) => {

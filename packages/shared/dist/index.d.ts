@@ -60,6 +60,7 @@ export type SoupDetail = SoupSummary & {
     canViewFull: boolean;
     canEdit: boolean;
     isFavorited: boolean;
+    isLiked: boolean;
     pendingRequestId: string | null;
     evaluations: Evaluation[];
 };
