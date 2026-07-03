@@ -28,7 +28,7 @@ const app = express();
 app.set("trust proxy", 1);
 
 // ---------- JWT 认证中间件 ----------
-function signToken(payload: PublicUser): string {
+function signToken(payload: Record<string, unknown>): string {
   return jwt.sign(payload, JWT_SECRET_FINAL, { expiresIn: "30d" });
 }
 
