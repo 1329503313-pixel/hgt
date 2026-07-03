@@ -29,7 +29,7 @@ function MyListPage({ title, endpoint, emptyHint }: { title: string; endpoint: s
     return (
       <section className="space-y-3 pt-[72px]">
         <div className="card flex items-center justify-center p-8">
-          <p className="text-sm text-muted">加载中...</p>
+          <p className="text-sm text-muted"><img src="/loading.gif" alt="加载中" className="mx-auto w-20 h-20 object-contain" /></p>
         </div>
       </section>
     );

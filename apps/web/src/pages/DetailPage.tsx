@@ -116,7 +116,7 @@ export default function DetailPage() {
     navigate("/");
   }
 
-  if (loading) return <div className="flex items-center justify-center py-20 text-sm text-muted">加载中...</div>;
+  if (loading) return <div className="flex items-center justify-center py-20 text-sm text-muted"><img src="/loading.gif" alt="加载中" className="mx-auto w-20 h-20 object-contain" /></div>;
   if (!soup) return <div className="card p-8 text-center text-sm text-muted">海龟汤不存在</div>;
 
   const hasRadarData = [
