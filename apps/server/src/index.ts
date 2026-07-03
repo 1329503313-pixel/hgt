@@ -378,8 +378,19 @@ app.post("/api/auth/password", async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/auth/me", (req, res) => {
-  res.json({ user: currentUser(req) });
+app.get("/api/auth/me", async (req, res) => {
+  const user = currentUser(req);
+  if (user) {
+    // JWT 不再包含 avatar（缩小 token 体积），需要从数据库查
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT avatar FROM users WHERE id = ? LIMIT 1",
+      [user.id]
+    );
+    if (rows.length) {
+      user.avatar = rows[0].avatar ? String(rows[0].avatar) : null;
+    }
+  }
+  res.json({ user });
 });
 
 app.patch("/api/me/nickname", async (req, res) => {
