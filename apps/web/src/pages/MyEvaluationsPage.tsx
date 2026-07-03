@@ -12,15 +12,20 @@ function useWaitForUser() {
 
 function MyListPage({ title, endpoint, emptyHint }: { title: string; endpoint: string; emptyHint: string }) {
   const navigate = useNavigate();
-  const { loading } = useWaitForUser();
+  const { loading: loadingUser } = useWaitForUser();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (loading) return;
-    api<SoupsResponse>(endpoint).then((d) => setSoups(d.soups)).catch(() => {});
-  }, [loading, endpoint]);
+    if (loadingUser) return;
+    setLoading(true);
+    api<SoupsResponse>(endpoint)
+      .then((d) => setSoups(d.soups))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [loadingUser, endpoint]);
 
-  if (loading) {
+  if (loadingUser || loading) {
     return (
       <section className="space-y-3 pt-[72px]">
         <div className="card flex items-center justify-center p-8">

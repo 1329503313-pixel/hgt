@@ -10,10 +10,15 @@ export default function RequestsPage() {
   const { user, loadingUser } = useApp();
   const navigate = useNavigate();
   const [requests, setRequests] = useState<ViewRequestItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (loadingUser || !user) return;
-    api<RequestsResponse>("/api/access-requests").then((d) => setRequests(d.requests)).catch(() => {});
+    setLoading(true);
+    api<RequestsResponse>("/api/access-requests")
+      .then((d) => setRequests(d.requests))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [user, loadingUser]);
 
   async function decideRequest(id: string, decision: "approved" | "rejected") {

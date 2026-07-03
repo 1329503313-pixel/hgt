@@ -10,10 +10,15 @@ export default function NotificationsPage() {
   const { user, loadingUser } = useApp();
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (loadingUser || !user) return;
-    api<NotificationsResponse>("/api/notifications").then((d) => setNotifications(d.notifications)).catch(() => {});
+    setLoading(true);
+    api<NotificationsResponse>("/api/notifications")
+      .then((d) => setNotifications(d.notifications))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [user, loadingUser]);
 
   async function markRead(id: string) {
