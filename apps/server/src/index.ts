@@ -160,6 +160,16 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
   };
 }
 
+function toJwtPayload(row: mysql.RowDataPacket) {
+  return {
+    id: row.id,
+    username: row.username,
+    nickname: row.nickname,
+    role: row.role,
+    createdAt: new Date(row.created_at).toISOString()
+  };
+}
+
 function num(value: unknown): number | null {
   if (value == null) return null;
   const parsed = Number(value);
@@ -334,7 +344,7 @@ app.post("/api/auth/login", async (req, res) => {
   if (!ok) return sendError(res, 401, "账号或密码错误");
 
   const user = toUser(row);
-  const token = signToken(user);
+  const token = signToken(toJwtPayload(row));
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
