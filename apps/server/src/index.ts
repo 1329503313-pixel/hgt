@@ -197,13 +197,14 @@ function mapEvaluation(row: mysql.RowDataPacket) {
 }
 
 function mapSoupSummary(row: mysql.RowDataPacket) {
+  const cover = row.cover_image ? String(row.cover_image) : null;
   return {
     id: row.id,
     title: row.title,
     author: row.author,
     type: row.type,
     summary: row.summary ?? "",
-    coverImage: row.cover_image ? String(row.cover_image) : null,
+    coverImage: cover && cover.length > 300 ? cover.slice(0, 150) + "..." : cover,
     isOriginal: bool(row.is_original ?? 1),
     creatorId: row.creator_id,
     creatorName: row.creator_name,
