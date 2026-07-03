@@ -543,7 +543,9 @@ app.get("/api/soups", async (req, res) => {
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*, u.avatar AS creator_avatar,
+    SELECT s.id, s.title, s.author, s.type, s.summary, s.cover_image, s.is_original,
+      s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
+      u.avatar AS creator_avatar,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
