@@ -8,17 +8,17 @@ import { PageTopBar } from "../components/PageTopBar";
 import { NotificationList, RequestList } from "../components/Lists";
 
 export default function MessagesPage() {
-  const { user } = useApp();
+  const { user, loadingUser } = useApp();
   const navigate = useNavigate();
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [requests, setRequests] = useState<ViewRequestItem[]>([]);
 
   useEffect(() => {
-    if (!user) return;
+    if (loadingUser || !user) return;
     api<NotificationsResponse>("/api/notifications").then((d) => setNotifications(d.notifications)).catch(() => {});
     api<RequestsResponse>("/api/access-requests").then((d) => setRequests(d.requests)).catch(() => {});
-  }, [user]);
+  }, [user, loadingUser]);
 
   async function markRead(id: string) {
     await api(`/api/notifications/${id}/read`, { method: "PATCH" });

@@ -71,6 +71,7 @@ type AppContextValue = {
   // 用户
   user: PublicUser | null;
   setUser: (u: PublicUser | null) => void;
+  loadingUser: boolean;
 
   // Toast
   toast: string;
@@ -125,6 +126,7 @@ export function useApp() {
 // ---------- Provider ----------
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<PublicUser | null>(null);
+  const [loadingUser, setLoadingUser] = useState(true); // 初始 true，等待 /me 返回
   const [toast, setToastRaw] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -162,7 +164,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     api<MeResponse>("/api/auth/me")
       .then((data) => setUser(data.user))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setLoadingUser(false));
   }, []);
 
   const openAuth = useCallback(() => {
@@ -231,6 +234,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value: AppContextValue = {
     user,
     setUser,
+    loadingUser,
     toast,
     showToast,
     refreshKey,

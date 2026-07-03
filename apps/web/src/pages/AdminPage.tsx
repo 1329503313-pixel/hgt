@@ -7,17 +7,22 @@ import { useApp } from "../context/AppContext";
 import { RequestList } from "../components/Lists";
 
 export default function AdminPage() {
-  const { user } = useApp();
+  const { user, loadingUser } = useApp();
   const navigate = useNavigate();
 
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [requests, setRequests] = useState<ViewRequestItem[]>([]);
 
   useEffect(() => {
+    if (loadingUser) return;
     if (!user || user.role !== "admin") { navigate("/"); return; }
     api<UsersResponse>("/api/admin/users").then((d) => setUsers(d.users)).catch(() => {});
     api<RequestsResponse>("/api/access-requests").then((d) => setRequests(d.requests)).catch(() => {});
-  }, [user]);
+  }, [user, loadingUser]);
+
+  if (loadingUser) {
+    return <div className="flex items-center justify-center py-20 text-sm text-muted">加载中...</div>;
+  }
 
   async function updateRole(item: PublicUser, role: "admin" | "user") {
     await api(`/api/admin/users/${item.id}`, { method: "PATCH", body: { nickname: item.nickname, role } });

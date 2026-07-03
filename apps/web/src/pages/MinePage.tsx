@@ -6,7 +6,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { api, StatsResponse, NicknameResponse, AvatarResponse, PasswordResponse } from "../api";
 
 export default function MinePage() {
-  const { user } = useApp();
+  const { user, loadingUser } = useApp();
   const navigate = useNavigate();
 
   const [stats, setStats] = useState({ soupCount: 0, favoriteCount: 0, evaluationCount: 0, likeCount: 0 });
@@ -27,6 +27,18 @@ export default function MinePage() {
       setNicknameValue(user.nickname);
     }
   }, [user]);
+
+  // 等待登录状态加载
+  if (loadingUser) {
+    return (
+      <section className="space-y-3">
+        <PageTopBar title="我的" />
+        <div className="card flex items-center justify-center p-8">
+          <p className="text-sm text-muted">加载中...</p>
+        </div>
+      </section>
+    );
+  }
 
   if (!user) {
     return (

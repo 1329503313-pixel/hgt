@@ -7,14 +7,14 @@ import { useApp } from "../context/AppContext";
 import { NotificationList } from "../components/Lists";
 
 export default function NotificationsPage() {
-  const { user } = useApp();
+  const { user, loadingUser } = useApp();
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   useEffect(() => {
-    if (!user) return;
+    if (loadingUser || !user) return;
     api<NotificationsResponse>("/api/notifications").then((d) => setNotifications(d.notifications)).catch(() => {});
-  }, [user]);
+  }, [user, loadingUser]);
 
   async function markRead(id: string) {
     await api(`/api/notifications/${id}/read`, { method: "PATCH" });

@@ -7,14 +7,14 @@ import { useApp } from "../context/AppContext";
 import { RequestList } from "../components/Lists";
 
 export default function RequestsPage() {
-  const { user } = useApp();
+  const { user, loadingUser } = useApp();
   const navigate = useNavigate();
   const [requests, setRequests] = useState<ViewRequestItem[]>([]);
 
   useEffect(() => {
-    if (!user) return;
+    if (loadingUser || !user) return;
     api<RequestsResponse>("/api/access-requests").then((d) => setRequests(d.requests)).catch(() => {});
-  }, [user]);
+  }, [user, loadingUser]);
 
   async function decideRequest(id: string, decision: "approved" | "rejected") {
     await api(`/api/access-requests/${id}/decision`, { method: "POST", body: { decision } });
