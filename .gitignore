@@ -6,3 +6,4 @@ apps/web/dist/
 mysql-data
 *.log
 *.err
+.tmp_cookies
