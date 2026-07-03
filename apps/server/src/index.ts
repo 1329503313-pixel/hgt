@@ -312,7 +312,7 @@ app.post("/api/auth/register", async (req, res) => {
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: config.cookieSecure,
+    secure: false,
     maxAge: 1000 * 60 * 60 * 24 * 30,
     path: "/"
   });
@@ -338,7 +338,7 @@ app.post("/api/auth/login", async (req, res) => {
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: config.cookieSecure,
+    secure: false,
     maxAge: 1000 * 60 * 60 * 24 * 30,
     path: "/"
   });
@@ -415,7 +415,7 @@ app.patch("/api/me/avatar", async (req, res) => {
   res.cookie("hgt_token", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: config.cookieSecure,
+    secure: false,
     maxAge: 1000 * 60 * 60 * 24 * 30,
     path: "/"
   });
