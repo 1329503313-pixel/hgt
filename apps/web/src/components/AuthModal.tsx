@@ -51,7 +51,7 @@ export function ExportPreview() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-slate-900/45 p-0 sm:items-center sm:justify-center sm:p-4">
-      <div className="max-h-[88vh] w-full max-w-lg overflow-auto rounded-t-lg bg-white p-4 shadow-soft sm:rounded-[20px]">
+      <div className="max-h-[88vh] w-full max-w-lg overflow-auto overscroll-contain rounded-t-lg bg-white p-4 shadow-soft sm:rounded-[20px]">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-base font-black text-ink">图片已生成</div>
