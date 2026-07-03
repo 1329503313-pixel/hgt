@@ -61,6 +61,7 @@ type EvalForm = {
   mechanism: string;
   twist: string;
   depth: string;
+  content: string;
 };
 
 const emptySoup: SoupForm = {
@@ -86,7 +87,8 @@ const emptyEval: EvalForm = {
   share: "",
   mechanism: "",
   twist: "",
-  depth: ""
+  depth: "",
+  content: ""
 };
 
 const soupTypes = ["本格清汤", "本格红汤", "本格黑汤", "变格清汤", "变格红汤", "变格黑汤", "纯机制汤", "其他"];
@@ -541,7 +543,8 @@ export default function App() {
         share: ownEvaluation.share?.toString() ?? "",
         mechanism: ownEvaluation.mechanism?.toString() ?? "",
         twist: ownEvaluation.twist?.toString() ?? "",
-        depth: ownEvaluation.depth?.toString() ?? ""
+        depth: ownEvaluation.depth?.toString() ?? "",
+        content: ownEvaluation.content ?? ""
       });
     } else {
       setEvalForm(emptyEval);
@@ -1524,6 +1527,9 @@ function DetailView({
                   <strong>{item.reviewer}</strong>
                   <span className="rounded-lg bg-blue-50 px-2 py-1 text-sm font-black text-primary">{item.total}</span>
                 </div>
+                {item.content && (
+                  <p className="mt-2 text-sm leading-6 text-ink whitespace-pre-wrap">{item.content}</p>
+                )}
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted sm:grid-cols-3">
                   <span>文笔 {item.writing ?? "-"}</span>
                   <span>逻辑 {item.logic ?? "-"}</span>
@@ -2608,6 +2614,18 @@ function EvalEditor({
           <ScoreInput label="反转" desc="本汤汤底对于汤面的反转与震撼程度如何" value={value.twist} onChange={(twist) => patch({ twist })} />
           <ScoreInput label="深度" desc="本汤故事立意深度如何" value={value.depth} onChange={(depth) => patch({ depth })} />
         </div>
+        <label className="space-y-1">
+          <span className="label">评价内容</span>
+          <textarea
+            className="field min-h-24"
+            style={{ minHeight: 96 }}
+            placeholder="说说你对这条海龟汤的看法（选填，最多500字）"
+            maxLength={500}
+            value={value.content}
+            onChange={(event) => patch({ content: event.target.value })}
+          />
+          <span className="text-xs text-muted">剩余 {500 - value.content.length} 字</span>
+        </label>
         <button className="btn btn-primary w-full">保存评价</button>
       </form>
     </Modal>

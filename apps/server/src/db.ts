@@ -65,6 +65,7 @@ export async function initDatabase() {
       mechanism DECIMAL(3,1) NULL,
       twist DECIMAL(3,1) NULL,
       depth DECIMAL(3,1) NULL,
+      content TEXT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_evaluation_user_soup (soup_id, reviewer_id),
@@ -153,6 +154,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "supplemental_surfaces", "supplemental_surfaces JSON NULL AFTER surface");
   await ensureColumn("soups", "supplemental_bottoms", "supplemental_bottoms JSON NULL AFTER bottom");
   await ensureColumn("soups", "view_count", "view_count INT NOT NULL DEFAULT 0 AFTER is_bottom_public");
+  await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
   await migrateSoupViewsColumn();
   await seedAdmin();

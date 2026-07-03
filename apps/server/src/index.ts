@@ -110,7 +110,8 @@ const evaluationSchema = z.object({
   share: optionalScore,
   mechanism: optionalScore,
   twist: optionalScore,
-  depth: optionalScore
+  depth: optionalScore,
+  content: z.string().trim().max(500, "评价内容不超过 500 字").optional().default("")
 });
 
 function sendError(res: express.Response, status: number, message: string) {
@@ -190,6 +191,7 @@ function mapEvaluation(row: mysql.RowDataPacket) {
     mechanism: num(row.mechanism),
     twist: num(row.twist),
     depth: num(row.depth),
+    content: row.content ? String(row.content) : null,
     createdAt: new Date(row.created_at).toISOString()
   };
 }
@@ -826,7 +828,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   if (existing) {
     await pool.query(
       `UPDATE evaluations
-       SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?
+       SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?
        WHERE id = ?`,
       [
         data.total,
@@ -837,6 +839,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         data.mechanism,
         data.twist,
         data.depth,
+        data.content || null,
         existing.id
       ]
     );
@@ -846,8 +849,8 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   const id = nanoid();
   await pool.query(
     `INSERT INTO evaluations
-      (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth, content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       req.params.id,
@@ -859,7 +862,8 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
       data.share,
       data.mechanism,
       data.twist,
-      data.depth
+      data.depth,
+      data.content || null
     ]
   );
   res.status(201).json({ id });

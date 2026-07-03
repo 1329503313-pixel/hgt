@@ -49,6 +49,7 @@ export type Evaluation = {
     mechanism: number | null;
     twist: number | null;
     depth: number | null;
+    content: string | null;
     createdAt: string;
 };
 export type SoupDetail = SoupSummary & {
