@@ -156,6 +156,8 @@ export async function initDatabase() {
   await ensureColumn("soups", "view_count", "view_count INT NOT NULL DEFAULT 0 AFTER is_bottom_public");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
+  await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
+  await migrateCoverThumbnails();
   await migrateSoupViewsColumn();
   await seedAdmin();
 }
@@ -179,6 +181,27 @@ async function ensureColumn(table: string, column: string, ddl: string) {
       }
     }
   }
+}
+
+async function migrateCoverThumbnails() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, cover_image FROM soups WHERE cover_image IS NOT NULL AND cover_image LIKE 'data:%' AND (cover_thumbnail IS NULL OR cover_thumbnail = '')"
+  );
+  if (rows.length === 0) return;
+  console.log(`migrateCoverThumbnails: processing ${rows.length} soups...`);
+  const sharp = (await import("sharp")).default;
+  for (const row of rows) {
+    try {
+      const base64 = String(row.cover_image);
+      const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
+      const thumb = await sharp(buf).resize(400, undefined, { withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+      const thumbBase64 = `data:image/jpeg;base64,${thumb.toString("base64")}`;
+      await pool.query("UPDATE soups SET cover_thumbnail = ? WHERE id = ?", [thumbBase64, row.id]);
+    } catch (err) {
+      console.error(`migrateCoverThumbnails: failed for soup ${row.id}`, (err as Error).message);
+    }
+  }
+  console.log("migrateCoverThumbnails: done");
 }
 
 async function migrateSoupViewsColumn() {

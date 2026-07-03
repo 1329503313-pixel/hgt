@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import mysql from "mysql2/promise";
 import jwt from "jsonwebtoken";
 import { nanoid } from "nanoid";
+import sharp from "sharp";
 import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
@@ -203,7 +204,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     author: row.author,
     type: row.type,
     summary: row.summary ?? "",
-    coverImage: null, // 列表不返回 coverImage，详情用 mapSoupDetail
+    coverImage: row.cover_thumbnail ? String(row.cover_thumbnail) : null,
     isOriginal: bool(row.is_original ?? 1),
     creatorId: row.creator_id,
     creatorName: row.creator_name,
@@ -265,6 +266,16 @@ async function notify(userId: string, type: string, title: string, content: stri
 async function adminIds() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin'");
   return rows.map((row) => String(row.id));
+}
+
+async function generateThumbnail(base64: string): Promise<string | null> {
+  try {
+    const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
+    const thumb = await sharp(buf).resize(400, undefined, { withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+    return `data:image/jpeg;base64,${thumb.toString("base64")}`;
+  } catch {
+    return null;
+  }
 }
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
@@ -588,10 +599,11 @@ app.post("/api/soups", async (req, res) => {
   const soup = parsed.data;
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const author = soup.isOriginal ? soup.author : "佚名";
+  const thumbnail = soup.coverImage ? await generateThumbnail(soup.coverImage) : null;
   await pool.query(
     `INSERT INTO soups
-      (id, title, author, type, summary, cover_image, is_original, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, creator_id, creator_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, creator_id, creator_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       soup.title,
@@ -599,6 +611,7 @@ app.post("/api/soups", async (req, res) => {
       soup.type,
       soup.summary,
       soup.coverImage || null,
+      thumbnail,
       soup.isOriginal,
       soup.surface,
       JSON.stringify(soup.supplementalSurfaces),
@@ -782,9 +795,10 @@ app.put("/api/soups/:id", async (req, res) => {
   const next = parsed.data;
   if (next.isOriginal && !next.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const author = next.isOriginal ? next.author : "佚名";
+  const thumbnail = next.coverImage ? await generateThumbnail(next.coverImage) : null;
   await pool.query(
     `UPDATE soups
-     SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, is_original = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
+     SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
          is_surface_public = ?, is_bottom_public = ?
      WHERE id = ?`,
     [
@@ -793,6 +807,7 @@ app.put("/api/soups/:id", async (req, res) => {
       next.type,
       next.summary,
       next.coverImage || null,
+      thumbnail,
       next.isOriginal,
       next.surface,
       JSON.stringify(next.supplementalSurfaces),
