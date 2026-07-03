@@ -1033,7 +1033,16 @@ app.get("/api/notifications", async (req, res) => {
   const user = requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+    `SELECT n.*,
+      CASE WHEN n.type = 'view_request' OR n.type = 'view_request_result'
+           THEN vr.soup_id
+           ELSE n.related_id
+      END AS soup_id
+     FROM notifications n
+     LEFT JOIN view_requests vr ON n.type IN ('view_request','view_request_result') AND n.related_id = vr.id
+     WHERE n.user_id = ?
+     ORDER BY n.created_at DESC
+     LIMIT 50`,
     [user.id]
   );
   res.json({
@@ -1042,7 +1051,7 @@ app.get("/api/notifications", async (req, res) => {
       type: row.type,
       title: row.title,
       content: row.content,
-      relatedId: row.related_id,
+      relatedId: row.soup_id,
       isRead: bool(row.is_read),
       createdAt: new Date(row.created_at).toISOString()
     }))
