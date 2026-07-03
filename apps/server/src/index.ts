@@ -389,7 +389,7 @@ app.patch("/api/me/avatar", async (req, res) => {
   const avatar = parsed.data.avatar || null;
   await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
 
-  const updated = { ...user, avatar };
+  const updated = { id: user.id, username: user.username, nickname: user.nickname, avatar, role: user.role, createdAt: user.createdAt };
   const token = signToken(updated);
   res.cookie("hgt_token", token, {
     httpOnly: true,
