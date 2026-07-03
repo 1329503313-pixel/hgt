@@ -55,7 +55,7 @@ function UserMenuDropdown({ user }: { user: PublicUser }) {
 
   return (
     <details className="user-menu">
-      <summary className="flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
+      <summary className="flex min-h-10 min-w-0 cursor-pointer list-none items-center gap-1 rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
         {user.avatar ? (
           <img className="h-7 w-7 shrink-0 rounded-full object-cover" src={user.avatar} alt="" />
         ) : (
