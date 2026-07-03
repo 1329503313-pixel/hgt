@@ -45,6 +45,7 @@ type SoupForm = {
   summary: string;
   coverImage: string;
   isOriginal: boolean;
+  isSensitive: boolean;
   surface: string;
   supplementalSurfaces: string[];
   bottom: string;
@@ -71,6 +72,7 @@ const emptySoup: SoupForm = {
   summary: "",
   coverImage: "",
   isOriginal: true,
+  isSensitive: false,
   surface: "",
   supplementalSurfaces: [],
   bottom: "",
@@ -308,6 +310,7 @@ export default function App() {
       summary: soup.summary,
       coverImage: soup.coverImage ?? "",
       isOriginal: soup.isOriginal,
+      isSensitive: ('isSensitive' in soup) ? (soup as any).isSensitive : false,
       surface: soup.surface,
       supplementalSurfaces: soup.supplementalSurfaces,
       bottom: soup.bottom ?? "",
@@ -2360,6 +2363,21 @@ function SoupEditor({
             </select>
           </label>
         </div>
+
+        <label className="space-y-2">
+          <span className="text-xs font-bold text-muted">是否涉黄赌毒暴恐</span>
+          <select
+            className="field"
+            value={value.isSensitive ? "yes" : "no"}
+            onChange={(event) => patch({ isSensitive: event.target.value === "yes" })}
+          >
+            <option value="no">否</option>
+            <option value="yes">是</option>
+          </select>
+          {value.isSensitive && (
+            <p className="text-xs text-muted">请您仔细检查汤面汤底，相关敏感词汇以首字母或同音字代替。</p>
+          )}
+        </label>
 
         <label className="space-y-2 pb-2">
           <span className="text-xs font-bold text-muted">封面</span>

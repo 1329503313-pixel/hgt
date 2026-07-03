@@ -95,6 +95,7 @@ const soupSchema = z.object({
     .default("")
     .refine((value) => !value || /^data:image\/(png|jpeg);base64,/.test(value), "封面仅支持 JPG 或 PNG"),
   isOriginal: z.boolean().default(true),
+  isSensitive: z.boolean().default(false),
   surface: text,
   supplementalSurfaces: optionalTextList,
   bottom: text,
@@ -602,8 +603,8 @@ app.post("/api/soups", async (req, res) => {
   const thumbnail = soup.coverImage ? await generateThumbnail(soup.coverImage) : null;
   await pool.query(
     `INSERT INTO soups
-      (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, creator_id, creator_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, creator_id, creator_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       soup.title,
@@ -613,6 +614,7 @@ app.post("/api/soups", async (req, res) => {
       soup.coverImage || null,
       thumbnail,
       soup.isOriginal,
+      soup.isSensitive,
       soup.surface,
       JSON.stringify(soup.supplementalSurfaces),
       soup.bottom,
@@ -798,7 +800,7 @@ app.put("/api/soups/:id", async (req, res) => {
   const thumbnail = next.coverImage ? await generateThumbnail(next.coverImage) : null;
   await pool.query(
     `UPDATE soups
-     SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
+     SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
          is_surface_public = ?, is_bottom_public = ?
      WHERE id = ?`,
     [
@@ -809,6 +811,7 @@ app.put("/api/soups/:id", async (req, res) => {
       next.coverImage || null,
       thumbnail,
       next.isOriginal,
+      next.isSensitive,
       next.surface,
       JSON.stringify(next.supplementalSurfaces),
       next.bottom,
