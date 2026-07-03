@@ -197,14 +197,13 @@ function mapEvaluation(row: mysql.RowDataPacket) {
 }
 
 function mapSoupSummary(row: mysql.RowDataPacket) {
-  const cover = row.cover_image ? String(row.cover_image) : null;
   return {
     id: row.id,
     title: row.title,
     author: row.author,
     type: row.type,
     summary: row.summary ?? "",
-    coverImage: cover && cover.length > 300 ? cover.slice(0, 150) + "..." : cover,
+    coverImage: null, // 列表不返回 coverImage，详情用 mapSoupDetail
     isOriginal: bool(row.is_original ?? 1),
     creatorId: row.creator_id,
     creatorName: row.creator_name,
@@ -223,6 +222,13 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
       twist: num(row.avg_twist),
       depth: num(row.avg_depth)
     }
+  };
+}
+
+function mapSoupDetail(row: mysql.RowDataPacket) {
+  return {
+    ...mapSoupSummary(row),
+    coverImage: row.cover_image ? String(row.cover_image) : null
   };
 }
 
@@ -677,7 +683,7 @@ app.get("/api/soups/:id", async (req, res) => {
 
   res.json({
     soup: {
-      ...mapSoupSummary(statsRows[0]),
+      ...mapSoupDetail(statsRows[0]),
       surface: soup.surface,
       supplementalSurfaces: jsonList(soup.supplemental_surfaces),
       bottom: full ? soup.bottom : null,
