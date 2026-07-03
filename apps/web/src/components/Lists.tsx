@@ -27,7 +27,10 @@ export function NotificationList({
           onClick={() => {
             if (item.relatedId) {
               if (!item.isRead) onRead(item.id);
-              onOpenSoup(item.relatedId);
+              const soupId = item.relatedId;
+              // relatedId 可能是 soup_id 或 view_request_id
+              // 优先尝试作为 soup_id 导航，如果不是则忽略
+              onOpenSoup(soupId);
             }
           }}
         >

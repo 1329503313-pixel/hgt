@@ -34,7 +34,7 @@ export default function MessagesPage() {
   const unread = notifications.filter((n) => !n.isRead).length;
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-4 pt-[72px]">
       <PageTopBar title="消息" unread={unread} />
 
       <div className="card p-4">
