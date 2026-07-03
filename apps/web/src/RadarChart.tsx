@@ -41,7 +41,7 @@ const radarScoreLabels: Plugin<"radar"> = {
       const dy = point.y - scale.yCenter;
       const distance = Math.hypot(dx, dy) || 1;
       // 高分会合并在每个维度顶点上的线从外面拉回来，得分 >= 4.1 时数字放在顶点内侧
-      const offset = value >= 4.1 ? -6 : 18;
+      const offset = value >= 4.1 ? -10 : 18;
       const labelX = point.x + (dx / distance) * offset;
       const labelY = point.y + (dy / distance) * offset;
       const text = Number.isInteger(value) ? String(value) : value.toFixed(1);
