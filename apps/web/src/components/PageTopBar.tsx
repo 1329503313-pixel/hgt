@@ -1,10 +1,10 @@
-import { Bell, LogOut, Shield } from "lucide-react";
+import { ArrowLeft, Bell, LogOut, Shield } from "lucide-react";
 import type { PublicUser } from "../shared/types";
 import { useApp } from "../context/AppContext";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 
-export function PageTopBar({ title, unread = 0 }: { title: string; unread?: number }) {
+export function PageTopBar({ title, unread = 0, backTo }: { title: string; unread?: number; backTo?: string }) {
   const { user } = useApp();
   const navigate = useNavigate();
 
@@ -18,14 +18,20 @@ export function PageTopBar({ title, unread = 0 }: { title: string; unread?: numb
           {user ? (
             <>
               <UserMenuDropdown user={user} />
-              <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate("/messages")} aria-label="消息">
-                <Bell size={20} />
-                {unread > 0 && (
-                  <span className="absolute right-1.5 top-0 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
-                    {unread > 99 ? "99+" : unread}
-                  </span>
-                )}
-              </button>
+              {backTo ? (
+                <button className="grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate(backTo)} aria-label="返回">
+                  <ArrowLeft size={20} />
+                </button>
+              ) : (
+                <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate("/messages")} aria-label="消息">
+                  <Bell size={20} />
+                  {unread > 0 && (
+                    <span className="absolute right-1.5 top-0 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                </button>
+              )}
               {user.role === "admin" && (
                 <button className="hidden h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={() => navigate("/admin")} aria-label="后台">
                   <Shield size={19} />

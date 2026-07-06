@@ -5,11 +5,19 @@ import { useApp } from "../context/AppContext";
 export function BottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, openAuth, openSoupEditor } = useApp();
+  const { user, openAuth, openSoupEditor, triggerRefresh } = useApp();
 
   const path = location.pathname;
   const isHomeActive = path === "/" || path.startsWith("/soup/");
   const isMineActive = path.startsWith("/mine");
+
+  function handleHome() {
+    if (path === "/") {
+      triggerRefresh();
+    } else {
+      navigate("/");
+    }
+  }
 
   function handleMine() {
     if (!user) { openAuth(); return; }
@@ -26,7 +34,7 @@ export function BottomNav() {
       <div className="relative mx-auto grid max-w-md grid-cols-3 items-end gap-2">
         <button
           className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isHomeActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}
-          onClick={() => navigate("/")}
+          onClick={handleHome}
         >
           <Home size={20} />
           <span>首页</span>

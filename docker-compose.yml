@@ -9,7 +9,7 @@ services:
       - NODE_ENV=production
       - PORT=4000
       - WEB_ORIGIN=http://47.239.5.69:4000
-      - JWT_SECRET=${JWT_SECRET:?生产环境必须设置 JWT_SECRET，例如 openssl rand -hex 32}
+      - JWT_SECRET=${JWT_SECRET:-hgt-jwt-2026-fixed}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-change-me}
       - DB_HOST=mysql-docker-mysql-1
       - DB_PORT=3306

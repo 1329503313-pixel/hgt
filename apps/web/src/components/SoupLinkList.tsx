@@ -1,4 +1,4 @@
-import { Eye, ChevronRight } from "lucide-react";
+import { Eye, ChevronRight, ThumbsUp, Star, Sparkles } from "lucide-react";
 import type { SoupSummary } from "../shared/types";
 import { formatViews } from "../context/AppContext";
 
@@ -34,12 +34,23 @@ export function SoupLinkList({
               </div>
             )}
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-base font-semibold text-ink">{soup.title}</span>
+              <span className="flex items-center gap-1.5 truncate">
+                <span className="truncate text-base font-semibold text-ink">{soup.title}</span>
+                {soup.averageTotal != null && (
+                  <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-bold text-muted">
+                    <Sparkles size={13} /> {Number(soup.averageTotal.toFixed(1))}
+                  </span>
+                )}
+              </span>
               <span className="mt-1 flex items-center gap-1 truncate text-xs text-muted">
-                {soup.creatorAvatar ? (
-                  <img className="h-3.5 w-3.5 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
-                ) : null}
-                {soup.author || soup.creatorName} · {formatViews(soup.viewCount)} 浏览 · {soup.evaluationCount} 评
+                {soup.isOriginal ? (
+                  soup.creatorAvatar ? (
+                    <img className="h-3.5 w-3.5 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
+                  ) : null
+                ) : (
+                  <img className="h-3.5 w-3.5 rounded-full object-cover" src="/turtle-avatar.png" alt="" />
+                )}
+                {soup.author || soup.creatorName} · <ThumbsUp size={12} /> {soup.likeCount} · <Star size={12} /> {soup.favoriteCount} · <Eye size={12} /> {formatViews(soup.viewCount)}
               </span>
             </span>
           </button>

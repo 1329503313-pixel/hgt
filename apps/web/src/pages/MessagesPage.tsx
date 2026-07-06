@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronRight } from "lucide-react";
+import { CheckCheck, ChevronRight } from "lucide-react";
 import type { NotificationItem, ViewRequestItem } from "../shared/types";
 import { api, NotificationsResponse, RequestsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -31,20 +31,32 @@ export default function MessagesPage() {
     setRequests(d.requests);
   }
 
+  async function markAllRead() {
+    await api("/api/notifications/read-all", { method: "PATCH" });
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+  }
+
   const unread = notifications.filter((n) => !n.isRead).length;
 
   return (
     <section className="space-y-4 pt-[72px]">
-      <PageTopBar title="消息" unread={unread} />
+      <PageTopBar title="消息" backTo="/" />
 
       <div className="card p-4">
         <div className="mb-3 flex items-center justify-between">
           <h1 className="text-lg font-black text-ink">站内消息</h1>
-          {notifications.length > 3 && (
-            <button className="btn btn-secondary px-3 text-xs" onClick={() => navigate("/messages/notifications")}>
-              更多 <ChevronRight size={14} />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {unread > 0 && (
+              <button className="btn btn-secondary px-3 text-xs" onClick={markAllRead}>
+                <CheckCheck size={14} /> 一键已读
+              </button>
+            )}
+            {notifications.length > 3 && (
+              <button className="btn btn-secondary px-3 text-xs" onClick={() => navigate("/messages/notifications")}>
+                更多 <ChevronRight size={14} />
+              </button>
+            )}
+          </div>
         </div>
         <NotificationList notifications={notifications} onRead={markRead} onOpenSoup={(id) => navigate(`/soup/${id}`)} max={3} />
       </div>

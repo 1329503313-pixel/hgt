@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, SlidersHorizontal } from "lucide-react";
 import type { SoupSummary } from "../shared/types";
-import { api, SoupsResponse } from "../api";
+import { api, SoupsResponse, NotificationsResponse } from "../api";
 import { useApp, soupTypes } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { MasonryList } from "../components/MasonryList";
@@ -16,6 +16,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const loadingRef = useRef(false);
   const offsetRef = useRef(0);
+  const [unread, setUnread] = useState(0);
 
   const [filters, setFilters] = useState({
     keyword: "",
@@ -68,11 +69,19 @@ export default function HomePage() {
     loadSoups(false);
   }, [filters, refreshKey]);
 
+  // 加载未读消息数
+  useEffect(() => {
+    if (!user) { setUnread(0); return; }
+    api<NotificationsResponse>("/api/notifications").then((d) => {
+      setUnread(d.notifications.filter((n) => !n.isRead).length);
+    }).catch(() => {});
+  }, [user, refreshKey]);
+
   const handleLoadMore = () => loadSoups(true);
 
   return (
     <section className="space-y-3">
-      <PageTopBar title="海龟汤" />
+      <PageTopBar title="海龟汤" unread={unread} />
 
       <div className="flex gap-2">
         <div className="relative min-w-0 flex-1">

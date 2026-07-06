@@ -1,4 +1,5 @@
 import type {
+  Evaluation,
   NotificationItem,
   PublicUser,
   SoupDetail,
@@ -42,3 +43,4 @@ export type StatsResponse = { soupCount: number; favoriteCount: number; evaluati
 export type PasswordResponse = { ok: boolean };
 export type NicknameResponse = { ok: boolean; nickname: string };
 export type AvatarResponse = { ok: boolean; avatar: string | null };
+export type EvaluationsResponse = { evaluations: (Evaluation & { soupTitle: string })[]; total: number; hasMore: boolean };

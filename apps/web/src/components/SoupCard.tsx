@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SoupSummary } from "../shared/types";
-import { Star, Eye, User } from "lucide-react";
+import { Star, User, ThumbsUp, Sparkles } from "lucide-react";
 import { formatViews } from "../context/AppContext";
 
 export function SoupCard({
@@ -45,14 +45,18 @@ export function SoupCard({
           ))}
         </div>
         <p className="mt-2 line-clamp-3 text-[13px] leading-5 text-muted">{soup.summary || "暂无摘要，点开看看汤面留下的第一道线索。"}</p>
-        <div className="mt-1 flex items-center justify-between text-[13px] text-muted">
+        <div className="mt-3 flex items-center justify-between text-[13px] text-muted">
           <span className="inline-flex items-center gap-1 font-semibold">
-            <Star className="fill-amber-400 text-amber-400" size={16} />
+            <Sparkles size={14} />
             {soup.averageTotal ? `${soup.averageTotal}分` : "未评分"}
           </span>
           <span className="inline-flex items-center gap-1">
-            <Eye size={16} />
-            {formatViews(soup.viewCount)}
+            <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : ""} size={14} />
+            {soup.likeCount}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <Star className={soup.isFavorited ? "fill-yellow-400 text-yellow-400" : ""} size={14} />
+            {soup.favoriteCount}
           </span>
         </div>
       </div>

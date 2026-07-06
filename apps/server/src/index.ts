@@ -223,6 +223,10 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
     viewCount: Number(row.view_count ?? 0),
+    likeCount: Number(row.like_count ?? 0),
+    favoriteCount: Number(row.favorite_count ?? 0),
+    isLiked: bool(row.is_liked),
+    isFavorited: bool(row.is_favorited),
     createdAt: new Date(row.created_at).toISOString(),
     evaluationCount: Number(row.evaluation_count ?? 0),
     averageTotal: num(row.average_total),
@@ -449,6 +453,8 @@ app.get("/api/me/soups", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -494,6 +500,8 @@ app.get("/api/me/favorites", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -521,6 +529,8 @@ app.get("/api/me/evaluations", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e2.id) AS evaluation_count,
       AVG(e2.total) AS average_total,
       AVG(e2.writing) AS avg_writing,
@@ -546,6 +556,7 @@ app.get("/api/soups", async (req, res) => {
   const user = currentUser(req);
   const where: string[] = [];
   const params: unknown[] = [];
+  const userParams: unknown[] = [];
 
   if (!user || user.role !== "admin") {
     if (user) {
@@ -580,12 +591,19 @@ app.get("/api/soups", async (req, res) => {
 
   const limit = Math.min(Number(req.query.limit ?? 10), 50);
   const offset = Number(req.query.offset ?? 0);
+  const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RAND";
+
+  const orderClause = order === "RAND" ? "RAND()" : `s.created_at ${order}`;
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.id, s.title, s.author, s.type, s.summary, s.cover_thumbnail, s.is_original,
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
       u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+      ${user ? `EXISTS(SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,` : "FALSE AS is_liked,"}
+      ${user ? `EXISTS(SELECT 1 FROM soup_favorites WHERE soup_id = s.id AND user_id = ?) AS is_favorited,` : "FALSE AS is_favorited,"}
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -600,10 +618,10 @@ app.get("/api/soups", async (req, res) => {
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     GROUP BY s.id
     ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
-    ORDER BY s.created_at DESC
+    ORDER BY ${orderClause}
     LIMIT ${limit + 1} OFFSET ${offset}
     `,
-    params
+    [...(user ? [user.id, user.id] : []), ...params]
   );
 
   const hasMore = rows.length > limit;
@@ -673,6 +691,8 @@ app.get("/api/soups/:id", async (req, res) => {
   const [statsRows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -721,7 +741,7 @@ app.get("/api/soups/:id", async (req, res) => {
     soup: {
       ...mapSoupDetail(statsRows[0]),
       surface: soup.surface,
-      supplementalSurfaces: jsonList(soup.supplemental_surfaces),
+      supplementalSurfaces: full ? jsonList(soup.supplemental_surfaces) : [],
       bottom: full ? soup.bottom : null,
       supplementalBottoms: full ? jsonList(soup.supplemental_bottoms) : null,
       manual: full ? soup.host_manual : null,
@@ -749,12 +769,14 @@ app.post("/api/soups/:id/like", async (req, res) => {
   );
   if (rows.length > 0) {
     await pool.query("DELETE FROM soup_likes WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
-    res.json({ isLiked: false });
+    const [[c]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
+    res.json({ isLiked: false, likeCount: Number(c.cnt) });
     return;
   }
 
   await pool.query("INSERT INTO soup_likes (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
-  res.status(201).json({ isLiked: true });
+  const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
+  res.status(201).json({ isLiked: true, likeCount: Number(c2.cnt) });
 });
 
 app.get("/api/me/likes", async (req, res) => {
@@ -763,6 +785,8 @@ app.get("/api/me/likes", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u2.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -798,12 +822,14 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
   );
   if (rows.length > 0) {
     await pool.query("DELETE FROM soup_favorites WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
-    res.json({ isFavorited: false });
+    const [[c]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
+    res.json({ isFavorited: false, favoriteCount: Number(c.cnt) });
     return;
   }
 
   await pool.query("INSERT INTO soup_favorites (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
-  res.status(201).json({ isFavorited: true });
+  const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
+  res.status(201).json({ isFavorited: true, favoriteCount: Number(c2.cnt) });
 });
 
 app.put("/api/soups/:id", async (req, res) => {
@@ -1058,6 +1084,13 @@ app.get("/api/notifications", async (req, res) => {
   });
 });
 
+app.patch("/api/notifications/read-all", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  await pool.query("UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE", [user.id]);
+  res.json({ ok: true });
+});
+
 app.patch("/api/notifications/:id/read", async (req, res) => {
   const user = requireAuth(req, res);
   if (!user) return;
@@ -1068,9 +1101,25 @@ app.patch("/api/notifications/:id/read", async (req, res) => {
 app.get("/api/admin/users", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id, username, nickname, role, created_at FROM users ORDER BY created_at DESC"
+    `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at,
+      (SELECT COUNT(*) FROM soups WHERE creator_id = u.id) AS soup_count,
+      (SELECT COUNT(*) FROM evaluations WHERE reviewer_id = u.id) AS evaluation_count,
+      (SELECT COUNT(*) FROM soup_likes WHERE user_id = u.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE user_id = u.id) AS favorite_count
+     FROM users u
+     ORDER BY u.created_at DESC`
   );
-  res.json({ users: rows.map(toUser) });
+  res.json({
+    users: rows.map((row) => ({
+      ...toUser(row),
+      stats: {
+        soupCount: Number(row.soup_count ?? 0),
+        evaluationCount: Number(row.evaluation_count ?? 0),
+        likeCount: Number(row.like_count ?? 0),
+        favoriteCount: Number(row.favorite_count ?? 0)
+      }
+    }))
+  });
 });
 
 app.patch("/api/admin/users/:id", async (req, res) => {
@@ -1091,6 +1140,51 @@ app.delete("/api/admin/users/:id", async (req, res) => {
   if (user.id === req.params.id) return sendError(res, 400, "不能删除自己");
   await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
+});
+
+app.post("/api/admin/users/:id/reset-password", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const parsed = z.object({ newPassword: z.string().min(6, "新密码至少 6 位").max(72) }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码格式不正确");
+  const hash = await bcrypt.hash(parsed.data.newPassword, 10);
+  await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash, req.params.id]);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/evaluations", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(Number(req.query.limit ?? 20), 100);
+  const offset = Number(req.query.offset ?? 0);
+  const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
+
+  const where = keyword
+    ? "WHERE (e.reviewer LIKE ? OR e.content LIKE ? OR s.title LIKE ?)"
+    : "";
+  const searchParams = keyword ? [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`] : [];
+
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `
+    SELECT e.*, s.title AS soup_title
+    FROM evaluations e
+    JOIN soups s ON e.soup_id = s.id
+    ${where}
+    ORDER BY e.created_at DESC
+    LIMIT ? OFFSET ?
+    `,
+    [...searchParams, limit + 1, offset]
+  );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM evaluations e JOIN soups s ON e.soup_id = s.id ${where}`,
+    searchParams
+  );
+
+  const hasMore = rows.length > limit;
+  if (hasMore) rows.pop();
+  res.json({
+    evaluations: rows.map(mapEvaluation),
+    total: Number(totalRow.total),
+    hasMore
+  });
 });
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

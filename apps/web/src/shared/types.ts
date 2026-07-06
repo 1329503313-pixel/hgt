@@ -35,6 +35,10 @@ export type SoupSummary = {
   isSurfacePublic: boolean;
   isBottomPublic: boolean;
   viewCount: number;
+  likeCount: number;
+  favoriteCount: number;
+  isLiked: boolean;
+  isFavorited: boolean;
   createdAt: string;
   evaluationCount: number;
   averageTotal: number | null;

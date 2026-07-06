@@ -1,7 +1,8 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Download, Eye, Lock, Pencil, Shield, Star, ThumbsUp, Trash2, User } from "lucide-react";
+import { ArrowLeft, Bell, Download, Eye, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User } from "lucide-react";
 import { toPng } from "html-to-image";
+import QRCode from "qrcode";
 import type { SoupDetail } from "../shared/types";
 import { api, SoupResponse, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -16,6 +17,8 @@ export default function DetailPage() {
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const radarRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -40,15 +43,15 @@ export default function DetailPage() {
   async function handleFavorite() {
     if (!soup) return;
     if (!user) { openAuth(); return; }
-    const data = await api<{ isFavorited: boolean }>(`/api/soups/${soup.id}/favorite`, { method: "POST" });
-    setSoup((old) => old ? { ...old, isFavorited: data.isFavorited } : old);
+    const data = await api<{ isFavorited: boolean; favoriteCount: number }>(`/api/soups/${soup.id}/favorite`, { method: "POST" });
+    setSoup((old) => old ? { ...old, isFavorited: data.isFavorited, favoriteCount: data.favoriteCount } : old);
   }
 
   async function handleLike() {
     if (!soup) return;
     if (!user) { openAuth(); return; }
-    const data = await api<{ isLiked: boolean }>(`/api/soups/${soup.id}/like`, { method: "POST" });
-    setSoup((old) => old ? { ...old, isLiked: data.isLiked } : old);
+    const data = await api<{ isLiked: boolean; likeCount: number }>(`/api/soups/${soup.id}/like`, { method: "POST" });
+    setSoup((old) => old ? { ...old, isLiked: data.isLiked, likeCount: data.likeCount } : old);
   }
 
   async function handleRequest() {
@@ -98,6 +101,64 @@ export default function DetailPage() {
     const content = document.createElement("div"); content.className = "export-content"; content.textContent = text;
     body.append(bodyTitle, content);
     sheet.append(header, body);
+
+    // Footer: radar chart + QR code (always show QR, radar only if data exists)
+    const hasRadarData = [
+      soup.radar.writing, soup.radar.logic, soup.radar.share,
+      soup.radar.mechanism, soup.radar.twist, soup.radar.depth
+    ].some((v) => v != null);
+
+    const footer = document.createElement("div");
+    footer.className = hasRadarData ? "export-footer" : "export-footer export-footer-qr-only";
+
+    if (hasRadarData) {
+      // Left: radar chart
+      const left = document.createElement("div");
+      left.className = "export-footer-left";
+      const radarCanvas = (await new Promise<HTMLCanvasElement | null>((resolve) => {
+        const radarEl = radarRef.current;
+        if (!radarEl) return resolve(null);
+        const sourceCanvas = radarEl.querySelector("canvas");
+        if (!sourceCanvas) return resolve(null);
+        const clone = document.createElement("canvas");
+        clone.width = sourceCanvas.width;
+        clone.height = sourceCanvas.height;
+        const ctx = clone.getContext("2d");
+        if (!ctx) return resolve(null);
+        ctx.drawImage(sourceCanvas, 0, 0);
+        resolve(clone);
+      }));
+      if (radarCanvas) {
+        left.appendChild(radarCanvas);
+        const radarLabel = document.createElement("div");
+        radarLabel.className = "export-footer-label";
+        radarLabel.textContent = `本汤综合评分：${soup.averageTotal != null ? soup.averageTotal + "分" : "暂无评分"}`;
+        left.appendChild(radarLabel);
+      }
+      footer.appendChild(left);
+    }
+
+    // Right: QR code
+    const right = document.createElement("div");
+    right.className = "export-footer-right";
+    const soupUrl = `${window.location.origin}/soup/${soup.id}`;
+    const qrDataUrl = await QRCode.toDataURL(soupUrl, {
+      width: 180,
+      margin: 2,
+      color: { dark: "#1e293b", light: "#ffffff" }
+    });
+    const qrImg = document.createElement("img");
+    qrImg.src = qrDataUrl;
+    qrImg.alt = "二维码";
+    right.appendChild(qrImg);
+    const qrLabel = document.createElement("div");
+    qrLabel.className = "export-footer-label";
+    qrLabel.textContent = "欢迎您扫码对本汤进行评价";
+    right.appendChild(qrLabel);
+
+    footer.appendChild(right);
+    sheet.appendChild(footer);
+
     document.body.appendChild(sheet);
 
     try {
@@ -182,21 +243,27 @@ export default function DetailPage() {
                   style={{ height: "calc(1.5lh * 0.75)" }}
                   onClick={handleLike} aria-pressed={soup.isLiked}
                 >
-                  <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : "text-muted"} size={15} /> 点赞
+                  <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : "text-muted"} size={15} /> {soup.likeCount}
                 </button>
                 <button
                   className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${soup.isFavorited ? "border-amber-200 bg-amber-50 text-amber-500" : "border-line bg-white text-muted hover:border-amber-200 hover:text-amber-500"}`}
                   style={{ height: "calc(1.5lh * 0.75)" }}
                   onClick={handleFavorite} aria-pressed={soup.isFavorited}
                 >
-                  <Star className={soup.isFavorited ? "fill-amber-400 text-amber-400" : "text-muted"} size={15} /> 收藏
+                  <Star className={soup.isFavorited ? "fill-amber-400 text-amber-400" : "text-muted"} size={15} /> {soup.favoriteCount}
+                </button>
+                <button
+                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 text-xs font-bold text-muted hover:text-primary transition"
+                  style={{ height: "calc(1.5lh * 0.75)" }}
+                  onClick={() => { document.getElementById("evaluations")?.scrollIntoView({ behavior: "smooth" }); }}
+                >
+                  <MessageSquare size={15} /> {soup.evaluationCount}
                 </button>
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
-              <span className="pill bg-slate-100 text-muted">{soup.evaluationCount} 条评价</span>
             </div>
             <p className="mt-3 flex items-center gap-1.5 text-sm text-muted">
               {soup.creatorAvatar ? <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" /> : <User size={14} />}
@@ -263,12 +330,12 @@ export default function DetailPage() {
       {/* Radar + Evaluations */}
       <div className={hasRadarData ? "grid gap-4 lg:grid-cols-[360px_1fr]" : "grid gap-4"}>
         {hasRadarData && (
-          <div className="card flex h-[360px] flex-col p-3">
+          <div className="card flex h-[360px] flex-col p-3" ref={radarRef}>
             <h2 className="mb-3 font-black text-ink">六维雷达图</h2>
             <div className="min-h-0 flex-1"><RadarChart radar={soup.radar} /></div>
           </div>
         )}
-        <div className="card p-4">
+        <div className="card p-4" id="evaluations">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="font-black text-ink">评价</h2>
             {hasEvaluations && (
