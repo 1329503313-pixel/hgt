@@ -84,7 +84,7 @@ export default function HomePage() {
 
   async function handleExportSoups() {
     setShowExportConfirm(false);
-    const latest = soups.slice(0, 20);
+    const latest = soups.slice(0, 10);
     if (latest.length === 0) return;
 
     const sheet = document.createElement("div");
@@ -105,10 +105,6 @@ export default function HomePage() {
     // Body: soup list
     const body = document.createElement("div");
     body.className = "export-body";
-
-    const bodyTitle = document.createElement("h2");
-    bodyTitle.textContent = `最新 ${latest.length} 条海龟汤`;
-    body.appendChild(bodyTitle);
 
     const list = document.createElement("div");
     list.className = "export-soup-list";
@@ -263,7 +259,7 @@ export default function HomePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4">
           <div className="w-full max-w-sm rounded-[20px] bg-white p-6 shadow-soft">
             <p className="text-base font-bold text-ink">导出汤名</p>
-            <p className="mt-2 text-sm text-muted">是否导出当前页面最新 20 条海龟汤列表？</p>
+            <p className="mt-2 text-sm text-muted">是否导出当前页面最新 10 条海龟汤列表？</p>
             <div className="mt-5 flex gap-3">
               <button
                 className="btn btn-secondary flex-1"
