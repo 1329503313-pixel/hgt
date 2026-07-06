@@ -17,9 +17,10 @@ export default function MinePage() {
   const [nicknameSaving, setNicknameSaving] = useState(false);
   const [nicknameError, setNicknameError] = useState("");
   const [avatarSaving, setAvatarSaving] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { showToast, openAuth } = useApp();
+  const { showToast, openAuth, setUser, triggerRefresh } = useApp();
 
   useEffect(() => {
     if (user) {
@@ -94,6 +95,14 @@ export default function MinePage() {
       setPasswordForm({ newPassword: "", confirmPassword: "" });
       showToast("密码已更新");
     } catch (e) { showToast(e instanceof Error ? e.message : "修改密码失败"); }
+  }
+
+  async function handleLogout() {
+    setShowLogoutConfirm(false);
+    await api("/api/auth/logout", { method: "POST" });
+    setUser(null);
+    triggerRefresh();
+    navigate("/");
   }
 
   return (
@@ -187,6 +196,38 @@ export default function MinePage() {
           </form>
         )}
       </div>
+
+      {/* Logout */}
+      <button
+        className="btn btn-danger w-full"
+        onClick={() => setShowLogoutConfirm(true)}
+      >
+        退出登录
+      </button>
+
+      {/* 退出登录确认弹框 */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4">
+          <div className="w-full max-w-sm rounded-[20px] bg-white p-6 shadow-soft">
+            <p className="text-base font-bold text-ink">退出登录</p>
+            <p className="mt-2 text-sm text-muted">确定要退出登录吗？</p>
+            <div className="mt-5 flex gap-3">
+              <button
+                className="btn btn-secondary flex-1"
+                onClick={() => setShowLogoutConfirm(false)}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn-danger flex-1"
+                onClick={handleLogout}
+              >
+                确定退出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
