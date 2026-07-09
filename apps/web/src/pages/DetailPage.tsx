@@ -187,7 +187,7 @@ export default function DetailPage() {
   const hasEvaluations = soup.evaluations.length > 0;
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-4 pt-16">
       {/* Header */}
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
@@ -232,7 +232,7 @@ export default function DetailPage() {
 
       {/* Meta card */}
       <div className="card p-4">
-        {soup.coverImage && <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage} alt={`${soup.title} 封面`} />}
+        <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage ?? "/default-cover.png"} alt={`${soup.title} 封面`} />
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-end justify-between gap-3">

@@ -35,9 +35,7 @@ export function SoupLinkList({
             {soup.coverImage ? (
               <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />
             ) : (
-              <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-slate-100 text-muted">
-                <Eye size={20} />
-              </div>
+              <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src="/default-cover.png" alt="" />
             )}
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 truncate">

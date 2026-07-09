@@ -7,3 +7,9 @@ mysql-data
 *.log
 *.err
 .tmp_cookies
+test_*.js
+test_*.cjs
+test_*.mjs
+*.tar
+*.tar.gz
+hgt.tar.gz

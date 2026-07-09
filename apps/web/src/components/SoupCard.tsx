@@ -25,7 +25,7 @@ export function SoupCard({
       {soup.coverImage ? (
         <CoverImage src={soup.coverImage} alt={`${soup.title} 封面`} />
       ) : (
-        <div className="soup-card-cover bg-[url('/home-hero.png')] bg-cover bg-center" style={{ aspectRatio: "2 / 1" }} />
+        <div className="soup-card-cover bg-[url('/default-cover.png')] bg-cover bg-center" style={{ aspectRatio: "2 / 1" }} />
       )}
       <div className="p-3">
         <h2 className="line-clamp-2 text-[16px] font-black leading-snug text-ink">{soup.title}</h2>

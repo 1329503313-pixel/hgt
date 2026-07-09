@@ -161,8 +161,32 @@ textarea {
 }
 
 .content-block {
-  white-space: pre-wrap;
   word-break: break-word;
+}
+.content-block p {
+  margin-bottom: 0.75em;
+}
+.content-block p:last-child {
+  margin-bottom: 0;
+}
+.content-block h3 {
+  font-size: 1.05em;
+  font-weight: 700;
+  margin: 1em 0 0.5em;
+}
+.content-block ul,
+.content-block ol {
+  padding-left: 1.25em;
+  margin-bottom: 0.75em;
+}
+.content-block li {
+  margin-bottom: 0.25em;
+}
+.content-block strong {
+  font-weight: 700;
+}
+.content-block em {
+  font-style: italic;
 }
 
 .export-sheet {
