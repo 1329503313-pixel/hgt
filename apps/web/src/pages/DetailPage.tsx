@@ -187,7 +187,7 @@ export default function DetailPage() {
   const hasEvaluations = soup.evaluations.length > 0;
 
   return (
-    <section className="space-y-4 pt-16">
+    <section className="pt-16">
       {/* Header */}
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
@@ -229,6 +229,8 @@ export default function DetailPage() {
           </div>
         </div>
       </header>
+
+      <div className="mx-auto max-w-6xl px-4 space-y-4">
 
       {/* Meta card */}
       <div className="card p-4">
@@ -372,6 +374,8 @@ export default function DetailPage() {
             )}
           </div>
         </div>
+      </div>
+
       </div>
 
       {/* Edit/Delete floating bar */}
