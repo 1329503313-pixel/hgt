@@ -161,6 +161,7 @@ textarea {
 }
 
 .content-block {
+  white-space: pre-wrap;
   word-break: break-word;
 }
 .content-block p {
