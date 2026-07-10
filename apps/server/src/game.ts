@@ -28,50 +28,57 @@ function parseJson<T>(val: any): T {
 }
 
 // ---------- 构建 System Prompt ----------
-function buildSystemPrompt(surface: string, bottom: string, manual: string, keyPoints: KeyPoint[]): string {
+function buildSystemPrompt(surface: string, bottom: string, manual: string, keyPoints: KeyPoint[], savedRevealed: string[]): string {
   const pointsText = keyPoints.map((p, i) => `${i + 1}. ${p.key}：${p.description}`).join("\n");
-  return `你是一个海龟汤（情境谜题）的主持人。玩家知道"汤面"（故事的表象），不知道"汤底"（故事的真相）。你需要根据玩家的提问引导他们推理出真相。
+  const revealedInfo = savedRevealed.length > 0
+    ? `\n**目前玩家已解锁的线索：${savedRevealed.join("、")}**\n未解锁的线索：${keyPoints.filter(p => !savedRevealed.includes(p.key)).map(p => p.key).join("、")}\n`
+    : "\n**目前玩家尚未触及任何线索。**\n";
 
-## 汤面（玩家已经看到的内容）
+  return `你是海龟汤（情境谜题）的主持人。玩家知道"汤面"，不知道"汤底"。你的任务是引导他们推理出真相，并通过 JSON 返回你的回答。
+
+## 汤面（玩家可见）
 ${surface}
 
-## 汤底（主持人专用，绝对保密——不要直接告诉玩家）
+## 汤底（绝对保密，永远不要直接透露任何汤底原文）
 ${bottom}
 
-## 主持人手册（引导指南）
-${manual || "无特殊指引，按常规海龟汤主持方式进行。"}
+## 主持人指引
+${manual || "按常规海龟汤主持方式。每次回答不超过 3 段。"}
 
-## 关键线索点（用于追踪玩家还原进度）
+## 五个关键线索维度（每个维度的 key 必须精确匹配，不能创造新 key）
 ${pointsText}
+${revealedInfo}
+## 你的角色
+- 对玩家的猜测回答"是"/"否"/"无关"，或给简短的方向性提示
+- 绝对不透露汤底原文，即使玩家猜对也不直接确认
+- 语气温暖引导，像一位朋友在陪你推理
 
-## 规则
-1. 对玩家的提问回答"是""否""无关"，或给出简短的方向性提示
-2. 绝对不要主动透露汤底的具体内容，即使玩家猜对了一个线索也不要直接说"你猜对了，事实就是..."
-3. 回答使用温暖但不剧透的语气，像一位引导者而非考官
-4. 如果玩家的提问方向完全偏离，温和地引导他们回到正轨
-5. **重要：即使是第一个回答，也必须使用 JSON 格式输出，禁止输出纯文本**
+## JSON 输出格式（每轮必须输出 JSON，禁止纯文本）
 
-## 关键线索点（用于追踪玩家还原进度）
-${pointsText}
+{"answer": "你的回答（必填）", "newlyRevealed": [], "hint": ""}
 
-## 规则
-1. 对玩家的提问回答"是""否""无关"，或给出简短的方向性提示
-2. 绝对不要主动透露汤底的具体内容
-3. 回答使用温暖但不剧透的语气
-4. 如果玩家的提问方向完全偏离，温和地引导他们回到正轨
-5. **重要：必须使用 JSON 格式输出**
+- newlyRevealed 填写本轮玩家**首次触及**的关键线索点的 key（来自上面的五个维度）
+- 如果本轮问题没有触及任何新线索，传空数组 []
+- 只填**本轮新触及的**，不要填入之前已解锁的
+- progress 由系统自动计算，你不要填入`;
+}
 
-## 输出格式
-请只输出一行合法的 JSON：
-{"answer":"回答内容","newlyRevealed":[],"hint":""}
-- answer: 你的回答
-- newlyRevealed: 本轮提问中新触及的关键线索点 key（空数组 = 未触及新线索）
-- hint: 如果玩家请求提示且你给出提示，把提示内容放这里
-
-注意：
-- 只把本轮提问**新**触及的线索放入 newlyRevealed，不要重复之前已揭示的
-- 不要输出 progress 字段——系统会自动计算
-- 答案中禁止包含汤底原文`;
+// ---------- 修复 JSON：DeepSeek 有时忘记用 JSON 格式回复 ----------
+function repairJson(raw: string): any {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // 尝试从纯文本中提取 JSON
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        return JSON.parse(m[0]);
+      } catch {
+        // fall through
+      }
+    }
+    return null;
+  }
 }
 
 // ---------- 调用 DeepSeek API ----------
@@ -114,11 +121,15 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
   console.error("DeepSeek raw response:", raw.slice(0, 300));
 
   try {
-    const parsed = JSON.parse(raw) as any;
+    const parsed = repairJson(raw) || {};
     return {
-      answer: typeof parsed.answer === "string" ? parsed.answer : String(parsed.answer ?? ""),
+      answer: typeof parsed.answer === "string" && parsed.answer.trim()
+        ? parsed.answer.trim()
+        : (raw.slice(0, 500) || "AI 返回了异常内容，请重试。"),
       hint: typeof parsed.hint === "string" ? parsed.hint : "",
-      newlyRevealed: Array.isArray(parsed.newlyRevealed) ? parsed.newlyRevealed.filter((k: unknown) => typeof k === "string") : []
+      newlyRevealed: Array.isArray(parsed.newlyRevealed)
+        ? parsed.newlyRevealed.filter((k: unknown) => typeof k === "string")
+        : []
     };
   } catch {
     console.error("DeepSeek JSON parse error:", raw.slice(0, 200));
@@ -178,7 +189,7 @@ gameRouter.post("/:soupId/start", async (req, res) => {
   }
 
   // 新建存档
-  const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS);
+  const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS, []);
   const initialMsg = { role: "assistant", content: "欢迎来到海龟汤！我已经准备好了，请输入你对这个谜题的推理和提问，我会以\"是\"\"否\"\"无关\"或提示来引导你逐步接近真相。你可以随时问我\"我还忽略了什么\"来获取提示。开始吧！🔍" };
 
   const id = nanoid(24);
@@ -223,7 +234,7 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
   const currentProgress = Math.round((savedRevealed.length / DEFAULT_KEY_POINTS.length) * 100);
 
   // 构建 prompt
-  const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS);
+  const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS, savedRevealed);
 
   // 已有线索上下文 (让 AI 知道已有进度)
   const historyCtx = `[当前已揭示的线索: ${savedRevealed.length > 0 ? savedRevealed.join("、") : "暂无"}]`;
@@ -287,7 +298,7 @@ gameRouter.post("/:soupId/hint", async (req, res) => {
   const session = sessions[0];
   const messages: { role: string; content: string }[] = parseJson(session.messages);
   const savedRevealed: string[] = parseJson(session.revealed_keys);
-  const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS);
+  const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS, savedRevealed);
 
   const historyCtx = `[当前已揭示的线索: ${savedRevealed.length > 0 ? savedRevealed.join("、") : "暂无"}]`;
   const history = messages.map((m) => ({
