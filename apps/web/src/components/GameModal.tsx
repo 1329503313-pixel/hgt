@@ -133,7 +133,7 @@ export function GameModal({
       </header>
 
       {/* 上半部分：汤面 + 进度条 */}
-      <div className="shrink-0 border-b border-line bg-white">
+      <div className="shrink-0 border-b border-line bg-white pt-[52px]">
         <div className="mx-auto max-w-3xl px-4 py-3 space-y-3">
           {/* 汤面卡片 */}
           <div className="card p-3">
