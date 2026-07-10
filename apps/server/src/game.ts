@@ -87,7 +87,7 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
       Authorization: `Bearer ${DEEPSEEK_API_KEY}`
     },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      model: "deepseek-v4-flash",
       messages: apiMessages,
       max_tokens: 1200,
       temperature: 0.7
@@ -102,6 +102,7 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
 
   const data = await resp.json() as { choices: { message: { content: string } }[] };
   const raw = data.choices?.[0]?.message?.content ?? "";
+  console.error("DeepSeek raw response:", raw.slice(0, 300));
 
   try {
     const parsed = JSON.parse(raw) as any;
