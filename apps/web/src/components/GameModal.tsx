@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowLeft, Send, Lightbulb, Sparkles } from "lucide-react";
+import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api } from "../api";
 
@@ -29,6 +29,8 @@ export function GameModal({
     loading: true
   });
   const [input, setInput] = useState("");
+  const [infoExpanded, setInfoExpanded] = useState(true);
+  const chatRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -130,66 +132,82 @@ export function GameModal({
         </div>
       </header>
 
-      {/* 内容区 */}
-      <div className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-3xl px-4 py-4 space-y-4">
-
+      {/* 上半部分：汤面 + 进度条 */}
+      <div className="shrink-0 border-b border-line bg-white">
+        <div className="mx-auto max-w-3xl px-4 py-3 space-y-3">
           {/* 汤面卡片 */}
-          <div className="card p-4">
-            <h2 className="mb-2 font-black text-ink">{soup.title}</h2>
-            <div className="text-[15px] leading-7 text-ink whitespace-pre-wrap">{soup.surface}</div>
+          <div className="card p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <h2 className="font-black text-ink">{soup.title}</h2>
+                <div className={`text-[14px] leading-6 text-ink whitespace-pre-wrap ${infoExpanded ? "" : "line-clamp-2"}`}>
+                  {soup.surface}
+                </div>
+              </div>
+              <button
+                className="shrink-0 mt-1 grid h-7 w-7 place-items-center rounded-md bg-slate-100 text-muted"
+                onClick={() => setInfoExpanded(!infoExpanded)}
+              >
+                {infoExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            </div>
           </div>
 
           {/* 进度条 */}
-          <div className="card p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-bold text-muted">推理进度</span>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-bold text-muted">推理进度</span>
               <span className="text-sm font-black text-primary">{state.progress}%</span>
             </div>
-            <div className="h-3 w-full overflow-hidden rounded-full bg-slate-200">
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
               <div
                 className="h-full rounded-full bg-primary transition-all duration-700 ease-out"
-                style={{ width: `${Math.max(2, state.progress)}%` }}
+                style={{ width: `${Math.max(3, state.progress)}%` }}
               />
             </div>
             {state.revealedKeys.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
+              <div className="mt-1.5 flex flex-wrap gap-1">
                 {state.revealedKeys.map((k) => (
-                  <span key={k} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-primary">
-                    <Sparkles size={12} className="mr-1" />{k}
+                  <span key={k} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                    <Sparkles size={11} className="mr-1" />{k}
                   </span>
                 ))}
               </div>
             )}
           </div>
+        </div>
+      </div>
 
-          {/* 对话框 */}
-          <div className="space-y-3 pb-4">
-            {state.messages.map((msg, i) => (
+      {/* 下半部分：聊天对话 */}
+      <div
+        ref={chatRef}
+        className="flex-1 overflow-auto"
+      >
+        <div className="mx-auto max-w-3xl px-4 py-3 space-y-3">
+          {state.messages.map((msg, i) => (
+            <div
+              key={i}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+            >
               <div
-                key={i}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px] leading-7 ${
+                  msg.role === "user"
+                    ? "bg-primary text-white"
+                    : "border border-line bg-white text-ink"
+                }`}
               >
-                <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-3 text-[15px] leading-7 ${
-                    msg.role === "user"
-                      ? "bg-primary text-white"
-                      : "border border-line bg-white text-ink"
-                  }`}
-                >
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
-                </div>
+                <div className="whitespace-pre-wrap">{msg.content}</div>
               </div>
-            ))}
-            {state.loading && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl border border-line bg-white px-4 py-3 text-[15px] text-muted">
-                  推理中<DotDots />
-                </div>
+            </div>
+          ))}
+          {state.loading && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl border border-line bg-white px-4 py-2.5 text-[15px] text-muted">
+                推理中<DotDots />
               </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
         </div>
       </div>
 
