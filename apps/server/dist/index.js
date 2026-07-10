@@ -2,21 +2,32 @@ import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
+import { createHash } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { nanoid } from "nanoid";
+import sharp from "sharp";
 import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
-const JWT_SECRET = process.env.JWT_SECRET || "jwt-fallback-secret-change-in-production";
+import gameRouter from "./game.js";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    if (config.nodeEnv === "production") {
+        console.error("FATAL: JWT_SECRET 环境变量未设置，服务拒绝启动。请设置一个随机长字符串。");
+        process.exit(1);
+    }
+    console.warn("⚠ 未设置 JWT_SECRET，使用开发 fallback。生产环境请务必设置 JWT_SECRET。");
+}
+const JWT_SECRET_FINAL = JWT_SECRET || "dev-jwt-fallback-not-for-production";
 const app = express();
 app.set("trust proxy", 1);
 // ---------- JWT 认证中间件 ----------
 function signToken(payload) {
-    return jwt.sign(payload, JWT_SECRET, { expiresIn: "30d" });
+    return jwt.sign(payload, JWT_SECRET_FINAL, { expiresIn: "30d" });
 }
 function verifyToken(token) {
     try {
-        return jwt.verify(token, JWT_SECRET);
+        return jwt.verify(token, JWT_SECRET_FINAL);
     }
     catch {
         return null;
@@ -38,6 +49,17 @@ function extractAuth(req) {
 app.use(cors({ origin: config.webOrigin, credentials: true }));
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
+// 生产环境：serve Vite 构建产物
+if (config.nodeEnv === "production") {
+    const path = await import("node:path");
+    const frontendDist = path.resolve(process.cwd(), "apps/web/dist");
+    app.use(express.static(frontendDist, { index: false }));
+    app.get("*", (_req, res, next) => {
+        if (_req.path.startsWith("/api/"))
+            return next();
+        res.sendFile("index.html", { root: frontendDist });
+    });
+}
 const text = z.string().trim().min(1);
 const optionalText = z.string().trim().optional().default("");
 const optionalTextList = z
@@ -62,6 +84,7 @@ const soupSchema = z.object({
         .default("")
         .refine((value) => !value || /^data:image\/(png|jpeg);base64,/.test(value), "封面仅支持 JPG 或 PNG"),
     isOriginal: z.boolean().default(true),
+    isSensitive: z.boolean(),
     surface: text,
     supplementalSurfaces: optionalTextList,
     bottom: text,
@@ -77,13 +100,20 @@ const evaluationSchema = z.object({
     share: optionalScore,
     mechanism: optionalScore,
     twist: optionalScore,
-    depth: optionalScore
+    depth: optionalScore,
+    content: z.string().trim().max(500, "评价内容不超过 500 字").optional().default("")
 });
 function sendError(res, status, message) {
     return res.status(status).json({ error: message });
 }
 function currentUser(req) {
     return extractAuth(req);
+}
+function viewIdentifier(req, user) {
+    if (user)
+        return `user:${user.id}`;
+    const raw = `${req.ip ?? "0"}|${req.headers["user-agent"] ?? ""}`;
+    return `guest:${createHash("sha256").update(raw).digest("hex")}`;
 }
 function requireAuth(req, res) {
     const user = currentUser(req);
@@ -104,6 +134,16 @@ function requireAdmin(req, res) {
     return user;
 }
 function toUser(row) {
+    return {
+        id: row.id,
+        username: row.username,
+        nickname: row.nickname,
+        avatar: row.avatar ? String(row.avatar) : null,
+        role: row.role,
+        createdAt: new Date(row.created_at).toISOString()
+    };
+}
+function toJwtPayload(row) {
     return {
         id: row.id,
         username: row.username,
@@ -145,6 +185,7 @@ function mapEvaluation(row) {
         mechanism: num(row.mechanism),
         twist: num(row.twist),
         depth: num(row.depth),
+        content: row.content ? String(row.content) : null,
         createdAt: new Date(row.created_at).toISOString()
     };
 }
@@ -155,13 +196,18 @@ function mapSoupSummary(row) {
         author: row.author,
         type: row.type,
         summary: row.summary ?? "",
-        coverImage: row.cover_image ? String(row.cover_image) : null,
+        coverImage: row.cover_thumbnail ? String(row.cover_thumbnail) : null,
         isOriginal: bool(row.is_original ?? 1),
         creatorId: row.creator_id,
         creatorName: row.creator_name,
+        creatorAvatar: row.creator_avatar ? String(row.creator_avatar) : null,
         isSurfacePublic: bool(row.is_surface_public),
         isBottomPublic: bool(row.is_bottom_public),
         viewCount: Number(row.view_count ?? 0),
+        likeCount: Number(row.like_count ?? 0),
+        favoriteCount: Number(row.favorite_count ?? 0),
+        isLiked: bool(row.is_liked),
+        isFavorited: bool(row.is_favorited),
         createdAt: new Date(row.created_at).toISOString(),
         evaluationCount: Number(row.evaluation_count ?? 0),
         averageTotal: num(row.average_total),
@@ -173,6 +219,12 @@ function mapSoupSummary(row) {
             twist: num(row.avg_twist),
             depth: num(row.avg_depth)
         }
+    };
+}
+function mapSoupDetail(row) {
+    return {
+        ...mapSoupSummary(row),
+        coverImage: row.cover_image ? String(row.cover_image) : null
     };
 }
 async function getSoupRaw(id) {
@@ -203,6 +255,16 @@ async function adminIds() {
     const [rows] = await pool.query("SELECT id FROM users WHERE role = 'admin'");
     return rows.map((row) => String(row.id));
 }
+async function generateThumbnail(base64) {
+    try {
+        const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
+        const thumb = await sharp(buf).resize(400, undefined, { withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+        return `data:image/jpeg;base64,${thumb.toString("base64")}`;
+    }
+    catch {
+        return null;
+    }
+}
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.post("/api/auth/register", async (req, res) => {
     const parsed = z
@@ -226,7 +288,7 @@ app.post("/api/auth/register", async (req, res) => {
         hash,
         nickname
     ]);
-    const user = { id, username, nickname, role: "user", createdAt: new Date().toISOString() };
+    const user = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString() };
     const token = signToken(user);
     res.cookie("hgt_token", token, {
         httpOnly: true,
@@ -249,7 +311,7 @@ app.post("/api/auth/login", async (req, res) => {
     if (!ok)
         return sendError(res, 401, "账号或密码错误");
     const user = toUser(row);
-    const token = signToken(user);
+    const token = signToken(toJwtPayload(row));
     res.cookie("hgt_token", token, {
         httpOnly: true,
         sameSite: "lax",
@@ -282,15 +344,68 @@ app.post("/api/auth/password", async (req, res) => {
     await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash, user.id]);
     res.json({ ok: true });
 });
-app.get("/api/auth/me", (req, res) => {
-    res.json({ user: currentUser(req) });
+app.get("/api/auth/me", async (req, res) => {
+    const user = currentUser(req);
+    if (user) {
+        // JWT 不再包含 avatar（缩小 token 体积），需要从数据库查
+        const [rows] = await pool.query("SELECT avatar FROM users WHERE id = ? LIMIT 1", [user.id]);
+        if (rows.length) {
+            user.avatar = rows[0].avatar ? String(rows[0].avatar) : null;
+        }
+    }
+    res.json({ user });
+});
+app.patch("/api/me/nickname", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const parsed = z.object({ nickname: text.max(8, "昵称不超过 8 个字符") }).safeParse(req.body);
+    if (!parsed.success)
+        return sendError(res, 400, parsed.error.issues[0]?.message ?? "昵称信息不正确");
+    // 更新用户昵称
+    await pool.query("UPDATE users SET nickname = ? WHERE id = ?", [parsed.data.nickname, user.id]);
+    // 同步更新该用户作为原创作者的 soups 中的 creator_name 和 author
+    await pool.query("UPDATE soups SET creator_name = ?, author = ? WHERE creator_id = ? AND is_original = TRUE", [parsed.data.nickname, parsed.data.nickname, user.id]);
+    // 同步更新 evaluations 中的 reviewer
+    await pool.query("UPDATE evaluations SET reviewer = ? WHERE reviewer_id = ?", [parsed.data.nickname, user.id]);
+    res.json({ ok: true, nickname: parsed.data.nickname });
+});
+app.patch("/api/me/avatar", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const parsed = z
+        .object({
+        avatar: z
+            .string()
+            .optional()
+            .default("")
+            .refine((value) => !value || /^data:image\/(png|jpeg);base64,/.test(value), "头像仅支持 JPG 或 PNG")
+    })
+        .safeParse(req.body);
+    if (!parsed.success)
+        return sendError(res, 400, parsed.error.issues[0]?.message ?? "头像格式不正确");
+    const avatar = parsed.data.avatar || null;
+    await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
+    const updated = { id: user.id, username: user.username, nickname: user.nickname, avatar, role: user.role, createdAt: user.createdAt };
+    const token = signToken(updated);
+    res.cookie("hgt_token", token, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: false,
+        maxAge: 1000 * 60 * 60 * 24 * 30,
+        path: "/"
+    });
+    res.json({ ok: true, avatar });
 });
 app.get("/api/me/soups", async (req, res) => {
     const user = requireAuth(req, res);
     if (!user)
         return;
     const [rows] = await pool.query(`
-    SELECT s.*,
+    SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -301,9 +416,79 @@ app.get("/api/me/soups", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.creator_id = ?
     GROUP BY s.id
     ORDER BY s.created_at DESC
+    `, [user.id]);
+    res.json({ soups: rows.map(mapSoupSummary) });
+});
+app.get("/api/me/stats", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const [[soupRows], [favRows], [evalRows], [likeRows]] = await Promise.all([
+        pool.query("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [user.id]),
+        pool.query("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [user.id]),
+        pool.query("SELECT COUNT(DISTINCT soup_id) AS count FROM evaluations WHERE reviewer_id = ?", [user.id]),
+        pool.query("SELECT COUNT(*) AS count FROM soup_likes WHERE user_id = ?", [user.id])
+    ]);
+    res.json({
+        soupCount: Number(soupRows[0]?.count ?? 0),
+        favoriteCount: Number(favRows[0]?.count ?? 0),
+        evaluationCount: Number(evalRows[0]?.count ?? 0),
+        likeCount: Number(likeRows[0]?.count ?? 0)
+    });
+});
+app.get("/api/me/favorites", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const [rows] = await pool.query(`
+    SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+      COUNT(e.id) AS evaluation_count,
+      AVG(e.total) AS average_total,
+      AVG(e.writing) AS avg_writing,
+      AVG(e.logic) AS avg_logic,
+      AVG(e.share) AS avg_share,
+      AVG(e.mechanism) AS avg_mechanism,
+      AVG(e.twist) AS avg_twist,
+      AVG(e.depth) AS avg_depth
+    FROM soups s
+    INNER JOIN soup_favorites f ON f.soup_id = s.id
+    LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
+    WHERE f.user_id = ?
+    GROUP BY s.id
+    ORDER BY f.created_at DESC
+    `, [user.id]);
+    res.json({ soups: rows.map(mapSoupSummary) });
+});
+app.get("/api/me/evaluations", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const [rows] = await pool.query(`
+    SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+      COUNT(e2.id) AS evaluation_count,
+      AVG(e2.total) AS average_total,
+      AVG(e2.writing) AS avg_writing,
+      AVG(e2.logic) AS avg_logic,
+      AVG(e2.share) AS avg_share,
+      AVG(e2.mechanism) AS avg_mechanism,
+      AVG(e2.twist) AS avg_twist,
+      AVG(e2.depth) AS avg_depth
+    FROM soups s
+    INNER JOIN evaluations my ON my.soup_id = s.id
+    LEFT JOIN evaluations e2 ON e2.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
+    WHERE my.reviewer_id = ?
+    GROUP BY s.id
+    ORDER BY my.created_at DESC
     `, [user.id]);
     res.json({ soups: rows.map(mapSoupSummary) });
 });
@@ -311,6 +496,7 @@ app.get("/api/soups", async (req, res) => {
     const user = currentUser(req);
     const where = [];
     const params = [];
+    const userParams = [];
     if (!user || user.role !== "admin") {
         if (user) {
             where.push("(s.is_surface_public = TRUE OR s.creator_id = ?)");
@@ -344,8 +530,16 @@ app.get("/api/soups", async (req, res) => {
     }
     const limit = Math.min(Number(req.query.limit ?? 10), 50);
     const offset = Number(req.query.offset ?? 0);
+    const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RAND";
+    const orderClause = order === "RAND" ? "RAND()" : `s.created_at ${order}`;
     const [rows] = await pool.query(`
-    SELECT s.*,
+    SELECT s.id, s.title, s.author, s.type, s.summary, s.cover_thumbnail, s.is_original,
+      s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
+      u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+      ${user ? `EXISTS(SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,` : "FALSE AS is_liked,"}
+      ${user ? `EXISTS(SELECT 1 FROM soup_favorites WHERE soup_id = s.id AND user_id = ?) AS is_favorited,` : "FALSE AS is_favorited,"}
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -356,12 +550,13 @@ app.get("/api/soups", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     GROUP BY s.id
     ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
-    ORDER BY s.created_at DESC
+    ORDER BY ${orderClause}
     LIMIT ${limit + 1} OFFSET ${offset}
-    `, params);
+    `, [...(user ? [user.id, user.id] : []), ...params]);
     const hasMore = rows.length > limit;
     if (hasMore)
         rows.pop();
@@ -379,16 +574,19 @@ app.post("/api/soups", async (req, res) => {
     if (soup.isOriginal && !soup.author)
         return sendError(res, 400, "原创海龟汤需要填写作者");
     const author = soup.isOriginal ? soup.author : "佚名";
+    const thumbnail = soup.coverImage ? await generateThumbnail(soup.coverImage) : null;
     await pool.query(`INSERT INTO soups
-      (id, title, author, type, summary, cover_image, is_original, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, creator_id, creator_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, creator_id, creator_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
         id,
         soup.title,
         author,
         soup.type,
         soup.summary,
         soup.coverImage || null,
+        thumbnail,
         soup.isOriginal,
+        soup.isSensitive,
         soup.surface,
         JSON.stringify(soup.supplementalSurfaces),
         soup.bottom,
@@ -408,7 +606,7 @@ app.get("/api/soups/:id", async (req, res) => {
         return sendError(res, 404, "海龟汤不存在");
     if (!canSeeSoupSurface(soup, user))
         return sendError(res, 403, "没有查看权限");
-    const identifier = user?.id ?? `${req.ip ?? "0"}|${(req.headers["user-agent"] ?? "").slice(0, 120)}`;
+    const identifier = viewIdentifier(req, user);
     const [recent] = await pool.query("SELECT viewed_at FROM soup_views WHERE soup_id = ? AND user_identifier = ? ORDER BY viewed_at DESC LIMIT 1", [req.params.id, identifier]);
     const lastView = recent[0]?.viewed_at ? new Date(recent[0].viewed_at).getTime() : 0;
     if (Date.now() - lastView > 60_000) {
@@ -416,7 +614,9 @@ app.get("/api/soups/:id", async (req, res) => {
         await pool.query("UPDATE soups SET view_count = view_count + 1 WHERE id = ?", [req.params.id]);
     }
     const [statsRows] = await pool.query(`
-    SELECT s.*,
+    SELECT s.*, u.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
       AVG(e.total) AS average_total,
       AVG(e.writing) AS avg_writing,
@@ -427,6 +627,7 @@ app.get("/api/soups/:id", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.id = ?
     GROUP BY s.id
     LIMIT 1
@@ -436,20 +637,94 @@ app.get("/api/soups/:id", async (req, res) => {
     const [requestRows] = user && !full
         ? await pool.query("SELECT id FROM view_requests WHERE soup_id = ? AND requester_id = ? AND status = 'pending' LIMIT 1", [req.params.id, user.id])
         : [[]];
+    const [favoriteRows] = user
+        ? await pool.query("SELECT id FROM soup_favorites WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.id, user.id])
+        : [[]];
+    const [likeRows] = user
+        ? await pool.query("SELECT id FROM soup_likes WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.id, user.id])
+        : [[]];
     res.json({
         soup: {
-            ...mapSoupSummary(statsRows[0]),
+            ...mapSoupDetail(statsRows[0]),
             surface: soup.surface,
-            supplementalSurfaces: jsonList(soup.supplemental_surfaces),
+            supplementalSurfaces: full ? jsonList(soup.supplemental_surfaces) : [],
             bottom: full ? soup.bottom : null,
             supplementalBottoms: full ? jsonList(soup.supplemental_bottoms) : null,
             manual: full ? soup.host_manual : null,
             canViewFull: full,
             canEdit: Boolean(user && (user.role === "admin" || user.id === soup.creator_id)),
+            isFavorited: favoriteRows.length > 0,
+            isLiked: likeRows.length > 0,
             pendingRequestId: requestRows[0]?.id ?? null,
             evaluations: evalRows.map(mapEvaluation)
         }
     });
+});
+app.post("/api/soups/:id/like", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const soup = await getSoupRaw(req.params.id);
+    if (!soup)
+        return sendError(res, 404, "海龟汤不存在");
+    if (!canSeeSoupSurface(soup, user))
+        return sendError(res, 403, "没有查看权限");
+    const [rows] = await pool.query("SELECT id FROM soup_likes WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.id, user.id]);
+    if (rows.length > 0) {
+        await pool.query("DELETE FROM soup_likes WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
+        const [[c]] = await pool.query("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
+        res.json({ isLiked: false, likeCount: Number(c.cnt) });
+        return;
+    }
+    await pool.query("INSERT INTO soup_likes (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+    const [[c2]] = await pool.query("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
+    res.status(201).json({ isLiked: true, likeCount: Number(c2.cnt) });
+});
+app.get("/api/me/likes", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const [rows] = await pool.query(`
+    SELECT s.*, u2.avatar AS creator_avatar,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+      COUNT(e.id) AS evaluation_count,
+      AVG(e.total) AS average_total,
+      AVG(e.writing) AS avg_writing,
+      AVG(e.logic) AS avg_logic,
+      AVG(e.share) AS avg_share,
+      AVG(e.mechanism) AS avg_mechanism,
+      AVG(e.twist) AS avg_twist,
+      AVG(e.depth) AS avg_depth
+    FROM soups s
+    INNER JOIN soup_likes lk ON lk.soup_id = s.id
+    LEFT JOIN evaluations e ON e.soup_id = s.id
+    LEFT JOIN users u2 ON u2.id = s.creator_id
+    WHERE lk.user_id = ?
+    GROUP BY s.id
+    ORDER BY lk.created_at DESC
+    `, [user.id]);
+    res.json({ soups: rows.map(mapSoupSummary) });
+});
+app.post("/api/soups/:id/favorite", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    const soup = await getSoupRaw(req.params.id);
+    if (!soup)
+        return sendError(res, 404, "海龟汤不存在");
+    if (!canSeeSoupSurface(soup, user))
+        return sendError(res, 403, "没有查看权限");
+    const [rows] = await pool.query("SELECT id FROM soup_favorites WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.id, user.id]);
+    if (rows.length > 0) {
+        await pool.query("DELETE FROM soup_favorites WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
+        const [[c]] = await pool.query("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
+        res.json({ isFavorited: false, favoriteCount: Number(c.cnt) });
+        return;
+    }
+    await pool.query("INSERT INTO soup_favorites (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+    const [[c2]] = await pool.query("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
+    res.status(201).json({ isFavorited: true, favoriteCount: Number(c2.cnt) });
 });
 app.put("/api/soups/:id", async (req, res) => {
     const user = requireAuth(req, res);
@@ -467,8 +742,9 @@ app.put("/api/soups/:id", async (req, res) => {
     if (next.isOriginal && !next.author)
         return sendError(res, 400, "原创海龟汤需要填写作者");
     const author = next.isOriginal ? next.author : "佚名";
+    const thumbnail = next.coverImage ? await generateThumbnail(next.coverImage) : null;
     await pool.query(`UPDATE soups
-     SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, is_original = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
+     SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
          is_surface_public = ?, is_bottom_public = ?
      WHERE id = ?`, [
         next.title,
@@ -476,7 +752,9 @@ app.put("/api/soups/:id", async (req, res) => {
         next.type,
         next.summary,
         next.coverImage || null,
+        thumbnail,
         next.isOriginal,
+        next.isSensitive,
         next.surface,
         JSON.stringify(next.supplementalSurfaces),
         next.bottom,
@@ -517,7 +795,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
     const data = parsed.data;
     if (existing) {
         await pool.query(`UPDATE evaluations
-       SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?
+       SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?
        WHERE id = ?`, [
             data.total,
             user.nickname,
@@ -527,14 +805,15 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
             data.mechanism,
             data.twist,
             data.depth,
+            data.content || null,
             existing.id
         ]);
         return res.json({ id: existing.id });
     }
     const id = nanoid();
     await pool.query(`INSERT INTO evaluations
-      (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth, content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
         id,
         req.params.id,
         data.total,
@@ -545,7 +824,8 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         data.share,
         data.mechanism,
         data.twist,
-        data.depth
+        data.depth,
+        data.content || null
     ]);
     res.status(201).json({ id });
 });
@@ -644,18 +924,34 @@ app.get("/api/notifications", async (req, res) => {
     const user = requireAuth(req, res);
     if (!user)
         return;
-    const [rows] = await pool.query("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [user.id]);
+    const [rows] = await pool.query(`SELECT n.*,
+      CASE WHEN n.type = 'view_request' OR n.type = 'view_request_result'
+           THEN vr.soup_id
+           ELSE n.related_id
+      END AS soup_id
+     FROM notifications n
+     LEFT JOIN view_requests vr ON n.type IN ('view_request','view_request_result') AND n.related_id = vr.id
+     WHERE n.user_id = ?
+     ORDER BY n.created_at DESC
+     LIMIT 50`, [user.id]);
     res.json({
         notifications: rows.map((row) => ({
             id: row.id,
             type: row.type,
             title: row.title,
             content: row.content,
-            relatedId: row.related_id,
+            relatedId: row.soup_id,
             isRead: bool(row.is_read),
             createdAt: new Date(row.created_at).toISOString()
         }))
     });
+});
+app.patch("/api/notifications/read-all", async (req, res) => {
+    const user = requireAuth(req, res);
+    if (!user)
+        return;
+    await pool.query("UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE", [user.id]);
+    res.json({ ok: true });
 });
 app.patch("/api/notifications/:id/read", async (req, res) => {
     const user = requireAuth(req, res);
@@ -667,8 +963,24 @@ app.patch("/api/notifications/:id/read", async (req, res) => {
 app.get("/api/admin/users", async (req, res) => {
     if (!requireAdmin(req, res))
         return;
-    const [rows] = await pool.query("SELECT id, username, nickname, role, created_at FROM users ORDER BY created_at DESC");
-    res.json({ users: rows.map(toUser) });
+    const [rows] = await pool.query(`SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at,
+      (SELECT COUNT(*) FROM soups WHERE creator_id = u.id) AS soup_count,
+      (SELECT COUNT(*) FROM evaluations WHERE reviewer_id = u.id) AS evaluation_count,
+      (SELECT COUNT(*) FROM soup_likes WHERE user_id = u.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE user_id = u.id) AS favorite_count
+     FROM users u
+     ORDER BY u.created_at DESC`);
+    res.json({
+        users: rows.map((row) => ({
+            ...toUser(row),
+            stats: {
+                soupCount: Number(row.soup_count ?? 0),
+                evaluationCount: Number(row.evaluation_count ?? 0),
+                likeCount: Number(row.like_count ?? 0),
+                favoriteCount: Number(row.favorite_count ?? 0)
+            }
+        }))
+    });
 });
 app.patch("/api/admin/users/:id", async (req, res) => {
     if (!requireAdmin(req, res))
@@ -692,6 +1004,49 @@ app.delete("/api/admin/users/:id", async (req, res) => {
     await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
     res.json({ ok: true });
 });
+app.post("/api/admin/users/:id/reset-password", async (req, res) => {
+    if (!requireAdmin(req, res))
+        return;
+    const parsed = z.object({ newPassword: z.string().min(6, "新密码至少 6 位").max(72) }).safeParse(req.body);
+    if (!parsed.success)
+        return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码格式不正确");
+    const hash = await bcrypt.hash(parsed.data.newPassword, 10);
+    await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash, req.params.id]);
+    res.json({ ok: true });
+});
+app.get("/api/admin/evaluations", async (req, res) => {
+    if (!requireAdmin(req, res))
+        return;
+    const limit = Math.min(Number(req.query.limit ?? 20), 100);
+    const offset = Number(req.query.offset ?? 0);
+    const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
+    const where = keyword
+        ? "WHERE (e.reviewer LIKE ? OR e.content LIKE ? OR s.title LIKE ?)"
+        : "";
+    const searchParams = keyword ? [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`] : [];
+    const [rows] = await pool.query(`
+    SELECT e.*, s.title AS soup_title
+    FROM evaluations e
+    JOIN soups s ON e.soup_id = s.id
+    ${where}
+    ORDER BY e.created_at DESC
+    LIMIT ? OFFSET ?
+    `, [...searchParams, limit + 1, offset]);
+    const [[totalRow]] = await pool.query(`SELECT COUNT(*) AS total FROM evaluations e JOIN soups s ON e.soup_id = s.id ${where}`, searchParams);
+    const hasMore = rows.length > limit;
+    if (hasMore)
+        rows.pop();
+    res.json({
+        evaluations: rows.map(mapEvaluation),
+        total: Number(totalRow.total),
+        hasMore
+    });
+});
+// ---------- AI 游戏路由 ----------
+app.use("/api/game", (req, _res, next) => {
+    req.user = extractAuth(req);
+    next();
+}, gameRouter);
 app.use((err, _req, res, _next) => {
     console.error(err);
     res.status(500).json({ error: "服务暂时不可用" });

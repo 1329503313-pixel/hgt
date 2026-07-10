@@ -4,6 +4,7 @@ import mysql from "mysql2/promise";
 import { config } from "./config.js";
 export const pool = mysql.createPool({
     ...config.db,
+    charset: "utf8mb4",
     waitForConnections: true,
     connectionLimit: 10,
     namedPlaceholders: true,
@@ -59,6 +60,7 @@ export async function initDatabase() {
       mechanism DECIMAL(3,1) NULL,
       twist DECIMAL(3,1) NULL,
       depth DECIMAL(3,1) NULL,
+      content TEXT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_evaluation_user_soup (soup_id, reviewer_id),
@@ -97,6 +99,30 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
     await pool.query(`
+    CREATE TABLE IF NOT EXISTS soup_favorites (
+      id VARCHAR(64) PRIMARY KEY,
+      soup_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_favorite_soup_user (soup_id, user_id),
+      INDEX idx_favorites_user_time (user_id, created_at),
+      CONSTRAINT fk_favorite_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
+      CONSTRAINT fk_favorite_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+    await pool.query(`
+    CREATE TABLE IF NOT EXISTS soup_likes (
+      id VARCHAR(64) PRIMARY KEY,
+      soup_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_like_soup_user (soup_id, user_id),
+      INDEX idx_likes_user_time (user_id, created_at),
+      CONSTRAINT fk_like_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
+      CONSTRAINT fk_like_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+    await pool.query(`
     CREATE TABLE IF NOT EXISTS notifications (
       id VARCHAR(64) PRIMARY KEY,
       user_id VARCHAR(64) NOT NULL,
@@ -117,7 +143,28 @@ export async function initDatabase() {
     await ensureColumn("soups", "supplemental_surfaces", "supplemental_surfaces JSON NULL AFTER surface");
     await ensureColumn("soups", "supplemental_bottoms", "supplemental_bottoms JSON NULL AFTER bottom");
     await ensureColumn("soups", "view_count", "view_count INT NOT NULL DEFAULT 0 AFTER is_bottom_public");
+    await ensureColumn("soups", "is_sensitive", "is_sensitive BOOLEAN NOT NULL DEFAULT FALSE AFTER is_original");
+    await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
+    await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
+    await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
+    await migrateCoverThumbnails();
     await migrateSoupViewsColumn();
+    // AI 游戏存档表
+    await pool.query(`
+    CREATE TABLE IF NOT EXISTS game_sessions (
+      id VARCHAR(64) PRIMARY KEY,
+      soup_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      messages JSON NOT NULL,
+      revealed_keys JSON NOT NULL,
+      progress INT NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_game_user_soup (soup_id, user_id),
+      CONSTRAINT fk_game_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
+      CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
     await seedAdmin();
 }
 async function ensureColumn(table, column, ddl) {
@@ -138,13 +185,33 @@ async function ensureColumn(table, column, ddl) {
         }
     }
 }
+async function migrateCoverThumbnails() {
+    const [rows] = await pool.query("SELECT id, cover_image FROM soups WHERE cover_image IS NOT NULL AND cover_image LIKE 'data:%' AND (cover_thumbnail IS NULL OR cover_thumbnail = '')");
+    if (rows.length === 0)
+        return;
+    console.log(`migrateCoverThumbnails: processing ${rows.length} soups...`);
+    const sharp = (await import("sharp")).default;
+    for (const row of rows) {
+        try {
+            const base64 = String(row.cover_image);
+            const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
+            const thumb = await sharp(buf).resize(400, undefined, { withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+            const thumbBase64 = `data:image/jpeg;base64,${thumb.toString("base64")}`;
+            await pool.query("UPDATE soups SET cover_thumbnail = ? WHERE id = ?", [thumbBase64, row.id]);
+        }
+        catch (err) {
+            console.error(`migrateCoverThumbnails: failed for soup ${row.id}`, err.message);
+        }
+    }
+    console.log("migrateCoverThumbnails: done");
+}
 async function migrateSoupViewsColumn() {
     await pool.query("DROP TABLE IF EXISTS soup_views");
     await pool.query(`
     CREATE TABLE soup_views (
       id VARCHAR(64) PRIMARY KEY,
       soup_id VARCHAR(64) NOT NULL,
-      user_identifier VARCHAR(128) NOT NULL,
+      user_identifier VARCHAR(191) NOT NULL,
       viewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_views_soup_uid_time (soup_id, user_identifier, viewed_at),
       CONSTRAINT fk_view_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE
