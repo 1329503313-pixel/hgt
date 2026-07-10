@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Download, Eye, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, Gamepad2 } from "lucide-react";
+import { ArrowLeft, Bell, Download, Eye, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, Gamepad2, ChevronDown, ChevronUp } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import type { SoupDetail } from "../shared/types";
@@ -11,6 +11,22 @@ import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
 import { GameModal } from "../components/GameModal";
 
+function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button
+        className="mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-line bg-white px-4 text-sm font-semibold text-muted shadow-sm active:scale-[0.98] transition-transform"
+        onClick={() => setOpen(!open)}
+      >
+        {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        {open ? "收起" : "展开"} 隐藏内容
+      </button>
+      {open && <div className="space-y-4">{children}</div>}
+    </div>
+  );
+}
+
 export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -19,6 +35,7 @@ export default function DetailPage() {
   const [soup, setSoup] = useState<SoupDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [showGame, setShowGame] = useState(false);
+  const [hiddenExpanded, setHiddenExpanded] = useState(false);
 
   const radarRef = useRef<HTMLDivElement | null>(null);
 
@@ -285,16 +302,18 @@ export default function DetailPage() {
         </button>
       </ContentCard>
       {soup.supplementalSurfaces.map((text, i) => (
-        <ContentCard key={`${i}-${text}`} title={`补充汤面${i + 1}`} text={text}>
-          <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(text, `${soup.title}-补充汤面${i + 1}`, `补充汤面${i + 1}`)}>
-            <Download size={18} /> 导出补充汤面{i + 1}
-          </button>
-        </ContentCard>
+        <CollapsibleSection key={`ss-${i}`}>
+          <ContentCard key={`${i}-${text}`} title={`补充汤面${i + 1}`} text={text}>
+            <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(text, `${soup.title}-补充汤面${i + 1}`, `补充汤面${i + 1}`)}>
+              <Download size={18} /> 导出补充汤面{i + 1}
+            </button>
+          </ContentCard>
+        </CollapsibleSection>
       ))}
 
       {/* Bottom */}
       {soup.canViewFull ? (
-        <>
+        <CollapsibleSection>
           <ContentCard title="汤底" text={soup.bottom ?? ""}>
             <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(soup.bottom ?? "", `${soup.title}-汤底`, "汤底")}>
               <Download size={18} /> 导出汤底
@@ -308,13 +327,13 @@ export default function DetailPage() {
             </ContentCard>
           ))}
           {soup.manual && (
-            <ContentCard title="主持人手册" text={soup.manual}>
+            <ContentCard key="manual" title="主持人手册" text={soup.manual}>
               <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(soup.manual ?? "", `${soup.title}-主持人手册`, "主持人手册")}>
                 <Download size={18} /> 导出手册
               </button>
             </ContentCard>
           )}
-        </>
+        </CollapsibleSection>
       ) : (
         <div className="card p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -330,7 +349,7 @@ export default function DetailPage() {
             </button>
           </div>
         </div>
-      )}
+      )}  {/* soup.canViewFull */}
 
       {/* Radar + Evaluations */}
       <div className={hasRadarData ? "grid gap-4 lg:grid-cols-[360px_1fr]" : "grid gap-4"}>
