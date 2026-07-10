@@ -10,6 +10,7 @@ import sharp from "sharp";
 import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
+import gameRouter from "./game.js";
 import { PublicUser } from "./types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -1186,6 +1187,12 @@ app.get("/api/admin/evaluations", async (req, res) => {
     hasMore
   });
 });
+
+// ---------- AI 游戏路由 ----------
+app.use("/api/game", (req, _res, next) => {
+  (req as any).user = extractAuth(req);
+  next();
+}, gameRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

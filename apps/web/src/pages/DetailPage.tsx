@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Download, Eye, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User } from "lucide-react";
+import { ArrowLeft, Bell, Download, Eye, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, Gamepad2 } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import type { SoupDetail } from "../shared/types";
@@ -9,6 +9,7 @@ import { useApp } from "../context/AppContext";
 import { ContentCard } from "../components/ContentCard";
 import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
+import { GameModal } from "../components/GameModal";
 
 export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -17,6 +18,7 @@ export default function DetailPage() {
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showGame, setShowGame] = useState(false);
 
   const radarRef = useRef<HTMLDivElement | null>(null);
 
@@ -179,6 +181,7 @@ export default function DetailPage() {
 
   if (loading) return <div className="flex items-center justify-center py-20 text-sm text-muted">正在喝汤中……</div>;
   if (!soup) return <div className="card p-8 text-center text-sm text-muted">海龟汤不存在</div>;
+  if (showGame) return <GameModal soup={soup} onBack={() => setShowGame(false)} />;
 
   const hasRadarData = [
     soup.radar.writing, soup.radar.logic, soup.radar.share,
@@ -377,6 +380,17 @@ export default function DetailPage() {
       </div>
 
       </div>
+
+      {/* AI 玩汤 悬浮按钮 */}
+      {user && (
+        <button
+          className="fixed bottom-24 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-lg active:scale-95 transition-transform hover:shadow-xl"
+          onClick={() => setShowGame(true)}
+          aria-label="AI 玩汤"
+        >
+          <Gamepad2 size={24} />
+        </button>
+      )}
 
       {/* Edit/Delete floating bar */}
       {soup.canEdit && (

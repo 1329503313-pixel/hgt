@@ -1,0 +1,236 @@
+import { useState, useRef, useEffect } from "react";
+import { ArrowLeft, Send, Lightbulb, Sparkles } from "lucide-react";
+import type { SoupDetail } from "../shared/types";
+import { api } from "../api";
+
+type ChatMessage = {
+  role: "assistant" | "user";
+  content: string;
+};
+
+type GameState = {
+  messages: ChatMessage[];
+  progress: number;
+  revealedKeys: string[];
+  loading: boolean;
+};
+
+export function GameModal({
+  soup,
+  onBack
+}: {
+  soup: SoupDetail;
+  onBack: () => void;
+}) {
+  const [state, setState] = useState<GameState>({
+    messages: [],
+    progress: 0,
+    revealedKeys: [],
+    loading: true
+  });
+  const [input, setInput] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // 进入时自动开始/载入游戏
+  useEffect(() => {
+    api<{
+      sessionId: string;
+      messages: ChatMessage[];
+      progress: number;
+      revealedKeys: string[];
+    }>(`/api/game/${soup.id}/start`, { method: "POST" })
+      .then((data) => {
+        setState({ messages: data.messages, progress: data.progress, revealedKeys: data.revealedKeys, loading: false });
+      })
+      .catch(() => {
+        setState((s) => ({ ...s, loading: false }));
+      });
+  }, [soup.id]);
+
+  // 自动滚动到底部
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [state.messages]);
+
+  async function handleSend() {
+    const q = input.trim();
+    if (!q || state.loading) return;
+    setInput("");
+    setState((s) => ({
+      ...s,
+      loading: true,
+      messages: [...s.messages, { role: "user", content: q }]
+    }));
+
+    try {
+      const data = await api<{
+        answer: string;
+        hint: string;
+        progress: number;
+        revealedKeys: string[];
+      }>(`/api/game/${soup.id}/ask`, { method: "POST", body: { question: q } });
+      setState((s) => ({
+        ...s,
+        loading: false,
+        progress: data.progress,
+        revealedKeys: data.revealedKeys,
+        messages: [...s.messages, { role: "assistant", content: data.answer }]
+      }));
+    } catch {
+      setState((s) => ({
+        ...s,
+        loading: false,
+        messages: [...s.messages, { role: "assistant", content: "网络错误，请重试。" }]
+      }));
+    }
+  }
+
+  async function handleHint() {
+    if (state.loading) return;
+    setState((s) => ({ ...s, loading: true }));
+
+    try {
+      const data = await api<{
+        answer: string;
+        hint: string;
+        progress: number;
+        revealedKeys: string[];
+      }>(`/api/game/${soup.id}/hint`, { method: "POST" });
+      setState((s) => ({
+        ...s,
+        loading: false,
+        progress: data.progress,
+        revealedKeys: data.revealedKeys,
+        messages: [
+          ...s.messages,
+          { role: "user", content: "🔔 请求提示" },
+          { role: "assistant", content: data.answer }
+        ]
+      }));
+    } catch {
+      setState((s) => ({ ...s, loading: false }));
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex flex-col bg-page">
+      {/* 顶栏 */}
+      <header className="top-nav-shell shrink-0">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
+          <button
+            className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink"
+            onClick={onBack}
+          >
+            <ArrowLeft size={18} />
+            <span>返回详情</span>
+          </button>
+          <span className="text-sm font-bold text-muted">AI 玩汤</span>
+          <div className="w-16" />
+        </div>
+      </header>
+
+      {/* 内容区 */}
+      <div className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-3xl px-4 py-4 space-y-4">
+
+          {/* 汤面卡片 */}
+          <div className="card p-4">
+            <h2 className="mb-2 font-black text-ink">{soup.title}</h2>
+            <div className="text-[15px] leading-7 text-ink whitespace-pre-wrap">{soup.surface}</div>
+          </div>
+
+          {/* 进度条 */}
+          <div className="card p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-bold text-muted">推理进度</span>
+              <span className="text-sm font-black text-primary">{state.progress}%</span>
+            </div>
+            <div className="h-3 w-full overflow-hidden rounded-full bg-slate-200">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-700 ease-out"
+                style={{ width: `${Math.max(2, state.progress)}%` }}
+              />
+            </div>
+            {state.revealedKeys.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {state.revealedKeys.map((k) => (
+                  <span key={k} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-primary">
+                    <Sparkles size={12} className="mr-1" />{k}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 对话框 */}
+          <div className="space-y-3 pb-4">
+            {state.messages.map((msg, i) => (
+              <div
+                key={i}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`max-w-[85%] rounded-2xl px-4 py-3 text-[15px] leading-7 ${
+                    msg.role === "user"
+                      ? "bg-primary text-white"
+                      : "border border-line bg-white text-ink"
+                  }`}
+                >
+                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                </div>
+              </div>
+            ))}
+            {state.loading && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl border border-line bg-white px-4 py-3 text-[15px] text-muted">
+                  推理中<DotDots />
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+        </div>
+      </div>
+
+      {/* 底部输入栏 */}
+      <div className="shrink-0 border-t border-line bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3">
+          <button
+            className="btn btn-secondary shrink-0 px-3"
+            onClick={handleHint}
+            disabled={state.loading}
+            title="请求提示"
+          >
+            <Lightbulb size={18} />
+          </button>
+          <input
+            ref={inputRef}
+            className="field flex-1"
+            placeholder="输入你的推理或提问…"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+            disabled={state.loading}
+          />
+          <button
+            className="btn btn-primary shrink-0 px-4"
+            onClick={handleSend}
+            disabled={state.loading || !input.trim()}
+          >
+            <Send size={18} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DotDots() {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setN((n) => (n + 1) % 4), 400);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="inline-block w-8 text-left">{Array.from({ length: n }, () => ".").join("")}</span>;
+}

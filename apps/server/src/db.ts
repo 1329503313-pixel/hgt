@@ -160,6 +160,24 @@ export async function initDatabase() {
   await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
   await migrateCoverThumbnails();
   await migrateSoupViewsColumn();
+
+  // AI 游戏存档表
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS game_sessions (
+      id VARCHAR(64) PRIMARY KEY,
+      soup_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      messages JSON NOT NULL,
+      revealed_keys JSON NOT NULL,
+      progress INT NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_game_user_soup (soup_id, user_id),
+      CONSTRAINT fk_game_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
+      CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   await seedAdmin();
 }
 

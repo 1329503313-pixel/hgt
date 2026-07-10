@@ -7,6 +7,7 @@ export const config = {
   cookieSecure: process.env.COOKIE_SECURE === "true" || process.env.COOKIE_SECURE === "1",
   sessionSecret: process.env.SESSION_SECRET ?? "dev-session-secret-change-me",
   adminDefaultPassword: process.env.ADMIN_DEFAULT_PASSWORD ?? "",
+  deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? "",
   db: {
     host: process.env.DB_HOST ?? "127.0.0.1",
     port: Number(process.env.DB_PORT ?? 3306),
