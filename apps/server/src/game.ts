@@ -16,9 +16,15 @@ interface GameSessionRow extends mysql.RowDataPacket {
   id: string;
   soup_id: number;
   user_id: string;
-  messages: string;
-  revealed_keys: string;
+  messages: any;       // mysql2 自动解析 JSON 列，可能是 string 或已解析的对象
+  revealed_keys: any;
   progress: number;
+}
+
+// mysql2 会自定将 JSON 列解析为对象，但也可能是 string，统一处理
+function parseJson<T>(val: any): T {
+  if (typeof val === "string") return parseJson(val);
+  return val as T;
 }
 
 // ---------- 构建 System Prompt ----------
@@ -98,7 +104,7 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
   const raw = data.choices?.[0]?.message?.content ?? "";
 
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as any;
     return {
       answer: typeof parsed.answer === "string" ? parsed.answer : String(parsed.answer ?? ""),
       hint: typeof parsed.hint === "string" ? parsed.hint : "",
@@ -153,12 +159,12 @@ gameRouter.post("/:soupId/start", async (req, res) => {
   if (existing.length > 0) {
     // 返回已有存档
     const session = existing[0];
-    const msgs: { role: string; content: string }[] = JSON.parse(session.messages);
+    const msgs: { role: string; content: string }[] = parseJson(session.messages);
     return res.json({
       sessionId: session.id,
       messages: msgs,
       progress: session.progress,
-      revealedKeys: JSON.parse(session.revealed_keys)
+      revealedKeys: parseJson(session.revealed_keys)
     });
   }
 
@@ -201,7 +207,7 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
   if (sessions.length === 0) return res.status(400).json({ error: "请先开始游戏" });
 
   const session = sessions[0];
-  const messages: { role: string; content: string }[] = JSON.parse(session.messages);
+  const messages: { role: string; content: string }[] = parseJson(session.messages);
 
   // 构建 prompt
   const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS);
@@ -259,7 +265,7 @@ gameRouter.post("/:soupId/hint", async (req, res) => {
   if (sessions.length === 0) return res.status(400).json({ error: "请先开始游戏" });
 
   const session = sessions[0];
-  const messages: { role: string; content: string }[] = JSON.parse(session.messages);
+  const messages: { role: string; content: string }[] = parseJson(session.messages);
   const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS);
 
   const history = messages.map((m) => ({
@@ -304,9 +310,9 @@ gameRouter.get("/:soupId/status", async (req, res) => {
   res.json({
     exists: true,
     sessionId: session.id,
-    messages: JSON.parse(session.messages),
+    messages: parseJson(session.messages),
     progress: session.progress,
-    revealedKeys: JSON.parse(session.revealed_keys)
+    revealedKeys: parseJson(session.revealed_keys)
   });
 });
 
