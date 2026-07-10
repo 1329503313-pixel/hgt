@@ -53,26 +53,35 @@ ${pointsText}
 
 ## 关键线索点（用于追踪玩家还原进度）
 ${pointsText}
-- 每个回答后评估哪些关键线索点已被玩家通过提问触及，更新 revealedKeys 和 progress
-- progress = 已触及的关键线索点数量 / 5 * 100
-- 如果玩家请求"提示"或问"我还忽略了什么"，从一个尚未触及的关键线索点给出方向性提示
+
+## 规则
+1. 对玩家的提问回答"是""否""无关"，或给出简短的方向性提示
+2. 绝对不要主动透露汤底的具体内容
+3. 回答使用温暖但不剧透的语气
+4. 如果玩家的提问方向完全偏离，温和地引导他们回到正轨
+5. **重要：必须使用 JSON 格式输出**
 
 ## 输出格式
-## 输出格式（必须严格遵守）
-请只输出一行合法的 JSON 对象，不要添加任何 markdown 标记、代码块或额外文字。示例：
-{"answer":"这是你的回答内容","progress":50,"revealedKeys":["作案动机","时间线"],"hint":"额外提示可填这里"}
-其中 progress 是 0-100 的整数。如果不需要提示，hint 填空字符串 ""。`;
+请只输出一行合法的 JSON：
+{"answer":"回答内容","newlyRevealed":[],"hint":""}
+- answer: 你的回答
+- newlyRevealed: 本轮提问中新触及的关键线索点 key（空数组 = 未触及新线索）
+- hint: 如果玩家请求提示且你给出提示，把提示内容放这里
+
+注意：
+- 只把本轮提问**新**触及的线索放入 newlyRevealed，不要重复之前已揭示的
+- 不要输出 progress 字段——系统会自动计算
+- 答案中禁止包含汤底原文`;
 }
 
 // ---------- 调用 DeepSeek API ----------
 async function callDeepSeek(systemPrompt: string, messages: { role: string; content: string }[]): Promise<{
   answer: string;
   hint: string;
-  progress: number;
-  revealedKeys: string[];
+  newlyRevealed: string[];
 }> {
   if (!DEEPSEEK_API_KEY) {
-    return { answer: "服务未配置 AI 接口，请联系管理员设置 DEEPSEEK_API_KEY。", hint: "", progress: 0, revealedKeys: [] };
+    return { answer: "服务未配置 AI 接口，请联系管理员设置 DEEPSEEK_API_KEY。", hint: "", newlyRevealed: [] };
   }
 
   const apiMessages = [
@@ -97,7 +106,7 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     console.error("DeepSeek API error:", resp.status, text);
-    return { answer: "AI 服务暂时不可用，请稍后再试。", hint: "", progress: 0, revealedKeys: [] };
+    return { answer: "AI 服务暂时不可用，请稍后再试。", hint: "", newlyRevealed: [] };
   }
 
   const data = await resp.json() as { choices: { message: { content: string } }[] };
@@ -109,12 +118,11 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
     return {
       answer: typeof parsed.answer === "string" ? parsed.answer : String(parsed.answer ?? ""),
       hint: typeof parsed.hint === "string" ? parsed.hint : "",
-      progress: typeof parsed.progress === "number" ? Math.min(100, Math.max(0, Math.round(parsed.progress))) : 0,
-      revealedKeys: Array.isArray(parsed.revealedKeys) ? parsed.revealedKeys.filter((k: unknown) => typeof k === "string") : []
+      newlyRevealed: Array.isArray(parsed.newlyRevealed) ? parsed.newlyRevealed.filter((k: unknown) => typeof k === "string") : []
     };
   } catch {
     console.error("DeepSeek JSON parse error:", raw.slice(0, 200));
-    return { answer: raw.slice(0, 500) || "AI 返回了无法解析的内容，请重试。", hint: "", progress: 0, revealedKeys: [] };
+    return { answer: raw.slice(0, 500) || "AI 返回了无法解析的内容，请重试。", hint: "", newlyRevealed: [] };
   }
 }
 
@@ -209,11 +217,16 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
 
   const session = sessions[0];
   const messages: { role: string; content: string }[] = parseJson(session.messages);
+  const savedRevealed: string[] = parseJson(session.revealed_keys);
+
+  // 计算当前进度 (保护下限: 不大于当前的 revealedKeys.length)
+  const currentProgress = Math.round((savedRevealed.length / DEFAULT_KEY_POINTS.length) * 100);
 
   // 构建 prompt
   const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS);
 
-  // 把 AI 回答过的消息去掉 role: "assistant" → 改为 DeepSeek 能理解的格式
+  // 已有线索上下文 (让 AI 知道已有进度)
+  const historyCtx = `[当前已揭示的线索: ${savedRevealed.length > 0 ? savedRevealed.join("、") : "暂无"}]`;
   const history = messages.map((m) => ({
     role: m.role === "assistant" ? "assistant" as const : "user" as const,
     content: m.content
@@ -221,13 +234,19 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
 
   // 添加玩家提问
   const question = parsed.data.question;
-  history.push({ role: "user", content: question });
+  history.push({ role: "user", content: `${historyCtx}\n${question}` });
 
   // 调用 AI
   const result = await callDeepSeek(systemPrompt, history);
 
+  // 合并新揭示的线索——只增不减
+  const newRevealed = result.newlyRevealed.filter((k: string) => !savedRevealed.includes(k));
+  const mergedRevealed = [...savedRevealed, ...newRevealed];
+  // 保护: mergedRevealed 至少保留 savedRevealed (bot不能减少)
+  const finalProgress = Math.round((mergedRevealed.length / DEFAULT_KEY_POINTS.length) * 100);
+
   // 检查是否是完成标志——progress >= 90 表示接近完成
-  const answer = result.progress >= 90
+  const answer = finalProgress >= 90
     ? result.answer + "\n\n🎉 你已经接近真相了！试着把你推理出的完整故事复述一遍吧。如果正确，就通关了！"
     : result.answer;
 
@@ -240,14 +259,14 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
 
   await pool.query(
     "UPDATE game_sessions SET messages = ?, revealed_keys = ?, progress = ? WHERE id = ?",
-    [JSON.stringify(newMessages), JSON.stringify(result.revealedKeys), result.progress, session.id]
+    [JSON.stringify(newMessages), JSON.stringify(mergedRevealed), finalProgress, session.id]
   );
 
   res.json({
     answer,
     hint: result.hint,
-    progress: result.progress,
-    revealedKeys: result.revealedKeys
+    progress: finalProgress,
+    revealedKeys: mergedRevealed
   });
 });
 
@@ -267,15 +286,22 @@ gameRouter.post("/:soupId/hint", async (req, res) => {
 
   const session = sessions[0];
   const messages: { role: string; content: string }[] = parseJson(session.messages);
+  const savedRevealed: string[] = parseJson(session.revealed_keys);
   const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, DEFAULT_KEY_POINTS);
 
+  const historyCtx = `[当前已揭示的线索: ${savedRevealed.length > 0 ? savedRevealed.join("、") : "暂无"}]`;
   const history = messages.map((m) => ({
     role: m.role === "assistant" ? "assistant" as const : "user" as const,
     content: m.content
   }));
-  history.push({ role: "user", content: "请给我一个提示，指出我可能忽略了什么。不要直接揭示答案，而是给我方向性指引。" });
+  history.push({ role: "user", content: `${historyCtx}\n请给我一个提示，指出我可能忽略了什么。不要直接揭示答案，而是给我方向性指引。` });
 
   const result = await callDeepSeek(systemPrompt, history);
+
+  // 合并新揭示的线索
+  const newRevealed = result.newlyRevealed.filter((k: string) => !savedRevealed.includes(k));
+  const mergedRevealed = [...savedRevealed, ...newRevealed];
+  const finalProgress = Math.round((mergedRevealed.length / DEFAULT_KEY_POINTS.length) * 100);
 
   const newMessages = [
     ...messages,
@@ -285,14 +311,14 @@ gameRouter.post("/:soupId/hint", async (req, res) => {
 
   await pool.query(
     "UPDATE game_sessions SET messages = ?, revealed_keys = ?, progress = ? WHERE id = ?",
-    [JSON.stringify(newMessages), JSON.stringify(result.revealedKeys), result.progress, session.id]
+    [JSON.stringify(newMessages), JSON.stringify(mergedRevealed), finalProgress, session.id]
   );
 
   res.json({
     answer: result.answer,
     hint: result.hint,
-    progress: result.progress,
-    revealedKeys: result.revealedKeys
+    progress: finalProgress,
+    revealedKeys: mergedRevealed
   });
 });
 
