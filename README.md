@@ -11,7 +11,7 @@ npm run dev
 
 - 前端：http://localhost:5173
 - 后端：http://localhost:4000
-- 默认管理员：admin / asd110035
+
 
 ## Docker 部署（阿里云）
 
