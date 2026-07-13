@@ -233,7 +233,7 @@ export function GameModal({
                     : "border border-line bg-white text-ink"
                 }`}
               >
-                <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: msg.content }} />
+                <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: extractDisplayContent(msg.content, msg.role) }} />
               </div>
             </div>
           ))}
@@ -269,12 +269,17 @@ export function GameModal({
             {menuOpen && (
               <div className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-line bg-white shadow-lg py-1.5 z-20">
                 <button
-                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-bold text-ink hover:bg-slate-50 transition-colors"
-                  onClick={() => { handleHint(); setMenuOpen(false); }}
-                  disabled={state.loading}
+                  className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-bold transition-colors ${
+                    state.progress < 20
+                      ? "cursor-not-allowed text-muted opacity-50"
+                      : "text-ink hover:bg-slate-50"
+                  }`}
+                  onClick={() => { if (state.progress >= 20) { handleHint(); setMenuOpen(false); } }}
+                  disabled={state.loading || state.progress < 20}
+                  title={state.progress < 20 ? "推理进度需达到 20% 后才能使用提示" : "获取提示"}
                 >
-                  <Lightbulb size={16} className="text-amber-500" />
-                  获取提示
+                  <Lightbulb size={16} className={state.progress < 20 ? "text-muted" : "text-amber-500"} />
+                  获取提示{state.progress < 20 ? ` (${state.progress}%)` : ""}
                 </button>
                 <button
                   className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-bold text-ink hover:bg-red-50 hover:text-red-600 transition-colors"
@@ -309,7 +314,7 @@ export function GameModal({
 
       {/* 重新开始确认弹窗 */}
       {restartConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-end bg-slate-900/35 p-0 sm:items-center sm:justify-center sm:p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4">
           <div className="w-full max-w-sm rounded-t-xl bg-white p-5 shadow-soft sm:rounded-[20px]">
             <h3 className="text-base font-black text-ink">是否重新开始 AI 盘汤？</h3>
             <p className="mt-2 text-sm text-muted leading-6">重新开始将会重置进度。</p>
@@ -332,6 +337,18 @@ export function GameModal({
       )}
     </div>
   );
+}
+
+/** 从 assistant 消息中提取显示内容：如果是完整 JSON，提取 answer 字段；否则直接显示 */
+function extractDisplayContent(content: string, role: string): string {
+  if (role !== "assistant") return content;
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed.answer && typeof parsed.answer === "string") return parsed.answer;
+  } catch {
+    // 不是 JSON，直接显示
+  }
+  return content;
 }
 
 function DotDots() {
