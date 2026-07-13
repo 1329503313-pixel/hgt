@@ -167,7 +167,7 @@ export function SoupEditor() {
       ...value,
       supplementalSurfaces: value.supplementalSurfaces.map((s: string) => s.trim()).filter(Boolean),
       supplementalBottoms: value.supplementalBottoms.map((s: string) => s.trim()).filter(Boolean),
-      author: value.isOriginal ? value.author : "佚名"
+      author: value.isOriginal ? authorName : "佚名"
     };
 
     try {
@@ -206,7 +206,7 @@ export function SoupEditor() {
               <option value="no">否，非原创</option>
             </select>
           </label>
-          {value.isOriginal && (
+          {!value.isOriginal && (
             <label className="space-y-2 md:col-span-2">
               <span className="text-xs font-bold text-muted"><span className="text-danger">*</span> 作者</span>
               <input className="field" value={value.author || authorName} readOnly required />
