@@ -239,7 +239,11 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
     if (!answer) {
       const cleaned = raw.replace(/\s+/g, "").replace(/[（(].*?[)）]/g, "");
       for (const w of allowedWords) { if (cleaned.startsWith(w)) { answer = w; break; } }
-      if (!answer) answer = raw.slice(0, 500) || "AI 返回了异常内容，请重试。";
+      if (!answer) {
+        // JSON 解析完全失败，原始输出作为 answer 可能泄露汤底。用安全通用回复替代。
+        console.error("DeepSeek unparseable output, suppressing raw text (length %d)", raw.length);
+        answer = "AI 返回了异常内容，请重试。";
+      }
     }
     // 裁剪多余文字
     for (const w of allowedWords) { if (answer.startsWith(w) && answer.length > w.length) { answer = w; break; } }

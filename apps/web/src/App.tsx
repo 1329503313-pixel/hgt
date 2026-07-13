@@ -4,6 +4,7 @@ import { useApp } from "./context/AppContext";
 import { AuthModal, ExportPreview } from "./components/AuthModal";
 import { SoupEditor } from "./components/SoupEditor";
 import { EvalEditor } from "./components/EvalEditor";
+import ErrorBoundary from "./components/ErrorBoundary";
 import MainLayout from "./layouts/MainLayout";
 
 import HomePage from "./pages/HomePage";
@@ -23,7 +24,8 @@ export default function App() {
 
   return (
     <div className="app-shell min-h-screen bg-page">
-      <Routes>
+      <ErrorBoundary>
+        <Routes>
         {/* Main layout group — BottomNav visible */}
         <Route element={<MainLayout />}>
           <Route index element={<HomePage />} />
@@ -43,6 +45,7 @@ export default function App() {
         <Route path="messages/requests" element={<RequestsPage />} />
         <Route path="admin" element={<AdminPage />} />
       </Routes>
+      </ErrorBoundary>
 
       {/* Global toast */}
       {toast && (

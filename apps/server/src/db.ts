@@ -232,7 +232,13 @@ async function migrateCoverThumbnails() {
 }
 
 async function migrateSoupViewsColumn() {
-  await pool.query("DROP TABLE IF EXISTS soup_views");
+  // 注意: 不 DROP TABLE，避免丢失浏览数据。如果表已存在则跳过，用 ensureColumn 补列。
+  const [exists] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'soup_views'",
+    [config.db.database]
+  );
+  if (exists.length > 0) return;
+
   await pool.query(`
     CREATE TABLE soup_views (
       id VARCHAR(64) PRIMARY KEY,
