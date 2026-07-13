@@ -61,12 +61,22 @@ export type Evaluation = {
   createdAt: string;
 };
 
+export type KeyFact = {
+  id: number;
+  content: string;
+  weight: number;
+};
+
 export type SoupDetail = SoupSummary & {
   surface: string;
   supplementalSurfaces: string[];
   bottom: string | null;
   supplementalBottoms: string[] | null;
   manual: string | null;
+  enableAiGame: boolean;
+  aiPrompt: string | null;
+  keyFacts: KeyFact[] | null;
+  keyFactsCustomized: boolean;
   canViewFull: boolean;
   canEdit: boolean;
   isFavorited: boolean;

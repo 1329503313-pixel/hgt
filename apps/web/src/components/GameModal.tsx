@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api } from "../api";
 
@@ -11,7 +11,8 @@ type ChatMessage = {
 type GameState = {
   messages: ChatMessage[];
   progress: number;
-  revealedKeys: string[];
+  revealedSupplements: { surfaces: number[]; bottoms: number[] };
+  completed: boolean;
   loading: boolean;
 };
 
@@ -25,7 +26,8 @@ export function GameModal({
   const [state, setState] = useState<GameState>({
     messages: [],
     progress: 0,
-    revealedKeys: [],
+    revealedSupplements: { surfaces: [], bottoms: [] },
+    completed: false,
     loading: true
   });
   const [input, setInput] = useState("");
@@ -40,10 +42,10 @@ export function GameModal({
       sessionId: string;
       messages: ChatMessage[];
       progress: number;
-      revealedKeys: string[];
+      revealedSupplements: { surfaces: number[]; bottoms: number[] };
     }>(`/api/game/${soup.id}/start`, { method: "POST" })
       .then((data) => {
-        setState({ messages: data.messages, progress: data.progress, revealedKeys: data.revealedKeys, loading: false });
+        setState({ messages: data.messages, progress: data.progress, revealedSupplements: data.revealedSupplements, completed: false, loading: false });
       })
       .catch(() => {
         setState((s) => ({ ...s, loading: false }));
@@ -68,15 +70,16 @@ export function GameModal({
     try {
       const data = await api<{
         answer: string;
-        hint: string;
         progress: number;
-        revealedKeys: string[];
+        revealedSupplements: { surfaces: number[]; bottoms: number[] };
+        completed: boolean;
       }>(`/api/game/${soup.id}/ask`, { method: "POST", body: { question: q } });
       setState((s) => ({
         ...s,
         loading: false,
         progress: data.progress,
-        revealedKeys: data.revealedKeys,
+        revealedSupplements: data.revealedSupplements,
+        completed: data.completed,
         messages: [...s.messages, { role: "assistant", content: data.answer }]
       }));
     } catch {
@@ -95,21 +98,44 @@ export function GameModal({
     try {
       const data = await api<{
         answer: string;
-        hint: string;
         progress: number;
-        revealedKeys: string[];
+        revealedSupplements: { surfaces: number[]; bottoms: number[] };
+        completed: boolean;
       }>(`/api/game/${soup.id}/hint`, { method: "POST" });
       setState((s) => ({
         ...s,
         loading: false,
         progress: data.progress,
-        revealedKeys: data.revealedKeys,
+        revealedSupplements: data.revealedSupplements,
+        completed: data.completed,
         messages: [
           ...s.messages,
           { role: "user", content: "🔔 请求提示" },
           { role: "assistant", content: data.answer }
         ]
       }));
+    } catch {
+      setState((s) => ({ ...s, loading: false }));
+    }
+  }
+
+  async function handleRestart() {
+    if (state.loading) return;
+    setState((s) => ({ ...s, loading: true, messages: [] }));
+    try {
+      const data = await api<{
+        sessionId: string;
+        messages: ChatMessage[];
+        progress: number;
+        revealedSupplements: { surfaces: number[]; bottoms: number[] };
+      }>(`/api/game/${soup.id}/restart`, { method: "POST" });
+      setState({
+        messages: data.messages,
+        progress: data.progress,
+        revealedSupplements: data.revealedSupplements,
+        completed: false,
+        loading: false
+      });
     } catch {
       setState((s) => ({ ...s, loading: false }));
     }
@@ -140,9 +166,10 @@ export function GameModal({
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <h2 className="font-black text-ink">{soup.title}</h2>
-                <div className={`text-[14px] leading-6 text-ink whitespace-pre-wrap ${infoExpanded ? "" : "line-clamp-2"}`}>
-                  {soup.surface}
-                </div>
+                <div
+                  className={`text-[14px] leading-6 text-ink content-block ${infoExpanded ? "" : "line-clamp-2"}`}
+                  dangerouslySetInnerHTML={{ __html: soup.surface }}
+                />
               </div>
               <button
                 className="shrink-0 mt-1 grid h-7 w-7 place-items-center rounded-md bg-slate-100 text-muted"
@@ -165,13 +192,23 @@ export function GameModal({
                 style={{ width: `${Math.max(3, state.progress)}%` }}
               />
             </div>
-            {state.revealedKeys.length > 0 && (
+            {state.revealedSupplements.surfaces.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
-                {state.revealedKeys.map((k) => (
-                  <span key={k} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-primary">
-                    <Sparkles size={11} className="mr-1" />{k}
+                {state.revealedSupplements.surfaces.map((idx) => (
+                  <span key={`s${idx}`} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                    <Sparkles size={11} className="mr-1" />补充汤面 #{idx + 1}
                   </span>
                 ))}
+                {state.revealedSupplements.bottoms.map((idx) => (
+                  <span key={`b${idx}`} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                    <Sparkles size={11} className="mr-1" />补充汤底 #{idx + 1}
+                  </span>
+                ))}
+              </div>
+            )}
+            {state.completed && (
+              <div className="mt-2 rounded-md bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700">
+                🎉 恭喜通关！
               </div>
             )}
           </div>
@@ -181,8 +218,18 @@ export function GameModal({
       {/* 下半部分：聊天对话 */}
       <div
         ref={chatRef}
-        className="flex-1 overflow-auto"
+        className="relative flex-1 overflow-auto"
       >
+        {/* 重新开始悬浮按钮 */}
+        <button
+          className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-full bg-white/90 backdrop-blur border border-line px-3.5 py-2 text-xs font-bold text-muted shadow-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+          onClick={handleRestart}
+          disabled={state.loading}
+          title="重新开始游戏"
+        >
+          <RotateCcw size={14} />
+          重新开始
+        </button>
         <div className="mx-auto max-w-3xl px-4 py-3 space-y-3">
           {state.messages.map((msg, i) => (
             <div
@@ -196,7 +243,7 @@ export function GameModal({
                     : "border border-line bg-white text-ink"
                 }`}
               >
-                <div className="whitespace-pre-wrap">{msg.content}</div>
+                <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: msg.content }} />
               </div>
             </div>
           ))}
@@ -213,6 +260,11 @@ export function GameModal({
 
       {/* 底部输入栏 */}
       <div className="shrink-0 border-t border-line bg-white/95 backdrop-blur">
+        {state.completed ? (
+          <div className="mx-auto max-w-3xl px-4 py-4 text-center text-sm font-bold text-muted">
+            🎉 游戏已通关！返回详情页查看完整汤底。
+          </div>
+        ) : (
         <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3">
           <button
             className="btn btn-secondary shrink-0 px-3"
@@ -239,6 +291,7 @@ export function GameModal({
             <Send size={18} />
           </button>
         </div>
+        )}
       </div>
     </div>
   );

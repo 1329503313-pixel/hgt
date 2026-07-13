@@ -10,7 +10,7 @@ import sharp from "sharp";
 import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
-import gameRouter from "./game.js";
+import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts } from "./game.js";
 import { PublicUser } from "./types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -103,7 +103,21 @@ const soupSchema = z.object({
   supplementalBottoms: optionalTextList,
   manual: optionalText,
   isSurfacePublic: z.boolean().default(true),
-  isBottomPublic: z.boolean().default(false)
+  isBottomPublic: z.boolean().default(false),
+  enableAiGame: z.boolean().default(false),
+  aiPrompt: z.string().trim().max(5000).optional().default(""),
+  keyFacts: z
+    .array(
+      z.object({
+        id: z.number(),
+        content: z.string().trim().min(1).max(200),
+        weight: z.number().int().min(1).max(99)
+      })
+    )
+    .max(20)
+    .optional()
+    .default([]),
+  keyFactsCustomized: z.boolean().optional().default(false)
 });
 
 const evaluationSchema = z.object({
@@ -188,6 +202,15 @@ function jsonList(value: unknown): string[] {
     return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()) : [];
   } catch {
     return [];
+  }
+}
+
+function safeParseJson(value: unknown) {
+  if (!value) return null;
+  try {
+    return typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    return null;
   }
 }
 
@@ -643,8 +666,8 @@ app.post("/api/soups", async (req, res) => {
   const thumbnail = soup.coverImage ? await generateThumbnail(soup.coverImage) : null;
   await pool.query(
     `INSERT INTO soups
-      (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, creator_id, creator_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, ai_prompt, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       soup.title,
@@ -662,11 +685,21 @@ app.post("/api/soups", async (req, res) => {
       soup.manual || null,
       soup.isSurfacePublic,
       soup.isBottomPublic,
+      soup.enableAiGame,
+      soup.aiPrompt || null,
+      soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null,
+      null,
+      soup.keyFactsCustomized ? 1 : 0,
       user.id,
       user.nickname
     ]
   );
   res.status(201).json({ id });
+
+  // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
+  if (soup.enableAiGame && !soup.keyFactsCustomized) {
+    splitKeyFactsForSoup(id).catch(() => {});
+  }
 });
 
 app.get("/api/soups/:id", async (req, res) => {
@@ -746,6 +779,10 @@ app.get("/api/soups/:id", async (req, res) => {
       bottom: full ? soup.bottom : null,
       supplementalBottoms: full ? jsonList(soup.supplemental_bottoms) : null,
       manual: full ? soup.host_manual : null,
+      enableAiGame: bool(soup.enable_ai_game),
+      aiPrompt: (soup.ai_prompt as string) || null,
+      keyFacts: safeParseJson(soup.key_facts),
+      keyFactsCustomized: (soup.key_facts_customized as number) === 1,
       canViewFull: full,
       canEdit: Boolean(user && (user.role === "admin" || user.id === soup.creator_id)),
       isFavorited: favoriteRows.length > 0,
@@ -849,7 +886,7 @@ app.put("/api/soups/:id", async (req, res) => {
   await pool.query(
     `UPDATE soups
      SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
-         is_surface_public = ?, is_bottom_public = ?
+         is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
      WHERE id = ?`,
     [
       next.title,
@@ -867,9 +904,34 @@ app.put("/api/soups/:id", async (req, res) => {
       next.manual || null,
       next.isSurfacePublic,
       next.isBottomPublic,
+      next.enableAiGame,
+      next.aiPrompt || null,
+      next.keyFacts.length > 0 ? JSON.stringify(next.keyFacts) : null,
+      null,
+      next.keyFactsCustomized ? 1 : 0,
       req.params.id
     ]
   );
+  res.json({ ok: true });
+
+  // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
+  if (next.enableAiGame && !next.keyFactsCustomized) {
+    splitKeyFactsForSoup(req.params.id).catch(() => {});
+  } else if (!next.enableAiGame) {
+    // 关闭 AI 玩汤时清空缓存
+    pool.query("UPDATE soups SET key_facts = NULL, key_facts_hash = NULL, ai_prompt = NULL, key_facts_customized = 0 WHERE id = ?", [req.params.id]).catch(() => {});
+  }
+});
+
+// 强制 AI 重新解析关键点（清除自定义标记后重拆）
+app.post("/api/soups/:id/reanalyze-keyfacts", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  const soup = await getSoupRaw(req.params.id);
+  if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (user.role !== "admin" && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
+
+  forceReanalyzeKeyFacts(req.params.id).catch(() => {});
   res.json({ ok: true });
 });
 

@@ -401,7 +401,7 @@ export default function DetailPage() {
       </div>
 
       {/* AI 玩汤 悬浮按钮 */}
-      {user && (
+      {user && soup.enableAiGame && (
         <button
           className="fixed bottom-24 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-lg active:scale-95 transition-transform hover:shadow-xl"
           onClick={() => setShowGame(true)}

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { PublicUser, SoupDetail } from "../shared/types";
+import type { PublicUser, SoupDetail, KeyFact } from "../shared/types";
 import { api, MeResponse } from "../api";
 
 // ---------- 常量 ----------
@@ -25,6 +25,10 @@ export type SoupForm = {
   manual: string;
   isSurfacePublic: boolean;
   isBottomPublic: boolean;
+  enableAiGame: boolean;
+  aiPrompt: string;
+  keyFacts: KeyFact[];
+  keyFactsCustomized: boolean;
 };
 
 export type EvalForm = {
@@ -52,7 +56,11 @@ export const emptySoup: SoupForm = {
   supplementalBottoms: [],
   manual: "",
   isSurfacePublic: true,
-  isBottomPublic: false
+  isBottomPublic: false,
+  enableAiGame: false,
+  aiPrompt: "",
+  keyFacts: [],
+  keyFactsCustomized: false
 };
 
 export const emptyEval: EvalForm = {
@@ -198,7 +206,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         supplementalBottoms: soup.supplementalBottoms ?? [],
         manual: soup.manual ?? "",
         isSurfacePublic: soup.isSurfacePublic,
-        isBottomPublic: soup.isBottomPublic
+        isBottomPublic: soup.isBottomPublic,
+        enableAiGame: (soup as any).enableAiGame ?? false,
+        aiPrompt: soup.aiPrompt ?? "",
+        keyFacts: soup.keyFacts ?? [],
+        keyFactsCustomized: soup.keyFactsCustomized ?? false
       });
     } else {
       setEditingSoupId(null);

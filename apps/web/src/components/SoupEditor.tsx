@@ -86,10 +86,42 @@ export function SoupEditor() {
   const [termsOpen, setTermsOpen] = useState(false);
   const [termsError, setTermsError] = useState("");
   const [coverError, setCoverError] = useState("");
+  const [advSettingsOpen, setAdvSettingsOpen] = useState(false);
+  const [reanalyzeConfirmOpen, setReanalyzeConfirmOpen] = useState(false);
 
   const authorName = user?.nickname || user?.username || "";
 
   const patch = (next: Partial<SoupForm>) => setValue({ ...value, ...next });
+
+  // 高级设置：关键点增/删/改
+  function addKeyFact() {
+    const nextId = Math.max(0, ...value.keyFacts.map((k) => k.id)) + 1;
+    patch({ keyFacts: [...value.keyFacts, { id: nextId, content: "", weight: 10 }], keyFactsCustomized: true });
+  }
+  function removeKeyFact(id: number) {
+    patch({ keyFacts: value.keyFacts.filter((k) => k.id !== id), keyFactsCustomized: true });
+  }
+  function updateKeyFact(id: number, field: "content" | "weight", val: string | number) {
+    patch({
+      keyFacts: value.keyFacts.map((k) => (k.id === id ? { ...k, [field]: val } : k)),
+      keyFactsCustomized: true
+    });
+  }
+
+  const keyFactsTotalWeight = value.keyFacts.reduce((sum, k) => sum + k.weight, 0);
+  const keyFactsWeightValid = value.keyFacts.length === 0 || keyFactsTotalWeight === 100;
+
+  // AI 重新解析
+  async function handleReanalyze() {
+    if (!editingSoupId) return;
+    try {
+      await api(`/api/soups/${editingSoupId}/reanalyze-keyfacts`, { method: "POST" });
+      showToast("AI 重新解析中，稍后刷新查看结果");
+      setReanalyzeConfirmOpen(false);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "操作失败");
+    }
+  }
 
   function handleCoverUpload(file: File | undefined) {
     setCoverError("");
@@ -257,6 +289,25 @@ export function SoupEditor() {
         <div className="space-y-2 border-t border-line pt-3">
           <CheckRow label="公开汤面" desc="勾选后，其他用户可以在列表和详情中看到这条海龟汤。" checked={value.isSurfacePublic} onChange={(c) => patch({ isSurfacePublic: c })} />
           <CheckRow label="公开汤底和主持人手册" desc="勾选后，其他用户无需申请即可查看完整内容。" checked={value.isBottomPublic} onChange={(c) => patch({ isBottomPublic: c })} />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <CheckRow label="开启 AI 玩汤" desc="" checked={value.enableAiGame} onChange={(c) => patch({ enableAiGame: c })} />
+              {value.enableAiGame && (
+                <button
+                  type="button"
+                  className="shrink-0 text-xs font-semibold text-primary hover:underline"
+                  onClick={() => setAdvSettingsOpen(true)}
+                >
+                  高级设置
+                </button>
+              )}
+            </div>
+            {value.enableAiGame && (
+              <p className="pl-7 text-[11px] leading-5 text-muted">
+                仅无任何机制的汤建议开启 AI 玩汤，开启后用户如通关，可以直接获得汤底。
+              </p>
+            )}
+          </div>
           <label className="flex items-center gap-2 text-xs leading-5 text-muted">
             <input className="h-4 w-4 shrink-0" type="checkbox" checked={termsAccepted} onChange={(e) => { setTermsAccepted(e.target.checked); if (e.target.checked) setTermsError(""); }} />
             <span className="flex min-h-11 flex-wrap items-center">
@@ -274,6 +325,130 @@ export function SoupEditor() {
         </div>
       </form>
       {termsOpen && <TermsModal onClose={() => setTermsOpen(false)} onAccept={() => { setTermsAccepted(true); setTermsError(""); setTermsOpen(false); }} />}
+
+      {/* 高级设置弹窗 */}
+      {advSettingsOpen && (
+        <Modal onClose={() => setAdvSettingsOpen(false)}>
+          <div className="space-y-5 p-2 max-h-[80vh] overflow-auto">
+            <h2 className="text-lg font-black text-ink">AI 高级设置</h2>
+
+            {/* AI 提示词 */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-bold text-ink">AI 提示词</label>
+              <p className="text-[11px] leading-5 text-muted">
+                您可编辑您的 AI 提示词，主要用于规定 AI 主持人的身份、注意点。比如：你是主持人视角，可以回答所有真实问题；或你是汤面中的 XX 人，当用户问你 XX 问题时，你需要以 XX 人的视角来回答问题。
+              </p>
+              <textarea
+                className="field min-h-[120px] w-full"
+                placeholder="留空则使用默认提示词"
+                value={value.aiPrompt}
+                onChange={(e) => patch({ aiPrompt: e.target.value })}
+              />
+            </div>
+
+            {/* 进度关键点 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-bold text-ink">进度关键点</span>
+                  <span className={`ml-2 text-xs font-bold ${keyFactsWeightValid ? "text-green-600" : "text-danger"}`}>
+                    权重总和：{keyFactsTotalWeight}/100
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary text-xs"
+                  onClick={addKeyFact}
+                  disabled={value.keyFacts.length >= 20}
+                >
+                  <Plus size={14} className="mr-1" />添加关键点
+                </button>
+              </div>
+
+              {value.keyFacts.map((kf) => (
+                <div key={kf.id} className="flex gap-2 rounded-lg border border-line bg-page p-3">
+                  <div className="flex-1 space-y-2">
+                    <div>
+                      <label className="text-[11px] font-bold text-muted">关键点</label>
+                      <p className="text-[10px] text-muted">请以陈述句输入本故事的关键点，即盘到这个关键点则增长进度</p>
+                      <input
+                        className="field mt-1 w-full text-sm"
+                        placeholder="如：凶手是父亲"
+                        value={kf.content}
+                        onChange={(e) => updateKeyFact(kf.id, "content", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-muted">进度值</label>
+                      <p className="text-[10px] text-muted">请输入该关键点的进度值，总和应该为 100</p>
+                      <input
+                        className="field mt-1 w-24 text-sm"
+                        type="number"
+                        min={1}
+                        max={99}
+                        value={kf.weight}
+                        onChange={(e) => updateKeyFact(kf.id, "weight", Math.max(1, Math.min(99, parseInt(e.target.value) || 1)))}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-red-50 hover:text-danger"
+                    onClick={() => removeKeyFact(kf.id)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+
+              {value.keyFacts.length === 0 && (
+                <p className="text-sm text-muted text-center py-4">暂无自定义关键点。留空则由 AI 自动拆分。</p>
+              )}
+
+              {!keyFactsWeightValid && (
+                <p className="text-xs font-bold text-danger">进度值总和必须为 100，当前为 {keyFactsTotalWeight}。</p>
+              )}
+            </div>
+
+            {/* AI 重新解析 */}
+            {value.keyFactsCustomized && editing && (
+              <button
+                type="button"
+                className="btn btn-secondary w-full text-sm"
+                onClick={() => setReanalyzeConfirmOpen(true)}
+              >
+                由 AI 自动重新解析关键点
+              </button>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button type="button" className="btn btn-secondary flex-1" onClick={() => setAdvSettingsOpen(false)}>返回</button>
+              <button
+                type="button"
+                className="btn btn-primary flex-1"
+                disabled={!keyFactsWeightValid}
+                onClick={() => setAdvSettingsOpen(false)}
+              >
+                完成
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* AI 重新解析确认弹窗 */}
+      {reanalyzeConfirmOpen && (
+        <Modal onClose={() => setReanalyzeConfirmOpen(false)}>
+          <div className="space-y-4 p-2">
+            <p className="text-sm font-bold text-ink">是否由 AI 自动重新解析关键点并覆盖您的预设？</p>
+            <p className="text-xs text-muted">此操作将清除您手动编辑的关键点和提示词，由 AI 根据汤面、汤底、主持人手册重新生成。</p>
+            <div className="flex gap-2">
+              <button type="button" className="btn btn-secondary flex-1" onClick={() => setReanalyzeConfirmOpen(false)}>取消</button>
+              <button type="button" className="btn btn-primary flex-1" onClick={handleReanalyze}>确认</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </Modal>
   );
 }

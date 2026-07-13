@@ -43,6 +43,7 @@ export async function initDatabase() {
       host_manual TEXT NULL,
       is_surface_public BOOLEAN NOT NULL DEFAULT TRUE,
       is_bottom_public BOOLEAN NOT NULL DEFAULT FALSE,
+      enable_ai_game BOOLEAN NOT NULL DEFAULT FALSE,
       view_count INT NOT NULL DEFAULT 0,
       creator_id VARCHAR(64) NOT NULL,
       creator_name VARCHAR(50) NOT NULL,
@@ -154,6 +155,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "supplemental_surfaces", "supplemental_surfaces JSON NULL AFTER surface");
   await ensureColumn("soups", "supplemental_bottoms", "supplemental_bottoms JSON NULL AFTER bottom");
   await ensureColumn("soups", "view_count", "view_count INT NOT NULL DEFAULT 0 AFTER is_bottom_public");
+  await ensureColumn("soups", "enable_ai_game", "enable_ai_game BOOLEAN NOT NULL DEFAULT FALSE AFTER is_bottom_public");
   await ensureColumn("soups", "is_sensitive", "is_sensitive BOOLEAN NOT NULL DEFAULT FALSE AFTER is_original");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
@@ -169,6 +171,7 @@ export async function initDatabase() {
       user_id VARCHAR(64) NOT NULL,
       messages JSON NOT NULL,
       revealed_keys JSON NOT NULL,
+      revealed_supplements JSON NULL,
       progress INT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -177,6 +180,11 @@ export async function initDatabase() {
       CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("game_sessions", "revealed_supplements", "revealed_supplements JSON NULL AFTER revealed_keys");
+  await ensureColumn("soups", "key_facts", "key_facts JSON NULL AFTER enable_ai_game");
+  await ensureColumn("soups", "key_facts_hash", "key_facts_hash VARCHAR(64) NULL AFTER key_facts");
+  await ensureColumn("soups", "key_facts_customized", "key_facts_customized TINYINT(1) NOT NULL DEFAULT 0 AFTER key_facts_hash");
+  await ensureColumn("soups", "ai_prompt", "ai_prompt TEXT NULL AFTER enable_ai_game");
 
   await seedAdmin();
 }
