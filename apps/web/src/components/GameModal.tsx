@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
+import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw, Menu } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api } from "../api";
 
@@ -32,6 +32,8 @@ export function GameModal({
   });
   const [input, setInput] = useState("");
   const [infoExpanded, setInfoExpanded] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -158,19 +160,13 @@ export function GameModal({
         </div>
       </header>
 
-      {/* 上半部分：汤面 + 进度条 */}
-      <div className="shrink-0 border-b border-line bg-white pt-[52px]">
-        <div className="mx-auto max-w-3xl px-4 py-3 space-y-3">
-          {/* 汤面卡片 */}
-          <div className="card p-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <h2 className="font-black text-ink">{soup.title}</h2>
-                <div
-                  className={`text-[14px] leading-6 text-ink content-block ${infoExpanded ? "" : "line-clamp-2"}`}
-                  dangerouslySetInnerHTML={{ __html: soup.surface }}
-                />
-              </div>
+      {/* 上半部分：汤面 + 进度条（最高不超过屏幕一半，进度条始终可见） */}
+      <div className="shrink-0 border-b border-line bg-white pt-[52px] max-h-[50vh] flex flex-col">
+        <div className="mx-auto max-w-3xl px-4 pt-3 w-full space-y-3 flex flex-col min-h-0 flex-1">
+          {/* 汤面卡片 — 卡片始终完整显示在画面内，内容超出时在卡片内部滚动 */}
+          <div className="card p-3 flex flex-col min-h-0 flex-1">
+            <div className="flex items-start justify-between gap-2 shrink-0">
+              <h2 className="font-black text-ink">{soup.title}</h2>
               <button
                 className="shrink-0 mt-1 grid h-7 w-7 place-items-center rounded-md bg-slate-100 text-muted"
                 onClick={() => setInfoExpanded(!infoExpanded)}
@@ -178,10 +174,14 @@ export function GameModal({
                 {infoExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
             </div>
+            <div
+              className={`text-[14px] leading-6 text-ink content-block mt-3 overflow-auto min-h-0 flex-1 ${infoExpanded ? "" : "line-clamp-2 overflow-hidden"}`}
+              dangerouslySetInnerHTML={{ __html: soup.surface }}
+            />
           </div>
 
-          {/* 进度条 */}
-          <div>
+          {/* 进度条 — 始终可见，不参与滚动 */}
+          <div className="shrink-0 pb-3">
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-xs font-bold text-muted">推理进度</span>
               <span className="text-sm font-black text-primary">{state.progress}%</span>
@@ -220,16 +220,6 @@ export function GameModal({
         ref={chatRef}
         className="relative flex-1 overflow-auto"
       >
-        {/* 重新开始悬浮按钮 */}
-        <button
-          className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-full bg-white/90 backdrop-blur border border-line px-3.5 py-2 text-xs font-bold text-muted shadow-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
-          onClick={handleRestart}
-          disabled={state.loading}
-          title="重新开始游戏"
-        >
-          <RotateCcw size={14} />
-          重新开始
-        </button>
         <div className="mx-auto max-w-3xl px-4 py-3 space-y-3">
           {state.messages.map((msg, i) => (
             <div
@@ -258,7 +248,7 @@ export function GameModal({
         </div>
       </div>
 
-      {/* 底部输入栏 */}
+      {/* 底部操作栏：菜单 + 输入 */}
       <div className="shrink-0 border-t border-line bg-white/95 backdrop-blur">
         {state.completed ? (
           <div className="mx-auto max-w-3xl px-4 py-4 text-center text-sm font-bold text-muted">
@@ -266,14 +256,37 @@ export function GameModal({
           </div>
         ) : (
         <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3">
-          <button
-            className="btn btn-secondary shrink-0 px-3"
-            onClick={handleHint}
-            disabled={state.loading}
-            title="请求提示"
-          >
-            <Lightbulb size={18} />
-          </button>
+          {/* 菜单按钮 */}
+          <div className="relative shrink-0">
+            <button
+              className="btn btn-secondary px-3"
+              onClick={() => setMenuOpen(!menuOpen)}
+              disabled={state.loading}
+              title="菜单"
+            >
+              <Menu size={18} />
+            </button>
+            {menuOpen && (
+              <div className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-line bg-white shadow-lg py-1.5 z-20">
+                <button
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-bold text-ink hover:bg-slate-50 transition-colors"
+                  onClick={() => { handleHint(); setMenuOpen(false); }}
+                  disabled={state.loading}
+                >
+                  <Lightbulb size={16} className="text-amber-500" />
+                  获取提示
+                </button>
+                <button
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-bold text-ink hover:bg-red-50 hover:text-red-600 transition-colors"
+                  onClick={() => { setRestartConfirmOpen(true); setMenuOpen(false); }}
+                  disabled={state.loading}
+                >
+                  <RotateCcw size={16} className="text-muted" />
+                  重新开始
+                </button>
+              </div>
+            )}
+          </div>
           <input
             ref={inputRef}
             className="field flex-1"
@@ -293,6 +306,30 @@ export function GameModal({
         </div>
         )}
       </div>
+
+      {/* 重新开始确认弹窗 */}
+      {restartConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-900/35 p-0 sm:items-center sm:justify-center sm:p-4">
+          <div className="w-full max-w-sm rounded-t-xl bg-white p-5 shadow-soft sm:rounded-[20px]">
+            <h3 className="text-base font-black text-ink">是否重新开始 AI 盘汤？</h3>
+            <p className="mt-2 text-sm text-muted leading-6">重新开始将会重置进度。</p>
+            <div className="mt-4 flex gap-3">
+              <button
+                className="btn btn-secondary flex-1"
+                onClick={() => setRestartConfirmOpen(false)}
+              >
+                否
+              </button>
+              <button
+                className="btn btn-primary flex-1"
+                onClick={() => { setRestartConfirmOpen(false); handleRestart(); }}
+              >
+                是
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

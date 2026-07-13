@@ -261,8 +261,8 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
 
     return { answer, progress, keyFacts, revealedSupplementSurfaces, revealedSupplementBottoms, completed };
   } catch {
-    console.error("DeepSeek JSON parse error:", raw.slice(0, 200));
-    return { ...empty, answer: raw.slice(0, 500) || "AI 返回了无法解析的内容，请重试。" };
+    console.error("DeepSeek JSON parse error, suppressing raw output (length %d)", raw.length);
+    return { ...empty, answer: "AI 返回了无法解析的内容，请重试。" };
   }
 }
 
@@ -461,7 +461,7 @@ gameRouter.post("/:soupId/start", async (req, res) => {
   );
   if (existing.length > 0) {
     const s = existing[0];
-    const msgs: { role: string; content: string }[] = parseJson(s.messages);
+    const msgs: { role: string; content: string }[] = parseJson(s.messages) ?? [];
     const recalculated = recalculateProgressFromMessages(s.messages);
     const supp = recalculated.revealedSupplements.surfaces.length > 0 || recalculated.revealedSupplements.bottoms.length > 0
       ? recalculated.revealedSupplements

@@ -1,5 +1,15 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// 确保从项目根目录加载 .env（无论 cwd 在哪个子目录）
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// apps/server/src/config.ts → 上三层到项目根
+dotenv.config({ path: resolve(__dirname, "..", "..", "..", ".env") });
+// 如果根目录 .env 不存在，尝试从 cwd 加载（兼容 Docker 等场景）
+dotenv.config();
 
 function readSecret(envKey: string, fileEnvKey: string): string {
   const filePath = process.env[fileEnvKey];
