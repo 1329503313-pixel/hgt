@@ -1,0 +1,238 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Award, Eye, RotateCcw, Search, ShieldPlus, Users, X } from "lucide-react";
+import { api } from "../../api";
+import { useApp } from "../../context/AppContext";
+import { BADGES, getBadgeKey, TIER_COLORS_EARNED, TIER_LABEL, type BadgeDef } from "../../pages/MyAchievementsPage";
+import { LegendaryBadge, LegendaryBadgeIcon, LegendaryBadgeTile } from "../BadgeVisuals";
+import { Modal } from "../Modal";
+import { AdminPageSize, AdminPagination } from "./AdminPagination";
+
+type BadgeAdminUser = {
+  id: string;
+  username: string;
+  nickname: string;
+  avatar: string | null;
+  badgeCount: number;
+  normalCount: number;
+  rareCount: number;
+  epicCount: number;
+  legendCount: number;
+};
+
+type BasicUser = Pick<BadgeAdminUser, "id" | "username" | "nickname" | "avatar">;
+type UserDetail = { user: BasicUser; badgeKeys: string[] };
+type UserAction = "view" | "grant" | "revoke";
+
+function UserIdentity({ user }: { user: BasicUser }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      {user.avatar ? <img className="h-9 w-9 shrink-0 rounded-full object-cover" src={user.avatar} alt="" /> : (
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{(user.nickname || user.username).slice(0, 1)}</div>
+      )}
+      <div className="min-w-0 text-left">
+        <div className="truncate font-bold text-ink">{user.nickname}</div>
+        <div className="truncate text-xs text-muted">@{user.username}</div>
+      </div>
+    </div>
+  );
+}
+
+function SystemBadgeTile({ badge }: { badge: BadgeDef }) {
+  const colors = TIER_COLORS_EARNED[badge.tier];
+  return (
+    <div className="flex flex-col items-center gap-1.5 text-center">
+      <div className={`grid h-16 w-16 place-items-center overflow-hidden rounded-2xl shadow-soft ring-1 ${colors.bg} ${colors.text} ${colors.ring}`}>{badge.icon}</div>
+      <span className="text-xs font-semibold leading-tight text-ink">{badge.label}</span>
+      <span className={`text-[11px] font-bold ${colors.label}`}>{TIER_LABEL[badge.tier]}</span>
+    </div>
+  );
+}
+
+export function BadgeManagement() {
+  const { showToast } = useApp();
+  const [subTab, setSubTab] = useState<"users" | "badges">("users");
+  const [users, setUsers] = useState<BadgeAdminUser[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(10);
+  const [keyword, setKeyword] = useState("");
+  const [submittedKeyword, setSubmittedKeyword] = useState("");
+  const [legendaryBadges, setLegendaryBadges] = useState<LegendaryBadge[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [userDetail, setUserDetail] = useState<UserDetail | null>(null);
+  const [userAction, setUserAction] = useState<UserAction | null>(null);
+  const [ownersBadge, setOwnersBadge] = useState<LegendaryBadge | null>(null);
+  const [owners, setOwners] = useState<BasicUser[]>([]);
+  const [modalLoading, setModalLoading] = useState(false);
+
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String((page - 1) * pageSize) });
+      if (submittedKeyword) params.set("keyword", submittedKeyword);
+      const result = await api<{ users: BadgeAdminUser[]; total: number }>(`/api/admin/badges/users?${params}`);
+      setUsers(result.users);
+      setTotal(result.total);
+    } finally { setLoading(false); }
+  }, [page, pageSize, submittedKeyword]);
+
+  const loadLegendaryBadges = useCallback(async () => {
+    const result = await api<{ badges: LegendaryBadge[] }>("/api/admin/badges");
+    setLegendaryBadges(result.badges);
+  }, []);
+
+  useEffect(() => { loadUsers().catch((error) => showToast(error instanceof Error ? error.message : "用户徽章加载失败")); }, [loadUsers]);
+  useEffect(() => { loadLegendaryBadges().catch((error) => showToast(error instanceof Error ? error.message : "传说徽章加载失败")); }, [loadLegendaryBadges]);
+
+  const ownedSystemBadges = useMemo(() => {
+    if (!userDetail) return [];
+    const owned = new Set(userDetail.badgeKeys);
+    return BADGES.filter((badge) => owned.has(getBadgeKey(badge)));
+  }, [userDetail]);
+  const ownedLegendaryBadges = useMemo(() => {
+    if (!userDetail) return [];
+    const owned = new Set(userDetail.badgeKeys);
+    return legendaryBadges.filter((badge) => owned.has(badge.key));
+  }, [legendaryBadges, userDetail]);
+  const grantableBadges = useMemo(() => {
+    if (!userDetail) return [];
+    const owned = new Set(userDetail.badgeKeys);
+    return legendaryBadges.filter((badge) => !owned.has(badge.key));
+  }, [legendaryBadges, userDetail]);
+
+  async function openUserAction(user: BadgeAdminUser, action: UserAction) {
+    setModalLoading(true);
+    setUserAction(action);
+    try {
+      setUserDetail(await api<UserDetail>(`/api/admin/badges/users/${user.id}`));
+    } catch (error) {
+      setUserAction(null);
+      showToast(error instanceof Error ? error.message : "用户徽章加载失败");
+    } finally { setModalLoading(false); }
+  }
+
+  function closeUserModal() {
+    if (modalLoading) return;
+    setUserAction(null);
+    setUserDetail(null);
+  }
+
+  async function grantBadge(badge: LegendaryBadge) {
+    if (!userDetail) return;
+    setModalLoading(true);
+    try {
+      await api(`/api/admin/badges/users/${userDetail.user.id}/legendary/${badge.id}`, { method: "POST" });
+      setUserDetail((current) => current ? { ...current, badgeKeys: [...current.badgeKeys, badge.key] } : current);
+      showToast(`已向 ${userDetail.user.nickname} 发放「${badge.name}」`);
+      await Promise.all([loadUsers(), loadLegendaryBadges()]);
+    } finally { setModalLoading(false); }
+  }
+
+  async function revokeBadge(user: BasicUser, badge: LegendaryBadge, fromOwners = false) {
+    if (!confirm(`确定撤销 ${user.nickname} 的传说徽章「${badge.name}」吗？`)) return;
+    setModalLoading(true);
+    try {
+      await api(`/api/admin/badges/users/${user.id}/legendary/${badge.id}`, { method: "DELETE" });
+      if (fromOwners) setOwners((current) => current.filter((item) => item.id !== user.id));
+      setUserDetail((current) => current?.user.id === user.id ? { ...current, badgeKeys: current.badgeKeys.filter((key) => key !== badge.key) } : current);
+      showToast(`已撤销 ${user.nickname} 的「${badge.name}」`);
+      await Promise.all([loadUsers(), loadLegendaryBadges()]);
+    } finally { setModalLoading(false); }
+  }
+
+  async function openOwners(badge: LegendaryBadge) {
+    setOwnersBadge(badge);
+    setModalLoading(true);
+    try {
+      const result = await api<{ users: BasicUser[] }>(`/api/admin/badges/${badge.id}/owners`);
+      setOwners(result.users);
+    } catch (error) {
+      setOwnersBadge(null);
+      showToast(error instanceof Error ? error.message : "拥有用户加载失败");
+    } finally { setModalLoading(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="card flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center">
+        <div>
+          <h2 className="font-black text-ink">徽章管理</h2>
+          <p className="mt-1 text-xs text-muted">查看用户徽章，人工发放或收回传说徽章</p>
+        </div>
+        <div className="flex rounded-xl bg-slate-100 p-1">
+          <button className={`rounded-lg px-4 py-2 text-sm font-bold ${subTab === "users" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => setSubTab("users")}><Users size={15} className="mr-1 inline" />用户</button>
+          <button className={`rounded-lg px-4 py-2 text-sm font-bold ${subTab === "badges" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => setSubTab("badges")}><Award size={15} className="mr-1 inline" />徽章</button>
+        </div>
+      </section>
+
+      {subTab === "users" ? (
+        <section className="card p-4">
+          <div className="mb-4 flex gap-2">
+            <div className="relative min-w-0 flex-1">
+              <input className="field h-10 pl-4 pr-24" placeholder="搜索昵称、账号..." value={keyword} onChange={(event) => setKeyword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { setPage(1); setSubmittedKeyword(keyword.trim()); } }} />
+              <button className="absolute right-1 top-1/2 inline-flex h-8 -translate-y-1/2 items-center gap-1 px-2 text-sm font-semibold text-primary" onClick={() => { setPage(1); setSubmittedKeyword(keyword.trim()); }}><Search size={17} />搜索</button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <div className="min-w-[1040px]">
+              <div className="grid grid-cols-[minmax(190px,1fr)_90px_90px_90px_90px_90px_300px] gap-2 px-3 py-2 text-center text-xs font-bold text-muted"><span>用户</span><span>全部</span><span>普通</span><span>稀有</span><span>史诗</span><span>传说</span><span>操作</span></div>
+              <div className="space-y-1">
+                {users.map((user) => (
+                  <div key={user.id} className="grid grid-cols-[minmax(190px,1fr)_90px_90px_90px_90px_90px_300px] items-center gap-2 rounded-lg border border-line px-3 py-2 text-center text-sm">
+                    <UserIdentity user={user} />
+                    <strong>{user.badgeCount}</strong><span>{user.normalCount}</span><span>{user.rareCount}</span><span>{user.epicCount}</span><span className="badge-legend-text font-black">{user.legendCount}</span>
+                    <div className="flex justify-center gap-2">
+                      <button className="btn btn-secondary h-8 px-2 text-xs" onClick={() => openUserAction(user, "view")}><Eye size={13} />查看徽章</button>
+                      <button className="btn btn-secondary h-8 px-2 text-xs" onClick={() => openUserAction(user, "grant")}><ShieldPlus size={13} />发放徽章</button>
+                      <button className="btn btn-danger h-8 px-2 text-xs" onClick={() => openUserAction(user, "revoke")}><RotateCcw size={13} />收回徽章</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {!loading && users.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无符合条件的用户</p>}
+          <AdminPagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size); }} />
+        </section>
+      ) : (
+        <section className="card p-4">
+          <div className="mb-3"><h2 className="font-black text-ink">传说徽章</h2><p className="mt-1 text-xs text-muted">传说徽章仅由管理员人工发放</p></div>
+          <div className="space-y-2">
+            {legendaryBadges.map((badge) => (
+              <div key={badge.id} className="flex flex-col gap-4 rounded-xl border border-line p-4 sm:flex-row sm:items-center">
+                <LegendaryBadgeIcon badge={badge} className="h-20 w-20" />
+                <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h3 className="font-black text-ink">{badge.name}</h3><span className="badge-legend-text text-xs font-black">传说</span></div><p className="mt-1 text-sm text-muted">{badge.description}</p>{badge.requirement && <p className="mt-2 text-xs text-muted">获取条件：{badge.requirement}</p>}</div>
+                <button className="btn btn-secondary shrink-0" onClick={() => openOwners(badge)}><Users size={15} />拥有用户（{badge.ownerCount ?? 0}）</button>
+              </div>
+            ))}
+          </div>
+          {legendaryBadges.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无传说徽章</p>}
+        </section>
+      )}
+
+      {userAction && (
+        <Modal full onClose={closeUserModal}>
+          <div className="flex items-center justify-between border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">{userAction === "view" ? "查看徽章" : userAction === "grant" ? "发放传说徽章" : "收回传说徽章"}</h2>{userDetail && <p className="mt-1 text-sm text-muted">{userDetail.user.nickname}（@{userDetail.user.username}）</p>}</div><button className="btn btn-secondary px-3" onClick={closeUserModal}><X size={17} /></button></div>
+          {modalLoading && !userDetail ? <div className="grid h-48 place-items-center text-sm text-muted">加载中……</div> : userDetail && (
+            <div className="py-5">
+              {userAction === "view" && <div className="grid grid-cols-3 gap-5 sm:grid-cols-5 md:grid-cols-6">{ownedSystemBadges.map((badge) => <SystemBadgeTile key={getBadgeKey(badge)} badge={badge} />)}{ownedLegendaryBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}</div>}
+              {userAction === "view" && ownedSystemBadges.length + ownedLegendaryBadges.length === 0 && <p className="py-10 text-center text-sm text-muted">该用户尚未拥有徽章</p>}
+              {userAction === "grant" && <div className="space-y-3">{grantableBadges.map((badge) => <div key={badge.id} className="flex items-center gap-3 rounded-xl border border-line p-3"><LegendaryBadgeIcon badge={badge} /><div className="min-w-0 flex-1"><strong className="text-ink">{badge.name}</strong><p className="text-sm text-muted">{badge.description}</p></div><button className="btn btn-primary shrink-0" disabled={modalLoading} onClick={() => grantBadge(badge)}>发放</button></div>)}</div>}
+              {userAction === "grant" && grantableBadges.length === 0 && <p className="py-10 text-center text-sm text-muted">全部传说徽章均已拥有</p>}
+              {userAction === "revoke" && <div className="space-y-3">{ownedLegendaryBadges.map((badge) => <div key={badge.id} className="flex items-center gap-3 rounded-xl border border-line p-3"><LegendaryBadgeIcon badge={badge} /><div className="min-w-0 flex-1"><strong className="text-ink">{badge.name}</strong><p className="text-sm text-muted">{badge.description}</p></div><button className="btn btn-danger shrink-0" disabled={modalLoading} onClick={() => revokeBadge(userDetail.user, badge)}>收回</button></div>)}</div>}
+              {userAction === "revoke" && ownedLegendaryBadges.length === 0 && <p className="py-10 text-center text-sm text-muted">该用户没有可收回的传说徽章</p>}
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {ownersBadge && (
+        <Modal full onClose={() => setOwnersBadge(null)}>
+          <div className="flex items-center justify-between border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">拥有「{ownersBadge.name}」的用户</h2><p className="mt-1 text-sm text-muted">共 {owners.length} 位</p></div><button className="btn btn-secondary px-3" onClick={() => setOwnersBadge(null)}><X size={17} /></button></div>
+          <div className="space-y-2 py-4">{owners.map((user) => <div key={user.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-3"><UserIdentity user={user} /><button className="btn btn-danger shrink-0" disabled={modalLoading} onClick={() => revokeBadge(user, ownersBadge, true)}>撤销徽章</button></div>)}</div>
+          {owners.length === 0 && !modalLoading && <p className="py-10 text-center text-sm text-muted">暂时没有用户拥有该徽章</p>}
+        </Modal>
+      )}
+    </div>
+  );
+}

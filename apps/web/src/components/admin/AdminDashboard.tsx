@@ -19,7 +19,7 @@ import { api } from "../../api";
 
 ChartJS.register(CategoryScale, LinearScale, RadialLinearScale, PointElement, LineElement, BarElement, ArcElement, Filler, Tooltip, Legend);
 
-type DashboardRange = "7d" | "30d" | "90d";
+type DashboardRange = "7d" | "15d" | "30d" | "90d";
 type PeriodMetric = { current: number; previous: number; changePercent: number | null };
 type GrowthMetric = { total: number; today: PeriodMetric; week: PeriodMetric };
 
@@ -43,7 +43,7 @@ type DashboardResponse = {
     publicBottom: number;
     aiEnabled: number;
     sensitive: number;
-    top: Array<{ id: string; title: string; views: number; evaluations: number; likes: number; favorites: number }>;
+    top: Array<{ id: string; title: string; views: number; evaluations: number; comprehensiveScore: number; likes: number; favorites: number; heatValue: number }>;
   };
   evaluations: {
     averageTotal: number | null;
@@ -252,7 +252,7 @@ export function AdminDashboard() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-xl bg-slate-100 p-1" aria-label="趋势时间范围">
-            {(["7d", "30d", "90d"] as DashboardRange[]).map((item) => (
+            {(["7d", "15d", "30d", "90d"] as DashboardRange[]).map((item) => (
               <button
                 key={item}
                 className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${range === item ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`}
@@ -319,15 +319,17 @@ export function AdminDashboard() {
         </ChartCard>
       </div>
 
-      <ChartCard title="热门汤品 Top 10" description="按浏览量优先排序，其次按评价数和点赞数排序">
+      <ChartCard title="热门汤品 Top 10" description="热力值 =（综合评分 + 2）×（浏览 + 点赞 × 收藏 × 评价 × 5），按热力值降序排列">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead><tr className="border-b border-line text-xs text-muted"><th className="px-3 py-2">排名</th><th className="px-3 py-2">汤品</th><th className="px-3 py-2 text-right">浏览</th><th className="px-3 py-2 text-right">评价</th><th className="px-3 py-2 text-right">点赞</th><th className="px-3 py-2 text-right">收藏</th></tr></thead>
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead><tr className="border-b border-line text-xs text-muted"><th className="px-3 py-2">排名</th><th className="px-3 py-2">汤品</th><th className="px-3 py-2 text-right">综合评分</th><th className="px-3 py-2 text-right">热力值</th><th className="px-3 py-2 text-right">浏览</th><th className="px-3 py-2 text-right">评价</th><th className="px-3 py-2 text-right">点赞</th><th className="px-3 py-2 text-right">收藏</th></tr></thead>
             <tbody>
               {data.soups.top.map((item, index) => (
                 <tr key={item.id} className="border-b border-line/70 last:border-0">
                   <td className="px-3 py-3 font-black text-muted">{index + 1}</td>
                   <td className="px-3 py-3"><button className="max-w-72 truncate font-bold text-ink hover:text-primary" onClick={() => navigate(`/soup/${item.id}`)}>{item.title}</button></td>
+                  <td className="px-3 py-3 text-right font-bold text-primary">{item.comprehensiveScore.toFixed(1)}</td>
+                  <td className="px-3 py-3 text-right font-black text-amber-600">{numberFormat.format(item.heatValue)}</td>
                   <td className="px-3 py-3 text-right text-muted"><span className="inline-flex items-center gap-1"><Eye size={13} />{numberFormat.format(item.views)}</span></td>
                   <td className="px-3 py-3 text-right text-muted"><span className="inline-flex items-center gap-1"><MessageSquare size={13} />{numberFormat.format(item.evaluations)}</span></td>
                   <td className="px-3 py-3 text-right text-muted"><span className="inline-flex items-center gap-1"><ThumbsUp size={13} />{numberFormat.format(item.likes)}</span></td>

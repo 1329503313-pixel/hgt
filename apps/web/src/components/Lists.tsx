@@ -4,12 +4,12 @@ import type { NotificationItem, ViewRequestItem } from "../shared/types";
 export function NotificationList({
   notifications,
   onRead,
-  onOpenSoup,
+  onOpen,
   max
 }: {
   notifications: NotificationItem[];
   onRead: (id: string) => void;
-  onOpenSoup: (id: string) => void;
+  onOpen: (link: string) => void;
   max?: number;
 }) {
   const visible = max ? notifications.slice(0, max) : notifications;
@@ -23,15 +23,10 @@ export function NotificationList({
       {visible.map((item) => (
         <div
           key={item.id}
-          className={`rounded-lg border border-line bg-white p-3 ${item.relatedId ? "cursor-pointer hover:border-primary/40 hover:shadow-sm" : ""}`}
+          className={`rounded-lg border border-line bg-white p-3 ${item.link || !item.isRead ? "cursor-pointer hover:border-primary/40 hover:shadow-sm" : ""}`}
           onClick={() => {
-            if (item.relatedId) {
-              if (!item.isRead) onRead(item.id);
-              const soupId = item.relatedId;
-              // relatedId 可能是 soup_id 或 view_request_id
-              // 优先尝试作为 soup_id 导航，如果不是则忽略
-              onOpenSoup(soupId);
-            }
+            if (!item.isRead) onRead(item.id);
+            if (item.link) onOpen(item.link);
           }}
         >
           <div className="flex items-start justify-between gap-3">
@@ -42,7 +37,7 @@ export function NotificationList({
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {!item.isRead && <span className="h-2 w-2 rounded-full bg-primary" />}
-              {item.relatedId && <ChevronRight size={16} className="text-muted/40" />}
+              {item.link && <ChevronRight size={16} className="text-muted/40" />}
             </div>
           </div>
         </div>

@@ -10,6 +10,7 @@ import { ContentCard } from "../components/ContentCard";
 import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
 import { GameModal } from "../components/GameModal";
+import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -291,7 +292,9 @@ export default function DetailPage() {
             </div>
             <p className="avatar-name-gap mt-3 flex items-center text-sm text-muted">
               {soup.creatorAvatar ? <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" /> : <User size={14} />}
-              作者 {soup.author} · 发布者 {soup.creatorName} · 评分 {soup.averageTotal ?? "-"}
+              <span>作者 {soup.author} · 发布者 {soup.creatorName}</span>
+              <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />
+              <span>· 评分 {soup.averageTotal ?? "-"}</span>
             </p>
           </div>
         </div>
@@ -374,7 +377,11 @@ export default function DetailPage() {
             {soup.evaluations.map((item) => (
               <div key={item.id} className="rounded-lg border border-line bg-slate-50 p-3">
                 <div className="flex items-center justify-between">
-                  <strong>{item.reviewer}</strong>
+                  <span className="flex items-center gap-2">
+                    {item.reviewerAvatar ? <img className="h-6 w-6 rounded-full object-cover" src={item.reviewerAvatar} alt="" /> : <span className="grid h-6 w-6 place-items-center rounded-full bg-blue-100 text-primary"><User size={14} /></span>}
+                    <strong>{item.reviewer}</strong>
+                    <EquippedBadgeIcon badge={item.reviewerEquippedBadge} className="h-5 w-5" />
+                  </span>
                   <span className="rounded-lg bg-blue-50 px-2 py-1 text-sm font-black text-primary">{item.total}</span>
                 </div>
                 {item.content && <p className="mt-2 text-sm leading-6 text-ink whitespace-pre-wrap">{item.content}</p>}

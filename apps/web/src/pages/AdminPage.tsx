@@ -7,6 +7,7 @@ import { SoupManagement } from "../components/admin/SoupManagement";
 import { EvaluationManagement } from "../components/admin/EvaluationManagement";
 import { ApprovalManagement } from "../components/admin/ApprovalManagement";
 import { AdminDashboard } from "../components/admin/AdminDashboard";
+import { BadgeManagement } from "../components/admin/BadgeManagement";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -28,6 +29,7 @@ export default function AdminPage() {
       <div className="mx-auto max-w-7xl px-4 pt-[72px] pb-8 space-y-4">
         {activeTab === "data" && <AdminDashboard />}
         {activeTab === "users" && <UserManagement />}
+        {activeTab === "badges" && <BadgeManagement />}
         {activeTab === "approvals" && <ApprovalManagement />}
         {activeTab === "soups" && <SoupManagement />}
         {activeTab === "evaluations" && <EvaluationManagement />}

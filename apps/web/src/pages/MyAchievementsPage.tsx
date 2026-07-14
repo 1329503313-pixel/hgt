@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { cloneElement, isValidElement, useState, useEffect, useRef } from "react";
 import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { api, StatsResponse } from "../api";
+import { LegendaryBadge, LegendaryBadgeTile, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 
 // ============================================================
 // 类型定义
@@ -58,7 +59,12 @@ interface DisplayBadge {
 // 徽章定义：进度和解锁状态会根据用户真实统计更新
 // ============================================================
 
-export const BADGES: BadgeDef[] = [
+function versionBadgeIcon(icon: React.ReactNode) {
+  if (!isValidElement<{ src?: string }>(icon) || !icon.props.src?.startsWith("/badges/")) return icon;
+  return cloneElement(icon, { src: versionBadgeAssetUrl(icon.props.src) });
+}
+
+const BADGE_DEFINITIONS: BadgeDef[] = [
   { series: "publish", tier: "normal", tierIndex: 1, label: "熬汤新秀", description: "你已经是一个合格的厨子了", icon: <img src="/badges/publish-normal.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布一篇海龟汤", nextBadgeLabel: "熬汤达人", progressCurrent: 0, progressTarget: 1, earned: false },
   { series: "publish", tier: "rare", tierIndex: 2, label: "熬汤达人", description: "没有你该怎么办？", icon: <img src="/badges/publish-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布十篇海龟汤", nextBadgeLabel: "熬汤大师", progressCurrent: 0, progressTarget: 10, earned: false },
   { series: "publish", tier: "epic", tierIndex: 3, label: "熬汤大师", description: "再……再来一口汤……", icon: <img src="/badges/publish-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布五十篇海龟汤", progressCurrent: 0, progressTarget: 50, earned: false },
@@ -90,6 +96,9 @@ export const BADGES: BadgeDef[] = [
   { series: "aiClear", tier: "rare", tierIndex: 2, label: "汤灵搭档", description: "你负责带汤，我负责找到真相", icon: <img src="/badges/ai-clear-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计通关10次AI玩汤（同一局游戏重复结算只记录一次）", nextBadgeLabel: "AI破局王", progressCurrent: 0, progressTarget: 10, earned: false },
   { series: "aiClear", tier: "epic", tierIndex: 3, label: "AI破局王", description: "AI也藏不住最后的真相", icon: <img src="/badges/ai-clear-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计通关50次AI玩汤（同一局游戏重复结算只记录一次）", progressCurrent: 0, progressTarget: 50, earned: false },
 ];
+
+// 徽章文件名未包含内容哈希，版本号用于在图片更新时主动刷新浏览器长期缓存。
+export const BADGES: BadgeDef[] = BADGE_DEFINITIONS.map((badge) => ({ ...badge, icon: versionBadgeIcon(badge.icon) }));
 
 export function buildBadgesFromStats(stats: StatsResponse): BadgeDef[] {
   const progressBySeries: Record<string, number> = {
@@ -472,11 +481,15 @@ function BadgeDetail({
 export default function MyAchievementsPage() {
   const navigate = useNavigate();
   const [badges, setBadges] = useState<BadgeDef[]>(BADGES);
+  const [legendaryBadges, setLegendaryBadges] = useState<LegendaryBadge[]>([]);
   const displayBadges = buildDisplayBadges(badges);
 
   useEffect(() => {
     api<StatsResponse>("/api/me/stats")
       .then((stats) => setBadges(buildBadgesFromStats(stats)))
+      .catch(() => {});
+    api<{ badges: LegendaryBadge[] }>("/api/me/legendary-badges")
+      .then((result) => setLegendaryBadges(result.badges))
       .catch(() => {});
   }, []);
 
@@ -605,6 +618,7 @@ export default function MyAchievementsPage() {
               </div>
             );
           })}
+          {legendaryBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}
         </div>
       </div>
 

@@ -58,7 +58,7 @@ export default function MessagesPage() {
             )}
           </div>
         </div>
-        <NotificationList notifications={notifications} onRead={markRead} onOpenSoup={(id) => navigate(`/soup/${id}`)} max={3} />
+        <NotificationList notifications={notifications} onRead={markRead} onOpen={navigate} max={3} />
       </div>
 
       <div className="card p-4">

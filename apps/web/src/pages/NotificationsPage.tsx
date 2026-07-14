@@ -33,7 +33,7 @@ export default function NotificationsPage() {
         <h1 className="text-xl font-black text-ink">全部站内消息</h1>
       </div>
       <div className="card p-4">
-        <NotificationList notifications={notifications} onRead={markRead} onOpenSoup={(id) => navigate(`/soup/${id}`)} />
+        <NotificationList notifications={notifications} onRead={markRead} onOpen={navigate} />
       </div>
     </section>
   );

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { SoupSummary } from "../shared/types";
 import { Star, User, ThumbsUp, Sparkles } from "lucide-react";
 import { formatViews } from "../context/AppContext";
+import { EquippedBadgeIcon } from "./BadgeVisuals";
 
 export function SoupCard({
   soup,
@@ -36,6 +37,7 @@ export function SoupCard({
             <User size={14} />
           )}
           {soup.author || soup.creatorName}
+          <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />
         </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {tags.map((tag) => (

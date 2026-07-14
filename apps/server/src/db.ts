@@ -142,9 +142,11 @@ export async function initDatabase() {
       title VARCHAR(120) NOT NULL,
       content VARCHAR(500) NOT NULL,
       related_id VARCHAR(64) NULL,
+      actor_id VARCHAR(64) NULL,
       is_read BOOLEAN NOT NULL DEFAULT FALSE,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_notifications_user_read (user_id, is_read),
+      UNIQUE KEY uq_notification_actor_event (user_id, type, related_id, actor_id),
       CONSTRAINT fk_notification_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
@@ -161,8 +163,12 @@ export async function initDatabase() {
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
   await ensureColumn("users", "badges_initialized", "badges_initialized TINYINT(1) NOT NULL DEFAULT 0 AFTER avatar");
+  await ensureColumn("users", "equipped_badge_key", "equipped_badge_key VARCHAR(128) NULL AFTER badges_initialized");
+  await ensureColumn("users", "equipped_badge_icon_url", "equipped_badge_icon_url VARCHAR(255) NULL AFTER equipped_badge_key");
   await ensureColumn("users", "last_login_at", "last_login_at DATETIME NULL AFTER badges_initialized");
   await ensureColumn("users", "token_version", "token_version INT NOT NULL DEFAULT 0 AFTER role");
+  await ensureColumn("notifications", "actor_id", "actor_id VARCHAR(64) NULL AFTER related_id");
+  await ensureIndex("notifications", "uq_notification_actor_event", "user_id, type, related_id, actor_id", true);
   await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
   await ensureIndex("users", "idx_users_created_at", "created_at");
   await ensureIndex("soups", "idx_soups_created_at", "created_at");
@@ -225,6 +231,20 @@ export async function initDatabase() {
       CONSTRAINT fk_badge_unlock_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureIndex("user_badge_unlocks", "idx_badge_unlocks_badge_user", "badge_key, user_id");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS legendary_badges (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(80) NOT NULL,
+      description VARCHAR(300) NOT NULL,
+      requirement VARCHAR(300) NULL,
+      icon_url VARCHAR(255) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await seedLegendaryBadges();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS soup_like_history (
@@ -348,7 +368,7 @@ async function ensureColumn(table: string, column: string, ddl: string) {
   }
 }
 
-async function ensureIndex(table: string, index: string, columns: string) {
+async function ensureIndex(table: string, index: string, columns: string, unique = false) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT INDEX_NAME
@@ -360,7 +380,7 @@ async function ensureIndex(table: string, index: string, columns: string) {
   );
   if (rows.length === 0) {
     try {
-      await pool.query(`ALTER TABLE ${table} ADD INDEX ${index} (${columns})`);
+      await pool.query(`ALTER TABLE ${table} ADD ${unique ? "UNIQUE " : ""}INDEX ${index} (${columns})`);
     } catch (error) {
       if ((error as { code?: string }).code !== "ER_DUP_KEYNAME") throw error;
     }
@@ -423,5 +443,15 @@ async function seedAdmin() {
   await pool.query(
     "INSERT INTO users (id, username, password, nickname, role) VALUES (?, ?, ?, ?, ?)",
     ["admin", "admin", hash, "管理员", "admin"]
+  );
+}
+
+async function seedLegendaryBadges() {
+  await pool.query(
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url)`,
+    ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png"]
   );
 }

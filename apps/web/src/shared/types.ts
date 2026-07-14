@@ -3,6 +3,11 @@ export type RequestStatus = "pending" | "approved" | "rejected";
 export type BottomPublicFilter = "all" | "surface" | "bottom";
 export type RatingFilter = "all" | "2" | "3" | "4";
 
+export type EquippedBadge = {
+  key: string;
+  iconUrl: string;
+};
+
 export type PublicUser = {
   id: string;
   username: string;
@@ -10,6 +15,7 @@ export type PublicUser = {
   avatar: string | null;
   role: UserRole;
   createdAt: string;
+  equippedBadge: EquippedBadge | null;
 };
 
 export type RadarStats = {
@@ -32,6 +38,7 @@ export type SoupSummary = {
   creatorId: string;
   creatorName: string;
   creatorAvatar: string | null;
+  creatorEquippedBadge: EquippedBadge | null;
   isSurfacePublic: boolean;
   isBottomPublic: boolean;
   viewCount: number;
@@ -51,6 +58,8 @@ export type Evaluation = {
   total: number;
   reviewer: string;
   reviewerId: string;
+  reviewerAvatar: string | null;
+  reviewerEquippedBadge: EquippedBadge | null;
   writing: number | null;
   logic: number | null;
   share: number | null;
@@ -91,6 +100,7 @@ export type NotificationItem = {
   title: string;
   content: string;
   relatedId: string | null;
+  link: string | null;
   isRead: boolean;
   createdAt: string;
 };

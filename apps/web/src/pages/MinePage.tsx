@@ -1,9 +1,21 @@
 import { useEffect, useState, useRef, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronRight, ImagePlus, Pencil, Trophy, Key } from "lucide-react";
+import { Check, ChevronRight, ImagePlus, Pencil, Plus, Trophy, Key, X } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { api, StatsResponse, NicknameResponse, AvatarResponse, PasswordResponse } from "../api";
+import { Modal } from "../components/Modal";
+import { EquippedBadgeIcon, LegendaryBadge, LegendaryBadgeIcon } from "../components/BadgeVisuals";
+import { BADGES, getBadgeKey } from "./MyAchievementsPage";
+import type { EquippedBadge } from "../shared/types";
+
+type BadgeCollectionResponse = {
+  badgeKeys: string[];
+  legendaryBadges: LegendaryBadge[];
+  equippedBadge: EquippedBadge | null;
+};
+
+type EquippedBadgeResponse = { equippedBadge: EquippedBadge | null };
 
 export default function MinePage() {
   const { user, loadingUser } = useApp();
@@ -18,6 +30,10 @@ export default function MinePage() {
   const [nicknameError, setNicknameError] = useState("");
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [badgePickerOpen, setBadgePickerOpen] = useState(false);
+  const [badgeCollection, setBadgeCollection] = useState<BadgeCollectionResponse | null>(null);
+  const [badgeCollectionLoading, setBadgeCollectionLoading] = useState(false);
+  const [badgeSaving, setBadgeSaving] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const { showToast, openAuth, setUser, triggerRefresh } = useApp();
@@ -105,13 +121,48 @@ export default function MinePage() {
     navigate("/");
   }
 
+  async function openBadgePicker() {
+    setBadgePickerOpen(true);
+    setBadgeCollectionLoading(true);
+    try {
+      const collection = await api<BadgeCollectionResponse>("/api/me/badge-collection");
+      setBadgeCollection(collection);
+      if (user) setUser({ ...user, equippedBadge: collection.equippedBadge });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "徽章加载失败");
+      setBadgePickerOpen(false);
+    } finally {
+      setBadgeCollectionLoading(false);
+    }
+  }
+
+  async function toggleEquippedBadge(badgeKey: string) {
+    if (badgeSaving || !user) return;
+    setBadgeSaving(true);
+    try {
+      const nextKey = user.equippedBadge?.key === badgeKey ? null : badgeKey;
+      const data = await api<EquippedBadgeResponse>("/api/me/equipped-badge", {
+        method: "PATCH",
+        body: { badgeKey: nextKey }
+      });
+      setUser({ ...user, equippedBadge: data.equippedBadge });
+      setBadgeCollection((current) => current ? { ...current, equippedBadge: data.equippedBadge } : current);
+      triggerRefresh();
+      showToast(data.equippedBadge ? "徽章已装配" : "徽章已卸下");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "徽章装配失败");
+    } finally {
+      setBadgeSaving(false);
+    }
+  }
+
   return (
     <section className="space-y-3">
       <PageTopBar title="我的" />
 
       {/* Profile card */}
       <div className="card p-4">
-        <div className="avatar-name-gap flex items-center">
+        <div className="flex items-center gap-3">
           <button className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-xl font-black text-primary" type="button" disabled={avatarSaving}
             onClick={() => avatarInputRef.current?.click()} title="点击更换头像">
             {user.avatar ? <img className="h-full w-full object-cover" src={user.avatar} alt="" /> : (user.nickname || user.username).slice(0, 1)}
@@ -132,14 +183,69 @@ export default function MinePage() {
             ) : (
               <div className="flex items-center gap-2">
                 <span className="text-lg font-black text-ink">{user.nickname}</span>
+                <EquippedBadgeIcon badge={user.equippedBadge} className="h-11 w-11" title="当前装配徽章" />
                 <button className="text-primary" onClick={() => setEditNickname(true)}><Pencil size={14} /></button>
               </div>
             )}
             {nicknameError && <p className="mt-1 text-xs font-semibold text-danger">{nicknameError}</p>}
             <p className="text-xs text-muted">@{user.username}</p>
           </div>
+          <button
+            type="button"
+            className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-50"
+            onClick={openBadgePicker}
+            title={user.equippedBadge ? "更换或卸下徽章" : "装配徽章"}
+          >
+            {user.equippedBadge
+              ? <EquippedBadgeIcon badge={user.equippedBadge} className="h-full w-full rounded-xl" title="当前装配徽章" />
+              : <Plus size={24} />}
+          </button>
         </div>
       </div>
+
+      {badgePickerOpen && (
+        <Modal full onClose={() => setBadgePickerOpen(false)}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black text-ink">装配徽章</h2>
+              <p className="mt-1 text-sm text-muted">点击徽章装配，再次点击当前徽章即可卸下。</p>
+            </div>
+            <button className="btn btn-secondary px-3" onClick={() => setBadgePickerOpen(false)}><X size={18} /></button>
+          </div>
+          {badgeCollectionLoading ? (
+            <div className="grid min-h-48 place-items-center text-sm text-muted">正在加载徽章…</div>
+          ) : (
+            <div className="mt-5 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+              {BADGES.filter((badge) => badgeCollection?.badgeKeys.includes(getBadgeKey(badge))).map((badge) => {
+                const key = getBadgeKey(badge);
+                const selected = user.equippedBadge?.key === key;
+                return (
+                  <button key={key} type="button" disabled={badgeSaving} onClick={() => toggleEquippedBadge(key)}
+                    className={`relative flex min-h-28 flex-col items-center justify-center gap-2 rounded-xl border p-3 transition ${selected ? "border-primary bg-blue-50 ring-2 ring-blue-100" : "border-line bg-white hover:border-blue-200 hover:bg-blue-50/50"}`}>
+                    <span className="h-14 w-14 overflow-hidden rounded-xl">{badge.icon}</span>
+                    <span className="line-clamp-2 text-xs font-bold text-ink">{badge.label}</span>
+                    {selected && <span className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-primary text-white"><Check size={13} /></span>}
+                  </button>
+                );
+              })}
+              {(badgeCollection?.legendaryBadges ?? []).map((badge) => {
+                const selected = user.equippedBadge?.key === badge.key;
+                return (
+                  <button key={badge.key} type="button" disabled={badgeSaving} onClick={() => toggleEquippedBadge(badge.key)}
+                    className={`relative flex min-h-28 flex-col items-center justify-center gap-2 rounded-xl border p-3 transition ${selected ? "border-fuchsia-300 bg-fuchsia-50 ring-2 ring-fuchsia-100" : "border-line bg-white hover:border-fuchsia-200 hover:bg-fuchsia-50/40"}`}>
+                    <LegendaryBadgeIcon badge={badge} className="h-14 w-14" />
+                    <span className="line-clamp-2 text-xs font-bold text-ink">{badge.name}</span>
+                    {selected && <span className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-primary text-white"><Check size={13} /></span>}
+                  </button>
+                );
+              })}
+              {badgeCollection?.badgeKeys.length === 0 && (
+                <p className="col-span-full py-12 text-center text-sm text-muted">还没有已获得的徽章，先去完成成就吧。</p>
+              )}
+            </div>
+          )}
+        </Modal>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-2">

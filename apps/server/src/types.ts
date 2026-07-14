@@ -5,4 +5,5 @@ export type PublicUser = {
   avatar: string | null;
   role: "admin" | "user";
   createdAt: string;
+  equippedBadge: { key: string; iconUrl: string } | null;
 };
