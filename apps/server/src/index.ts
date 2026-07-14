@@ -569,6 +569,44 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
   };
 }
 
+async function syncSystemBadgeUnlocks(userId: string) {
+  const stats = await getAchievementStats(userId);
+  const earnedKeys = BADGE_THRESHOLDS
+    .filter((badge) => stats[badge.stat] >= badge.target)
+    .map((badge) => badge.key);
+  const [unlockRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT badge_key FROM user_badge_unlocks WHERE user_id = ?",
+    [userId]
+  );
+  const unlocked = new Set(unlockRows.map((row) => String(row.badge_key)));
+  const newKeys = earnedKeys.filter((key) => !unlocked.has(key));
+  if (newKeys.length > 0) {
+    const placeholders = newKeys.map(() => "(?, ?)").join(", ");
+    const values = newKeys.flatMap((key) => [userId, key]);
+    await pool.query(
+      `INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key) VALUES ${placeholders}`,
+      values
+    );
+  }
+  return { stats, newKeys };
+}
+
+let rankingBadgeSyncPromise: Promise<void> | null = null;
+let rankingBadgeSyncedAt = 0;
+
+async function ensureRankingBadgeUnlocksCurrent() {
+  if (Date.now() - rankingBadgeSyncedAt < 30_000) return;
+  if (rankingBadgeSyncPromise) return rankingBadgeSyncPromise;
+  rankingBadgeSyncPromise = (async () => {
+    const [users] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'user'");
+    for (let index = 0; index < users.length; index += 5) {
+      await Promise.all(users.slice(index, index + 5).map((row) => syncSystemBadgeUnlocks(String(row.id))));
+    }
+    rankingBadgeSyncedAt = Date.now();
+  })().finally(() => { rankingBadgeSyncPromise = null; });
+  return rankingBadgeSyncPromise;
+}
+
 async function generateThumbnail(base64: string): Promise<string | null> {
   try {
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
@@ -767,26 +805,7 @@ app.post("/api/me/badge-unlocks/sync", async (req, res) => {
     [user.id]
   );
   const wasInitialized = Boolean(userRows[0]?.badges_initialized);
-  const stats = await getAchievementStats(user.id);
-  const earnedKeys = BADGE_THRESHOLDS
-    .filter((badge) => stats[badge.stat] >= badge.target)
-    .map((badge) => badge.key);
-
-  const [unlockRows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT badge_key FROM user_badge_unlocks WHERE user_id = ?",
-    [user.id]
-  );
-  const unlocked = new Set(unlockRows.map((row) => String(row.badge_key)));
-  const newKeys = earnedKeys.filter((key) => !unlocked.has(key));
-
-  if (newKeys.length > 0) {
-    const placeholders = newKeys.map(() => "(?, ?)").join(", ");
-    const values = newKeys.flatMap((key) => [user.id, key]);
-    await pool.query(
-      `INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key) VALUES ${placeholders}`,
-      values
-    );
-  }
+  const { stats, newKeys } = await syncSystemBadgeUnlocks(user.id);
 
   if (!wasInitialized) {
     await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [user.id]);
@@ -885,6 +904,7 @@ app.patch("/api/me/equipped-badge", async (req, res) => {
 
 app.get("/api/rankings", async (req, res) => {
   if (!(await requireAuth(req, res))) return;
+  await ensureRankingBadgeUnlocksCurrent();
 
   const [hotSoupRows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT s.id, s.title, s.author, s.view_count,
