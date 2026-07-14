@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Download, Eye, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, Gamepad2, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, Gamepad2, ChevronDown, ChevronUp } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import type { SoupDetail } from "../shared/types";
@@ -261,7 +261,13 @@ export default function DetailPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-end justify-between gap-3">
-              <h1 className="min-w-0 flex-1 break-words text-2xl font-black text-ink">{soup.title}</h1>
+              <h1 className="min-w-0 flex-1 break-words text-2xl font-black text-ink">
+                {soup.title}
+                <span className="ml-2 inline-flex items-center gap-1 whitespace-nowrap align-middle text-base font-black text-red-500" title={`热力值 ${soup.heatValue}`}>
+                  <Flame size={18} className="fill-red-500" />
+                  {soup.heatValue.toLocaleString()}
+                </span>
+              </h1>
               <div className="flex shrink-0 items-end gap-2" style={{ height: "calc(1.5lh * 0.75)" }}>
                 <button
                   className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${soup.isLiked ? "border-red-200 bg-red-50 text-red-500" : "border-line bg-white text-muted hover:border-red-200 hover:text-red-500"}`}

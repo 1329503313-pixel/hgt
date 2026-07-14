@@ -7,6 +7,7 @@ export type LegendaryBadge = {
   description: string;
   requirement: string | null;
   iconUrl: string;
+  achievementPoints: number;
   tier: "legend";
   ownerCount?: number;
 };
@@ -29,13 +30,20 @@ export function LegendaryBadgeIcon({ badge, className = "h-16 w-16" }: { badge: 
   );
 }
 
-export function LegendaryBadgeTile({ badge }: { badge: LegendaryBadge }) {
-  return (
-    <div className="flex flex-col items-center gap-1.5 text-center">
+export function LegendaryBadgeTile({ badge, onClick }: { badge: LegendaryBadge; onClick?: () => void }) {
+  const content = (
+    <>
       <LegendaryBadgeIcon badge={badge} />
       <span className="text-xs font-semibold leading-tight text-ink">{badge.name}</span>
       <span className="badge-legend-text text-[11px] font-black">传说</span>
-    </div>
+    </>
+  );
+  return onClick ? (
+    <button type="button" className="flex flex-col items-center gap-1.5 rounded-xl text-center transition active:scale-95" onClick={onClick} aria-label={`检视徽章：${badge.name}`}>
+      {content}
+    </button>
+  ) : (
+    <div className="flex flex-col items-center gap-1.5 text-center">{content}</div>
   );
 }
 

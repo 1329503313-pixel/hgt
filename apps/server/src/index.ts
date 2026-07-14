@@ -349,6 +349,11 @@ function mapEvaluation(row: mysql.RowDataPacket) {
 }
 
 function mapSoupSummary(row: mysql.RowDataPacket) {
+  const comprehensiveScore = Number(row.average_total ?? 0);
+  const views = Number(row.view_count ?? 0);
+  const likes = Number(row.like_count ?? 0);
+  const favorites = Number(row.favorite_count ?? 0);
+  const evaluations = Number(row.evaluation_count ?? 0);
   return {
     id: row.id,
     title: row.title,
@@ -363,14 +368,15 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     creatorEquippedBadge: equippedBadge(row.creator_badge_key, row.creator_badge_icon_url),
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
-    viewCount: Number(row.view_count ?? 0),
-    likeCount: Number(row.like_count ?? 0),
-    favoriteCount: Number(row.favorite_count ?? 0),
+    viewCount: views,
+    likeCount: likes,
+    favoriteCount: favorites,
     isLiked: bool(row.is_liked),
     isFavorited: bool(row.is_favorited),
     createdAt: new Date(row.created_at).toISOString(),
-    evaluationCount: Number(row.evaluation_count ?? 0),
+    evaluationCount: evaluations,
     averageTotal: num(row.average_total),
+    heatValue: Math.round((comprehensiveScore + 2) * (views + (likes + 1) * (favorites + 1) * (evaluations + 1) * 5)),
     radar: {
       writing: num(row.avg_writing),
       logic: num(row.avg_logic),
@@ -488,6 +494,19 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "aiClear:rare", stat: "aiCompletionCount", target: 10 },
   { key: "aiClear:epic", stat: "aiCompletionCount", target: 50 }
 ];
+
+const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
+  "publish:normal": 10, "publish:rare": 30, "publish:epic": 100,
+  "insight:normal": 10, "insight:rare": 35, "insight:epic": 120,
+  "favorite:normal": 10, "favorite:rare": 30, "favorite:epic": 100,
+  "like:normal": 10, "like:rare": 30, "like:epic": 100,
+  "login:normal": 10, "login:rare": 45, "login:epic": 100,
+  "creatorLike:normal": 10, "creatorLike:rare": 40, "creatorLike:epic": 150,
+  "creatorFavorite:normal": 10, "creatorFavorite:rare": 30, "creatorFavorite:epic": 120,
+  "receivedComment:normal": 10, "receivedComment:rare": 40, "receivedComment:epic": 100,
+  "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
+  "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120
+};
 
 const BADGE_NOTIFICATION_LABELS: Record<string, [string, string, string]> = {
   publish: ["熬汤新秀", "熬汤达人", "熬汤大师"],
@@ -787,7 +806,7 @@ app.get("/api/me/legendary-badges", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url
+    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points
      FROM legendary_badges lb
      INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
      WHERE ubu.user_id = ?
@@ -802,6 +821,7 @@ app.get("/api/me/legendary-badges", async (req, res) => {
       description: String(row.description),
       requirement: row.requirement ? String(row.requirement) : null,
       iconUrl: String(row.icon_url),
+      achievementPoints: Number(row.achievement_points ?? 0),
       tier: "legend" as const
     }))
   });
@@ -815,7 +835,7 @@ app.get("/api/me/badge-collection", async (req, res) => {
     [user.id]
   );
   const [legendaryRows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url
+    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points
      FROM legendary_badges lb
      INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
      WHERE ubu.user_id = ?
@@ -835,6 +855,7 @@ app.get("/api/me/badge-collection", async (req, res) => {
       description: String(row.description),
       requirement: row.requirement ? String(row.requirement) : null,
       iconUrl: String(row.icon_url),
+      achievementPoints: Number(row.achievement_points ?? 0),
       tier: "legend" as const
     })),
     equippedBadge: equippedBadge(freshUser?.equipped_badge_key, freshUser?.equipped_badge_icon_url)
@@ -860,6 +881,71 @@ app.patch("/api/me/equipped-badge", async (req, res) => {
     [parsed.data.badgeKey, iconUrl, user.id]
   );
   res.json({ equippedBadge: { key: parsed.data.badgeKey, iconUrl } });
+});
+
+app.get("/api/rankings", async (req, res) => {
+  if (!(await requireAuth(req, res))) return;
+
+  const [hotSoupRows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT s.id, s.title, s.author, s.view_count,
+       COALESCE(e.evaluation_count, 0) AS evaluation_count,
+       COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
+       COALESCE(l.like_count, 0) AS like_count,
+       COALESCE(f.favorite_count, 0) AS favorite_count,
+       (COALESCE(e.comprehensive_score, 0) + 2) *
+         (s.view_count + (COALESCE(l.like_count, 0) + 1) * (COALESCE(f.favorite_count, 0) + 1) * (COALESCE(e.evaluation_count, 0) + 1) * 5) AS heat_value
+     FROM soups s
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
+     WHERE s.is_surface_public = TRUE
+     ORDER BY heat_value DESC, s.view_count DESC, evaluation_count DESC, s.created_at ASC
+     LIMIT 10`
+  );
+
+  const [achievementRows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT u.id, u.nickname, u.created_at, ubu.badge_key, ubu.unlocked_at,
+       lb.achievement_points AS legendary_points
+     FROM users u
+     LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
+     LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
+     WHERE u.role = 'user'
+     ORDER BY u.created_at ASC, ubu.unlocked_at ASC`
+  );
+
+  const users = new Map<string, { id: string; nickname: string; achievementPoints: number; reachedAt: number; createdAt: number }>();
+  for (const row of achievementRows) {
+    const id = String(row.id);
+    const createdAt = new Date(row.created_at).getTime();
+    const current = users.get(id) ?? { id, nickname: String(row.nickname), achievementPoints: 0, reachedAt: createdAt, createdAt };
+    if (row.badge_key) {
+      const key = String(row.badge_key);
+      const points = key.startsWith("legendary:")
+        ? Number(row.legendary_points ?? 0)
+        : Number(SYSTEM_BADGE_ACHIEVEMENT_POINTS[key] ?? 0);
+      if (points > 0) {
+        current.achievementPoints += points;
+        current.reachedAt = Math.max(current.reachedAt, new Date(row.unlocked_at).getTime());
+      }
+    }
+    users.set(id, current);
+  }
+
+  const achievementUsers = [...users.values()]
+    .sort((a, b) => b.achievementPoints - a.achievementPoints || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .slice(0, 10)
+    .map((item, index) => ({ rank: index + 1, id: item.id, nickname: item.nickname, achievementPoints: item.achievementPoints }));
+
+  res.json({
+    hotSoups: hotSoupRows.map((row, index) => ({
+      rank: index + 1,
+      id: String(row.id),
+      title: String(row.title),
+      author: String(row.author),
+      heatValue: Math.round(Number(row.heat_value ?? 0))
+    })),
+    achievementUsers
+  });
 });
 
 app.get("/api/me/favorites", async (req, res) => {
@@ -1743,7 +1829,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(f.favorite_count, 0) AS favorite_count,
         (COALESCE(e.comprehensive_score, 0) + 2) *
-          (s.view_count + COALESCE(l.like_count, 0) * COALESCE(f.favorite_count, 0) * COALESCE(e.evaluation_count, 0) * 5) AS heat_value
+          (s.view_count + (COALESCE(l.like_count, 0) + 1) * (COALESCE(f.favorite_count, 0) + 1) * (COALESCE(e.evaluation_count, 0) + 1) * 5) AS heat_value
        FROM soups s
        LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
        LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
@@ -1835,7 +1921,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
 app.get("/api/admin/badges", async (req, res) => {
   if (!(await requireAdmin(req, res))) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url,
+    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
       COUNT(ubu.user_id) AS owner_count
      FROM legendary_badges lb
      LEFT JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
@@ -1850,6 +1936,7 @@ app.get("/api/admin/badges", async (req, res) => {
       description: String(row.description),
       requirement: row.requirement ? String(row.requirement) : null,
       iconUrl: String(row.icon_url),
+      achievementPoints: Number(row.achievement_points ?? 0),
       tier: "legend" as const,
       ownerCount: Number(row.owner_count ?? 0)
     }))

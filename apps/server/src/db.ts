@@ -240,10 +240,12 @@ export async function initDatabase() {
       description VARCHAR(300) NOT NULL,
       requirement VARCHAR(300) NULL,
       icon_url VARCHAR(255) NOT NULL,
+      achievement_points INT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("legendary_badges", "achievement_points", "achievement_points INT NOT NULL DEFAULT 0 AFTER icon_url");
   await seedLegendaryBadges();
 
   await pool.query(`
@@ -448,10 +450,10 @@ async function seedAdmin() {
 
 async function seedLegendaryBadges() {
   await pool.query(
-    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
-       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url)`,
-    ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png"]
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url), achievement_points = VALUES(achievement_points)`,
+    ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png", 300]
   );
 }

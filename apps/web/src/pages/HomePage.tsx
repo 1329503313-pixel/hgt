@@ -177,7 +177,7 @@ export default function HomePage() {
     <section className="space-y-3">
       <PageTopBar title="海龟汤" unread={unread} />
 
-      <div className="flex gap-2">
+      <div className="home-search-sticky flex gap-2">
         <div className="relative min-w-0 flex-1">
           <input
             className="field h-12 rounded-full bg-white pl-4 pr-11 text-[15px] shadow-soft"

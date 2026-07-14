@@ -3,7 +3,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { api, StatsResponse } from "../api";
-import { LegendaryBadge, LegendaryBadgeTile, versionBadgeAssetUrl } from "../components/BadgeVisuals";
+import { LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 
 // ============================================================
 // 类型定义
@@ -37,6 +37,7 @@ export interface BadgeDef {
   description: string;
   icon: React.ReactNode;
   requirement: string;
+  achievementPoints: number;
   nextBadgeLabel?: string;
   progressCurrent: number;
   progressTarget: number;
@@ -50,6 +51,7 @@ interface DisplayBadge {
   tierLabel: string;
   icon: React.ReactNode;
   colors: { bg: string; text: string; ring: string; label: string };
+  achievementPoints: number;
   earned: boolean;
   highestEarnedIndex: number;
   currentIndex: number;
@@ -64,7 +66,7 @@ function versionBadgeIcon(icon: React.ReactNode) {
   return cloneElement(icon, { src: versionBadgeAssetUrl(icon.props.src) });
 }
 
-const BADGE_DEFINITIONS: BadgeDef[] = [
+const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints">[] = [
   { series: "publish", tier: "normal", tierIndex: 1, label: "熬汤新秀", description: "你已经是一个合格的厨子了", icon: <img src="/badges/publish-normal.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布一篇海龟汤", nextBadgeLabel: "熬汤达人", progressCurrent: 0, progressTarget: 1, earned: false },
   { series: "publish", tier: "rare", tierIndex: 2, label: "熬汤达人", description: "没有你该怎么办？", icon: <img src="/badges/publish-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布十篇海龟汤", nextBadgeLabel: "熬汤大师", progressCurrent: 0, progressTarget: 10, earned: false },
   { series: "publish", tier: "epic", tierIndex: 3, label: "熬汤大师", description: "再……再来一口汤……", icon: <img src="/badges/publish-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布五十篇海龟汤", progressCurrent: 0, progressTarget: 50, earned: false },
@@ -97,8 +99,25 @@ const BADGE_DEFINITIONS: BadgeDef[] = [
   { series: "aiClear", tier: "epic", tierIndex: 3, label: "AI破局王", description: "AI也藏不住最后的真相", icon: <img src="/badges/ai-clear-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计通关50次AI玩汤（同一局游戏重复结算只记录一次）", progressCurrent: 0, progressTarget: 50, earned: false },
 ];
 
+export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
+  "publish:normal": 10, "publish:rare": 30, "publish:epic": 100,
+  "insight:normal": 10, "insight:rare": 35, "insight:epic": 120,
+  "favorite:normal": 10, "favorite:rare": 30, "favorite:epic": 100,
+  "like:normal": 10, "like:rare": 30, "like:epic": 100,
+  "login:normal": 10, "login:rare": 45, "login:epic": 100,
+  "creatorLike:normal": 10, "creatorLike:rare": 40, "creatorLike:epic": 150,
+  "creatorFavorite:normal": 10, "creatorFavorite:rare": 30, "creatorFavorite:epic": 120,
+  "receivedComment:normal": 10, "receivedComment:rare": 40, "receivedComment:epic": 100,
+  "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
+  "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120
+};
+
 // 徽章文件名未包含内容哈希，版本号用于在图片更新时主动刷新浏览器长期缓存。
-export const BADGES: BadgeDef[] = BADGE_DEFINITIONS.map((badge) => ({ ...badge, icon: versionBadgeIcon(badge.icon) }));
+export const BADGES: BadgeDef[] = BADGE_DEFINITIONS.map((badge) => ({
+  ...badge,
+  achievementPoints: BADGE_ACHIEVEMENT_POINTS[`${badge.series}:${badge.tier}`] ?? 0,
+  icon: versionBadgeIcon(badge.icon)
+}));
 
 export function buildBadgesFromStats(stats: StatsResponse): BadgeDef[] {
   const progressBySeries: Record<string, number> = {
@@ -150,6 +169,7 @@ function buildDisplayBadges(badges: BadgeDef[]): DisplayBadge[] {
         tier, tierLabel: TIER_LABEL[tier],
         icon: highestEarned.icon,
         colors: TIER_COLORS_EARNED[tier],
+        achievementPoints: highestEarned.achievementPoints,
         earned: true,
         highestEarnedIndex: highestEarned.tierIndex,
         currentIndex: highestEarned.tierIndex,
@@ -163,6 +183,7 @@ function buildDisplayBadges(badges: BadgeDef[]): DisplayBadge[] {
         tierLabel: TIER_LABEL[lowest.tier],
         icon: lowest.icon,
         colors: { bg: "bg-slate-100", text: "text-slate-500", ring: "ring-slate-200", label: "text-slate-400" },
+        achievementPoints: lowest.achievementPoints,
         earned: false,
         highestEarnedIndex: 0,
         currentIndex: lowest.tierIndex,
@@ -183,6 +204,38 @@ function getAllTiers(badges: BadgeDef[], series: string): BadgeDef[] {
 function getProgressText(badge: BadgeDef): string {
   if (badge.earned) return "已完成";
   return `${badge.progressCurrent}/${badge.progressTarget}`;
+}
+
+function legendaryToBadgeDef(badge: LegendaryBadge): BadgeDef {
+  return {
+    series: badge.key,
+    tier: "legend",
+    tierIndex: 1,
+    label: badge.name,
+    description: badge.description,
+    icon: <LegendaryBadgeIcon badge={badge} className="h-full w-full rounded-2xl" />,
+    requirement: badge.requirement || "无",
+    achievementPoints: badge.achievementPoints,
+    progressCurrent: 1,
+    progressTarget: 1,
+    earned: true,
+  };
+}
+
+function legendaryToDisplayBadge(badge: LegendaryBadge): DisplayBadge {
+  const def = legendaryToBadgeDef(badge);
+  return {
+    series: def.series,
+    label: def.label,
+    tier: "legend",
+    tierLabel: TIER_LABEL.legend,
+    icon: def.icon,
+    colors: TIER_COLORS_EARNED.legend,
+    achievementPoints: def.achievementPoints,
+    earned: true,
+    highestEarnedIndex: 1,
+    currentIndex: 1,
+  };
 }
 
 // ============================================================
@@ -399,7 +452,15 @@ function BadgeDetail({
         onClick={(event) => event.stopPropagation()}
       >
         {/* 徽章 — ref 挂载点 */}
-        <div ref={badgeRef}>
+        <div
+          ref={badgeRef}
+          className="cursor-pointer"
+          role="button"
+          tabIndex={0}
+          aria-label="收起徽章详情"
+          onClick={onClickBackdrop}
+          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onClickBackdrop(); }}
+        >
           <div
             style={{ width: BADGE_SIZE, height: BADGE_SIZE, transform: `scale(${SCALE})` }}
             className="grid place-items-center"
@@ -433,6 +494,10 @@ function BadgeDetail({
           <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/20 backdrop-blur px-4 py-1.5 ring-1 ring-white/30">
             <span className="text-xs font-bold text-white/80">进度</span>
             <span className="text-sm font-black text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7)]">{getProgressText(progressBadge)}</span>
+          </div>
+          <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-amber-400/20 px-4 py-1.5 ring-1 ring-amber-200/40">
+            <span className="text-xs font-bold text-white/80">成就点</span>
+            <span className="text-sm font-black text-amber-200 [text-shadow:0_1px_3px_rgba(0,0,0,0.7)]">+{def.achievementPoints}</span>
           </div>
 
           {/* 升级路径 */}
@@ -483,6 +548,10 @@ export default function MyAchievementsPage() {
   const [badges, setBadges] = useState<BadgeDef[]>(BADGES);
   const [legendaryBadges, setLegendaryBadges] = useState<LegendaryBadge[]>([]);
   const displayBadges = buildDisplayBadges(badges);
+  const legendaryBadgeDefs = legendaryBadges.map(legendaryToBadgeDef);
+  const allBadgeDefs = [...badges, ...legendaryBadgeDefs];
+  const totalAchievementPoints = badges.filter((badge) => badge.earned).reduce((sum, badge) => sum + badge.achievementPoints, 0)
+    + legendaryBadges.reduce((sum, badge) => sum + badge.achievementPoints, 0);
 
   useEffect(() => {
     api<StatsResponse>("/api/me/stats")
@@ -574,6 +643,14 @@ export default function MyAchievementsPage() {
         <span>返回</span>
       </button>
 
+      <div className="mx-4 flex items-center justify-between rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 shadow-sm">
+        <div>
+          <p className="text-xs font-bold text-amber-700">当前累计成就点</p>
+          <p className="mt-0.5 text-xs text-muted">所有已获得徽章的成就点总和</p>
+        </div>
+        <strong className="text-2xl font-black text-amber-600">{totalAchievementPoints.toLocaleString()}</strong>
+      </div>
+
       {/* ======== 徽章网格 ======== */}
       <div className="px-4">
         <div className="grid grid-cols-4 gap-4">
@@ -615,10 +692,28 @@ export default function MyAchievementsPage() {
                 >
                   {badge.tierLabel}
                 </span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${badge.earned ? "bg-amber-50 text-amber-600" : "bg-slate-100 text-slate-400"}`}>
+                  +{badge.achievementPoints} 成就点
+                </span>
               </div>
             );
           })}
-          {legendaryBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}
+          {legendaryBadges.map((badge) => {
+            const displayBadge = legendaryToDisplayBadge(badge);
+            const isThis = state && flippingSeries === displayBadge.series;
+            return (
+              <div
+                key={badge.key}
+                className={`flex cursor-pointer flex-col items-center gap-1.5 text-center transition-opacity duration-300 ${isThis ? "opacity-0" : "opacity-100"}`}
+                onClick={(event) => handleBadgeClick(displayBadge, event)}
+              >
+                <LegendaryBadgeIcon badge={badge} />
+                <span className={`text-xs font-semibold leading-tight text-ink transition-opacity duration-200 ${isThis ? "opacity-0" : "opacity-100"}`}>{badge.name}</span>
+                <span className={`badge-legend-text text-[11px] font-black transition-opacity duration-200 ${isThis ? "opacity-0" : "opacity-100"}`}>传说</span>
+                <span className={`rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-600 transition-opacity duration-200 ${isThis ? "opacity-0" : "opacity-100"}`}>+{badge.achievementPoints} 成就点</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -626,7 +721,7 @@ export default function MyAchievementsPage() {
       {detailMounted && state && (
         <BadgeDetail
           badge={state.badge}
-          badges={badges}
+          badges={allBadgeDefs}
           series={state.badge.series}
           badgeRef={(el) => { badgeDetailRef.current = el; }}
           visible={detailVisible}

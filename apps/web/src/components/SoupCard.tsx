@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SoupSummary } from "../shared/types";
-import { Star, User, ThumbsUp, Sparkles } from "lucide-react";
+import { Flame, Star, User, ThumbsUp, Sparkles } from "lucide-react";
 import { formatViews } from "../context/AppContext";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
 
@@ -29,7 +29,13 @@ export function SoupCard({
         <CoverImage src="/default-cover.png" alt={`${soup.title} 封面`} />
       )}
       <div className="p-3">
-        <h2 className="line-clamp-2 text-[16px] font-black leading-snug text-ink">{soup.title}</h2>
+        <h2 className="line-clamp-2 text-[16px] font-black leading-snug text-ink">
+          {soup.title}
+          <span className="ml-1 inline-flex items-center gap-0.5 whitespace-nowrap align-middle text-[12px] font-black text-red-500" title={`热力值 ${soup.heatValue}`}>
+            <Flame size={14} className="fill-red-500" />
+            {soup.heatValue.toLocaleString()}
+          </span>
+        </h2>
         <p className="avatar-name-gap mt-1 flex items-center truncate text-[13px] text-muted">
           {soup.creatorAvatar ? (
             <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" />

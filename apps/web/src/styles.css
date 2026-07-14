@@ -472,6 +472,24 @@ textarea {
   border-top-right-radius: 20px;
 }
 
+.home-search-sticky {
+  position: sticky;
+  top: 72px;
+  z-index: 20;
+  isolation: isolate;
+}
+
+.home-search-sticky::before {
+  position: absolute;
+  inset: -8px -16px;
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+  border-bottom: 1px solid rgba(229, 231, 235, 0.72);
+  background: rgba(245, 247, 250, 0.94);
+  backdrop-filter: blur(12px);
+}
+
 /* 头像与昵称统一沿用首页间距：移动端 4px，桌面端 8px。 */
 .avatar-name-gap {
   column-gap: 0.25rem;

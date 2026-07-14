@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, ChevronRight, ImagePlus, Pencil, Plus, Trophy, Key, X } from "lucide-react";
+import { Check, ChevronRight, ImagePlus, Medal, Pencil, Plus, Trophy, Key, X } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { api, StatsResponse, NicknameResponse, AvatarResponse, PasswordResponse } from "../api";
@@ -278,6 +278,20 @@ export default function MinePage() {
             <span>
               <span className="block text-base font-semibold text-ink">我的成就</span>
               <span className="mt-1 block text-xs text-muted">查看已获得的徽章</span>
+            </span>
+          </span>
+          <ChevronRight size={18} className="text-primary" />
+        </button>
+      </div>
+
+      {/* Rankings */}
+      <div className="card p-4">
+        <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => navigate("/mine/rankings")}>
+          <span className="flex items-center gap-3">
+            <Medal size={20} className="text-orange-500" />
+            <span>
+              <span className="block text-base font-semibold text-ink">排行榜</span>
+              <span className="mt-1 block text-xs text-muted">热门海龟汤与用户成就点排名</span>
             </span>
           </span>
           <ChevronRight size={18} className="text-primary" />

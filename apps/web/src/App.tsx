@@ -19,6 +19,7 @@ import MyFavoritesPage from "./pages/MyFavoritesPage";
 import MyEvaluationsPage from "./pages/MyEvaluationsPage";
 import MyLikesPage from "./pages/MyLikesPage";
 import MyAchievementsPage from "./pages/MyAchievementsPage";
+import RankingsPage from "./pages/RankingsPage";
 import AdminPage from "./pages/AdminPage";
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
           <Route path="mine/evaluations" element={<MyEvaluationsPage />} />
           <Route path="mine/likes" element={<MyLikesPage />} />
           <Route path="mine/achievements" element={<MyAchievementsPage />} />
+          <Route path="mine/rankings" element={<RankingsPage />} />
         </Route>
 
         {/* Detail page — independent layout, no BottomNav */}

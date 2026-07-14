@@ -49,6 +49,7 @@ export type SoupSummary = {
   createdAt: string;
   evaluationCount: number;
   averageTotal: number | null;
+  heatValue: number;
   radar: RadarStats;
 };
 
