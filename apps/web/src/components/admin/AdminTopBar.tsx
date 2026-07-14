@@ -1,7 +1,7 @@
-import { ArrowLeft, ClipboardCheck, RefreshCw, Users, Soup, MessageSquare } from "lucide-react";
+import { ArrowLeft, BarChart3, ClipboardCheck, RefreshCw, Users, Soup, MessageSquare } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-export type AdminTab = "users" | "approvals" | "soups" | "evaluations";
+export type AdminTab = "data" | "users" | "approvals" | "soups" | "evaluations";
 
 export function AdminTopBar({
   activeTab,
@@ -13,6 +13,7 @@ export function AdminTopBar({
   const navigate = useNavigate();
 
   const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
+    { key: "data", label: "数据", icon: <BarChart3 size={16} /> },
     { key: "users", label: "用户", icon: <Users size={16} /> },
     { key: "approvals", label: "审批", icon: <ClipboardCheck size={16} /> },
     { key: "soups", label: "汤品", icon: <Soup size={16} /> },
@@ -22,9 +23,9 @@ export function AdminTopBar({
   return (
     <header className="top-nav-shell">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-4 py-2.5">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-xl font-black text-ink">管理员后台</h1>
-          <div className="ml-2 flex items-center gap-1">
+          <div className="ml-2 flex items-center gap-1 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.key}

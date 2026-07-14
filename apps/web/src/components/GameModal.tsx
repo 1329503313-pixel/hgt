@@ -3,6 +3,7 @@ import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw
 import type { SoupDetail } from "../shared/types";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
+import { sanitizeHtml } from "../sanitizeHtml";
 
 type ChatMessage = {
   role: "assistant" | "user";
@@ -180,7 +181,7 @@ export function GameModal({
             </div>
             <div
               className={`text-[14px] leading-6 text-ink content-block mt-3 overflow-auto min-h-0 flex-1 ${infoExpanded ? "" : "line-clamp-2 overflow-hidden"}`}
-              dangerouslySetInnerHTML={{ __html: soup.surface }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(soup.surface) }}
             />
           </div>
 
@@ -237,7 +238,10 @@ export function GameModal({
                     : "border border-line bg-white text-ink"
                 }`}
               >
-                <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: extractDisplayContent(msg.content, msg.role) }} />
+                <div
+                  className="whitespace-pre-wrap"
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(extractDisplayContent(msg.content, msg.role)) }}
+                />
               </div>
             </div>
           ))}

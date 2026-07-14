@@ -23,6 +23,7 @@ export async function initDatabase() {
       password VARCHAR(128) NOT NULL,
       nickname VARCHAR(50) NOT NULL,
       role ENUM('admin','user') NOT NULL DEFAULT 'user',
+      token_version INT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
@@ -161,7 +162,12 @@ export async function initDatabase() {
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
   await ensureColumn("users", "badges_initialized", "badges_initialized TINYINT(1) NOT NULL DEFAULT 0 AFTER avatar");
   await ensureColumn("users", "last_login_at", "last_login_at DATETIME NULL AFTER badges_initialized");
+  await ensureColumn("users", "token_version", "token_version INT NOT NULL DEFAULT 0 AFTER role");
   await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
+  await ensureIndex("users", "idx_users_created_at", "created_at");
+  await ensureIndex("soups", "idx_soups_created_at", "created_at");
+  await ensureIndex("soups", "idx_soups_type_created", "type, created_at");
+  await ensureIndex("evaluations", "idx_evaluations_created_at", "created_at");
   await migrateCoverThumbnails();
   await migrateSoupViewsColumn();
 
@@ -207,6 +213,7 @@ export async function initDatabase() {
       CONSTRAINT fk_login_day_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureIndex("user_login_days", "idx_login_days_date_user", "login_date, user_id");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_badge_unlocks (
@@ -341,6 +348,25 @@ async function ensureColumn(table: string, column: string, ddl: string) {
   }
 }
 
+async function ensureIndex(table: string, index: string, columns: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `
+    SELECT INDEX_NAME
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?
+    LIMIT 1
+    `,
+    [config.db.database, table, index]
+  );
+  if (rows.length === 0) {
+    try {
+      await pool.query(`ALTER TABLE ${table} ADD INDEX ${index} (${columns})`);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "ER_DUP_KEYNAME") throw error;
+    }
+  }
+}
+
 async function migrateCoverThumbnails() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id, cover_image FROM soups WHERE cover_image IS NOT NULL AND cover_image LIKE 'data:%' AND (cover_thumbnail IS NULL OR cover_thumbnail = '')"
@@ -388,6 +414,10 @@ async function seedAdmin() {
     ["admin"]
   );
   if (rows.length > 0) return;
+
+  if (!config.adminDefaultPassword || config.adminDefaultPassword.length < 12 || config.adminDefaultPassword === "change-me") {
+    throw new Error("ADMIN_DEFAULT_PASSWORD 未设置、长度不足 12 位或仍为默认值，拒绝创建管理员账号");
+  }
 
   const hash = await bcrypt.hash(config.adminDefaultPassword, 10);
   await pool.query(

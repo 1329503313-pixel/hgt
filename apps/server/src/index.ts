@@ -1,3 +1,4 @@
+import "express-async-errors";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -14,35 +15,97 @@ import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts } from "./game
 import { PublicUser } from "./types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
+const insecureJwtSecrets = new Set([
+  "dev-jwt-fallback-not-for-production",
+  "dev-session-secret-change-me",
+  "change-me"
+]);
+
+if (config.nodeEnv === "production" && !JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET 未设置，服务拒绝启动。");
+  process.exit(1);
+}
 
 if (!JWT_SECRET) {
-  if (config.nodeEnv === "production") {
-    console.error("FATAL: JWT_SECRET 环境变量未设置，服务拒绝启动。请设置一个随机长字符串。");
-    process.exit(1);
-  }
   console.warn("⚠ 未设置 JWT_SECRET，使用开发 fallback。生产环境请务必设置 JWT_SECRET。");
+} else if (JWT_SECRET.length < 32 || insecureJwtSecrets.has(JWT_SECRET)) {
+  console.warn("⚠ JWT_SECRET 长度不足 32 位或为公开默认值；为保持现有会话暂不阻止启动。建议安排维护窗口后轮换。");
 }
 
 const JWT_SECRET_FINAL: string = JWT_SECRET || "dev-jwt-fallback-not-for-production";
 
 const app = express();
 app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+type RateLimitEntry = { count: number; resetAt: number };
+
+function createRateLimiter(windowMs: number, maxRequests: number, keyFor: (req: Request) => string) {
+  const entries = new Map<string, RateLimitEntry>();
+  let requestsSinceCleanup = 0;
+  return (req: Request, res: Response, next: NextFunction) => {
+    const now = Date.now();
+    if (++requestsSinceCleanup >= 500) {
+      requestsSinceCleanup = 0;
+      for (const [key, entry] of entries) if (entry.resetAt <= now) entries.delete(key);
+    }
+    const key = keyFor(req);
+    const current = entries.get(key);
+    if (!current || current.resetAt <= now) {
+      entries.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    current.count += 1;
+    if (current.count > maxRequests) {
+      res.setHeader("Retry-After", Math.max(1, Math.ceil((current.resetAt - now) / 1000)));
+      return sendError(res, 429, "请求过于频繁，请稍后再试");
+    }
+    next();
+  };
+}
+
+const loginRateLimiter = createRateLimiter(15 * 60_000, 10, (req) => `login:${req.ip ?? "unknown"}`);
+const registerRateLimiter = createRateLimiter(60 * 60_000, 10, (req) => `register:${req.ip ?? "unknown"}`);
+
+function setAuthCookie(res: Response, token: string) {
+  res.cookie("hgt_token", token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: config.cookieSecure,
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+    path: "/"
+  });
+}
+
+type AuthClaims = {
+  id: string;
+  tokenVersion: number;
+};
+
+type AuthenticatedUser = PublicUser & {
+  tokenVersion: number;
+};
 
 // ---------- JWT 认证中间件 ----------
-function signToken(payload: Record<string, unknown>): string {
+function signToken(payload: AuthClaims): string {
   return jwt.sign(payload, JWT_SECRET_FINAL, { expiresIn: "30d" });
 }
 
-function verifyToken(token: string): PublicUser | null {
+function verifyToken(token: string): AuthClaims | null {
   try {
-    return jwt.verify(token, JWT_SECRET_FINAL) as PublicUser;
+    const payload = jwt.verify(token, JWT_SECRET_FINAL) as Partial<AuthClaims>;
+    if (typeof payload.id !== "string") return null;
+    // 兼容整改前签发的 Token；旧 Token 没有 tokenVersion，按数据库默认版本 0 处理。
+    const tokenVersion = payload.tokenVersion == null ? 0 : Number(payload.tokenVersion);
+    if (!Number.isInteger(tokenVersion)) return null;
+    return { id: payload.id, tokenVersion };
   } catch {
     return null;
   }
 }
 
-// 从请求中提取用户身份
-function extractAuth(req: Request): PublicUser | null {
+// 从请求中提取签名声明；权限和用户状态必须从数据库实时读取。
+function extractAuthClaims(req: Request): AuthClaims | null {
   // 方式 1: Cookie 中的 JWT
   const cookieToken = req.cookies?.hgt_token;
   if (cookieToken) return verifyToken(cookieToken);
@@ -59,6 +122,13 @@ function extractAuth(req: Request): PublicUser | null {
 app.use(cors({ origin: config.webOrigin, credentials: true }));
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
 
 // 生产环境：serve Vite 构建产物
 if (config.nodeEnv === "production") {
@@ -135,8 +205,13 @@ function sendError(res: express.Response, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
 
-function currentUser(req: express.Request): PublicUser | null {
-  return extractAuth(req);
+async function currentUser(req: express.Request): Promise<AuthenticatedUser | null> {
+  const claims = extractAuthClaims(req);
+  if (!claims) return null;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM users WHERE id = ? LIMIT 1", [claims.id]);
+  const row = rows[0];
+  if (!row || Number(row.token_version ?? 0) !== claims.tokenVersion) return null;
+  return { ...toUser(row), tokenVersion: Number(row.token_version ?? 0) };
 }
 
 function viewIdentifier(req: express.Request, user: PublicUser | null) {
@@ -145,8 +220,8 @@ function viewIdentifier(req: express.Request, user: PublicUser | null) {
   return `guest:${createHash("sha256").update(raw).digest("hex")}`;
 }
 
-function requireAuth(req: express.Request, res: express.Response): PublicUser | null {
-  const user = currentUser(req);
+async function requireAuth(req: express.Request, res: express.Response): Promise<AuthenticatedUser | null> {
+  const user = await currentUser(req);
   if (!user) {
     sendError(res, 401, "请先登录");
     return null;
@@ -154,8 +229,8 @@ function requireAuth(req: express.Request, res: express.Response): PublicUser | 
   return user;
 }
 
-function requireAdmin(req: express.Request, res: express.Response): PublicUser | null {
-  const user = requireAuth(req, res);
+async function requireAdmin(req: express.Request, res: express.Response): Promise<AuthenticatedUser | null> {
+  const user = await requireAuth(req, res);
   if (!user) return null;
   if (user.role !== "admin") {
     sendError(res, 403, "需要管理员权限");
@@ -178,10 +253,7 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
 function toJwtPayload(row: mysql.RowDataPacket) {
   return {
     id: row.id,
-    username: row.username,
-    nickname: row.nickname,
-    role: row.role,
-    createdAt: new Date(row.created_at).toISOString()
+    tokenVersion: Number(row.token_version ?? 0)
   };
 }
 
@@ -420,7 +492,7 @@ async function generateThumbnail(base64: string): Promise<string | null> {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   const parsed = z
     .object({
       username: text.max(50),
@@ -448,18 +520,12 @@ app.post("/api/auth/register", async (req, res) => {
   await recordLoginDay(id);
 
   const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString() };
-  const token = signToken(user);
-  res.cookie("hgt_token", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    maxAge: 1000 * 60 * 60 * 24 * 30,
-    path: "/"
-  });
+  const token = signToken({ id, tokenVersion: 0 });
+  setAuthCookie(res, token);
   res.json({ user, token });
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   const parsed = z.object({ username: text, password: z.string().min(1) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "请输入账号和密码");
 
@@ -476,23 +542,17 @@ app.post("/api/auth/login", async (req, res) => {
   const user = toUser(row);
   await recordLoginDay(user.id);
   const token = signToken(toJwtPayload(row));
-  res.cookie("hgt_token", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    maxAge: 1000 * 60 * 60 * 24 * 30,
-    path: "/"
-  });
+  setAuthCookie(res, token);
   res.json({ user, token });
 });
 
 app.post("/api/auth/logout", (_req, res) => {
-  res.clearCookie("hgt_token");
+  res.clearCookie("hgt_token", { httpOnly: true, sameSite: "lax", secure: config.cookieSecure, path: "/" });
   res.json({ ok: true });
 });
 
 app.post("/api/auth/password", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const parsed = z
     .object({
@@ -501,16 +561,18 @@ app.post("/api/auth/password", async (req, res) => {
     .safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码信息不正确");
 
-  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id = ? LIMIT 1", [user.id]);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id, token_version FROM users WHERE id = ? LIMIT 1", [user.id]);
   const row = rows[0];
   if (!row) return sendError(res, 404, "用户不存在");
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
-  await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash, user.id]);
+  const nextTokenVersion = Number(row.token_version ?? 0) + 1;
+  await pool.query("UPDATE users SET password = ?, token_version = ? WHERE id = ?", [hash, nextTokenVersion, user.id]);
+  setAuthCookie(res, signToken({ id: user.id, tokenVersion: nextTokenVersion }));
   res.json({ ok: true });
 });
 
 app.get("/api/auth/me", async (req, res) => {
-  const user = currentUser(req);
+  const user = await currentUser(req);
   if (user) {
     await recordLoginDay(user.id);
     // JWT 不再包含 avatar（缩小 token 体积），需要从数据库查
@@ -522,11 +584,13 @@ app.get("/api/auth/me", async (req, res) => {
       user.avatar = rows[0].avatar ? String(rows[0].avatar) : null;
     }
   }
-  res.json({ user });
+  if (!user) return res.json({ user: null });
+  const { tokenVersion: _tokenVersion, ...publicUser } = user;
+  res.json({ user: publicUser });
 });
 
 app.patch("/api/me/nickname", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const parsed = z.object({ nickname: text.max(8, "昵称不超过 8 个字符") }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "昵称信息不正确");
@@ -547,7 +611,7 @@ app.patch("/api/me/nickname", async (req, res) => {
 });
 
 app.patch("/api/me/avatar", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const parsed = z
     .object({
@@ -563,20 +627,13 @@ app.patch("/api/me/avatar", async (req, res) => {
   const avatar = parsed.data.avatar || null;
   await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
 
-  const updated = { id: user.id, username: user.username, nickname: user.nickname, avatar, role: user.role, createdAt: user.createdAt };
-  const token = signToken(updated);
-  res.cookie("hgt_token", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    maxAge: 1000 * 60 * 60 * 24 * 30,
-    path: "/"
-  });
+  const token = signToken({ id: user.id, tokenVersion: user.tokenVersion });
+  setAuthCookie(res, token);
   res.json({ ok: true, avatar });
 });
 
 app.get("/api/me/soups", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
@@ -604,14 +661,14 @@ app.get("/api/me/soups", async (req, res) => {
 });
 
 app.get("/api/me/stats", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   await recordLoginDay(user.id);
   res.json(await getAchievementStats(user.id));
 });
 
 app.post("/api/me/badge-unlocks/sync", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   await recordLoginDay(user.id);
 
@@ -649,7 +706,7 @@ app.post("/api/me/badge-unlocks/sync", async (req, res) => {
 });
 
 app.get("/api/me/favorites", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
@@ -678,7 +735,7 @@ app.get("/api/me/favorites", async (req, res) => {
 });
 
 app.get("/api/me/evaluations", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
@@ -707,7 +764,7 @@ app.get("/api/me/evaluations", async (req, res) => {
 });
 
 app.get("/api/soups", async (req, res) => {
-  const user = currentUser(req);
+  const user = await currentUser(req);
   const where: string[] = [];
   const params: unknown[] = [];
   const userParams: unknown[] = [];
@@ -795,7 +852,7 @@ app.get("/api/soups", async (req, res) => {
 });
 
 app.post("/api/soups", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const parsed = soupSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
@@ -844,7 +901,7 @@ app.post("/api/soups", async (req, res) => {
 });
 
 app.get("/api/soups/:id", async (req, res) => {
-  const user = currentUser(req);
+  const user = await currentUser(req);
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
@@ -911,6 +968,7 @@ app.get("/api/soups/:id", async (req, res) => {
           [req.params.id, user.id]
         )
       : [[] as mysql.RowDataPacket[]];
+  const canEdit = Boolean(user && (user.role === "admin" || user.id === soup.creator_id));
 
   res.json({
     soup: {
@@ -921,11 +979,11 @@ app.get("/api/soups/:id", async (req, res) => {
       supplementalBottoms: full ? jsonList(soup.supplemental_bottoms) : null,
       manual: full ? soup.host_manual : null,
       enableAiGame: bool(soup.enable_ai_game),
-      aiPrompt: (soup.ai_prompt as string) || null,
-      keyFacts: safeParseJson(soup.key_facts),
-      keyFactsCustomized: (soup.key_facts_customized as number) === 1,
+      aiPrompt: canEdit ? (soup.ai_prompt as string) || null : null,
+      keyFacts: canEdit ? safeParseJson(soup.key_facts) : null,
+      keyFactsCustomized: canEdit && (soup.key_facts_customized as number) === 1,
       canViewFull: full,
-      canEdit: Boolean(user && (user.role === "admin" || user.id === soup.creator_id)),
+      canEdit,
       isFavorited: favoriteRows.length > 0,
       isLiked: likeRows.length > 0,
       pendingRequestId: requestRows[0]?.id ?? null,
@@ -935,7 +993,7 @@ app.get("/api/soups/:id", async (req, res) => {
 });
 
 app.post("/api/soups/:id/like", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
 
   const soup = await getSoupRaw(req.params.id);
@@ -965,7 +1023,7 @@ app.post("/api/soups/:id/like", async (req, res) => {
 });
 
 app.get("/api/me/likes", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
@@ -994,7 +1052,7 @@ app.get("/api/me/likes", async (req, res) => {
 });
 
 app.post("/api/soups/:id/favorite", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
 
   const soup = await getSoupRaw(req.params.id);
@@ -1024,7 +1082,7 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
 });
 
 app.put("/api/soups/:id", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
@@ -1078,7 +1136,7 @@ app.put("/api/soups/:id", async (req, res) => {
 
 // 强制 AI 重新解析关键点（清除自定义标记后重拆）
 app.post("/api/soups/:id/reanalyze-keyfacts", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
@@ -1089,7 +1147,7 @@ app.post("/api/soups/:id/reanalyze-keyfacts", async (req, res) => {
 });
 
 app.delete("/api/soups/:id", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
@@ -1099,7 +1157,7 @@ app.delete("/api/soups/:id", async (req, res) => {
 });
 
 app.post("/api/soups/:id/evaluations", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
@@ -1172,7 +1230,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
 });
 
 app.delete("/api/evaluations/:id", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM evaluations WHERE id = ? LIMIT 1", [
     req.params.id
@@ -1185,7 +1243,7 @@ app.delete("/api/evaluations/:id", async (req, res) => {
 });
 
 app.post("/api/soups/:id/access-requests", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
@@ -1214,7 +1272,7 @@ app.post("/api/soups/:id/access-requests", async (req, res) => {
 });
 
 app.get("/api/access-requests", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const params: unknown[] = [];
   let where = "";
@@ -1258,7 +1316,7 @@ app.get("/api/access-requests", async (req, res) => {
 });
 
 app.post("/api/access-requests/:id/decision", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const parsed = z.object({ decision: z.enum(["approved", "rejected"]) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "审批结果不正确");
@@ -1293,7 +1351,7 @@ app.post("/api/access-requests/:id/decision", async (req, res) => {
 });
 
 app.get("/api/notifications", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT n.*,
@@ -1322,21 +1380,255 @@ app.get("/api/notifications", async (req, res) => {
 });
 
 app.patch("/api/notifications/read-all", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   await pool.query("UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE", [user.id]);
   res.json({ ok: true });
 });
 
 app.patch("/api/notifications/:id/read", async (req, res) => {
-  const user = requireAuth(req, res);
+  const user = await requireAuth(req, res);
   if (!user) return;
   await pool.query("UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?", [req.params.id, user.id]);
   res.json({ ok: true });
 });
 
+const DASHBOARD_DAY_MS = 24 * 60 * 60 * 1000;
+const DASHBOARD_CHINA_OFFSET_MS = 8 * 60 * 60 * 1000;
+const dashboardRanges = { "7d": 7, "30d": 30, "90d": 90 } as const;
+type DashboardRange = keyof typeof dashboardRanges;
+
+type DashboardGrowthMetric = {
+  total: number;
+  today: { current: number; previous: number; changePercent: number | null };
+  week: { current: number; previous: number; changePercent: number | null };
+};
+
+const dashboardCache = new Map<DashboardRange, { expiresAt: number; payload: unknown }>();
+
+function startOfChinaDay(date: Date): Date {
+  const shifted = new Date(date.getTime() + DASHBOARD_CHINA_OFFSET_MS);
+  return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - DASHBOARD_CHINA_OFFSET_MS);
+}
+
+function startOfChinaWeek(date: Date): Date {
+  const dayStart = startOfChinaDay(date);
+  const shifted = new Date(dayStart.getTime() + DASHBOARD_CHINA_OFFSET_MS);
+  const day = shifted.getUTCDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+  return new Date(dayStart.getTime() - daysSinceMonday * DASHBOARD_DAY_MS);
+}
+
+function chinaDateKey(date: Date): string {
+  return new Date(date.getTime() + DASHBOARD_CHINA_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function dashboardChange(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return Number((((current - previous) / previous) * 100).toFixed(1));
+}
+
+async function loadDashboardMetric(
+  table: "users" | "soups" | "evaluations",
+  now: Date,
+  todayStart: Date,
+  weekStart: Date
+): Promise<DashboardGrowthMetric> {
+  const todayElapsed = now.getTime() - todayStart.getTime();
+  const yesterdayStart = new Date(todayStart.getTime() - DASHBOARD_DAY_MS);
+  const yesterdaySameTime = new Date(yesterdayStart.getTime() + todayElapsed);
+  const weekElapsed = now.getTime() - weekStart.getTime();
+  const previousWeekStart = new Date(weekStart.getTime() - 7 * DASHBOARD_DAY_MS);
+  const previousWeekSameTime = new Date(previousWeekStart.getTime() + weekElapsed);
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT
+      COUNT(*) AS total,
+      COALESCE(SUM(created_at >= ? AND created_at < ?), 0) AS today_count,
+      COALESCE(SUM(created_at >= ? AND created_at < ?), 0) AS yesterday_count,
+      COALESCE(SUM(created_at >= ? AND created_at < ?), 0) AS week_count,
+      COALESCE(SUM(created_at >= ? AND created_at < ?), 0) AS previous_week_count
+     FROM ${table}`,
+    [todayStart, now, yesterdayStart, yesterdaySameTime, weekStart, now, previousWeekStart, previousWeekSameTime]
+  );
+  const today = Number(row.today_count ?? 0);
+  const yesterday = Number(row.yesterday_count ?? 0);
+  const week = Number(row.week_count ?? 0);
+  const previousWeek = Number(row.previous_week_count ?? 0);
+  return {
+    total: Number(row.total ?? 0),
+    today: { current: today, previous: yesterday, changePercent: dashboardChange(today, yesterday) },
+    week: { current: week, previous: previousWeek, changePercent: dashboardChange(week, previousWeek) }
+  };
+}
+
+app.get("/api/admin/dashboard", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsedRange = z.enum(["7d", "30d", "90d"]).safeParse(req.query.range ?? "30d");
+  if (!parsedRange.success) return sendError(res, 400, "统计时间范围不正确");
+  const range = parsedRange.data as DashboardRange;
+  const cached = dashboardCache.get(range);
+  if (req.query.refresh !== "1" && cached && cached.expiresAt > Date.now()) return res.json(cached.payload);
+
+  const now = new Date();
+  const todayStart = startOfChinaDay(now);
+  const weekStart = startOfChinaWeek(now);
+  const rangeDays = dashboardRanges[range];
+  const rangeStart = new Date(todayStart.getTime() - (rangeDays - 1) * DASHBOARD_DAY_MS);
+  const rangeStartKey = chinaDateKey(rangeStart);
+  const todayKey = chinaDateKey(now);
+  const last7StartKey = chinaDateKey(new Date(todayStart.getTime() - 6 * DASHBOARD_DAY_MS));
+
+  const [
+    userMetric,
+    soupMetric,
+    evaluationMetric,
+    [trendRows],
+    [activityRows],
+    [activityDailyRows],
+    [typeRows],
+    [soupStateRows],
+    [topSoupRows],
+    [evaluationRows]
+  ] = await Promise.all([
+    loadDashboardMetric("users", now, todayStart, weekStart),
+    loadDashboardMetric("soups", now, todayStart, weekStart),
+    loadDashboardMetric("evaluations", now, todayStart, weekStart),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT day_key,
+        SUM(user_count) AS user_count,
+        SUM(soup_count) AS soup_count,
+        SUM(evaluation_count) AS evaluation_count
+       FROM (
+         SELECT DATE_FORMAT(DATE_ADD(created_at, INTERVAL 8 HOUR), '%Y-%m-%d') AS day_key, COUNT(*) AS user_count, 0 AS soup_count, 0 AS evaluation_count
+         FROM users WHERE created_at >= ? AND created_at < ? GROUP BY day_key
+         UNION ALL
+         SELECT DATE_FORMAT(DATE_ADD(created_at, INTERVAL 8 HOUR), '%Y-%m-%d') AS day_key, 0, COUNT(*), 0
+         FROM soups WHERE created_at >= ? AND created_at < ? GROUP BY day_key
+         UNION ALL
+         SELECT DATE_FORMAT(DATE_ADD(created_at, INTERVAL 8 HOUR), '%Y-%m-%d') AS day_key, 0, 0, COUNT(*)
+         FROM evaluations WHERE created_at >= ? AND created_at < ? GROUP BY day_key
+       ) daily
+       GROUP BY day_key ORDER BY day_key`,
+      [rangeStart, now, rangeStart, now, rangeStart, now]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+        COUNT(DISTINCT CASE WHEN login_date = ? THEN user_id END) AS today_active,
+        COUNT(DISTINCT CASE WHEN login_date >= ? AND login_date <= ? THEN user_id END) AS last7_active
+       FROM user_login_days`,
+      [todayKey, last7StartKey, todayKey]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT DATE_FORMAT(login_date, '%Y-%m-%d') AS day_key, COUNT(DISTINCT user_id) AS active_count
+       FROM user_login_days WHERE login_date >= ? AND login_date <= ?
+       GROUP BY login_date ORDER BY login_date`,
+      [rangeStartKey, todayKey]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      "SELECT type AS name, COUNT(*) AS count FROM soups GROUP BY type ORDER BY count DESC, type ASC"
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+        COALESCE(SUM(is_original = TRUE), 0) AS original_count,
+        COALESCE(SUM(is_original = FALSE), 0) AS non_original_count,
+        COALESCE(SUM(is_surface_public = TRUE), 0) AS public_surface_count,
+        COALESCE(SUM(is_bottom_public = TRUE), 0) AS public_bottom_count,
+        COALESCE(SUM(enable_ai_game = TRUE), 0) AS ai_enabled_count,
+        COALESCE(SUM(is_sensitive = TRUE), 0) AS sensitive_count
+       FROM soups`
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT s.id, s.title, s.view_count,
+        COALESCE(e.evaluation_count, 0) AS evaluation_count,
+        COALESCE(l.like_count, 0) AS like_count,
+        COALESCE(f.favorite_count, 0) AS favorite_count
+       FROM soups s
+       LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
+       LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
+       LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
+       ORDER BY s.view_count DESC, evaluation_count DESC, like_count DESC
+       LIMIT 10`
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+        AVG(total) AS average_total,
+        AVG(CASE WHEN content IS NOT NULL AND TRIM(content) <> '' THEN 1 ELSE 0 END) AS with_content_rate,
+        COALESCE(SUM(total < 2), 0) AS score_1_2,
+        COALESCE(SUM(total >= 2 AND total < 3), 0) AS score_2_3,
+        COALESCE(SUM(total >= 3 AND total < 4), 0) AS score_3_4,
+        COALESCE(SUM(total >= 4), 0) AS score_4_5,
+        AVG(writing) AS writing, AVG(logic) AS logic, AVG(share) AS share,
+        AVG(mechanism) AS mechanism, AVG(twist) AS twist, AVG(depth) AS depth
+       FROM evaluations`
+    )
+  ]);
+
+  const trendByDate = new Map(trendRows.map((row) => [String(row.day_key), row]));
+  const activityByDate = new Map(activityDailyRows.map((row) => [String(row.day_key), Number(row.active_count ?? 0)]));
+  const trend = Array.from({ length: rangeDays }, (_, index) => {
+    const date = chinaDateKey(new Date(rangeStart.getTime() + index * DASHBOARD_DAY_MS));
+    const row = trendByDate.get(date);
+    return {
+      date,
+      users: Number(row?.user_count ?? 0),
+      soups: Number(row?.soup_count ?? 0),
+      evaluations: Number(row?.evaluation_count ?? 0)
+    };
+  });
+  const activityDaily = trend.map(({ date }) => ({ date, users: activityByDate.get(date) ?? 0 }));
+  const activity = activityRows[0] ?? {};
+  const soupState = soupStateRows[0] ?? {};
+  const evaluation = evaluationRows[0] ?? {};
+  const payload = {
+    generatedAt: now.toISOString(),
+    timezone: "Asia/Shanghai" as const,
+    range,
+    summary: { users: userMetric, soups: soupMetric, evaluations: evaluationMetric },
+    trend,
+    userActivity: {
+      today: Number(activity.today_active ?? 0),
+      last7Days: Number(activity.last7_active ?? 0),
+      todayRate: userMetric.total > 0 ? Number((Number(activity.today_active ?? 0) / userMetric.total * 100).toFixed(1)) : null,
+      daily: activityDaily
+    },
+    soups: {
+      byType: typeRows.map((row) => ({ name: String(row.name || "未分类"), count: Number(row.count ?? 0) })),
+      original: Number(soupState.original_count ?? 0),
+      nonOriginal: Number(soupState.non_original_count ?? 0),
+      publicSurface: Number(soupState.public_surface_count ?? 0),
+      publicBottom: Number(soupState.public_bottom_count ?? 0),
+      aiEnabled: Number(soupState.ai_enabled_count ?? 0),
+      sensitive: Number(soupState.sensitive_count ?? 0),
+      top: topSoupRows.map((row) => ({
+        id: String(row.id), title: String(row.title), views: Number(row.view_count ?? 0),
+        evaluations: Number(row.evaluation_count ?? 0), likes: Number(row.like_count ?? 0), favorites: Number(row.favorite_count ?? 0)
+      }))
+    },
+    evaluations: {
+      averageTotal: evaluation.average_total == null ? null : Number(Number(evaluation.average_total).toFixed(1)),
+      withContentRate: evaluation.with_content_rate == null ? null : Number((Number(evaluation.with_content_rate) * 100).toFixed(1)),
+      scoreBuckets: [
+        { label: "1–2", count: Number(evaluation.score_1_2 ?? 0) },
+        { label: "2–3", count: Number(evaluation.score_2_3 ?? 0) },
+        { label: "3–4", count: Number(evaluation.score_3_4 ?? 0) },
+        { label: "4–5", count: Number(evaluation.score_4_5 ?? 0) }
+      ],
+      dimensions: {
+        writing: evaluation.writing == null ? null : Number(Number(evaluation.writing).toFixed(1)),
+        logic: evaluation.logic == null ? null : Number(Number(evaluation.logic).toFixed(1)),
+        share: evaluation.share == null ? null : Number(Number(evaluation.share).toFixed(1)),
+        mechanism: evaluation.mechanism == null ? null : Number(Number(evaluation.mechanism).toFixed(1)),
+        twist: evaluation.twist == null ? null : Number(Number(evaluation.twist).toFixed(1)),
+        depth: evaluation.depth == null ? null : Number(Number(evaluation.depth).toFixed(1))
+      }
+    }
+  };
+  dashboardCache.set(range, { expiresAt: Date.now() + 45_000, payload });
+  res.json(payload);
+});
+
 app.get("/api/admin/users", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!(await requireAdmin(req, res))) return;
   const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
   const loggedToday = req.query.loggedToday === "yes" || req.query.loggedToday === "no"
     ? String(req.query.loggedToday)
@@ -1403,19 +1695,25 @@ app.get("/api/admin/users", async (req, res) => {
 });
 
 app.patch("/api/admin/users/:id", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  const actor = await requireAdmin(req, res);
+  if (!actor) return;
   const parsed = z.object({ nickname: text.max(50), role: z.enum(["admin", "user"]) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "用户信息不正确");
-  await pool.query("UPDATE users SET nickname = ?, role = ? WHERE id = ?", [
+  if (actor.id === req.params.id && parsed.data.role !== "admin") return sendError(res, 400, "不能取消自己的管理员权限");
+  const [targetRows] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!targetRows[0]) return sendError(res, 404, "用户不存在");
+  const tokenVersionIncrement = targetRows[0].role === parsed.data.role ? 0 : 1;
+  await pool.query("UPDATE users SET nickname = ?, role = ?, token_version = token_version + ? WHERE id = ?", [
     parsed.data.nickname,
     parsed.data.role,
+    tokenVersionIncrement,
     req.params.id
   ]);
   res.json({ ok: true });
 });
 
 app.delete("/api/admin/users/:id", async (req, res) => {
-  const user = requireAdmin(req, res);
+  const user = await requireAdmin(req, res);
   if (!user) return;
   if (user.id === req.params.id) return sendError(res, 400, "不能删除自己");
   await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
@@ -1423,16 +1721,16 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 });
 
 app.post("/api/admin/users/:id/reset-password", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!(await requireAdmin(req, res))) return;
   const parsed = z.object({ newPassword: z.string().min(6, "新密码至少 6 位").max(72) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码格式不正确");
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
-  await pool.query("UPDATE users SET password = ? WHERE id = ?", [hash, req.params.id]);
+  await pool.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [hash, req.params.id]);
   res.json({ ok: true });
 });
 
 app.get("/api/admin/evaluations", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!(await requireAdmin(req, res))) return;
   const limit = Math.min(Number(req.query.limit ?? 20), 100);
   const offset = Number(req.query.offset ?? 0);
   const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
@@ -1468,8 +1766,8 @@ app.get("/api/admin/evaluations", async (req, res) => {
 });
 
 // ---------- AI 游戏路由 ----------
-app.use("/api/game", (req, _res, next) => {
-  (req as any).user = extractAuth(req);
+app.use("/api/game", async (req, _res, next) => {
+  (req as any).user = await currentUser(req);
   next();
 }, gameRouter);
 

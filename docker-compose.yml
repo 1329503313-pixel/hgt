@@ -8,14 +8,16 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=4000
-      - WEB_ORIGIN=http://47.239.5.69:4000
-      - JWT_SECRET=${JWT_SECRET:-hgt-jwt-2026-fixed}
-      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-change-me}
+      - WEB_ORIGIN=${WEB_ORIGIN:?WEB_ORIGIN must be set}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:?ADMIN_DEFAULT_PASSWORD must be set}
       - DB_HOST=mysql-docker-mysql-1
       - DB_PORT=3306
       - DB_USER=hgt
-      - DB_PASSWORD=${DB_PASSWORD:-hgt_password}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set}
       - DB_NAME=hgt
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
     networks:
       - mysql-docker_default
 

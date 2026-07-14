@@ -37,6 +37,38 @@ function parseJson<T>(val: any): T {
   return val as T;
 }
 
+type GameUser = { id: string; role: "admin" | "user" };
+type GameSoupData = {
+  surface: string;
+  bottom: string;
+  manual: string;
+  supplementalSurfaces: string[];
+  supplementalBottoms: string[];
+  keyFacts: KeyFact[];
+  aiPrompt: string | null;
+  creatorId: string;
+  isSurfacePublic: boolean;
+  enableAiGame: boolean;
+};
+
+const aiRateBuckets = new Map<string, { count: number; resetAt: number }>();
+function aiRateLimiter(req: any, res: any, next: any) {
+  const user = req.user as GameUser | undefined;
+  const key = user?.id ?? req.ip ?? "unknown";
+  const now = Date.now();
+  const bucket = aiRateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    aiRateBuckets.set(key, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  bucket.count += 1;
+  if (bucket.count > 30) {
+    res.setHeader("Retry-After", Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)));
+    return res.status(429).json({ error: "AI 请求过于频繁，请稍后再试" });
+  }
+  next();
+}
+
 async function recordKeyHits(userId: string, soupId: string, keyIds: unknown[]) {
   const uniqueIds = Array.from(new Set(
     keyIds.map((id) => Number(id)).filter((id) => Number.isInteger(id))
@@ -238,19 +270,26 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
     return { ...empty, answer: "服务未配置 AI 接口，请联系管理员设置 DEEPSEEK_API_KEY。" };
   }
 
-  const resp = await fetch(DEEPSEEK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
-    body: JSON.stringify({
-      model: "deepseek-v4-flash",
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...messages.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content }))
-      ],
-      max_tokens: 4000,
-      temperature: 0.7
-    })
-  });
+  let resp: globalThis.Response;
+  try {
+    resp = await fetch(DEEPSEEK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({
+        model: "deepseek-v4-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...messages.slice(-60).map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content }))
+        ],
+        max_tokens: 4000,
+        temperature: 0.7
+      }),
+      signal: AbortSignal.timeout(30_000)
+    });
+  } catch (error) {
+    console.error("DeepSeek request failed:", error instanceof Error ? error.message : error);
+    return { ...empty, answer: "AI 服务暂时不可用，请稍后再试。" };
+  }
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -298,9 +337,9 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
 }
 
 // ---------- 获取汤底数据 ----------
-async function getSoupGameData(soupId: string) {
+async function getSoupGameData(soupId: string): Promise<GameSoupData | null> {
   const [rows] = await pool.query<any[]>(
-    "SELECT surface, bottom, host_manual, supplemental_surfaces, supplemental_bottoms, key_facts, ai_prompt FROM soups WHERE id = ? LIMIT 1", [soupId]
+    "SELECT surface, bottom, host_manual, supplemental_surfaces, supplemental_bottoms, key_facts, ai_prompt, creator_id, is_surface_public, enable_ai_game FROM soups WHERE id = ? LIMIT 1", [soupId]
   );
   if (rows.length === 0) return null;
   return {
@@ -311,7 +350,14 @@ async function getSoupGameData(soupId: string) {
     supplementalBottoms: parseJson<string[]>(rows[0].supplemental_bottoms) ?? [],
     keyFacts: parseJson<KeyFact[]>(rows[0].key_facts) ?? [],
     aiPrompt: (rows[0].ai_prompt as string) || null,
+    creatorId: String(rows[0].creator_id),
+    isSurfacePublic: Boolean(Number(rows[0].is_surface_public)),
+    enableAiGame: Boolean(Number(rows[0].enable_ai_game)),
   };
+}
+
+function canPlaySoup(soup: GameSoupData, user: GameUser) {
+  return soup.enableAiGame && (soup.isSurfacePublic || user.role === "admin" || soup.creatorId === user.id);
 }
 
 // ---------- 从存档消息中重算进度 ----------
@@ -428,7 +474,8 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
         messages: [{ role: "user", content: prompt }],
         max_tokens: 3000,
         temperature: 0.3
-      })
+      }),
+      signal: AbortSignal.timeout(30_000)
     });
 
     if (!resp.ok) {
@@ -486,6 +533,7 @@ gameRouter.post("/:soupId/start", async (req, res) => {
   if (!user) return res.status(401).json({ error: "请先登录" });
   const soupData = await getSoupGameData(req.params.soupId);
   if (!soupData) return res.status(404).json({ error: "海龟汤不存在" });
+  if (!canPlaySoup(soupData, user)) return res.status(403).json({ error: "该海龟汤未开放 AI 游戏或你没有查看权限" });
 
   const [existing] = await pool.query<GameSessionRow[]>(
     "SELECT * FROM game_sessions WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.soupId, user.id]
@@ -513,7 +561,7 @@ gameRouter.post("/:soupId/start", async (req, res) => {
   res.json({ sessionId: id, messages: [initialMsg], progress: 0, revealedKeys: [], revealedSupplements: { surfaces: [], bottoms: [] } });
 });
 
-gameRouter.post("/:soupId/ask", async (req, res) => {
+gameRouter.post("/:soupId/ask", aiRateLimiter, async (req, res) => {
   const user = (req as any).user;
   if (!user) return res.status(401).json({ error: "请先登录" });
   const parsed = z.object({ question: z.string().trim().min(1).max(500) }).safeParse(req.body);
@@ -521,6 +569,7 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
 
   const soupData = await getSoupGameData(req.params.soupId);
   if (!soupData) return res.status(404).json({ error: "海龟汤不存在" });
+  if (!canPlaySoup(soupData, user)) return res.status(403).json({ error: "该海龟汤未开放 AI 游戏或你没有查看权限" });
 
   const [sessions] = await pool.query<GameSessionRow[]>(
     "SELECT * FROM game_sessions WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.soupId, user.id]
@@ -581,11 +630,12 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
   res.json({ answer: result.answer, progress: mergedProgress, revealedKeys: mergedKeys, revealedSupplements: mergedSupp, completed: result.completed });
 });
 
-gameRouter.post("/:soupId/hint", async (req, res) => {
+gameRouter.post("/:soupId/hint", aiRateLimiter, async (req, res) => {
   const user = (req as any).user;
   if (!user) return res.status(401).json({ error: "请先登录" });
   const soupData = await getSoupGameData(req.params.soupId);
   if (!soupData) return res.status(404).json({ error: "海龟汤不存在" });
+  if (!canPlaySoup(soupData, user)) return res.status(403).json({ error: "该海龟汤未开放 AI 游戏或你没有查看权限" });
 
   const [sessions] = await pool.query<GameSessionRow[]>(
     "SELECT * FROM game_sessions WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.soupId, user.id]
@@ -654,10 +704,11 @@ gameRouter.post("/:soupId/restart", async (req, res) => {
   const user = (req as any).user;
   if (!user) return res.status(401).json({ error: "请先登录" });
 
-  await pool.query("DELETE FROM game_sessions WHERE soup_id = ? AND user_id = ?", [req.params.soupId, user.id]);
-
   const soupData = await getSoupGameData(req.params.soupId);
   if (!soupData) return res.status(404).json({ error: "海龟汤不存在" });
+  if (!canPlaySoup(soupData, user)) return res.status(403).json({ error: "该海龟汤未开放 AI 游戏或你没有查看权限" });
+
+  await pool.query("DELETE FROM game_sessions WHERE soup_id = ? AND user_id = ?", [req.params.soupId, user.id]);
 
   const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, soupData.supplementalSurfaces, soupData.supplementalBottoms, [], [], soupData.keyFacts, soupData.aiPrompt, []);
   const initialMsg = { role: "assistant", content: "欢迎来到海龟汤！请提出你的推理和猜测，我会用\"是\"\"不是\"\"是也不是\"\"不知道\"\"不重要\"来回应。需要提示时点左下角灯泡按钮。开始吧！" };
@@ -674,6 +725,10 @@ gameRouter.post("/:soupId/restart", async (req, res) => {
 gameRouter.get("/:soupId/status", async (req, res) => {
   const user = (req as any).user;
   if (!user) return res.status(401).json({ error: "请先登录" });
+
+  const soupData = await getSoupGameData(req.params.soupId);
+  if (!soupData) return res.status(404).json({ error: "海龟汤不存在" });
+  if (!canPlaySoup(soupData, user)) return res.status(403).json({ error: "该海龟汤未开放 AI 游戏或你没有查看权限" });
 
   const [sessions] = await pool.query<GameSessionRow[]>(
     "SELECT * FROM game_sessions WHERE soup_id = ? AND user_id = ? LIMIT 1", [req.params.soupId, user.id]

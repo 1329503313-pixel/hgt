@@ -13,3 +13,4 @@ test_*.mjs
 *.tar
 *.tar.gz
 hgt.tar.gz
+apps/server/dist/

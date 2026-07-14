@@ -174,7 +174,7 @@ npm run check                 # TypeScript 类型检查
 - 双重认证：cookie (`req.cookies.hgt_token`) 或 Authorization header (`Bearer xxx`)
 - JWT 仅含 `{id, username, nickname, role, createdAt}`，不含 avatar (缩小体积)
 - `/api/auth/me` 从 DB 补全 avatar 字段
-- 生产环境 JWT_SECRET 固定值 `hgt-jwt-2026-fixed`（避免部署后全量踢登）
+- 生产环境通过环境变量 `JWT_SECRET` 注入，不写入代码仓库（部署命令中指定）
 
 ## 前端架构关键点
 
