@@ -30,7 +30,7 @@ function CollapsibleSection({ children, defaultOpen = false }: { children: React
 export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, triggerRefresh, exportReady, setExportReady } = useApp();
+  const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,6 +64,7 @@ export default function DetailPage() {
     if (!user) { openAuth(); return; }
     const data = await api<{ isFavorited: boolean; favoriteCount: number }>(`/api/soups/${soup.id}/favorite`, { method: "POST" });
     setSoup((old) => old ? { ...old, isFavorited: data.isFavorited, favoriteCount: data.favoriteCount } : old);
+    if (data.isFavorited) await checkBadgeUnlocks();
   }
 
   async function handleLike() {
@@ -71,6 +72,7 @@ export default function DetailPage() {
     if (!user) { openAuth(); return; }
     const data = await api<{ isLiked: boolean; likeCount: number }>(`/api/soups/${soup.id}/like`, { method: "POST" });
     setSoup((old) => old ? { ...old, isLiked: data.isLiked, likeCount: data.likeCount } : old);
+    if (data.isLiked) await checkBadgeUnlocks();
   }
 
   async function handleRequest() {
@@ -218,7 +220,7 @@ export default function DetailPage() {
             {user ? (
               <>
                 <details className="user-menu">
-                  <summary className="flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:gap-2 sm:px-2.5 sm:py-1.5">
+                  <summary className="avatar-name-gap flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:px-2.5 sm:py-1.5">
                     {user.avatar ? (
                       <img className="h-7 w-7 shrink-0 rounded-full object-cover" src={user.avatar} alt="" />
                     ) : (
@@ -287,7 +289,7 @@ export default function DetailPage() {
               <span className="pill">{soup.type}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
             </div>
-            <p className="mt-3 flex items-center gap-1.5 text-sm text-muted">
+            <p className="avatar-name-gap mt-3 flex items-center text-sm text-muted">
               {soup.creatorAvatar ? <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" /> : <User size={14} />}
               作者 {soup.author} · 发布者 {soup.creatorName} · 评分 {soup.averageTotal ?? "-"}
             </p>

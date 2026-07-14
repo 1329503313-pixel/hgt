@@ -218,6 +218,7 @@ function mapEvaluation(row: mysql.RowDataPacket) {
   return {
     id: row.id,
     soupId: row.soup_id,
+    soupTitle: row.soup_title ? String(row.soup_title) : undefined,
     total: Number(row.total),
     reviewer: row.reviewer,
     reviewerId: row.reviewer_id,
@@ -307,6 +308,106 @@ async function adminIds() {
   return rows.map((row) => String(row.id));
 }
 
+async function recordLoginDay(userId: string) {
+  await Promise.all([
+    pool.query(
+      `INSERT IGNORE INTO user_login_days (user_id, login_date)
+       VALUES (?, DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR)))`,
+      [userId]
+    ),
+    pool.query("UPDATE users SET last_login_at = UTC_TIMESTAMP() WHERE id = ?", [userId])
+  ]);
+}
+
+type AchievementStats = {
+  soupCount: number;
+  favoriteCount: number;
+  evaluationCount: number;
+  likeCount: number;
+  criticalHitCount: number;
+  loginDayCount: number;
+  receivedLikeCount: number;
+  receivedFavoriteCount: number;
+  receivedCommentCount: number;
+  writtenCommentCount: number;
+  aiCompletionCount: number;
+};
+
+const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; target: number }> = [
+  { key: "publish:normal", stat: "soupCount", target: 1 },
+  { key: "publish:rare", stat: "soupCount", target: 10 },
+  { key: "publish:epic", stat: "soupCount", target: 50 },
+  { key: "insight:normal", stat: "criticalHitCount", target: 10 },
+  { key: "insight:rare", stat: "criticalHitCount", target: 100 },
+  { key: "insight:epic", stat: "criticalHitCount", target: 1000 },
+  { key: "favorite:normal", stat: "favoriteCount", target: 3 },
+  { key: "favorite:rare", stat: "favoriteCount", target: 20 },
+  { key: "favorite:epic", stat: "favoriteCount", target: 100 },
+  { key: "like:normal", stat: "likeCount", target: 3 },
+  { key: "like:rare", stat: "likeCount", target: 20 },
+  { key: "like:epic", stat: "likeCount", target: 100 },
+  { key: "login:normal", stat: "loginDayCount", target: 3 },
+  { key: "login:rare", stat: "loginDayCount", target: 20 },
+  { key: "login:epic", stat: "loginDayCount", target: 100 },
+  { key: "creatorLike:normal", stat: "receivedLikeCount", target: 10 },
+  { key: "creatorLike:rare", stat: "receivedLikeCount", target: 100 },
+  { key: "creatorLike:epic", stat: "receivedLikeCount", target: 1000 },
+  { key: "creatorFavorite:normal", stat: "receivedFavoriteCount", target: 10 },
+  { key: "creatorFavorite:rare", stat: "receivedFavoriteCount", target: 100 },
+  { key: "creatorFavorite:epic", stat: "receivedFavoriteCount", target: 1000 },
+  { key: "receivedComment:normal", stat: "receivedCommentCount", target: 5 },
+  { key: "receivedComment:rare", stat: "receivedCommentCount", target: 50 },
+  { key: "receivedComment:epic", stat: "receivedCommentCount", target: 300 },
+  { key: "commenter:normal", stat: "writtenCommentCount", target: 5 },
+  { key: "commenter:rare", stat: "writtenCommentCount", target: 50 },
+  { key: "commenter:epic", stat: "writtenCommentCount", target: 300 },
+  { key: "aiClear:normal", stat: "aiCompletionCount", target: 1 },
+  { key: "aiClear:rare", stat: "aiCompletionCount", target: 10 },
+  { key: "aiClear:epic", stat: "aiCompletionCount", target: 50 }
+];
+
+async function getAchievementStats(userId: string): Promise<AchievementStats> {
+  const [
+    [soupRows],
+    [favRows],
+    [evalRows],
+    [likeRows],
+    [keyHitRows],
+    [loginDayRows],
+    [receivedLikeRows],
+    [receivedFavoriteRows],
+    [receivedCommentRows],
+    [writtenCommentRows],
+    [aiCompletionRows]
+  ] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(DISTINCT soup_id) AS count FROM evaluations WHERE reviewer_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_likes WHERE user_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM game_key_hits WHERE user_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM user_login_days WHERE user_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_like_history WHERE creator_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorite_history WHERE creator_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE creator_id = ? AND is_original = TRUE", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE reviewer_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM game_completions WHERE user_id = ?", [userId])
+  ]);
+
+  return {
+    soupCount: Number(soupRows[0]?.count ?? 0),
+    favoriteCount: Number(favRows[0]?.count ?? 0),
+    evaluationCount: Number(evalRows[0]?.count ?? 0),
+    likeCount: Number(likeRows[0]?.count ?? 0),
+    criticalHitCount: Number(keyHitRows[0]?.count ?? 0),
+    loginDayCount: Number(loginDayRows[0]?.count ?? 0),
+    receivedLikeCount: Number(receivedLikeRows[0]?.count ?? 0),
+    receivedFavoriteCount: Number(receivedFavoriteRows[0]?.count ?? 0),
+    receivedCommentCount: Number(receivedCommentRows[0]?.count ?? 0),
+    writtenCommentCount: Number(writtenCommentRows[0]?.count ?? 0),
+    aiCompletionCount: Number(aiCompletionRows[0]?.count ?? 0)
+  };
+}
+
 async function generateThumbnail(base64: string): Promise<string | null> {
   try {
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
@@ -344,6 +445,7 @@ app.post("/api/auth/register", async (req, res) => {
     hash,
     nickname
   ]);
+  await recordLoginDay(id);
 
   const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString() };
   const token = signToken(user);
@@ -372,6 +474,7 @@ app.post("/api/auth/login", async (req, res) => {
   if (!ok) return sendError(res, 401, "账号或密码错误");
 
   const user = toUser(row);
+  await recordLoginDay(user.id);
   const token = signToken(toJwtPayload(row));
   res.cookie("hgt_token", token, {
     httpOnly: true,
@@ -409,6 +512,7 @@ app.post("/api/auth/password", async (req, res) => {
 app.get("/api/auth/me", async (req, res) => {
   const user = currentUser(req);
   if (user) {
+    await recordLoginDay(user.id);
     // JWT 不再包含 avatar（缩小 token 体积），需要从数据库查
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       "SELECT avatar FROM users WHERE id = ? LIMIT 1",
@@ -502,20 +606,46 @@ app.get("/api/me/soups", async (req, res) => {
 app.get("/api/me/stats", async (req, res) => {
   const user = requireAuth(req, res);
   if (!user) return;
+  await recordLoginDay(user.id);
+  res.json(await getAchievementStats(user.id));
+});
 
-  const [[soupRows], [favRows], [evalRows], [likeRows]] = await Promise.all([
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [user.id]),
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [user.id]),
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(DISTINCT soup_id) AS count FROM evaluations WHERE reviewer_id = ?", [user.id]),
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_likes WHERE user_id = ?", [user.id])
-  ]);
+app.post("/api/me/badge-unlocks/sync", async (req, res) => {
+  const user = requireAuth(req, res);
+  if (!user) return;
+  await recordLoginDay(user.id);
 
-  res.json({
-    soupCount: Number(soupRows[0]?.count ?? 0),
-    favoriteCount: Number(favRows[0]?.count ?? 0),
-    evaluationCount: Number(evalRows[0]?.count ?? 0),
-    likeCount: Number(likeRows[0]?.count ?? 0)
-  });
+  const [userRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT badges_initialized FROM users WHERE id = ? LIMIT 1",
+    [user.id]
+  );
+  const wasInitialized = Boolean(userRows[0]?.badges_initialized);
+  const stats = await getAchievementStats(user.id);
+  const earnedKeys = BADGE_THRESHOLDS
+    .filter((badge) => stats[badge.stat] >= badge.target)
+    .map((badge) => badge.key);
+
+  const [unlockRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT badge_key FROM user_badge_unlocks WHERE user_id = ?",
+    [user.id]
+  );
+  const unlocked = new Set(unlockRows.map((row) => String(row.badge_key)));
+  const newKeys = earnedKeys.filter((key) => !unlocked.has(key));
+
+  if (newKeys.length > 0) {
+    const placeholders = newKeys.map(() => "(?, ?)").join(", ");
+    const values = newKeys.flatMap((key) => [user.id, key]);
+    await pool.query(
+      `INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key) VALUES ${placeholders}`,
+      values
+    );
+  }
+
+  if (!wasInitialized) {
+    await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [user.id]);
+  }
+
+  res.json({ unlocks: wasInitialized ? newKeys : [], stats });
 });
 
 app.get("/api/me/favorites", async (req, res) => {
@@ -650,7 +780,18 @@ app.get("/api/soups", async (req, res) => {
 
   const hasMore = rows.length > limit;
   if (hasMore) rows.pop();
-  res.json({ soups: rows.map(mapSoupSummary), hasMore });
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM (
+      SELECT s.id
+      FROM soups s
+      LEFT JOIN evaluations e ON e.soup_id = s.id
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      GROUP BY s.id
+      ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
+    ) counted_soups`,
+    params
+  );
+  res.json({ soups: rows.map(mapSoupSummary), total: Number(totalRow.total ?? 0), hasMore });
 });
 
 app.post("/api/soups", async (req, res) => {
@@ -813,6 +954,12 @@ app.post("/api/soups/:id/like", async (req, res) => {
   }
 
   await pool.query("INSERT INTO soup_likes (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+  if (Boolean(soup.is_original)) {
+    await pool.query(
+      "INSERT IGNORE INTO soup_like_history (soup_id, actor_id, creator_id) VALUES (?, ?, ?)",
+      [req.params.id, user.id, soup.creator_id]
+    );
+  }
   const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
   res.status(201).json({ isLiked: true, likeCount: Number(c2.cnt) });
 });
@@ -866,6 +1013,12 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
   }
 
   await pool.query("INSERT INTO soup_favorites (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+  if (Boolean(soup.is_original)) {
+    await pool.query(
+      "INSERT IGNORE INTO soup_favorite_history (soup_id, actor_id, creator_id) VALUES (?, ?, ?)",
+      [req.params.id, user.id, soup.creator_id]
+    );
+  }
   const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
   res.status(201).json({ isFavorited: true, favoriteCount: Number(c2.cnt) });
 });
@@ -980,6 +1133,12 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         existing.id
       ]
     );
+    if (data.content?.trim()) {
+      await pool.query(
+        "INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original) VALUES (?, ?, ?, ?)",
+        [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
+      );
+    }
     return res.json({ id: existing.id });
   }
 
@@ -1003,6 +1162,12 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
       data.content || null
     ]
   );
+  if (data.content?.trim()) {
+    await pool.query(
+      "INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original) VALUES (?, ?, ?, ?)",
+      [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
+    );
+  }
   res.status(201).json({ id });
 });
 
@@ -1057,6 +1222,9 @@ app.get("/api/access-requests", async (req, res) => {
     where = "WHERE vr.owner_id = ?";
     params.push(user.id);
   }
+  const requestedLimit = Number(req.query.limit);
+  const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : null;
+  const offset = Math.max(0, Number(req.query.offset ?? 0));
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT vr.*, s.title AS soup_title
@@ -1064,10 +1232,16 @@ app.get("/api/access-requests", async (req, res) => {
     JOIN soups s ON s.id = vr.soup_id
     ${where}
     ORDER BY vr.created_at DESC
+    ${limit ? "LIMIT ? OFFSET ?" : ""}
     `,
+    limit ? [...params, limit, offset] : params
+  );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM view_requests vr ${where}`,
     params
   );
   res.json({
+    total: Number(totalRow.total ?? 0),
     requests: rows.map((row) => ({
       id: row.id,
       soupId: row.soup_id,
@@ -1163,18 +1337,61 @@ app.patch("/api/notifications/:id/read", async (req, res) => {
 
 app.get("/api/admin/users", async (req, res) => {
   if (!requireAdmin(req, res)) return;
+  const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
+  const loggedToday = req.query.loggedToday === "yes" || req.query.loggedToday === "no"
+    ? String(req.query.loggedToday)
+    : "all";
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (keyword) {
+    conditions.push("(u.nickname LIKE ? OR u.username LIKE ?)");
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+  if (loggedToday !== "all") {
+    conditions.push(`${loggedToday === "yes" ? "" : "NOT "}EXISTS (
+      SELECT 1 FROM user_login_days uld
+      WHERE uld.user_id = u.id
+        AND uld.login_date = DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR))
+    )`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const requestedLimit = Number(req.query.limit ?? 10);
+  const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : 10;
+  const offset = Math.max(0, Number(req.query.offset ?? 0));
+  const sortColumns: Record<string, string> = {
+    createdAt: "u.created_at",
+    lastLoginAt: "u.last_login_at",
+    soupCount: "soup_count",
+    evaluationCount: "evaluation_count",
+    likeCount: "like_count",
+    favoriteCount: "favorite_count"
+  };
+  const sortColumn = sortColumns[String(req.query.sortBy ?? "createdAt")] ?? sortColumns.createdAt;
+  const sortOrder = req.query.sortOrder === "asc" ? "ASC" : "DESC";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at,
+    `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at,
+      EXISTS (
+        SELECT 1 FROM user_login_days uld
+        WHERE uld.user_id = u.id
+          AND uld.login_date = DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR))
+      ) AS logged_in_today,
       (SELECT COUNT(*) FROM soups WHERE creator_id = u.id) AS soup_count,
       (SELECT COUNT(*) FROM evaluations WHERE reviewer_id = u.id) AS evaluation_count,
       (SELECT COUNT(*) FROM soup_likes WHERE user_id = u.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE user_id = u.id) AS favorite_count
      FROM users u
-     ORDER BY u.created_at DESC`
+     ${where}
+     ORDER BY ${sortColumn} ${sortOrder}, u.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
   );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(`SELECT COUNT(*) AS total FROM users u ${where}`, params);
   res.json({
+    total: Number(totalRow.total ?? 0),
     users: rows.map((row) => ({
       ...toUser(row),
+      lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
+      loggedInToday: Boolean(row.logged_in_today),
       stats: {
         soupCount: Number(row.soup_count ?? 0),
         evaluationCount: Number(row.evaluation_count ?? 0),

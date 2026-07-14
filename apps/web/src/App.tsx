@@ -4,6 +4,7 @@ import { useApp } from "./context/AppContext";
 import { AuthModal, ExportPreview } from "./components/AuthModal";
 import { SoupEditor } from "./components/SoupEditor";
 import { EvalEditor } from "./components/EvalEditor";
+import { AchievementUnlockOverlay } from "./components/AchievementUnlockOverlay";
 import ErrorBoundary from "./components/ErrorBoundary";
 import MainLayout from "./layouts/MainLayout";
 
@@ -17,10 +18,11 @@ import MySoupsPage from "./pages/MySoupsPage";
 import MyFavoritesPage from "./pages/MyFavoritesPage";
 import MyEvaluationsPage from "./pages/MyEvaluationsPage";
 import MyLikesPage from "./pages/MyLikesPage";
+import MyAchievementsPage from "./pages/MyAchievementsPage";
 import AdminPage from "./pages/AdminPage";
 
 export default function App() {
-  const { toast, showToast, authMode, showSoupForm, showEvalForm } = useApp();
+  const { toast, showToast, authMode, showSoupForm, showEvalForm, badgeUnlock } = useApp();
 
   return (
     <div className="app-shell min-h-screen bg-page">
@@ -34,6 +36,7 @@ export default function App() {
           <Route path="mine/favorites" element={<MyFavoritesPage />} />
           <Route path="mine/evaluations" element={<MyEvaluationsPage />} />
           <Route path="mine/likes" element={<MyLikesPage />} />
+          <Route path="mine/achievements" element={<MyAchievementsPage />} />
         </Route>
 
         {/* Detail page — independent layout, no BottomNav */}
@@ -60,6 +63,7 @@ export default function App() {
       {showSoupForm && <SoupEditor />}
       {showEvalForm && <EvalEditor />}
       <ExportPreview />
+      {badgeUnlock && <AchievementUnlockOverlay key={badgeUnlock.key} />}
     </div>
   );
 }

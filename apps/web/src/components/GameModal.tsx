@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw, Menu } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api } from "../api";
+import { useApp } from "../context/AppContext";
 
 type ChatMessage = {
   role: "assistant" | "user";
@@ -23,6 +24,7 @@ export function GameModal({
   soup: SoupDetail;
   onBack: () => void;
 }) {
+  const { checkBadgeUnlocks } = useApp();
   const [state, setState] = useState<GameState>({
     messages: [],
     progress: 0,
@@ -84,6 +86,7 @@ export function GameModal({
         completed: data.completed,
         messages: [...s.messages, { role: "assistant", content: data.answer }]
       }));
+      await checkBadgeUnlocks();
     } catch {
       setState((s) => ({
         ...s,
@@ -116,6 +119,7 @@ export function GameModal({
           { role: "assistant", content: data.answer }
         ]
       }));
+      await checkBadgeUnlocks();
     } catch {
       setState((s) => ({ ...s, loading: false }));
     }

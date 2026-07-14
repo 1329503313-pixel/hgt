@@ -34,12 +34,25 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 }
 
 export type MeResponse = { user: PublicUser | null };
-export type SoupsResponse = { soups: SoupSummary[]; hasMore: boolean };
+export type SoupsResponse = { soups: SoupSummary[]; total: number; hasMore: boolean };
 export type SoupResponse = { soup: SoupDetail };
 export type NotificationsResponse = { notifications: NotificationItem[] };
-export type RequestsResponse = { requests: ViewRequestItem[] };
+export type RequestsResponse = { requests: ViewRequestItem[]; total: number };
 export type UsersResponse = { users: PublicUser[] };
-export type StatsResponse = { soupCount: number; favoriteCount: number; evaluationCount: number; likeCount: number };
+export type StatsResponse = {
+  soupCount: number;
+  favoriteCount: number;
+  evaluationCount: number;
+  likeCount: number;
+  criticalHitCount: number;
+  loginDayCount: number;
+  receivedLikeCount: number;
+  receivedFavoriteCount: number;
+  receivedCommentCount: number;
+  writtenCommentCount: number;
+  aiCompletionCount: number;
+};
+export type BadgeUnlocksResponse = { unlocks: string[]; stats: StatsResponse };
 export type PasswordResponse = { ok: boolean };
 export type NicknameResponse = { ok: boolean; nickname: string };
 export type AvatarResponse = { ok: boolean; avatar: string | null };

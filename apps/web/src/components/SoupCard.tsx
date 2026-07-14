@@ -29,7 +29,7 @@ export function SoupCard({
       )}
       <div className="p-3">
         <h2 className="line-clamp-2 text-[16px] font-black leading-snug text-ink">{soup.title}</h2>
-        <p className="mt-1 flex items-center gap-1.5 truncate text-[13px] text-muted">
+        <p className="avatar-name-gap mt-1 flex items-center truncate text-[13px] text-muted">
           {soup.creatorAvatar ? (
             <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
           ) : (

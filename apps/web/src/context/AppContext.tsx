@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { PublicUser, SoupDetail, KeyFact } from "../shared/types";
-import { api, MeResponse } from "../api";
+import { api, BadgeUnlocksResponse, MeResponse, StatsResponse } from "../api";
+
+export type BadgeUnlockEvent = { key: string; stats: StatsResponse };
 
 // ---------- 常量 ----------
 export const soupTypes = ["本格清汤", "本格红汤", "本格黑汤", "变格清汤", "变格红汤", "变格黑汤", "纯机制汤", "其他"];
@@ -89,6 +91,11 @@ type AppContextValue = {
   refreshKey: number;
   triggerRefresh: () => void;
 
+  // 全局新徽章通知
+  badgeUnlock: BadgeUnlockEvent | null;
+  checkBadgeUnlocks: () => Promise<void>;
+  dismissBadgeUnlock: () => void;
+
   // 认证模态框
   authMode: "login" | "register" | null;
   authError: string;
@@ -137,6 +144,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [loadingUser, setLoadingUser] = useState(true); // 初始 true，等待 /me 返回
   const [toast, setToastRaw] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [badgeUnlockQueue, setBadgeUnlockQueue] = useState<BadgeUnlockEvent[]>([]);
 
   // 认证模态框
   const [authMode, setAuthModeRaw] = useState<"login" | "register" | null>(null);
@@ -167,6 +175,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback((msg: string) => setToastRaw(msg), []);
   const triggerRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const checkBadgeUnlocks = useCallback(async () => {
+    try {
+      const data = await api<BadgeUnlocksResponse>("/api/me/badge-unlocks/sync", { method: "POST" });
+      if (data.unlocks.length > 0) {
+        setBadgeUnlockQueue((queue) => [
+          ...queue,
+          ...data.unlocks.map((key) => ({ key, stats: data.stats })),
+        ]);
+      }
+    } catch {
+      // 未登录或服务暂时不可用时不影响当前操作
+    }
+  }, []);
+  const dismissBadgeUnlock = useCallback(() => {
+    setBadgeUnlockQueue((queue) => queue.slice(1));
+  }, []);
 
   // 页面加载时读取登录状态
   useEffect(() => {
@@ -175,6 +199,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .catch(() => undefined)
       .finally(() => setLoadingUser(false));
   }, []);
+
+  const badgeSyncedUserRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!user) {
+      badgeSyncedUserRef.current = null;
+      setBadgeUnlockQueue([]);
+      return;
+    }
+    if (badgeSyncedUserRef.current === user.id) return;
+    badgeSyncedUserRef.current = user.id;
+    void checkBadgeUnlocks();
+  }, [user, checkBadgeUnlocks]);
+
+  // 作者收到他人的点赞、收藏或评论时，也能在任意页面及时收到徽章
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setInterval(() => void checkBadgeUnlocks(), 30_000);
+    const handleFocus = () => void checkBadgeUnlocks();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [user, checkBadgeUnlocks]);
 
   const openAuth = useCallback(() => {
     setAuthError("");
@@ -251,6 +299,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast,
     refreshKey,
     triggerRefresh,
+    badgeUnlock: badgeUnlockQueue[0] ?? null,
+    checkBadgeUnlocks,
+    dismissBadgeUnlock,
     authMode,
     authError,
     setAuthError,

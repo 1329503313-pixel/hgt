@@ -46,7 +46,7 @@ export function SoupLinkList({
                   </span>
                 )}
               </span>
-              <span className="mt-1 flex items-center gap-1 truncate text-xs text-muted">
+              <span className="avatar-name-gap mt-1 flex items-center truncate text-xs text-muted">
                 {soup.isOriginal ? (
                   soup.creatorAvatar ? (
                     <img className="h-3.5 w-3.5 rounded-full object-cover" src={soup.creatorAvatar} alt="" />

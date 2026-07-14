@@ -159,6 +159,8 @@ export async function initDatabase() {
   await ensureColumn("soups", "is_sensitive", "is_sensitive BOOLEAN NOT NULL DEFAULT FALSE AFTER is_original");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
+  await ensureColumn("users", "badges_initialized", "badges_initialized TINYINT(1) NOT NULL DEFAULT 0 AFTER avatar");
+  await ensureColumn("users", "last_login_at", "last_login_at DATETIME NULL AFTER badges_initialized");
   await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
   await migrateCoverThumbnails();
   await migrateSoupViewsColumn();
@@ -179,6 +181,135 @@ export async function initDatabase() {
       CONSTRAINT fk_game_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
       CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // AI 玩汤关键点命中历史：同一用户、同一汤、同一关键点永久只计一次
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS game_key_hits (
+      user_id VARCHAR(64) NOT NULL,
+      soup_id VARCHAR(64) NOT NULL,
+      key_id INT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, soup_id, key_id),
+      INDEX idx_game_key_hits_user (user_id),
+      CONSTRAINT fk_game_key_hit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_game_key_hit_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // 累计登录天数：按北京时间自然日去重
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_login_days (
+      user_id VARCHAR(64) NOT NULL,
+      login_date DATE NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, login_date),
+      CONSTRAINT fk_login_day_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_badge_unlocks (
+      user_id VARCHAR(64) NOT NULL,
+      badge_key VARCHAR(64) NOT NULL,
+      unlocked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, badge_key),
+      INDEX idx_badge_unlocks_user_time (user_id, unlocked_at),
+      CONSTRAINT fk_badge_unlock_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS soup_like_history (
+      soup_id VARCHAR(64) NOT NULL,
+      actor_id VARCHAR(64) NOT NULL,
+      creator_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (soup_id, actor_id),
+      INDEX idx_like_history_creator (creator_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS soup_favorite_history (
+      soup_id VARCHAR(64) NOT NULL,
+      actor_id VARCHAR(64) NOT NULL,
+      creator_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (soup_id, actor_id),
+      INDEX idx_favorite_history_creator (creator_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS evaluation_comment_history (
+      soup_id VARCHAR(64) NOT NULL,
+      reviewer_id VARCHAR(64) NOT NULL,
+      creator_id VARCHAR(64) NOT NULL,
+      is_original BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (soup_id, reviewer_id),
+      INDEX idx_comment_history_creator (creator_id),
+      INDEX idx_comment_history_reviewer (reviewer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn(
+    "evaluation_comment_history",
+    "is_original",
+    "is_original BOOLEAN NOT NULL DEFAULT TRUE AFTER creator_id"
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS game_completions (
+      session_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      soup_id VARCHAR(64) NOT NULL,
+      completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (session_id),
+      INDEX idx_game_completions_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // 将当前有效数据补录为历史基线
+  await pool.query(`
+    INSERT IGNORE INTO soup_like_history (soup_id, actor_id, creator_id, created_at)
+    SELECT likes.soup_id, likes.user_id, soups.creator_id, likes.created_at
+    FROM soup_likes AS likes
+    JOIN soups ON soups.id = likes.soup_id
+    WHERE soups.is_original = TRUE
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO soup_favorite_history (soup_id, actor_id, creator_id, created_at)
+    SELECT favorites.soup_id, favorites.user_id, soups.creator_id, favorites.created_at
+    FROM soup_favorites AS favorites
+    JOIN soups ON soups.id = favorites.soup_id
+    WHERE soups.is_original = TRUE
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original, created_at)
+    SELECT evaluations.soup_id, evaluations.reviewer_id, soups.creator_id, soups.is_original, evaluations.created_at
+    FROM evaluations
+    JOIN soups ON soups.id = evaluations.soup_id
+    WHERE evaluations.content IS NOT NULL
+      AND TRIM(evaluations.content) <> ''
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO game_completions (session_id, user_id, soup_id, completed_at)
+    SELECT id, user_id, soup_id, updated_at
+    FROM game_sessions
+    WHERE progress = 100
+  `);
+
+  // 将现有游戏存档中的关键点补录到永久命中历史
+  await pool.query(`
+    INSERT IGNORE INTO game_key_hits (user_id, soup_id, key_id)
+    SELECT gs.user_id, gs.soup_id, hit.key_id
+    FROM game_sessions gs
+    JOIN JSON_TABLE(
+      gs.revealed_keys,
+      '$[*]' COLUMNS (key_id INT PATH '$')
+    ) AS hit
+    WHERE hit.key_id IS NOT NULL
   `);
   await ensureColumn("game_sessions", "revealed_supplements", "revealed_supplements JSON NULL AFTER revealed_keys");
   await ensureColumn("soups", "key_facts", "key_facts JSON NULL AFTER enable_ai_game");

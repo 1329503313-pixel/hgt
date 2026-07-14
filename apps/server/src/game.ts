@@ -37,6 +37,20 @@ function parseJson<T>(val: any): T {
   return val as T;
 }
 
+async function recordKeyHits(userId: string, soupId: string, keyIds: unknown[]) {
+  const uniqueIds = Array.from(new Set(
+    keyIds.map((id) => Number(id)).filter((id) => Number.isInteger(id))
+  ));
+  if (uniqueIds.length === 0) return;
+
+  const placeholders = uniqueIds.map(() => "(?, ?, ?)").join(", ");
+  const values = uniqueIds.flatMap((keyId) => [userId, soupId, keyId]);
+  await pool.query(
+    `INSERT IGNORE INTO game_key_hits (user_id, soup_id, key_id) VALUES ${placeholders}`,
+    values
+  );
+}
+
 // ---------- 构建 System Prompt ----------
 function buildSystemPrompt(
   surface: string,
@@ -545,6 +559,10 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
     mergedProgress = 100;
     await pool.query("INSERT IGNORE INTO soup_access_grants (id, soup_id, user_id, granted_by) VALUES (?, ?, ?, ?)",
       [nanoid(), req.params.soupId, user.id, "system"]);
+    await pool.query(
+      "INSERT IGNORE INTO game_completions (session_id, user_id, soup_id) VALUES (?, ?, ?)",
+      [session.id, user.id, req.params.soupId]
+    );
   } else {
     mergedProgress = Math.min(mergedProgress, 99);
   }
@@ -555,6 +573,7 @@ gameRouter.post("/:soupId/ask", async (req, res) => {
   // 从 AI 返回的 keyFacts 中提取本轮新揭示的事实点 ID，合并到 revealedKeys
   const newRevealedIds = result.keyFacts.filter((kf: any) => kf.revealed).map((kf: any) => kf.id);
   const mergedKeys = [...new Set([...savedKeys, ...newRevealedIds])].sort((a, b) => a - b);
+  await recordKeyHits(user.id, req.params.soupId, newRevealedIds);
 
   await pool.query("UPDATE game_sessions SET messages = ?, revealed_supplements = ?, progress = ?, revealed_keys = ? WHERE id = ?",
     [JSON.stringify(fullMessages), JSON.stringify(mergedSupp), mergedProgress, JSON.stringify(mergedKeys), session.id]);
@@ -609,6 +628,10 @@ gameRouter.post("/:soupId/hint", async (req, res) => {
     mergedProgress = 100;
     await pool.query("INSERT IGNORE INTO soup_access_grants (id, soup_id, user_id, granted_by) VALUES (?, ?, ?, ?)",
       [nanoid(), req.params.soupId, user.id, "system"]);
+    await pool.query(
+      "INSERT IGNORE INTO game_completions (session_id, user_id, soup_id) VALUES (?, ?, ?)",
+      [session.id, user.id, req.params.soupId]
+    );
   } else {
     mergedProgress = Math.min(mergedProgress, 99);
   }
@@ -619,6 +642,7 @@ gameRouter.post("/:soupId/hint", async (req, res) => {
   // 从 AI 返回的 keyFacts 中提取本轮新揭示的事实点 ID，合并到 revealedKeys
   const newRevealedIdsHint = result.keyFacts.filter((kf: any) => kf.revealed).map((kf: any) => kf.id);
   const mergedKeysHint = [...new Set([...savedKeysHint, ...newRevealedIdsHint])].sort((a, b) => a - b);
+  await recordKeyHits(user.id, req.params.soupId, newRevealedIdsHint);
 
   await pool.query("UPDATE game_sessions SET messages = ?, revealed_supplements = ?, progress = ?, revealed_keys = ? WHERE id = ?",
     [JSON.stringify(fullMessages), JSON.stringify(mergedSupp), mergedProgress, JSON.stringify(mergedKeysHint), session.id]);

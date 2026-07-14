@@ -4,9 +4,11 @@ import { Modal } from "./Modal";
 import { ScoreInput } from "./FormWidgets";
 import { useApp } from "../context/AppContext";
 import { api } from "../api";
+import { useNavigate } from "react-router-dom";
 
 export function EvalEditor() {
-  const { evalForm: value, setEvalForm: setValue, soupIdForEval, closeEvalEditor, showToast } = useApp();
+  const { evalForm: value, setEvalForm: setValue, soupIdForEval, closeEvalEditor, showToast, checkBadgeUnlocks } = useApp();
+  const navigate = useNavigate();
 
   const patch = (next: Partial<EvalForm>) => setValue({ ...value, ...next });
 
@@ -24,8 +26,8 @@ export function EvalEditor() {
       await api(`/api/soups/${soupIdForEval}/evaluations`, { method: "POST", body: value });
       closeEvalEditor();
       showToast("评价已保存");
-      // Reload the detail page
-      window.location.href = `/soup/${soupIdForEval}`;
+      if (value.content.trim()) await checkBadgeUnlocks();
+      navigate(`/soup/${soupIdForEval}`);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "保存失败");
     }

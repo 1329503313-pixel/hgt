@@ -5,6 +5,7 @@ import { AdminTopBar, AdminTab } from "../components/admin/AdminTopBar";
 import { UserManagement } from "../components/admin/UserManagement";
 import { SoupManagement } from "../components/admin/SoupManagement";
 import { EvaluationManagement } from "../components/admin/EvaluationManagement";
+import { ApprovalManagement } from "../components/admin/ApprovalManagement";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -25,6 +26,7 @@ export default function AdminPage() {
       <AdminTopBar activeTab={activeTab} onTabChange={setActiveTab} />
       <div className="mx-auto max-w-7xl px-4 pt-[72px] pb-8 space-y-4">
         {activeTab === "users" && <UserManagement />}
+        {activeTab === "approvals" && <ApprovalManagement />}
         {activeTab === "soups" && <SoupManagement />}
         {activeTab === "evaluations" && <EvaluationManagement />}
       </div>

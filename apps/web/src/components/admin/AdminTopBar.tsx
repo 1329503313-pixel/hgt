@@ -1,7 +1,7 @@
-import { ArrowLeft, Users, Soup, MessageSquare } from "lucide-react";
+import { ArrowLeft, ClipboardCheck, RefreshCw, Users, Soup, MessageSquare } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-export type AdminTab = "users" | "soups" | "evaluations";
+export type AdminTab = "users" | "approvals" | "soups" | "evaluations";
 
 export function AdminTopBar({
   activeTab,
@@ -14,6 +14,7 @@ export function AdminTopBar({
 
   const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
     { key: "users", label: "用户", icon: <Users size={16} /> },
+    { key: "approvals", label: "审批", icon: <ClipboardCheck size={16} /> },
     { key: "soups", label: "汤品", icon: <Soup size={16} /> },
     { key: "evaluations", label: "评价", icon: <MessageSquare size={16} /> }
   ];
@@ -40,10 +41,16 @@ export function AdminTopBar({
             ))}
           </div>
         </div>
-        <button className="btn btn-secondary rounded-full px-4" onClick={() => navigate("/")}>
-          <ArrowLeft size={16} />
-          <span className="hidden sm:inline ml-1">返回首页</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn btn-secondary rounded-full px-4" onClick={() => window.location.reload()}>
+            <RefreshCw size={16} />
+            <span className="hidden sm:inline ml-1">刷新</span>
+          </button>
+          <button className="btn btn-secondary rounded-full px-4" onClick={() => navigate("/")}>
+            <ArrowLeft size={16} />
+            <span className="hidden sm:inline ml-1">返回首页</span>
+          </button>
+        </div>
       </div>
     </header>
   );

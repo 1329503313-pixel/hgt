@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronRight, ImagePlus, Pencil } from "lucide-react";
+import { ChevronRight, ImagePlus, Pencil, Trophy, Key } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { api, StatsResponse, NicknameResponse, AvatarResponse, PasswordResponse } from "../api";
@@ -111,7 +111,7 @@ export default function MinePage() {
 
       {/* Profile card */}
       <div className="card p-4">
-        <div className="flex items-center gap-4">
+        <div className="avatar-name-gap flex items-center">
           <button className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-xl font-black text-primary" type="button" disabled={avatarSaving}
             onClick={() => avatarInputRef.current?.click()} title="点击更换头像">
             {user.avatar ? <img className="h-full w-full object-cover" src={user.avatar} alt="" /> : (user.nickname || user.username).slice(0, 1)}
@@ -146,22 +146,36 @@ export default function MinePage() {
         <button className="card flex flex-col items-center p-3 transition hover:bg-blue-50" onClick={() => navigate("/mine/soups")}>
           <span className="text-2xl font-black text-ink">{stats.soupCount}</span>
           <span className="mt-0.5 text-xs font-semibold text-muted">我发布的</span>
-          <ChevronRight size={14} className="mt-1 text-muted/40" />
+          <ChevronRight size={14} className="mt-1 text-primary" />
         </button>
         <button className="card flex flex-col items-center p-3 transition hover:bg-amber-50" onClick={() => navigate("/mine/favorites")}>
           <span className="text-2xl font-black text-ink">{stats.favoriteCount}</span>
           <span className="mt-0.5 text-xs font-semibold text-muted">我收藏的</span>
-          <ChevronRight size={14} className="mt-1 text-muted/40" />
+          <ChevronRight size={14} className="mt-1 text-primary" />
         </button>
         <button className="card flex flex-col items-center p-3 transition hover:bg-red-50" onClick={() => navigate("/mine/likes")}>
           <span className="text-2xl font-black text-ink">{stats.likeCount}</span>
           <span className="mt-0.5 text-xs font-semibold text-muted">我点赞的</span>
-          <ChevronRight size={14} className="mt-1 text-muted/40" />
+          <ChevronRight size={14} className="mt-1 text-primary" />
         </button>
         <button className="card flex flex-col items-center p-3 transition hover:bg-emerald-50" onClick={() => navigate("/mine/evaluations")}>
           <span className="text-2xl font-black text-ink">{stats.evaluationCount}</span>
           <span className="mt-0.5 text-xs font-semibold text-muted">我评价的</span>
-          <ChevronRight size={14} className="mt-1 text-muted/40" />
+          <ChevronRight size={14} className="mt-1 text-primary" />
+        </button>
+      </div>
+
+      {/* Achievements */}
+      <div className="card p-4">
+        <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => navigate("/mine/achievements")}>
+          <span className="flex items-center gap-3">
+            <Trophy size={20} className="text-amber-500" />
+            <span>
+              <span className="block text-base font-semibold text-ink">我的成就</span>
+              <span className="mt-1 block text-xs text-muted">查看已获得的徽章</span>
+            </span>
+          </span>
+          <ChevronRight size={18} className="text-primary" />
         </button>
       </div>
 
@@ -169,9 +183,12 @@ export default function MinePage() {
       <div className="card p-4">
         {!passwordOpen ? (
           <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => setPasswordOpen(true)}>
-            <span>
-              <span className="block text-base font-semibold text-ink">修改密码</span>
-              <span className="mt-1 block text-xs text-muted">进入后设置新密码</span>
+            <span className="flex items-center gap-3">
+              <Key size={20} className="text-primary" />
+              <span>
+                <span className="block text-base font-semibold text-ink">修改密码</span>
+                <span className="mt-1 block text-xs text-muted">进入后设置新密码</span>
+              </span>
             </span>
             <ChevronRight size={18} className="text-primary" />
           </button>

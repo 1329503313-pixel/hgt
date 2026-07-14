@@ -6,6 +6,7 @@ import { Modal } from "./Modal";
 import { CheckRow } from "./FormWidgets";
 import { useApp } from "../context/AppContext";
 import { api } from "../api";
+import { useNavigate } from "react-router-dom";
 
 function SupplementEditor({
   title,
@@ -79,7 +80,8 @@ function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () =
 }
 
 export function SoupEditor() {
-  const { user, soupForm: value, setSoupForm: setValue, editingSoupId, closeSoupEditor, showToast } = useApp();
+  const { user, soupForm: value, setSoupForm: setValue, editingSoupId, closeSoupEditor, showToast, checkBadgeUnlocks } = useApp();
+  const navigate = useNavigate();
   const editing = Boolean(editingSoupId);
 
   const [termsAccepted, setTermsAccepted] = useState(editing);
@@ -174,9 +176,8 @@ export function SoupEditor() {
       const result = await api<{ id?: string }>(path, { method, body: payload });
       closeSoupEditor();
       showToast(editing ? "已更新" : "已发布");
-      // Navigate to detail
-      const { useNavigate } = await import("react-router-dom");
-      window.location.href = `/soup/${editing ? editingSoupId : result.id}`;
+      if (!editing) await checkBadgeUnlocks();
+      navigate(`/soup/${editing ? editingSoupId : result.id}`);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "操作失败");
     }

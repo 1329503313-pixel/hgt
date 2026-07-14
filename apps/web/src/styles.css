@@ -471,3 +471,106 @@ textarea {
   border-top-left-radius: 20px;
   border-top-right-radius: 20px;
 }
+
+/* 头像与昵称统一沿用首页间距：移动端 4px，桌面端 8px。 */
+.avatar-name-gap {
+  column-gap: 0.25rem;
+}
+
+@media (min-width: 640px) {
+  .avatar-name-gap {
+    column-gap: 0.5rem;
+  }
+}
+
+@keyframes badge-rainbow-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+.badge-legend-shimmer {
+  background-image: linear-gradient(
+    110deg,
+    #ef4444,
+    #f59e0b,
+    #22c55e,
+    #06b6d4,
+    #3b82f6,
+    #a855f7,
+    #ec4899,
+    #ef4444
+  );
+  background-size: 300% 300%;
+  animation: badge-rainbow-flow 4s linear infinite;
+  box-shadow: 0 0 16px rgba(244, 114, 182, 0.65);
+}
+
+.badge-legend-text {
+  color: transparent;
+  background-image: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e, #3b82f6, #a855f7, #ec4899, #ef4444);
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: badge-rainbow-flow 4s linear infinite;
+}
+
+/* 徽章翻转背面：统一银色金属底与压印龟甲纹。 */
+.badge-metal-back {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(71, 85, 105, 0.72);
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.9) 0 8%, transparent 18% 72%, rgba(255, 255, 255, 0.55) 82% 88%, transparent 96%),
+    linear-gradient(145deg, #f8fafc 0%, #94a3b8 19%, #e2e8f0 38%, #64748b 58%, #f1f5f9 78%, #94a3b8 100%);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.68),
+    inset 0 0 0 5px rgba(71, 85, 105, 0.32),
+    inset 3px 3px 8px rgba(255, 255, 255, 0.72),
+    inset -4px -4px 9px rgba(30, 41, 59, 0.42),
+    0 5px 14px rgba(15, 23, 42, 0.24);
+}
+
+.badge-metal-back::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 11px;
+  border: 1px solid rgba(248, 250, 252, 0.78);
+  background:
+    radial-gradient(circle at 50% 50%, transparent 0 28%, rgba(51, 65, 85, 0.34) 29% 31%, transparent 32%),
+    conic-gradient(from 30deg, rgba(255, 255, 255, 0.32), rgba(71, 85, 105, 0.2), rgba(255, 255, 255, 0.38), rgba(71, 85, 105, 0.22), rgba(255, 255, 255, 0.32));
+  box-shadow:
+    inset 0 0 0 2px rgba(71, 85, 105, 0.28),
+    0 1px 1px rgba(255, 255, 255, 0.72);
+}
+
+.badge-metal-back::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 2px solid rgba(51, 65, 85, 0.55);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(248, 250, 252, 0.9) 0 15%, transparent 17%),
+    conic-gradient(from 30deg, #e2e8f0, #94a3b8, #f8fafc, #64748b, #e2e8f0, #94a3b8, #e2e8f0);
+  box-shadow:
+    inset 1px 1px 3px rgba(255, 255, 255, 0.9),
+    inset -2px -2px 4px rgba(51, 65, 85, 0.45),
+    0 1px 2px rgba(15, 23, 42, 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge-legend-shimmer,
+  .badge-legend-text {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
