@@ -487,8 +487,20 @@ textarea {
   0% {
     background-position: 0% 50%;
   }
-  100% {
+  50% {
     background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes legendary-badge-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -519,6 +531,9 @@ textarea {
 }
 
 .legendary-badge-icon {
+  position: relative;
+  overflow: hidden;
+  contain: paint;
   isolation: isolate;
   border: 2px solid rgba(255, 255, 255, 0.95);
   box-shadow:
@@ -531,24 +546,39 @@ textarea {
 .legendary-badge-icon::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -55%;
   z-index: 1;
   pointer-events: none;
 }
 
 .legendary-badge-icon::before {
-  background: linear-gradient(115deg, transparent 22%, rgba(255, 255, 255, 0.92) 43%, transparent 61%);
-  background-size: 240% 100%;
-  animation: badge-rainbow-flow 3.2s linear infinite;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 52deg,
+    rgba(255, 255, 255, 0.92) 82deg,
+    transparent 118deg,
+    transparent 360deg
+  );
+  animation: legendary-badge-orbit 4.8s linear infinite;
   mix-blend-mode: screen;
 }
 
 .legendary-badge-icon::after {
-  background: linear-gradient(110deg, #ef4444, #f59e0b, #22c55e, #06b6d4, #3b82f6, #a855f7, #ec4899, #ef4444);
-  background-size: 320% 320%;
-  animation: badge-rainbow-flow 5s linear infinite;
+  background: conic-gradient(
+    from 0deg,
+    #ef4444,
+    #f59e0b,
+    #22c55e,
+    #06b6d4,
+    #3b82f6,
+    #a855f7,
+    #ec4899,
+    #ef4444
+  );
+  animation: legendary-badge-orbit 7s linear infinite reverse;
   mix-blend-mode: color;
-  opacity: 0.4;
+  opacity: 0.36;
 }
 
 /* 徽章翻转背面：统一银色金属底与压印龟甲纹。 */

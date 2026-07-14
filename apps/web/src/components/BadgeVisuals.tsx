@@ -52,7 +52,7 @@ export function EquippedBadgeIcon({
   const legendary = badge.key.startsWith("legendary:");
   return (
     <span
-      className={`${legendary ? "legendary-badge-icon bg-white shadow-sm" : ""} inline-flex shrink-0 overflow-hidden rounded-md align-middle ${className}`}
+      className={`${legendary ? "legendary-badge-icon bg-white shadow-sm" : ""} relative inline-flex shrink-0 overflow-hidden rounded-md align-middle ${className}`}
       title={title}
       aria-label={title}
     >

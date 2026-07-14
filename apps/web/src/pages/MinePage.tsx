@@ -183,7 +183,6 @@ export default function MinePage() {
             ) : (
               <div className="flex items-center gap-2">
                 <span className="text-lg font-black text-ink">{user.nickname}</span>
-                <EquippedBadgeIcon badge={user.equippedBadge} className="h-11 w-11" title="当前装配徽章" />
                 <button className="text-primary" onClick={() => setEditNickname(true)}><Pencil size={14} /></button>
               </div>
             )}
