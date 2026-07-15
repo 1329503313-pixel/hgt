@@ -55,6 +55,28 @@ export type ActivityBadgeCondition = {
   target: number;
 };
 
+export const BADGE_TYPE_LABELS: Record<BadgeType, string> = {
+  achievement: "成就徽章",
+  activity: "活动徽章",
+  limited: "限定徽章"
+};
+
+export const ACTIVITY_CONDITION_LABELS: Record<ActivityConditionKind, string> = {
+  login: "登录平台",
+  publish: "发布海龟汤",
+  like_given: "点赞",
+  comment_given: "发布评论",
+  favorite_given: "收藏",
+  like_received: "收获点赞",
+  comment_received: "收获评论",
+  favorite_received: "收获收藏"
+};
+
+export function activityConditionText(condition: ActivityBadgeCondition) {
+  const count = condition.kind === "login" ? "" : `达到 ${condition.target} 次`;
+  return `${condition.startDate} 至 ${condition.endDate} ${ACTIVITY_CONDITION_LABELS[condition.kind]}${count}`;
+}
+
 export type LegendaryBadge = {
   id: string;
   key: string;

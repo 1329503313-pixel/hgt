@@ -2284,6 +2284,27 @@ app.get("/api/admin/badges/users/:id", async (req, res) => {
   });
 });
 
+app.patch("/api/admin/badges/:id/activity-conditions", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = z.object({ conditions: activityConditionsSchema }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "活动条件不正确");
+  const [[badge]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, badge_type FROM legendary_badges WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  if (!badge) return sendError(res, 404, "徽章不存在");
+  if (String(badge.badge_type) !== "activity") return sendError(res, 403, "只有活动徽章可以设置发放条件");
+  await pool.query(
+    "UPDATE legendary_badges SET activity_conditions = ? WHERE id = ?",
+    [parsed.data.conditions.length > 0 ? JSON.stringify(parsed.data.conditions) : null, req.params.id]
+  );
+  if (parsed.data.conditions.length > 0) {
+    const [users] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'user'");
+    queueActivityBadgeSync(users.map((user) => String(user.id)));
+  }
+  res.json({ ok: true, conditions: parsed.data.conditions });
+});
+
 app.get("/api/admin/badges/:id/owners", async (req, res) => {
   if (!(await requireAdmin(req, res))) return;
   const [badgeRows] = await pool.query<mysql.RowDataPacket[]>("SELECT id, name FROM legendary_badges WHERE id = ? LIMIT 1", [req.params.id]);
