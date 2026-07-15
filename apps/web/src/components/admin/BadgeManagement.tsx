@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Award, Eye, RotateCcw, Search, ShieldPlus, Users, X } from "lucide-react";
+import { Award, CalendarClock, Eye, Plus, RotateCcw, Search, ShieldPlus, Trash2, Users, X } from "lucide-react";
 import { api } from "../../api";
 import { useApp } from "../../context/AppContext";
 import { BADGES, getBadgeKey, TIER_COLORS_EARNED, TIER_LABEL, type BadgeDef } from "../../pages/MyAchievementsPage";
-import { LegendaryBadge, LegendaryBadgeIcon, LegendaryBadgeTile } from "../BadgeVisuals";
+import { ACTIVITY_CONDITION_LABELS, ActivityBadgeCondition, ActivityConditionKind, BADGE_TYPE_LABELS, LegendaryBadge, LegendaryBadgeIcon, LegendaryBadgeTile, activityConditionText } from "../BadgeVisuals";
 import { Modal } from "../Modal";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 
@@ -64,6 +64,8 @@ export function BadgeManagement() {
   const [ownersBadge, setOwnersBadge] = useState<LegendaryBadge | null>(null);
   const [owners, setOwners] = useState<BasicUser[]>([]);
   const [modalLoading, setModalLoading] = useState(false);
+  const [conditionBadge, setConditionBadge] = useState<LegendaryBadge | null>(null);
+  const [conditionDraft, setConditionDraft] = useState<ActivityBadgeCondition[]>([]);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -99,6 +101,8 @@ export function BadgeManagement() {
     const owned = new Set(userDetail.badgeKeys);
     return legendaryBadges.filter((badge) => !owned.has(badge.key));
   }, [legendaryBadges, userDetail]);
+  const activityBadges = legendaryBadges.filter((badge) => badge.badgeType === "activity");
+  const limitedBadges = legendaryBadges.filter((badge) => badge.badgeType === "limited");
 
   async function openUserAction(user: BadgeAdminUser, action: UserAction) {
     setModalLoading(true);
@@ -149,6 +153,33 @@ export function BadgeManagement() {
     } catch (error) {
       setOwnersBadge(null);
       showToast(error instanceof Error ? error.message : "拥有用户加载失败");
+    } finally { setModalLoading(false); }
+  }
+
+  function openActivityConditions(badge: LegendaryBadge) {
+    setConditionBadge(badge);
+    setConditionDraft(badge.activityConditions.map((condition) => ({ ...condition })));
+  }
+
+  function addActivityCondition() {
+    const today = new Date().toISOString().slice(0, 10);
+    setConditionDraft((current) => [...current, { kind: "login", startDate: today, endDate: today, target: 1 }]);
+  }
+
+  function updateActivityCondition(index: number, patch: Partial<ActivityBadgeCondition>) {
+    setConditionDraft((current) => current.map((condition, conditionIndex) => conditionIndex === index ? { ...condition, ...patch } : condition));
+  }
+
+  async function saveActivityConditions() {
+    if (!conditionBadge) return;
+    setModalLoading(true);
+    try {
+      await api(`/api/admin/badges/${conditionBadge.id}/activity-conditions`, { method: "PATCH", body: { conditions: conditionDraft } });
+      showToast("活动徽章发放条件已保存");
+      setConditionBadge(null);
+      await loadLegendaryBadges();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "活动条件保存失败");
     } finally { setModalLoading(false); }
   }
 

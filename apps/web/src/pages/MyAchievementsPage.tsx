@@ -3,7 +3,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { api, StatsResponse } from "../api";
-import { BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
+import { activityConditionText, BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 
 // ============================================================
 // 类型定义
@@ -239,6 +239,7 @@ function formatBadgeDate(value: string) {
 }
 
 function legendaryToBadgeDef(badge: LegendaryBadge): BadgeDef {
+  const activityRequirement = badge.activityConditions.map(activityConditionText).join("；");
   return {
     series: badge.key,
     tier: "legend",
@@ -246,7 +247,7 @@ function legendaryToBadgeDef(badge: LegendaryBadge): BadgeDef {
     label: badge.name,
     description: badge.description,
     icon: <LegendaryBadgeIcon badge={badge} className="h-full w-full rounded-2xl" />,
-    requirement: badge.requirement || "无",
+    requirement: badge.requirement || activityRequirement || "无",
     achievementPoints: badge.achievementPoints,
     badgeType: badge.badgeType,
     unlockedAt: badge.unlockedAt ?? null,
