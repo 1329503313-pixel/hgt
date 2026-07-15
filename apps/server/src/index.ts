@@ -156,6 +156,16 @@ const optionalTextList = z
   .default([])
   .transform((items) => items.filter(Boolean));
 const score = z.coerce.number().min(1).max(5).multipleOf(0.5);
+const activityConditionSchema = z.object({
+  kind: z.enum(["login", "publish", "like_given", "comment_given", "favorite_given", "like_received", "comment_received", "favorite_received"]),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  target: z.coerce.number().int().min(1).max(1_000_000)
+}).refine((condition) => condition.endDate >= condition.startDate, {
+  message: "结束日期不能早于开始日期",
+  path: ["endDate"]
+});
+const activityConditionsSchema = z.array(activityConditionSchema).max(8);
 const optionalScore = z
   .union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null(), z.literal("")])
   .optional()
@@ -635,6 +645,56 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
   };
 }
 
+async function activityConditionCount(userId: string, condition: ActivityBadgeCondition) {
+  const dateParams = [userId, condition.startDate, condition.endDate];
+  const queries: Record<ActivityConditionKind, string> = {
+    login: "SELECT COUNT(*) AS count FROM user_login_days WHERE user_id = ? AND login_date BETWEEN ? AND ?",
+    publish: "SELECT COUNT(*) AS count FROM soups WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
+    like_given: "SELECT COUNT(*) AS count FROM soup_like_history WHERE actor_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
+    comment_given: "SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE reviewer_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
+    favorite_given: "SELECT COUNT(*) AS count FROM soup_favorite_history WHERE actor_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
+    like_received: "SELECT COUNT(*) AS count FROM soup_like_history WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
+    comment_received: "SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
+    favorite_received: "SELECT COUNT(*) AS count FROM soup_favorite_history WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?"
+  };
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(queries[condition.kind], dateParams);
+  return Number(row?.count ?? 0);
+}
+
+async function syncActivityBadges(userId: string) {
+  const [badgeRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, name, activity_conditions FROM legendary_badges WHERE badge_type = 'activity' AND activity_conditions IS NOT NULL"
+  );
+  if (badgeRows.length === 0) return [] as Array<{ key: string; name: string }>;
+  const [unlockRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT badge_key FROM user_badge_unlocks WHERE user_id = ?",
+    [userId]
+  );
+  const owned = new Set(unlockRows.map((row) => String(row.badge_key)));
+  const earned: Array<{ key: string; name: string }> = [];
+  for (const badge of badgeRows) {
+    const key = `legendary:${badge.id}`;
+    if (owned.has(key)) continue;
+    const conditions = badgeActivityConditions(badge.activity_conditions);
+    if (conditions.length === 0) continue;
+    const counts = await Promise.all(conditions.map((condition) => activityConditionCount(userId, condition)));
+    if (conditions.every((condition, index) => counts[index] >= (condition.kind === "login" ? 1 : condition.target))) {
+      const [result] = await pool.query<mysql.ResultSetHeader>(
+        "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key) VALUES (?, ?)",
+        [userId, key]
+      );
+      if (result.affectedRows > 0) earned.push({ key, name: String(badge.name) });
+    }
+  }
+  return earned;
+}
+
+async function notifyActivityBadgeUnlocks(userId: string, badges: Array<{ key: string; name: string }>) {
+  await Promise.all(badges.map((badge) => (
+    notify(userId, "badge_unlock", "获得活动徽章", `恭喜你获得活动徽章「${badge.name}」`, badge.key, userId)
+  )));
+}
+
 async function syncSystemBadgeUnlocks(userId: string) {
   const stats = await getAchievementStats(userId);
   const earnedKeys = BADGE_THRESHOLDS
@@ -679,13 +739,36 @@ function queueSystemBadgeSync(userIds: string[]) {
           const { newKeys } = await syncSystemBadgeUnlocks(userId);
           if (!wasInitialized) {
             await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [userId]);
-            return;
+          } else {
+            await Promise.all(newKeys.map((key) => (
+              notify(userId, "badge_unlock", "获得新徽章", `恭喜你获得徽章「${badgeNotificationLabel(key)}」`, key, userId)
+            )));
           }
-          await Promise.all(newKeys.map((key) => (
-            notify(userId, "badge_unlock", "获得新徽章", `恭喜你获得徽章「${badgeNotificationLabel(key)}」`, key, userId)
-          )));
+          await notifyActivityBadgeUnlocks(userId, await syncActivityBadges(userId));
         } catch (error) {
           console.error("badge event sync failed", { userId, error });
+        }
+      }));
+    }
+  }, 0);
+}
+
+const pendingActivityBadgeSyncUsers = new Set<string>();
+let activityBadgeSyncTimer: NodeJS.Timeout | null = null;
+
+function queueActivityBadgeSync(userIds: string[]) {
+  userIds.filter(Boolean).forEach((userId) => pendingActivityBadgeSyncUsers.add(userId));
+  if (activityBadgeSyncTimer) return;
+  activityBadgeSyncTimer = setTimeout(async () => {
+    activityBadgeSyncTimer = null;
+    const users = [...pendingActivityBadgeSyncUsers];
+    pendingActivityBadgeSyncUsers.clear();
+    for (let index = 0; index < users.length; index += 5) {
+      await Promise.all(users.slice(index, index + 5).map(async (userId) => {
+        try {
+          await notifyActivityBadgeUnlocks(userId, await syncActivityBadges(userId));
+        } catch (error) {
+          console.error("activity badge sync failed", { userId, error });
         }
       }));
     }
@@ -920,6 +1003,8 @@ app.post("/api/me/badge-unlocks/sync", async (req, res) => {
       notify(user.id, "badge_unlock", "获得新徽章", `恭喜你获得徽章「${badgeNotificationLabel(key)}」`, key, user.id)
     ));
   }
+
+  await notifyActivityBadgeUnlocks(user.id, await syncActivityBadges(user.id));
 
   res.json({ unlocks: surfacedKeys, stats });
 });
