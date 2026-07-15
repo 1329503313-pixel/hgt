@@ -208,6 +208,7 @@ export default function DetailPage() {
     soup.radar.mechanism, soup.radar.twist, soup.radar.depth
   ].some((v) => v != null);
   const hasEvaluations = soup.evaluations.length > 0;
+  const isReviewApproved = soup.reviewStatus === "approved";
 
   return (
     <section className="pt-16">
@@ -255,6 +256,12 @@ export default function DetailPage() {
 
       <div className="mx-auto max-w-6xl px-4 space-y-4">
 
+      {!isReviewApproved && (
+        <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${soup.reviewStatus === "pending" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+          {soup.reviewStatus === "pending" ? "审核中：该海龟汤目前仅你和管理员可见，可以继续编辑或删除。" : `审核未通过：${soup.reviewReason || "请修改内容后重新提交审核"}`}
+        </div>
+      )}
+
       {/* Meta card */}
       <div className="card p-4">
         <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage ?? "/default-cover.png"} alt={`${soup.title} 封面`} />
@@ -268,7 +275,7 @@ export default function DetailPage() {
                   {soup.heatValue.toLocaleString()}
                 </span>
               </h1>
-              <div className="flex shrink-0 items-end gap-2" style={{ height: "calc(1.5lh * 0.75)" }}>
+              {isReviewApproved && <div className="flex shrink-0 items-end gap-2" style={{ height: "calc(1.5lh * 0.75)" }}>
                 <button
                   className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${soup.isLiked ? "border-red-200 bg-red-50 text-red-500" : "border-line bg-white text-muted hover:border-red-200 hover:text-red-500"}`}
                   style={{ height: "calc(1.5lh * 0.75)" }}
@@ -290,7 +297,7 @@ export default function DetailPage() {
                 >
                   <MessageSquare size={15} /> {soup.evaluationCount}
                 </button>
-              </div>
+              </div>}
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
@@ -416,7 +423,7 @@ export default function DetailPage() {
       </div>
 
       {/* AI 玩汤 悬浮按钮 */}
-      {user && soup.enableAiGame && (
+      {user && soup.enableAiGame && isReviewApproved && (
         <button
           className="fixed bottom-24 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-lg active:scale-95 transition-transform hover:shadow-xl"
           onClick={() => setShowGame(true)}

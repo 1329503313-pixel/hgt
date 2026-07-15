@@ -52,6 +52,12 @@ export function SoupLinkList({
                     <Flame size={13} className="fill-red-500" /> {soup.heatValue.toLocaleString()}
                   </span>
                 )}
+                {soup.reviewStatus === "pending" && (
+                  <span className="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-bold text-amber-700">审核中</span>
+                )}
+                {soup.reviewStatus === "rejected" && (
+                  <span className="shrink-0 rounded-md bg-red-50 px-1.5 py-0.5 text-[11px] font-bold text-red-600">审核未通过</span>
+                )}
               </span>
               <span className="avatar-name-gap mt-1 flex items-center truncate text-xs text-muted">
                 {soup.isOriginal ? (

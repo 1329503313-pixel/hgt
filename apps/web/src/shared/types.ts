@@ -2,6 +2,7 @@ export type UserRole = "admin" | "user";
 export type RequestStatus = "pending" | "approved" | "rejected";
 export type BottomPublicFilter = "all" | "surface" | "bottom";
 export type RatingFilter = "all" | "2" | "3" | "4";
+export type SoupReviewStatus = "approved" | "pending" | "rejected";
 
 export type EquippedBadge = {
   key: string;
@@ -50,6 +51,9 @@ export type SoupSummary = {
   evaluationCount: number;
   averageTotal: number | null;
   heatValue: number;
+  reviewStatus: SoupReviewStatus;
+  reviewReason: string | null;
+  reviewVersion: number;
   radar: RadarStats;
 };
 

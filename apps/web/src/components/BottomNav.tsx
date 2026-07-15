@@ -1,11 +1,12 @@
 import { Home, Plus, User } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useApp } from "../context/AppContext";
+import { api } from "../api";
 
 export function BottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, openAuth, openSoupEditor, triggerRefresh } = useApp();
+  const { user, openAuth, openSoupEditor, triggerRefresh, showToast } = useApp();
 
   const path = location.pathname;
   const isHomeActive = path === "/" || path.startsWith("/soup/");
@@ -24,9 +25,18 @@ export function BottomNav() {
     navigate("/mine");
   }
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!user) { openAuth(); return; }
-    openSoupEditor();
+    try {
+      const quota = await api<{ allowed: boolean; reason: string | null }>("/api/me/soup-publish-quota");
+      if (!quota.allowed) {
+        showToast(quota.reason || "今日暂时无法继续发布海龟汤");
+        return;
+      }
+      openSoupEditor();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "发布额度检查失败");
+    }
   }
 
   return (

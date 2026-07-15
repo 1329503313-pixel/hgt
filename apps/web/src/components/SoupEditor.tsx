@@ -173,9 +173,13 @@ export function SoupEditor() {
     };
 
     try {
-      const result = await api<{ id?: string }>(path, { method, body: payload });
+      const result = await api<{ id?: string; reviewStatus?: "approved" | "pending" | "rejected" }>(path, { method, body: payload });
       closeSoupEditor();
-      showToast(editing ? "已更新" : "已发布");
+      if (result.reviewStatus === "pending") {
+        showToast("您发布的海龟汤可能存在不当言论，目前正在由管理员进行审核");
+      } else {
+        showToast(editing ? "已更新" : "已发布");
+      }
       if (!editing) await checkBadgeUnlocks();
       navigate(`/soup/${editing ? editingSoupId : result.id}`);
     } catch (e) {

@@ -12,6 +12,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
 import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgressListener } from "./game.js";
+import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
 import { PublicUser } from "./types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -244,6 +245,37 @@ async function requireAdmin(req: express.Request, res: express.Response): Promis
   return user;
 }
 
+function beijingDateString() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+async function getSoupPublishUsage(userId: string) {
+  const date = beijingDateString();
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT published_count, auto_reject_count FROM soup_publish_daily_usage WHERE user_id = ? AND usage_date = ? LIMIT 1",
+    [userId, date],
+  );
+  return {
+    date,
+    publishedCount: Number(rows[0]?.published_count ?? 0),
+    autoRejectCount: Number(rows[0]?.auto_reject_count ?? 0),
+  };
+}
+
+async function recordSoupAutoReject(userId: string, date: string) {
+  await pool.query(
+    `INSERT INTO soup_publish_daily_usage (user_id, usage_date, auto_reject_count)
+     VALUES (?, ?, 1)
+     ON DUPLICATE KEY UPDATE auto_reject_count = auto_reject_count + 1`,
+    [userId, date],
+  );
+}
+
 function toUser(row: mysql.RowDataPacket): PublicUser {
   return {
     id: row.id,
@@ -377,6 +409,9 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     createdAt: new Date(row.created_at).toISOString(),
     evaluationCount: evaluations,
     averageTotal: num(row.average_total),
+    reviewStatus: String(row.review_status ?? "approved"),
+    reviewReason: row.review_reason ? String(row.review_reason) : null,
+    reviewVersion: Number(row.review_version ?? 1),
     heatValue: Math.round((comprehensiveScore + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25)),
     radar: {
       writing: num(row.avg_writing),
@@ -414,6 +449,9 @@ async function canViewFull(soup: mysql.RowDataPacket, user: PublicUser | null) {
 }
 
 function canSeeSoupSurface(soup: mysql.RowDataPacket, user: PublicUser | null) {
+  if (String(soup.review_status ?? "approved") !== "approved") {
+    return Boolean(user && (user.role === "admin" || user.id === soup.creator_id));
+  }
   if (bool(soup.is_surface_public)) return true;
   if (!user) return false;
   return user.role === "admin" || user.id === soup.creator_id;
@@ -808,6 +846,22 @@ app.patch("/api/me/avatar", async (req, res) => {
   res.json({ ok: true, avatar });
 });
 
+app.get("/api/me/soup-publish-quota", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (user.role === "admin") return res.json({ allowed: true, publishedCount: 0, autoRejectCount: 0, remaining: null });
+  const usage = await getSoupPublishUsage(user.id);
+  const blockedByReview = usage.autoRejectCount >= 3;
+  const blockedByLimit = usage.publishedCount >= 5;
+  res.json({
+    allowed: !blockedByReview && !blockedByLimit,
+    publishedCount: usage.publishedCount,
+    autoRejectCount: usage.autoRejectCount,
+    remaining: Math.max(0, 5 - usage.publishedCount),
+    reason: blockedByReview ? "今日自动审核未通过次数已达3次，请明天再试" : blockedByLimit ? "您今日已发布5篇海龟汤，明天再继续分享吧" : null,
+  });
+});
+
 app.get("/api/me/soups", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
@@ -966,7 +1020,7 @@ app.get("/api/rankings", async (req, res) => {
      LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
      LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
      LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
-     WHERE s.is_surface_public = TRUE
+      WHERE s.is_surface_public = TRUE AND s.review_status = 'approved'
      ORDER BY heat_value DESC, s.view_count DESC, evaluation_count DESC, s.created_at ASC
      LIMIT 10`
   );
@@ -1037,7 +1091,7 @@ app.get("/api/me/favorites", async (req, res) => {
     INNER JOIN soup_favorites f ON f.soup_id = s.id
     LEFT JOIN evaluations e ON e.soup_id = s.id
     LEFT JOIN users u ON u.id = s.creator_id
-    WHERE f.user_id = ?
+    WHERE f.user_id = ? AND s.review_status = 'approved'
     GROUP BY s.id
     ORDER BY f.created_at DESC
     `,
@@ -1067,7 +1121,7 @@ app.get("/api/me/evaluations", async (req, res) => {
     INNER JOIN evaluations my ON my.soup_id = s.id
     LEFT JOIN evaluations e2 ON e2.soup_id = s.id
     LEFT JOIN users u ON u.id = s.creator_id
-    WHERE my.reviewer_id = ?
+    WHERE my.reviewer_id = ? AND s.review_status = 'approved'
     GROUP BY s.id
     ORDER BY my.created_at DESC
     `,
@@ -1081,6 +1135,16 @@ app.get("/api/soups", async (req, res) => {
   const where: string[] = [];
   const params: unknown[] = [];
   const userParams: unknown[] = [];
+
+  const requestedReviewStatus = String(req.query.reviewStatus ?? "");
+  if (user?.role === "admin" && requestedReviewStatus === "all") {
+    // 管理后台可查看全部审核状态。
+  } else if (user?.role === "admin" && ["approved", "pending", "rejected"].includes(requestedReviewStatus)) {
+    where.push("s.review_status = ?");
+    params.push(requestedReviewStatus);
+  } else {
+    where.push("s.review_status = 'approved'");
+  }
 
   if (!user || user.role !== "admin") {
     if (user) {
@@ -1123,6 +1187,7 @@ app.get("/api/soups", async (req, res) => {
     `
     SELECT s.id, s.title, s.author, s.type, s.summary, s.cover_thumbnail, s.is_original,
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
+      s.review_status, s.review_reason, s.review_version,
       u.avatar AS creator_avatar,
       u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
@@ -1174,40 +1239,58 @@ app.post("/api/soups", async (req, res) => {
   const id = nanoid();
   const soup = parsed.data;
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
+  const usage = user.role === "admin" ? null : await getSoupPublishUsage(user.id);
+  if (usage && usage.autoRejectCount >= 3) return sendError(res, 429, "今日自动审核未通过次数已达3次，请明天再试");
+  if (usage && usage.publishedCount >= 5) return sendError(res, 429, "您今日已发布5篇海龟汤，明天再继续分享吧");
+
+  let review;
+  try {
+    review = await reviewSoupContent({ title: soup.title, surface: soup.surface, bottom: soup.bottom });
+  } catch (error) {
+    if (error instanceof SoupReviewUnavailableError) return sendError(res, 503, error.message);
+    throw error;
+  }
+  if (review.decision === "rejected") {
+    if (user.role !== "admin") await recordSoupAutoReject(user.id, usage!.date);
+    return sendError(res, 422, review.reason ?? "内容未通过自动审核");
+  }
+
   const author = soup.isOriginal ? soup.author : "佚名";
   const thumbnail = soup.coverImage ? await generateThumbnail(soup.coverImage) : null;
-  await pool.query(
-    `INSERT INTO soups
-      (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, ai_prompt, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      soup.title,
-      author,
-      soup.type,
-      soup.summary,
-      soup.coverImage || null,
-      thumbnail,
-      soup.isOriginal,
-      soup.isSensitive,
-      soup.surface,
-      JSON.stringify(soup.supplementalSurfaces),
-      soup.bottom,
-      JSON.stringify(soup.supplementalBottoms),
-      soup.manual || null,
-      soup.isSurfacePublic,
-      soup.isBottomPublic,
-      soup.enableAiGame,
-      soup.aiPrompt || null,
-      soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null,
-      null,
-      soup.keyFactsCustomized ? 1 : 0,
-      user.id,
-      user.nickname
-    ]
-  );
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    if (user.role !== "admin") {
+      await connection.query(
+        "INSERT IGNORE INTO soup_publish_daily_usage (user_id, usage_date) VALUES (?, ?)",
+        [user.id, usage!.date],
+      );
+      const [quotaResult] = await connection.query<mysql.ResultSetHeader>(
+        `UPDATE soup_publish_daily_usage SET published_count = published_count + 1
+         WHERE user_id = ? AND usage_date = ? AND published_count < 5 AND auto_reject_count < 3`,
+        [user.id, usage!.date],
+      );
+      if (quotaResult.affectedRows !== 1) throw new Error("SOUP_DAILY_QUOTA");
+    }
+    await connection.query(
+      `INSERT INTO soups
+        (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, ai_prompt, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, soup.title, author, soup.type, soup.summary, soup.coverImage || null, thumbnail, soup.isOriginal, soup.isSensitive,
+        soup.surface, JSON.stringify(soup.supplementalSurfaces), soup.bottom, JSON.stringify(soup.supplementalBottoms), soup.manual || null,
+        soup.isSurfacePublic, soup.isBottomPublic, soup.enableAiGame, review.decision, review.reason, 1, soup.aiPrompt || null,
+        soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null, null, soup.keyFactsCustomized ? 1 : 0, user.id, user.nickname]
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    if (error instanceof Error && error.message === "SOUP_DAILY_QUOTA") return sendError(res, 429, "您今日已发布5篇海龟汤，明天再继续分享吧");
+    throw error;
+  } finally {
+    connection.release();
+  }
   queueSystemBadgeSync([user.id]);
-  res.status(201).json({ id });
+  res.status(201).json({ id, reviewStatus: review.decision });
 
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
   if (soup.enableAiGame && !soup.keyFactsCustomized) {
@@ -1319,6 +1402,7 @@ app.post("/api/soups/:id/like", async (req, res) => {
 
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (String(soup.review_status ?? "approved") !== "approved") return sendError(res, 409, "审核中的海龟汤暂不可点赞");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -1375,7 +1459,7 @@ app.get("/api/me/likes", async (req, res) => {
     INNER JOIN soup_likes lk ON lk.soup_id = s.id
     LEFT JOIN evaluations e ON e.soup_id = s.id
     LEFT JOIN users u2 ON u2.id = s.creator_id
-    WHERE lk.user_id = ?
+    WHERE lk.user_id = ? AND s.review_status = 'approved'
     GROUP BY s.id
     ORDER BY lk.created_at DESC
     `,
@@ -1390,6 +1474,7 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
 
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (String(soup.review_status ?? "approved") !== "approved") return sendError(res, 409, "审核中的海龟汤暂不可收藏");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -1436,12 +1521,21 @@ app.put("/api/soups/:id", async (req, res) => {
   if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
   const next = parsed.data;
   if (next.isOriginal && !next.author) return sendError(res, 400, "原创海龟汤需要填写作者");
+  let review;
+  try {
+    review = await reviewSoupContent({ title: next.title, surface: next.surface, bottom: next.bottom });
+  } catch (error) {
+    if (error instanceof SoupReviewUnavailableError) return sendError(res, 503, error.message);
+    throw error;
+  }
+  if (review.decision === "rejected") return sendError(res, 422, review.reason ?? "内容未通过自动审核");
   const author = next.isOriginal ? next.author : "佚名";
   const thumbnail = next.coverImage ? await generateThumbnail(next.coverImage) : null;
   await pool.query(
     `UPDATE soups
      SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
-         is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
+         is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + 1,
+         reviewed_at = NULL, reviewed_by = NULL, ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
      WHERE id = ?`,
     [
       next.title,
@@ -1460,6 +1554,8 @@ app.put("/api/soups/:id", async (req, res) => {
       next.isSurfacePublic,
       next.isBottomPublic,
       next.enableAiGame,
+      review.decision,
+      review.reason,
       next.aiPrompt || null,
       next.keyFacts.length > 0 ? JSON.stringify(next.keyFacts) : null,
       null,
@@ -1467,7 +1563,7 @@ app.put("/api/soups/:id", async (req, res) => {
       req.params.id
     ]
   );
-  res.json({ ok: true });
+  res.json({ ok: true, reviewStatus: review.decision });
 
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
   if (next.enableAiGame && !next.keyFactsCustomized) {
@@ -1500,11 +1596,42 @@ app.delete("/api/soups/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/admin/soups/:id/review", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = z.object({
+    decision: z.enum(["approved", "rejected"]),
+    reviewVersion: z.number().int().positive(),
+    reason: z.string().trim().max(500).optional().default(""),
+  }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "审核参数不正确");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id, title, creator_id, review_status, review_version FROM soups WHERE id = ? LIMIT 1", [req.params.id]);
+  const soup = rows[0];
+  if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (String(soup.review_status) !== "pending") return sendError(res, 409, "该审核已取消或处理完成");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE soups SET review_status = ?, review_reason = ?, reviewed_at = NOW(), reviewed_by = ?
+     WHERE id = ? AND review_status = 'pending' AND review_version = ?`,
+    [parsed.data.decision, parsed.data.reason || (parsed.data.decision === "approved" ? null : "内容未通过人工审核"), admin.id, req.params.id, parsed.data.reviewVersion],
+  );
+  if (result.affectedRows !== 1) return sendError(res, 409, "内容已被作者修改，本次审核已自动取消");
+  await notify(
+    String(soup.creator_id),
+    "soup_review",
+    parsed.data.decision === "approved" ? "海龟汤审核通过" : "海龟汤审核未通过",
+    `《${soup.title}》${parsed.data.decision === "approved" ? "已通过管理员审核并公开" : "未通过管理员审核，可修改后重新提交"}`,
+    req.params.id,
+    admin.id,
+  );
+  res.json({ ok: true });
+});
+
 app.post("/api/soups/:id/evaluations", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (String(soup.review_status ?? "approved") !== "approved") return sendError(res, 409, "审核中的海龟汤暂不可评价");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "不能评价未公开内容");
 
   const parsed = evaluationSchema.safeParse(req.body);
@@ -1603,6 +1730,7 @@ app.post("/api/soups/:id/access-requests", async (req, res) => {
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
+  if (String(soup.review_status ?? "approved") !== "approved") return sendError(res, 409, "审核中的海龟汤暂不可申请查看");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "不能申请未公开汤面");
   if (await canViewFull(soup, user)) return sendError(res, 409, "已经拥有查看权限");
 

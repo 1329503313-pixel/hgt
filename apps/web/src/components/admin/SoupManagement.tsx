@@ -1,23 +1,24 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Trash2, ThumbsUp, Star, ExternalLink, ArrowUpDown } from "lucide-react";
+import { Search, Trash2, ThumbsUp, Star, ExternalLink, ArrowUpDown, Check, X } from "lucide-react";
 import type { SoupSummary } from "../../shared/types";
 import { api, SoupsResponse } from "../../api";
 import { soupTypes } from "../../context/AppContext";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 
-type SoupColumn = "title" | "original" | "likes" | "favorites" | "evaluations" | "creator" | "createdAt" | "actions";
+type SoupColumn = "title" | "review" | "original" | "likes" | "favorites" | "evaluations" | "creator" | "createdAt" | "actions";
 
 const soupColumns: readonly AdminColumn<SoupColumn>[] = [
   { key: "title", label: "标题", width: "minmax(180px, 1fr)" },
+  { key: "review", label: "审核状态", width: "100px" },
   { key: "original", label: "原创", width: "70px" },
   { key: "likes", label: "点赞", width: "70px" },
   { key: "favorites", label: "收藏", width: "70px" },
   { key: "evaluations", label: "评价", width: "70px" },
   { key: "creator", label: "创建者", width: "90px" },
   { key: "createdAt", label: "发布时间", width: "100px" },
-  { key: "actions", label: "操作", width: "164px" }
+  { key: "actions", label: "操作", width: "260px" }
 ];
 
 export function SoupManagement() {
@@ -33,6 +34,7 @@ export function SoupManagement() {
   const [submittedKeyword, setSubmittedKeyword] = useState("");
   const [submittedType, setSubmittedType] = useState("");
   const [order, setOrder] = useState<"desc" | "asc">("desc");
+  const [reviewFilter, setReviewFilter] = useState("pending");
   const [visibleColumns, setVisibleColumns] = useState<Set<SoupColumn>>(() => new Set(soupColumns.map((column) => column.key)));
   const template = useMemo(() => gridTemplate(soupColumns, visibleColumns), [visibleColumns]);
 
@@ -44,6 +46,7 @@ export function SoupManagement() {
         if (submittedKeyword) params.set("keyword", submittedKeyword);
         if (submittedType) params.set("type", submittedType);
         params.set("order", order);
+        params.set("reviewStatus", reviewFilter);
         params.set("limit", String(pageSize));
         params.set("offset", String((page - 1) * pageSize));
         const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
@@ -53,7 +56,7 @@ export function SoupManagement() {
         setLoading(false);
       }
     },
-    [submittedKeyword, submittedType, order, page, pageSize]
+    [submittedKeyword, submittedType, reviewFilter, order, page, pageSize]
   );
 
   useEffect(() => {
@@ -71,6 +74,13 @@ export function SoupManagement() {
     await api(`/api/soups/${id}`, { method: "DELETE" });
     setSoups((old) => old.filter((s) => s.id !== id));
     setTotal((old) => Math.max(0, old - 1));
+  }
+
+  async function handleReview(soup: SoupSummary, decision: "approved" | "rejected") {
+    const reason = decision === "rejected" ? (prompt("请输入审核未通过原因", soup.reviewReason || "内容存在不当表达") ?? "") : "";
+    if (decision === "rejected" && !reason.trim()) return;
+    await api(`/api/admin/soups/${soup.id}/review`, { method: "POST", body: { decision, reviewVersion: soup.reviewVersion, reason } });
+    await loadSoups();
   }
 
   return (
@@ -97,6 +107,12 @@ export function SoupManagement() {
         <select className="field h-10 sm:w-36" value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); }}>
           <option value="">全部类型</option>
           {soupTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select className="field h-10 sm:w-36" value={reviewFilter} onChange={(e) => { setPage(1); setReviewFilter(e.target.value); }}>
+          <option value="pending">待人工审核</option>
+          <option value="approved">已通过</option>
+          <option value="rejected">未通过</option>
+          <option value="all">全部状态</option>
         </select>
         <button
           className="btn btn-secondary h-10 px-3 text-xs whitespace-nowrap"
@@ -126,6 +142,9 @@ export function SoupManagement() {
                   </button>
                   <div className="text-xs text-muted">{s.type}</div>
                 </div>}
+                {visibleColumns.has("review") && <span className={`rounded-md px-2 py-1 text-xs font-bold ${s.reviewStatus === "pending" ? "bg-amber-50 text-amber-700" : s.reviewStatus === "rejected" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
+                  {s.reviewStatus === "pending" ? "审核中" : s.reviewStatus === "rejected" ? "未通过" : "已通过"}
+                </span>}
                 {visibleColumns.has("original") && <span className={`text-xs font-semibold ${s.isOriginal ? "text-emerald-600" : "text-muted"}`}>
                   {s.isOriginal ? "原创" : "非原创"}
                 </span>}
@@ -135,6 +154,10 @@ export function SoupManagement() {
                 {visibleColumns.has("creator") && <span className="max-w-full truncate text-muted">{s.creatorName}</span>}
                 {visibleColumns.has("createdAt") && <span className="text-xs text-muted whitespace-nowrap">{new Date(s.createdAt).toLocaleDateString()}</span>}
                 {visibleColumns.has("actions") && <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+                  {s.reviewStatus === "pending" && <>
+                    <button className="btn btn-primary h-8 px-2 text-xs" onClick={() => handleReview(s, "approved")}><Check size={14} />通过</button>
+                    <button className="btn btn-danger h-8 px-2 text-xs" onClick={() => handleReview(s, "rejected")}><X size={14} />驳回</button>
+                  </>}
                   <button className="btn btn-secondary h-8 w-[78px] flex-none px-2 text-xs whitespace-nowrap" onClick={() => navigate(`/soup/${s.id}`)} title="查看">
                     <ExternalLink size={14} />
                     <span>查看</span>

@@ -81,6 +81,7 @@ type GameSoupData = {
   creatorId: string;
   isSurfacePublic: boolean;
   enableAiGame: boolean;
+  reviewStatus: string;
 };
 
 const AI_MINUTE_LIMIT = 30;
@@ -472,7 +473,7 @@ ${candidates.map((fact) => `[${fact.id}] ${fact.content}`).join("\n")}
 // ---------- 获取汤底数据 ----------
 async function getSoupGameData(soupId: string): Promise<GameSoupData | null> {
   const [rows] = await pool.query<any[]>(
-    "SELECT surface, bottom, host_manual, supplemental_surfaces, supplemental_bottoms, key_facts, ai_prompt, creator_id, is_surface_public, enable_ai_game FROM soups WHERE id = ? LIMIT 1", [soupId]
+    "SELECT surface, bottom, host_manual, supplemental_surfaces, supplemental_bottoms, key_facts, ai_prompt, creator_id, is_surface_public, enable_ai_game, review_status FROM soups WHERE id = ? LIMIT 1", [soupId]
   );
   if (rows.length === 0) return null;
   return {
@@ -486,6 +487,7 @@ async function getSoupGameData(soupId: string): Promise<GameSoupData | null> {
     creatorId: String(rows[0].creator_id),
     isSurfacePublic: Boolean(Number(rows[0].is_surface_public)),
     enableAiGame: Boolean(Number(rows[0].enable_ai_game)),
+    reviewStatus: String(rows[0].review_status ?? "approved"),
   };
 }
 
@@ -496,7 +498,7 @@ async function ensureSoupKeyFacts(soupId: string, soupData: GameSoupData): Promi
 }
 
 function canPlaySoup(soup: GameSoupData, user: GameUser) {
-  return soup.enableAiGame && (soup.isSurfacePublic || user.role === "admin" || soup.creatorId === user.id);
+  return soup.reviewStatus === "approved" && soup.enableAiGame && (soup.isSurfacePublic || user.role === "admin" || soup.creatorId === user.id);
 }
 
 type TurnResult = Awaited<ReturnType<typeof callDeepSeek>>;

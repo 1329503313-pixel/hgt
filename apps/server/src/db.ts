@@ -45,6 +45,11 @@ export async function initDatabase() {
       is_surface_public BOOLEAN NOT NULL DEFAULT TRUE,
       is_bottom_public BOOLEAN NOT NULL DEFAULT FALSE,
       enable_ai_game BOOLEAN NOT NULL DEFAULT FALSE,
+      review_status ENUM('approved','pending','rejected') NOT NULL DEFAULT 'approved',
+      review_reason VARCHAR(500) NULL,
+      review_version INT NOT NULL DEFAULT 1,
+      reviewed_at DATETIME NULL,
+      reviewed_by VARCHAR(64) NULL,
       view_count INT NOT NULL DEFAULT 0,
       creator_id VARCHAR(64) NOT NULL,
       creator_name VARCHAR(50) NOT NULL,
@@ -196,6 +201,18 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS soup_publish_daily_usage (
+      user_id VARCHAR(64) NOT NULL,
+      usage_date DATE NOT NULL,
+      published_count INT NOT NULL DEFAULT 0,
+      auto_reject_count INT NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, usage_date),
+      CONSTRAINT fk_soup_publish_usage_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   // AI 请求共享配额：所有服务实例共用每分钟和每日计数
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ai_game_usage (
@@ -260,8 +277,6 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await ensureColumn("legendary_badges", "achievement_points", "achievement_points INT NOT NULL DEFAULT 0 AFTER icon_url");
-  await ensureColumn("legendary_badges", "badge_type", "badge_type VARCHAR(16) NOT NULL DEFAULT 'achievement' AFTER achievement_points");
-  await ensureColumn("legendary_badges", "activity_conditions", "activity_conditions JSON NULL AFTER badge_type");
   await seedLegendaryBadges();
 
   await pool.query(`
@@ -362,6 +377,12 @@ export async function initDatabase() {
   await ensureColumn("soups", "key_facts_hash", "key_facts_hash VARCHAR(64) NULL AFTER key_facts");
   await ensureColumn("soups", "key_facts_customized", "key_facts_customized TINYINT(1) NOT NULL DEFAULT 0 AFTER key_facts_hash");
   await ensureColumn("soups", "ai_prompt", "ai_prompt TEXT NULL AFTER enable_ai_game");
+  await ensureColumn("soups", "review_status", "review_status ENUM('approved','pending','rejected') NOT NULL DEFAULT 'approved' AFTER enable_ai_game");
+  await ensureColumn("soups", "review_reason", "review_reason VARCHAR(500) NULL AFTER review_status");
+  await ensureColumn("soups", "review_version", "review_version INT NOT NULL DEFAULT 1 AFTER review_reason");
+  await ensureColumn("soups", "reviewed_at", "reviewed_at DATETIME NULL AFTER review_version");
+  await ensureColumn("soups", "reviewed_by", "reviewed_by VARCHAR(64) NULL AFTER reviewed_at");
+  await ensureIndex("soups", "idx_soups_review_status_created", "review_status, created_at");
 
   await seedAdmin();
 }
@@ -467,11 +488,10 @@ async function seedAdmin() {
 
 async function seedLegendaryBadges() {
   await pool.query(
-    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, activity_conditions)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
-       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
-       achievement_points = VALUES(achievement_points), badge_type = VALUES(badge_type)`,
-    ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png", 300, "limited", null]
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url), achievement_points = VALUES(achievement_points)`,
+    ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png", 300]
   );
 }
