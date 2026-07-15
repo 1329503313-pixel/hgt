@@ -36,6 +36,25 @@ const BADGE_ASSET_URLS: Record<string, string> = {
   "/badges/received-comment-rare.png": "/badges/received-comment-rare.db9b793453.webp"
 };
 
+export type BadgeType = "achievement" | "activity" | "limited";
+
+export type ActivityConditionKind =
+  | "login"
+  | "publish"
+  | "like_given"
+  | "comment_given"
+  | "favorite_given"
+  | "like_received"
+  | "comment_received"
+  | "favorite_received";
+
+export type ActivityBadgeCondition = {
+  kind: ActivityConditionKind;
+  startDate: string;
+  endDate: string;
+  target: number;
+};
+
 export type LegendaryBadge = {
   id: string;
   key: string;
@@ -44,6 +63,9 @@ export type LegendaryBadge = {
   requirement: string | null;
   iconUrl: string;
   achievementPoints: number;
+  badgeType: BadgeType;
+  activityConditions: ActivityBadgeCondition[];
+  unlockedAt?: string | null;
   tier: "legend";
   ownerCount?: number;
 };
