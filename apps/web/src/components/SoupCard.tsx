@@ -37,13 +37,13 @@ export function SoupCard({
           </span>
         </h2>
         <p className="avatar-name-gap mt-1 flex items-center truncate text-[13px] text-muted">
-          {soup.creatorAvatar ? (
+          {soup.isOriginal && soup.creatorAvatar ? (
             <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
           ) : (
             <User size={14} />
           )}
-          {soup.author || soup.creatorName}
-          <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />
+          {soup.isOriginal ? (soup.author || soup.creatorName) : "佚名"}
+          {soup.isOriginal && <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />}
         </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {tags.map((tag) => (

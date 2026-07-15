@@ -166,7 +166,7 @@ export function EquippedBadgeIcon({
   return (
     <span className="inline-flex shrink-0 items-center gap-1 align-middle" title={`${badge.name} · ${badge.tier === "legend" ? "传说" : badge.tier === "epic" ? "史诗" : badge.tier === "rare" ? "稀有" : "普通"}`}>
       {icon}
-      <span className={`${nameColor} whitespace-nowrap text-[11px] font-black leading-none`}>{badge.name}</span>
+      <span className={`${nameColor} whitespace-nowrap py-px text-[11px] font-black leading-[1.4]`}>{badge.name}</span>
     </span>
   );
 }
