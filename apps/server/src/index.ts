@@ -166,6 +166,18 @@ const activityConditionSchema = z.object({
   path: ["endDate"]
 });
 const activityConditionsSchema = z.array(activityConditionSchema).max(8);
+type ActivityBadgeCondition = z.infer<typeof activityConditionSchema>;
+type ActivityConditionKind = ActivityBadgeCondition["kind"];
+
+function badgeActivityConditions(value: unknown): ActivityBadgeCondition[] {
+  try {
+    const raw = typeof value === "string" ? JSON.parse(value) : value;
+    const parsed = activityConditionsSchema.safeParse(raw ?? []);
+    return parsed.success ? parsed.data : [];
+  } catch {
+    return [];
+  }
+}
 const optionalScore = z
   .union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null(), z.literal("")])
   .optional()
@@ -680,7 +692,7 @@ async function syncActivityBadges(userId: string) {
     const counts = await Promise.all(conditions.map((condition) => activityConditionCount(userId, condition)));
     if (conditions.every((condition, index) => counts[index] >= (condition.kind === "login" ? 1 : condition.target))) {
       const [result] = await pool.query<mysql.ResultSetHeader>(
-        "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key) VALUES (?, ?)",
+        "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
         [userId, key]
       );
       if (result.affectedRows > 0) earned.push({ key, name: String(badge.name) });
@@ -705,16 +717,86 @@ async function syncSystemBadgeUnlocks(userId: string) {
     [userId]
   );
   const unlocked = new Set(unlockRows.map((row) => String(row.badge_key)));
-  const newKeys = earnedKeys.filter((key) => !unlocked.has(key));
-  if (newKeys.length > 0) {
-    const placeholders = newKeys.map(() => "(?, ?)").join(", ");
-    const values = newKeys.flatMap((key) => [userId, key]);
-    await pool.query(
-      `INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key) VALUES ${placeholders}`,
-      values
+  const candidates = earnedKeys.filter((key) => !unlocked.has(key));
+  const newKeys: string[] = [];
+  for (const key of candidates) {
+    const [result] = await pool.query<mysql.ResultSetHeader>(
+      "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
+      [userId, key]
     );
+    if (result.affectedRows > 0) newKeys.push(key);
   }
   return { stats, newKeys };
+}
+
+async function markPendingBadgePopupsSurfaced(userId: string) {
+  await pool.query(
+    "UPDATE user_badge_unlocks SET surfaced_at = CURRENT_TIMESTAMP WHERE user_id = ? AND surfaced_at IS NULL",
+    [userId]
+  );
+}
+
+async function claimPendingBadgePopups(userId: string) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT badge_key
+       FROM user_badge_unlocks
+       WHERE user_id = ? AND surfaced_at IS NULL
+       ORDER BY unlocked_at ASC
+       FOR UPDATE`,
+      [userId]
+    );
+    const keys = rows.map((row) => String(row.badge_key));
+    if (keys.length > 0) {
+      const placeholders = keys.map(() => "?").join(", ");
+      await connection.query(
+        `UPDATE user_badge_unlocks
+         SET surfaced_at = CURRENT_TIMESTAMP
+         WHERE user_id = ? AND surfaced_at IS NULL AND badge_key IN (${placeholders})`,
+        [userId, ...keys]
+      );
+    }
+    await connection.commit();
+    return keys;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function getLegendaryBadgeUnlockDetails(userId: string, keys: string[]) {
+  const legendaryKeys = keys.filter((key) => key.startsWith("legendary:"));
+  if (legendaryKeys.length === 0) return [];
+  const placeholders = legendaryKeys.map(() => "?").join(", ");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url,
+      lb.achievement_points, lb.badge_type, lb.activity_conditions, ubu.unlocked_at
+     FROM legendary_badges lb
+     INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
+     WHERE ubu.user_id = ? AND ubu.badge_key IN (${placeholders})`,
+    [userId, ...legendaryKeys]
+  );
+  const byKey = new Map(rows.map((row) => [`legendary:${row.id}`, {
+    id: String(row.id),
+    key: `legendary:${row.id}`,
+    name: String(row.name),
+    description: String(row.description),
+    requirement: row.requirement ? String(row.requirement) : null,
+    iconUrl: String(row.icon_url),
+    achievementPoints: Number(row.achievement_points ?? 0),
+    badgeType: String(row.badge_type ?? "limited") as "activity" | "limited",
+    activityConditions: badgeActivityConditions(row.activity_conditions),
+    unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
+    tier: "legend" as const
+  }]));
+  return legendaryKeys.flatMap((key) => {
+    const badge = byKey.get(key);
+    return badge ? [badge] : [];
+  });
 }
 
 const pendingBadgeSyncUsers = new Set<string>();
@@ -738,6 +820,7 @@ function queueSystemBadgeSync(userIds: string[]) {
           const wasInitialized = Boolean(rows[0].badges_initialized);
           const { newKeys } = await syncSystemBadgeUnlocks(userId);
           if (!wasInitialized) {
+            await markPendingBadgePopupsSurfaced(userId);
             await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [userId]);
           } else {
             await Promise.all(newKeys.map((key) => (
@@ -991,29 +1074,32 @@ app.post("/api/me/badge-unlocks/sync", async (req, res) => {
     [user.id]
   );
   const wasInitialized = Boolean(userRows[0]?.badges_initialized);
-  const { stats, newKeys } = await syncSystemBadgeUnlocks(user.id);
+  const { stats } = await syncSystemBadgeUnlocks(user.id);
+  const activityBadges = await syncActivityBadges(user.id);
+  await notifyActivityBadgeUnlocks(user.id, activityBadges);
 
   if (!wasInitialized) {
+    await markPendingBadgePopupsSurfaced(user.id);
     await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [user.id]);
   }
 
-  const surfacedKeys = wasInitialized ? newKeys : [];
-  if (surfacedKeys.length > 0) {
-    await Promise.all(surfacedKeys.map((key) =>
+  const surfacedKeys = wasInitialized ? await claimPendingBadgePopups(user.id) : [];
+  const systemSurfacedKeys = surfacedKeys.filter((key) => !key.startsWith("legendary:"));
+  if (systemSurfacedKeys.length > 0) {
+    await Promise.all(systemSurfacedKeys.map((key) =>
       notify(user.id, "badge_unlock", "获得新徽章", `恭喜你获得徽章「${badgeNotificationLabel(key)}」`, key, user.id)
     ));
   }
-
-  await notifyActivityBadgeUnlocks(user.id, await syncActivityBadges(user.id));
-
-  res.json({ unlocks: surfacedKeys, stats });
+  const specialBadges = await getLegendaryBadgeUnlockDetails(user.id, surfacedKeys);
+  res.json({ unlocks: surfacedKeys, specialBadges, stats });
 });
 
 app.get("/api/me/legendary-badges", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points
+    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
+       lb.badge_type, lb.activity_conditions, ubu.unlocked_at
      FROM legendary_badges lb
      INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
      WHERE ubu.user_id = ?
@@ -1029,6 +1115,9 @@ app.get("/api/me/legendary-badges", async (req, res) => {
       requirement: row.requirement ? String(row.requirement) : null,
       iconUrl: String(row.icon_url),
       achievementPoints: Number(row.achievement_points ?? 0),
+      badgeType: String(row.badge_type ?? "limited"),
+      activityConditions: badgeActivityConditions(row.activity_conditions),
+      unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
       tier: "legend" as const
     }))
   });
@@ -1042,7 +1131,8 @@ app.get("/api/me/badge-collection", async (req, res) => {
     [user.id]
   );
   const [legendaryRows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points
+    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
+       lb.badge_type, lb.activity_conditions, ubu.unlocked_at
      FROM legendary_badges lb
      INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
      WHERE ubu.user_id = ?
@@ -1063,6 +1153,9 @@ app.get("/api/me/badge-collection", async (req, res) => {
       requirement: row.requirement ? String(row.requirement) : null,
       iconUrl: String(row.icon_url),
       achievementPoints: Number(row.achievement_points ?? 0),
+      badgeType: String(row.badge_type ?? "limited"),
+      activityConditions: badgeActivityConditions(row.activity_conditions),
+      unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
       tier: "legend" as const
     })),
     equippedBadge: equippedBadge(freshUser?.equipped_badge_key, freshUser?.equipped_badge_icon_url)
@@ -2208,6 +2301,7 @@ app.get("/api/admin/badges", async (req, res) => {
   if (!(await requireAdmin(req, res))) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
+      lb.badge_type, lb.activity_conditions,
       COUNT(ubu.user_id) AS owner_count
      FROM legendary_badges lb
      LEFT JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
@@ -2223,6 +2317,8 @@ app.get("/api/admin/badges", async (req, res) => {
       requirement: row.requirement ? String(row.requirement) : null,
       iconUrl: String(row.icon_url),
       achievementPoints: Number(row.achievement_points ?? 0),
+      badgeType: String(row.badge_type ?? "limited"),
+      activityConditions: badgeActivityConditions(row.activity_conditions),
       tier: "legend" as const,
       ownerCount: Number(row.owner_count ?? 0)
     }))
@@ -2332,7 +2428,7 @@ app.post("/api/admin/badges/users/:userId/legendary/:badgeId", async (req, res) 
   if (!badge) return sendError(res, 404, "传说徽章不存在");
   const key = `legendary:${badge.id}`;
   const [result] = await pool.query<mysql.ResultSetHeader>(
-    "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key) VALUES (?, ?)",
+    "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
     [req.params.userId, key]
   );
   if (result.affectedRows > 0) {

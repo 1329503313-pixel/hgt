@@ -3,6 +3,7 @@ import { useApp } from "../context/AppContext";
 import {
   buildBadgesFromStats,
   getBadgeKey,
+  legendaryToBadgeDef,
   TIER_COLORS_EARNED,
   TIER_LABEL,
   TIER_PROGRESS_COLORS,
@@ -24,9 +25,11 @@ export function AchievementUnlockOverlay() {
     () => badgeUnlock ? buildBadgesFromStats(badgeUnlock.stats) : [],
     [badgeUnlock]
   );
-  const badge = badgeUnlock
-    ? badges.find((item) => getBadgeKey(item) === badgeUnlock.key)
-    : undefined;
+  const badge = badgeUnlock?.specialBadge
+    ? legendaryToBadgeDef(badgeUnlock.specialBadge)
+    : badgeUnlock
+      ? badges.find((item) => getBadgeKey(item) === badgeUnlock.key)
+      : undefined;
 
   useEffect(() => {
     const first = requestAnimationFrame(() => {
@@ -86,7 +89,9 @@ export function AchievementUnlockOverlay() {
 
   if (!badgeUnlock || !badge) return null;
 
-  const allTiers = badges.filter((item) => item.series === badge.series).sort((a, b) => a.tierIndex - b.tierIndex);
+  const allTiers = badgeUnlock.specialBadge
+    ? [badge]
+    : badges.filter((item) => item.series === badge.series).sort((a, b) => a.tierIndex - b.tierIndex);
   const nextUnearned = allTiers.find((item) => !item.earned);
   const progressBadge = nextUnearned ?? badge;
   const colors = TIER_COLORS_EARNED[badge.tier];

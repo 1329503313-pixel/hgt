@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { PublicUser, SoupDetail, KeyFact } from "../shared/types";
-import { api, BadgeUnlocksResponse, MeResponse, StatsResponse } from "../api";
+import { api, BadgeUnlocksResponse, MeResponse, SpecialBadgeUnlock, StatsResponse } from "../api";
 
-export type BadgeUnlockEvent = { key: string; stats: StatsResponse };
+export type BadgeUnlockEvent = { key: string; stats: StatsResponse; specialBadge?: SpecialBadgeUnlock };
 
 // ---------- 常量 ----------
 export const soupTypes = ["本格清汤", "本格红汤", "本格黑汤", "变格清汤", "变格红汤", "变格黑汤", "纯机制汤", "其他"];
@@ -179,9 +179,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await api<BadgeUnlocksResponse>("/api/me/badge-unlocks/sync", { method: "POST" });
       if (data.unlocks.length > 0) {
+        const specialBadges = new Map(data.specialBadges.map((badge) => [badge.key, badge]));
         setBadgeUnlockQueue((queue) => [
           ...queue,
-          ...data.unlocks.map((key) => ({ key, stats: data.stats })),
+          ...data.unlocks.map((key) => ({ key, stats: data.stats, specialBadge: specialBadges.get(key) })),
         ]);
       }
     } catch {

@@ -53,7 +53,25 @@ export type StatsResponse = {
   aiCompletionCount: number;
   maxOriginalSoupHeat: number;
 };
-export type BadgeUnlocksResponse = { unlocks: string[]; stats: StatsResponse };
+export type SpecialBadgeUnlock = {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  requirement: string | null;
+  iconUrl: string;
+  achievementPoints: number;
+  badgeType: "activity" | "limited";
+  activityConditions: Array<{
+    kind: "login" | "publish" | "like_given" | "comment_given" | "favorite_given" | "like_received" | "comment_received" | "favorite_received";
+    startDate: string;
+    endDate: string;
+    target: number;
+  }>;
+  unlockedAt: string | null;
+  tier: "legend";
+};
+export type BadgeUnlocksResponse = { unlocks: string[]; specialBadges: SpecialBadgeUnlock[]; stats: StatsResponse };
 export type PasswordResponse = { ok: boolean };
 export type NicknameResponse = { ok: boolean; nickname: string };
 export type AvatarResponse = { ok: boolean; avatar: string | null };

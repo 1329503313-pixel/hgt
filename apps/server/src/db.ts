@@ -257,11 +257,17 @@ export async function initDatabase() {
       user_id VARCHAR(64) NOT NULL,
       badge_key VARCHAR(64) NOT NULL,
       unlocked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      surfaced_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (user_id, badge_key),
       INDEX idx_badge_unlocks_user_time (user_id, unlocked_at),
       CONSTRAINT fk_badge_unlock_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn(
+    "user_badge_unlocks",
+    "surfaced_at",
+    "surfaced_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP AFTER unlocked_at"
+  );
   await ensureIndex("user_badge_unlocks", "idx_badge_unlocks_badge_user", "badge_key, user_id");
 
   await pool.query(`
@@ -272,11 +278,15 @@ export async function initDatabase() {
       requirement VARCHAR(300) NULL,
       icon_url VARCHAR(255) NOT NULL,
       achievement_points INT NOT NULL DEFAULT 0,
+      badge_type ENUM('achievement','activity','limited') NOT NULL DEFAULT 'achievement',
+      activity_conditions JSON NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await ensureColumn("legendary_badges", "achievement_points", "achievement_points INT NOT NULL DEFAULT 0 AFTER icon_url");
+  await ensureColumn("legendary_badges", "badge_type", "badge_type ENUM('achievement','activity','limited') NOT NULL DEFAULT 'achievement' AFTER achievement_points");
+  await ensureColumn("legendary_badges", "activity_conditions", "activity_conditions JSON NULL AFTER badge_type");
   await seedLegendaryBadges();
 
   await pool.query(`
@@ -488,10 +498,11 @@ async function seedAdmin() {
 
 async function seedLegendaryBadges() {
   await pool.query(
-    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type)
+     VALUES (?, ?, ?, ?, ?, ?, 'limited')
      ON DUPLICATE KEY UPDATE
-       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url), achievement_points = VALUES(achievement_points)`,
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
+       achievement_points = VALUES(achievement_points), badge_type = 'limited'`,
     ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png", 300]
   );
 }

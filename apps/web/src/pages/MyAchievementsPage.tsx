@@ -2,7 +2,7 @@ import { cloneElement, isValidElement, useState, useEffect, useRef } from "react
 import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { api, StatsResponse } from "../api";
+import { api, BadgeUnlocksResponse, StatsResponse } from "../api";
 import { activityConditionText, BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 
 // ============================================================
@@ -238,7 +238,7 @@ function formatBadgeDate(value: string) {
   }).format(new Date(value));
 }
 
-function legendaryToBadgeDef(badge: LegendaryBadge): BadgeDef {
+export function legendaryToBadgeDef(badge: LegendaryBadge): BadgeDef {
   const activityRequirement = badge.activityConditions.map(activityConditionText).join("；");
   return {
     series: badge.key,
@@ -597,13 +597,12 @@ export default function MyAchievementsPage() {
     + legendaryBadges.reduce((sum, badge) => sum + badge.achievementPoints, 0);
 
   useEffect(() => {
-    Promise.all([
-      api<StatsResponse>("/api/me/stats"),
-      api<{ legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string> }>("/api/me/badge-collection")
-    ]).then(([stats, collection]) => {
-      setBadges(buildBadgesFromStats(stats, collection.unlockDates));
-      setLegendaryBadges(collection.legendaryBadges);
-    }).catch(() => {});
+    api<BadgeUnlocksResponse>("/api/me/badge-unlocks/sync", { method: "POST" })
+      .then(async ({ stats }) => {
+        const collection = await api<{ legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string> }>("/api/me/badge-collection");
+        setBadges(buildBadgesFromStats(stats, collection.unlockDates));
+        setLegendaryBadges(collection.legendaryBadges);
+      }).catch(() => {});
   }, []);
 
   const [state, setState] = useState<{
