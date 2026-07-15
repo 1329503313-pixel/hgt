@@ -202,6 +202,35 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS excellent_author_applications (
+      id VARCHAR(64) PRIMARY KEY,
+      applicant_id VARCHAR(64) NOT NULL,
+      applicant_name VARCHAR(50) NOT NULL,
+      primary_soup_id VARCHAR(64) NOT NULL,
+      status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      handled_at DATETIME NULL,
+      handled_by VARCHAR(64) NULL,
+      INDEX idx_excellent_author_status_time (status, created_at),
+      INDEX idx_excellent_author_applicant_time (applicant_id, created_at),
+      CONSTRAINT fk_excellent_author_applicant FOREIGN KEY (applicant_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_excellent_author_primary_soup FOREIGN KEY (primary_soup_id) REFERENCES soups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS excellent_author_application_soups (
+      application_id VARCHAR(64) NOT NULL,
+      soup_id VARCHAR(64) NOT NULL,
+      sort_order TINYINT UNSIGNED NOT NULL,
+      PRIMARY KEY (application_id, soup_id),
+      UNIQUE KEY uq_excellent_author_application_order (application_id, sort_order),
+      CONSTRAINT fk_excellent_author_application FOREIGN KEY (application_id) REFERENCES excellent_author_applications(id) ON DELETE CASCADE,
+      CONSTRAINT fk_excellent_author_qualification_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS soup_publish_daily_usage (
       user_id VARCHAR(64) NOT NULL,
       usage_date DATE NOT NULL,
@@ -279,6 +308,7 @@ export async function initDatabase() {
       icon_url VARCHAR(255) NOT NULL,
       achievement_points INT NOT NULL DEFAULT 0,
       badge_type ENUM('achievement','activity','limited') NOT NULL DEFAULT 'achievement',
+      tier ENUM('epic','legend') NOT NULL DEFAULT 'legend',
       activity_conditions JSON NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -286,8 +316,20 @@ export async function initDatabase() {
   `);
   await ensureColumn("legendary_badges", "achievement_points", "achievement_points INT NOT NULL DEFAULT 0 AFTER icon_url");
   await ensureColumn("legendary_badges", "badge_type", "badge_type ENUM('achievement','activity','limited') NOT NULL DEFAULT 'achievement' AFTER achievement_points");
-  await ensureColumn("legendary_badges", "activity_conditions", "activity_conditions JSON NULL AFTER badge_type");
+  await ensureColumn("legendary_badges", "tier", "tier ENUM('epic','legend') NOT NULL DEFAULT 'legend' AFTER badge_type");
+  await ensureColumn("legendary_badges", "activity_conditions", "activity_conditions JSON NULL AFTER tier");
   await seedLegendaryBadges();
+  await pool.query(`
+    INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, unlocked_at, surfaced_at)
+    SELECT user_id, 'excellentAuthor:epic', unlocked_at, surfaced_at
+    FROM user_badge_unlocks
+    WHERE badge_key = 'legendary:excellent-author'
+  `);
+  await pool.query(
+    "UPDATE users SET equipped_badge_key = 'excellentAuthor:epic', equipped_badge_icon_url = '/badges/excellent-author.png' WHERE equipped_badge_key = 'legendary:excellent-author'"
+  );
+  await pool.query("DELETE FROM user_badge_unlocks WHERE badge_key = 'legendary:excellent-author'");
+  await pool.query("DELETE FROM legendary_badges WHERE id = 'excellent-author'");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS soup_like_history (
@@ -498,11 +540,19 @@ async function seedAdmin() {
 
 async function seedLegendaryBadges() {
   await pool.query(
-    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type)
-     VALUES (?, ?, ?, ?, ?, ?, 'limited')
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier)
+     VALUES (?, ?, ?, ?, ?, ?, 'limited', 'legend')
      ON DUPLICATE KEY UPDATE
        name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
-       achievement_points = VALUES(achievement_points), badge_type = 'limited'`,
+       achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend'`,
     ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png", 300]
+  );
+  await pool.query(
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier)
+     VALUES (?, ?, ?, ?, ?, ?, 'activity', 'epic')
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
+       achievement_points = VALUES(achievement_points), badge_type = 'activity', tier = 'epic'`,
+    ["original-shareholder", "原始股东", "我就是原始股东！", "平台初创用户可获得", "/badges/original-shareholder-epic.png", 150]
   );
 }

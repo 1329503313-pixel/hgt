@@ -112,6 +112,7 @@ export type NotificationItem = {
 
 export type ViewRequestItem = {
   id: string;
+  applicationType: "申请汤底";
   soupId: string;
   soupTitle: string;
   requesterId: string;
@@ -121,4 +122,39 @@ export type ViewRequestItem = {
   createdAt: string;
   handledAt: string | null;
   handledBy: string | null;
+};
+
+export type ExcellentAuthorApplicationStatus = {
+  id: string;
+  status: RequestStatus;
+  createdAt: string;
+  handledAt: string | null;
+};
+
+export type ExcellentAuthorApplicationItem = {
+  id: string;
+  applicationType: "申请认证优秀作者";
+  applicantId: string;
+  applicantName: string;
+  primarySoupId: string | null;
+  primarySoupTitle: string;
+  heatValue: number;
+  averageTotal: number | null;
+  status: RequestStatus;
+  createdAt: string;
+  handledAt: string | null;
+  handledBy: string | null;
+};
+
+export type ExcellentAuthorApplicationDetail = {
+  id: string;
+  applicationType: "申请认证优秀作者";
+  applicantId: string;
+  applicantName: string;
+  status: RequestStatus;
+  createdAt: string;
+  handledAt: string | null;
+  handledBy: string | null;
+  primarySoup: SoupSummary | null;
+  qualificationSoups: SoupSummary[];
 };

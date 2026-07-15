@@ -11,8 +11,8 @@ export function PageTopBar({ title, unread = 0, backTo }: { title: string; unrea
   return (
     <div className="top-nav-shell">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-        <button className="min-h-10 min-w-0 shrink-0 text-left" type="button" onClick={() => navigate("/")}>
-          <h1 className="truncate text-[22px] font-black leading-none text-ink sm:text-[24px]">{title}</h1>
+        <button className="flex min-h-10 min-w-0 shrink-0 items-center text-left" type="button" onClick={() => navigate("/")}>
+          <h1 className="truncate py-0.5 text-[22px] font-black leading-[1.25] text-ink sm:text-[24px]">{title}</h1>
         </button>
         <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
           {user ? (

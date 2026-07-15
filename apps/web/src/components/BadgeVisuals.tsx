@@ -88,7 +88,7 @@ export type LegendaryBadge = {
   badgeType: BadgeType;
   activityConditions: ActivityBadgeCondition[];
   unlockedAt?: string | null;
-  tier: "legend";
+  tier: "epic" | "legend";
   ownerCount?: number;
 };
 
@@ -103,8 +103,9 @@ export function versionBadgeAssetUrl(url: string) {
 }
 
 export function LegendaryBadgeIcon({ badge, className = "h-16 w-16" }: { badge: LegendaryBadge; className?: string }) {
+  const legendary = badge.tier === "legend";
   return (
-    <div className={`legendary-badge-icon relative shrink-0 overflow-hidden rounded-2xl bg-white shadow-soft ${className}`}>
+    <div className={`${legendary ? "legendary-badge-icon" : "ring-2 ring-amber-300 bg-amber-50"} relative shrink-0 overflow-hidden rounded-2xl bg-white shadow-soft ${className}`}>
       <img className="h-full w-full object-cover" src={versionBadgeAssetUrl(badge.iconUrl)} alt={badge.name} loading="lazy" decoding="async" draggable={false} />
     </div>
   );
@@ -115,7 +116,7 @@ export function LegendaryBadgeTile({ badge, onClick }: { badge: LegendaryBadge; 
     <>
       <LegendaryBadgeIcon badge={badge} />
       <span className="text-xs font-semibold leading-tight text-ink">{badge.name}</span>
-      <span className="badge-legend-text text-[11px] font-black">传说</span>
+      <span className={`${badge.tier === "legend" ? "badge-legend-text" : "text-amber-600"} text-[11px] font-black`}>{badge.tier === "legend" ? "传说" : "史诗"}</span>
     </>
   );
   return onClick ? (
@@ -139,7 +140,7 @@ export function EquippedBadgeIcon({
   animated?: boolean;
 }) {
   if (!badge) return null;
-  const legendary = badge.key.startsWith("legendary:") || badge.key.endsWith(":legend");
+  const legendary = (badge.key.startsWith("legendary:") && badge.key !== "legendary:excellent-author") || badge.key.endsWith(":legend");
   return (
     <span
       className={`${legendary ? `legendary-badge-icon bg-white shadow-sm ${animated ? "" : "equipped-badge-static"}` : ""} relative inline-flex shrink-0 overflow-hidden rounded-md align-middle ${className}`}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Flame, Medal, Trophy } from "lucide-react";
+import { Flame, Medal, Trophy } from "lucide-react";
 import { api } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
+import { MineBackButton } from "../components/MineBackButton";
 import { useApp } from "../context/AppContext";
 
 type HotSoupRank = {
@@ -53,10 +54,11 @@ export default function RankingsPage() {
       .finally(() => setLoading(false));
   }, [user]);
 
-  if (loadingUser) return <section className="space-y-3"><PageTopBar title="排行榜" /><div className="card p-8 text-center text-sm text-muted">正在加载排行榜…</div></section>;
+  if (loadingUser) return <section className="space-y-3"><PageTopBar title="排行榜" /><MineBackButton /><div className="card p-8 text-center text-sm text-muted">正在加载排行榜…</div></section>;
   if (!user) return (
     <section className="space-y-3">
       <PageTopBar title="排行榜" />
+      <MineBackButton />
       <div className="card p-6 text-center"><p className="text-sm text-muted">登录后可查看排行榜。</p><button className="btn btn-primary mt-4" onClick={openAuth}>登录</button></div>
     </section>
   );
@@ -64,9 +66,7 @@ export default function RankingsPage() {
   return (
     <section className="space-y-3">
       <PageTopBar title="排行榜" />
-      <button className="flex min-h-10 items-center gap-2 text-sm font-bold text-muted" onClick={() => navigate("/mine")}>
-        <ArrowLeft size={17} /> 返回我的
-      </button>
+      <MineBackButton />
 
       <div className="card p-2">
         <div className="grid grid-cols-2 gap-2">

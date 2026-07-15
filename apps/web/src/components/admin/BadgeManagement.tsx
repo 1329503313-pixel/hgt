@@ -103,7 +103,6 @@ export function BadgeManagement() {
   }, [legendaryBadges, userDetail]);
   const activityBadges = legendaryBadges.filter((badge) => badge.badgeType === "activity");
   const limitedBadges = legendaryBadges.filter((badge) => badge.badgeType === "limited");
-  const grantableActivityBadges = grantableBadges.filter((badge) => badge.badgeType === "activity");
   const grantableLimitedBadges = grantableBadges.filter((badge) => badge.badgeType === "limited");
   const ownedActivityBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "activity");
   const ownedLimitedBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "limited");
@@ -193,7 +192,7 @@ export function BadgeManagement() {
       <section className="card flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center">
         <div>
           <h2 className="font-black text-ink">徽章管理</h2>
-          <p className="mt-1 text-xs text-muted">查看用户徽章，人工发放或收回传说徽章</p>
+          <p className="mt-1 text-xs text-muted">活动徽章按活动规则发放，限定徽章由管理员直接发放</p>
         </div>
         <div className="flex rounded-xl bg-slate-100 p-1">
           <button className={`rounded-lg px-4 py-2 text-sm font-bold ${subTab === "users" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => setSubTab("users")}><Users size={15} className="mr-1 inline" />用户</button>
@@ -232,7 +231,7 @@ export function BadgeManagement() {
         </section>
       ) : (
         <section className="card p-4">
-          <div className="mb-5"><h2 className="font-black text-ink">可发放徽章</h2><p className="mt-1 text-xs text-muted">仅活动徽章和限定徽章支持管理员发放与收回，多个活动条件需同时满足。</p></div>
+          <div className="mb-5"><h2 className="font-black text-ink">特殊徽章</h2><p className="mt-1 text-xs text-muted">活动徽章按后台设置的活动规则自动发放；限定徽章由管理员直接发放。</p></div>
           <div className="space-y-6">
             <div>
               <h3 className="mb-3 text-sm font-black text-ink">活动徽章</h3>
@@ -243,7 +242,8 @@ export function BadgeManagement() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2"><h4 className="font-black text-ink">{badge.name}</h4><span className="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-black text-rose-600">活动</span></div>
                       <p className="mt-1 text-sm text-muted">{badge.description}</p>
-                      {badge.activityConditions.length > 0 && <div className="mt-2 space-y-1 text-xs text-muted">{badge.activityConditions.map((condition, index) => <p key={`${condition.kind}-${index}`}>{activityConditionText(condition)}</p>)}</div>}
+                      {badge.requirement && <p className="mt-2 text-xs text-muted">获取条件说明：{badge.requirement}</p>}
+                      {badge.activityConditions.length > 0 && <div className="mt-2 space-y-1 text-xs text-muted"><p className="font-bold text-ink">实际发放规则</p>{badge.activityConditions.map((condition, index) => <p key={`${condition.kind}-${index}`}>{activityConditionText(condition)}</p>)}</div>}
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
                       <button className="btn btn-secondary" onClick={() => openActivityConditions(badge)}><CalendarClock size={15} />设置条件</button>
@@ -283,10 +283,9 @@ export function BadgeManagement() {
               </div>}
               {userAction === "view" && ownedSystemBadges.length + ownedLegendaryBadges.length === 0 && <p className="py-10 text-center text-sm text-muted">该用户尚未拥有徽章</p>}
               {userAction === "grant" && <div className="space-y-6">
-                {grantableActivityBadges.length > 0 && <div><h3 className="mb-2 text-sm font-black text-ink">活动徽章</h3><div className="space-y-3">{grantableActivityBadges.map((badge) => <div key={badge.id} className="flex items-center gap-3 rounded-xl border border-line p-3"><LegendaryBadgeIcon badge={badge} /><div className="min-w-0 flex-1"><strong className="text-ink">{badge.name}</strong><p className="text-sm text-muted">{badge.description}</p></div><button className="btn btn-primary shrink-0" disabled={modalLoading} onClick={() => grantBadge(badge)}>发放</button></div>)}</div></div>}
                 {grantableLimitedBadges.length > 0 && <div><h3 className="mb-2 text-sm font-black text-ink">限定徽章</h3><div className="space-y-3">{grantableLimitedBadges.map((badge) => <div key={badge.id} className="flex items-center gap-3 rounded-xl border border-line p-3"><LegendaryBadgeIcon badge={badge} /><div className="min-w-0 flex-1"><strong className="text-ink">{badge.name}</strong><p className="text-sm text-muted">{badge.description}</p></div><button className="btn btn-primary shrink-0" disabled={modalLoading} onClick={() => grantBadge(badge)}>发放</button></div>)}</div></div>}
               </div>}
-              {userAction === "grant" && grantableBadges.length === 0 && <p className="py-10 text-center text-sm text-muted">全部传说徽章均已拥有</p>}
+              {userAction === "grant" && grantableLimitedBadges.length === 0 && <p className="py-10 text-center text-sm text-muted">没有可直接发放的限定徽章</p>}
               {userAction === "revoke" && <div className="space-y-6">
                 {ownedActivityBadges.length > 0 && <div><h3 className="mb-2 text-sm font-black text-ink">活动徽章</h3><div className="space-y-3">{ownedActivityBadges.map((badge) => <div key={badge.id} className="flex items-center gap-3 rounded-xl border border-line p-3"><LegendaryBadgeIcon badge={badge} /><div className="min-w-0 flex-1"><strong className="text-ink">{badge.name}</strong><p className="text-sm text-muted">{badge.description}</p></div><button className="btn btn-danger shrink-0" disabled={modalLoading} onClick={() => revokeBadge(userDetail.user, badge)}>收回</button></div>)}</div></div>}
                 {ownedLimitedBadges.length > 0 && <div><h3 className="mb-2 text-sm font-black text-ink">限定徽章</h3><div className="space-y-3">{ownedLimitedBadges.map((badge) => <div key={badge.id} className="flex items-center gap-3 rounded-xl border border-line p-3"><LegendaryBadgeIcon badge={badge} /><div className="min-w-0 flex-1"><strong className="text-ink">{badge.name}</strong><p className="text-sm text-muted">{badge.description}</p></div><button className="btn btn-danger shrink-0" disabled={modalLoading} onClick={() => revokeBadge(userDetail.user, badge)}>收回</button></div>)}</div></div>}
@@ -313,7 +312,7 @@ export function BadgeManagement() {
                 <button className="btn btn-danger h-11 px-3" type="button" disabled={modalLoading} onClick={() => setConditionDraft((current) => current.filter((_, conditionIndex) => conditionIndex !== index))}><Trash2 size={15} /></button>
               </div>
             ))}
-            {conditionDraft.length === 0 && <p className="rounded-xl border border-dashed border-line py-8 text-center text-sm text-muted">未设置条件时仅支持管理员手工发放</p>}
+            {conditionDraft.length === 0 && <p className="rounded-xl border border-dashed border-line py-8 text-center text-sm text-muted">未设置活动规则时不会自动发放</p>}
             <button className="btn btn-secondary" type="button" disabled={conditionDraft.length >= 8 || modalLoading} onClick={addActivityCondition}><Plus size={15} />添加条件</button>
           </div>
           <div className="flex justify-end gap-2 border-t border-line pt-3"><button className="btn btn-secondary" disabled={modalLoading} onClick={() => setConditionBadge(null)}>取消</button><button className="btn btn-primary" disabled={modalLoading} onClick={saveActivityConditions}>{modalLoading ? "保存中…" : "保存条件"}</button></div>

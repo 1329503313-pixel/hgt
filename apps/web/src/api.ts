@@ -2,6 +2,9 @@ import type {
   Evaluation,
   NotificationItem,
   PublicUser,
+  ExcellentAuthorApplicationDetail,
+  ExcellentAuthorApplicationItem,
+  ExcellentAuthorApplicationStatus,
   SoupDetail,
   SoupSummary,
   ViewRequestItem
@@ -38,6 +41,13 @@ export type SoupsResponse = { soups: SoupSummary[]; total: number; hasMore: bool
 export type SoupResponse = { soup: SoupDetail };
 export type NotificationsResponse = { notifications: NotificationItem[] };
 export type RequestsResponse = { requests: ViewRequestItem[]; total: number };
+export type ExcellentAuthorEligibilityResponse = {
+  eligibleSoups: SoupSummary[];
+  certified: boolean;
+  application: ExcellentAuthorApplicationStatus | null;
+};
+export type ExcellentAuthorApplicationsResponse = { applications: ExcellentAuthorApplicationItem[]; total: number };
+export type ExcellentAuthorApplicationDetailResponse = { application: ExcellentAuthorApplicationDetail };
 export type UsersResponse = { users: PublicUser[] };
 export type StatsResponse = {
   soupCount: number;
@@ -61,7 +71,7 @@ export type SpecialBadgeUnlock = {
   requirement: string | null;
   iconUrl: string;
   achievementPoints: number;
-  badgeType: "activity" | "limited";
+  badgeType: "achievement" | "activity" | "limited";
   activityConditions: Array<{
     kind: "login" | "publish" | "like_given" | "comment_given" | "favorite_given" | "like_received" | "comment_received" | "favorite_received";
     startDate: string;
@@ -69,7 +79,7 @@ export type SpecialBadgeUnlock = {
     target: number;
   }>;
   unlockedAt: string | null;
-  tier: "legend";
+  tier: "epic" | "legend";
 };
 export type BadgeUnlocksResponse = { unlocks: string[]; specialBadges: SpecialBadgeUnlock[]; stats: StatsResponse };
 export type PasswordResponse = { ok: boolean };

@@ -34,7 +34,7 @@ export function SoupManagement() {
   const [submittedKeyword, setSubmittedKeyword] = useState("");
   const [submittedType, setSubmittedType] = useState("");
   const [order, setOrder] = useState<"desc" | "asc">("desc");
-  const [reviewFilter, setReviewFilter] = useState("pending");
+  const [reviewFilter, setReviewFilter] = useState("all");
   const [visibleColumns, setVisibleColumns] = useState<Set<SoupColumn>>(() => new Set(soupColumns.map((column) => column.key)));
   const template = useMemo(() => gridTemplate(soupColumns, visibleColumns), [visibleColumns]);
 

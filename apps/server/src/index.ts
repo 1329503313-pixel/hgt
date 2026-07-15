@@ -13,6 +13,7 @@ import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
 import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgressListener } from "./game.js";
 import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
+import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -178,6 +179,10 @@ function badgeActivityConditions(value: unknown): ActivityBadgeCondition[] {
     return [];
   }
 }
+
+function specialBadgeTier(value: unknown): "epic" | "legend" {
+  return String(value) === "epic" ? "epic" : "legend";
+}
 const optionalScore = z
   .union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null(), z.literal("")])
   .optional()
@@ -227,6 +232,11 @@ const evaluationSchema = z.object({
   twist: optionalScore,
   depth: optionalScore,
   content: z.string().trim().max(500, "评价内容不超过 500 字").optional().default("")
+});
+
+const excellentAuthorApplicationSchema = z.object({
+  qualificationSoupIds: z.array(z.string().min(1)).length(5),
+  primarySoupId: z.string().min(1)
 });
 
 function sendError(res: express.Response, status: number, message: string) {
@@ -342,7 +352,8 @@ const SYSTEM_BADGE_ICON_BASE: Record<string, string> = {
   receivedComment: "received-comment",
   commenter: "commenter",
   aiClear: "ai-clear",
-  heat: "heat"
+  heat: "heat",
+  excellentAuthor: "excellent-author"
 };
 
 async function ownedBadgeIconUrl(userId: string, badgeKey: string) {
@@ -456,6 +467,92 @@ function mapSoupDetail(row: mysql.RowDataPacket) {
 async function getSoupRaw(id: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM soups WHERE id = ? LIMIT 1", [id]);
   return rows[0] ?? null;
+}
+
+type CertificationSoupSummary = ReturnType<typeof mapSoupSummary> & { enableAiGame: boolean };
+
+async function getSoupSummariesWhere(whereSql: string, params: unknown[]): Promise<CertificationSoupSummary[]> {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT s.*, u.avatar AS creator_avatar,
+      u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+      (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+      COUNT(e.id) AS evaluation_count,
+      AVG(e.total) AS average_total,
+      AVG(e.writing) AS avg_writing,
+      AVG(e.logic) AS avg_logic,
+      AVG(e.share) AS avg_share,
+      AVG(e.mechanism) AS avg_mechanism,
+      AVG(e.twist) AS avg_twist,
+      AVG(e.depth) AS avg_depth
+     FROM soups s
+     LEFT JOIN evaluations e ON e.soup_id = s.id
+     LEFT JOIN users u ON u.id = s.creator_id
+     WHERE ${whereSql}
+     GROUP BY s.id
+     ORDER BY s.created_at DESC`,
+    params
+  );
+  return rows.map((row) => ({ ...mapSoupSummary(row), enableAiGame: bool(row.enable_ai_game) }));
+}
+
+async function getCreatorCertificationSoups(userId: string) {
+  return getSoupSummariesWhere("s.creator_id = ?", [userId]);
+}
+
+function isQualificationSoup(soup: CertificationSoupSummary) {
+  return soup.isOriginal && soup.reviewStatus === "approved" && soup.heatValue >= 3000 && (soup.averageTotal ?? 0) >= 3.2;
+}
+
+function isPrimaryCertificationSoup(soup: CertificationSoupSummary) {
+  return isQualificationSoup(soup) && (soup.averageTotal ?? 0) >= 3.5;
+}
+
+async function getExcellentAuthorApplicationDetail(applicationId: string) {
+  const [[application]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT * FROM excellent_author_applications WHERE id = ? LIMIT 1",
+    [applicationId]
+  );
+  if (!application) return null;
+  const [selectedRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT soup_id FROM excellent_author_application_soups WHERE application_id = ? ORDER BY sort_order ASC",
+    [applicationId]
+  );
+  const selectedIds = selectedRows.map((row) => String(row.soup_id));
+  const soups = await getCreatorCertificationSoups(String(application.applicant_id));
+  const byId = new Map(soups.map((soup) => [soup.id, soup]));
+  return {
+    id: String(application.id),
+    applicationType: "申请认证优秀作者" as const,
+    applicantId: String(application.applicant_id),
+    applicantName: String(application.applicant_name),
+    status: String(application.status),
+    createdAt: new Date(application.created_at).toISOString(),
+    handledAt: application.handled_at ? new Date(application.handled_at).toISOString() : null,
+    handledBy: application.handled_by ? String(application.handled_by) : null,
+    primarySoup: byId.get(String(application.primary_soup_id)) ?? null,
+    qualificationSoups: selectedIds
+      .map((id) => byId.get(id))
+      .filter((soup): soup is CertificationSoupSummary => Boolean(soup))
+  };
+}
+
+async function findDuplicateSoup(input: SoupSimilarityInput, excludedId?: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, title, surface, bottom
+     FROM soups
+     ${excludedId ? "WHERE id <> ?" : ""}`,
+    excludedId ? [excludedId] : []
+  );
+  return findHighlySimilarSoup(
+    input,
+    rows.map((row) => ({
+      id: String(row.id),
+      title: String(row.title),
+      surface: String(row.surface),
+      bottom: String(row.bottom)
+    }))
+  );
 }
 
 async function canViewFull(soup: mysql.RowDataPacket, user: PublicUser | null) {
@@ -573,7 +670,8 @@ const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "receivedComment:normal": 10, "receivedComment:rare": 40, "receivedComment:epic": 100,
   "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
   "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120,
-  "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450
+  "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450,
+  "excellentAuthor:epic": 150
 };
 
 const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
@@ -587,7 +685,8 @@ const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
   receivedComment: ["初有回响", "热议之汤", "话题之王"],
   commenter: ["初次开麦", "评论达人", "妙语连珠"],
   aiClear: ["初识汤灵", "汤灵搭档", "AI破局王"],
-  heat: ["热力小子", "炽热瞩目", "狂热巅峰", "登峰造极"]
+  heat: ["热力小子", "炽热瞩目", "狂热巅峰", "登峰造极"],
+  excellentAuthor: ["优秀作者", "优秀作者", "优秀作者"]
 };
 
 function badgeNotificationLabel(key: string) {
@@ -774,7 +873,7 @@ async function getLegendaryBadgeUnlockDetails(userId: string, keys: string[]) {
   const placeholders = legendaryKeys.map(() => "?").join(", ");
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url,
-      lb.achievement_points, lb.badge_type, lb.activity_conditions, ubu.unlocked_at
+      lb.achievement_points, lb.badge_type, lb.tier, lb.activity_conditions, ubu.unlocked_at
      FROM legendary_badges lb
      INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
      WHERE ubu.user_id = ? AND ubu.badge_key IN (${placeholders})`,
@@ -788,10 +887,10 @@ async function getLegendaryBadgeUnlockDetails(userId: string, keys: string[]) {
     requirement: row.requirement ? String(row.requirement) : null,
     iconUrl: String(row.icon_url),
     achievementPoints: Number(row.achievement_points ?? 0),
-    badgeType: String(row.badge_type ?? "limited") as "activity" | "limited",
+    badgeType: String(row.badge_type ?? "achievement") as "achievement" | "activity" | "limited",
     activityConditions: badgeActivityConditions(row.activity_conditions),
     unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
-    tier: "legend" as const
+    tier: specialBadgeTier(row.tier)
   }]));
   return legendaryKeys.flatMap((key) => {
     const badge = byKey.get(key);
@@ -1057,6 +1156,95 @@ app.get("/api/me/soups", async (req, res) => {
   res.json({ soups: rows.map(mapSoupSummary) });
 });
 
+app.get("/api/me/excellent-author-application", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const soups = await getCreatorCertificationSoups(user.id);
+  const [[application]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, status, created_at, handled_at
+     FROM excellent_author_applications
+     WHERE applicant_id = ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [user.id]
+  );
+  const [[badge]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT badge_key FROM user_badge_unlocks WHERE user_id = ? AND badge_key = 'excellentAuthor:epic' LIMIT 1",
+    [user.id]
+  );
+  res.json({
+    eligibleSoups: soups.filter(isQualificationSoup),
+    certified: Boolean(badge),
+    application: application ? {
+      id: String(application.id),
+      status: String(application.status),
+      createdAt: new Date(application.created_at).toISOString(),
+      handledAt: application.handled_at ? new Date(application.handled_at).toISOString() : null
+    } : null
+  });
+});
+
+app.post("/api/me/excellent-author-application", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const parsed = excellentAuthorApplicationSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "请按要求选择5篇资格汤和1篇认证汤");
+  const qualificationSoupIds = [...new Set(parsed.data.qualificationSoupIds)];
+  if (qualificationSoupIds.length !== 5) return sendError(res, 400, "资格汤必须选择5篇，不能多也不能少");
+  if (!qualificationSoupIds.includes(parsed.data.primarySoupId)) return sendError(res, 400, "认证汤必须从5篇资格汤中选择");
+
+  const soups = await getCreatorCertificationSoups(user.id);
+  const byId = new Map(soups.map((soup) => [soup.id, soup]));
+  if (qualificationSoupIds.some((id) => {
+    const soup = byId.get(id);
+    return !soup || !isQualificationSoup(soup);
+  })) {
+    return sendError(res, 409, "所选资格汤已不满足原创、热力值或评分要求");
+  }
+  const primarySoup = byId.get(parsed.data.primarySoupId);
+  if (!primarySoup || !isPrimaryCertificationSoup(primarySoup)) {
+    return sendError(res, 409, "认证汤需达到3000热力值且综合评分不低于3.5");
+  }
+
+  const connection = await pool.getConnection();
+  let lockAcquired = false;
+  try {
+    const [[lock]] = await connection.query<mysql.RowDataPacket[]>("SELECT GET_LOCK(?, 5) AS acquired", [`excellent-author:${user.id}`]);
+    lockAcquired = Number(lock?.acquired) === 1;
+    if (!lockAcquired) return sendError(res, 503, "申请提交繁忙，请稍后再试");
+    const [existing] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT status FROM excellent_author_applications WHERE applicant_id = ? AND status IN ('pending','approved') LIMIT 1",
+      [user.id]
+    );
+    if (existing.some((row) => row.status === "approved")) return sendError(res, 409, "你已通过优秀作者认证");
+    if (existing.some((row) => row.status === "pending")) return sendError(res, 409, "已有待审核的优秀作者认证申请");
+
+    const id = nanoid();
+    await connection.beginTransaction();
+    await connection.query(
+      "INSERT INTO excellent_author_applications (id, applicant_id, applicant_name, primary_soup_id) VALUES (?, ?, ?, ?)",
+      [id, user.id, user.nickname, parsed.data.primarySoupId]
+    );
+    for (const [index, soupId] of qualificationSoupIds.entries()) {
+      await connection.query(
+        "INSERT INTO excellent_author_application_soups (application_id, soup_id, sort_order) VALUES (?, ?, ?)",
+        [id, soupId, index]
+      );
+    }
+    await connection.commit();
+    await Promise.all((await adminIds()).map((adminId) =>
+      notify(adminId, "excellent_author_application", "新的优秀作者认证申请", `${user.nickname} 提交了优秀作者认证申请`, id, user.id)
+    ));
+    res.status(201).json({ id, status: "pending" });
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    if (lockAcquired) await connection.query("SELECT RELEASE_LOCK(?)", [`excellent-author:${user.id}`]).catch(() => {});
+    connection.release();
+  }
+});
+
 app.get("/api/me/stats", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
@@ -1099,7 +1287,7 @@ app.get("/api/me/legendary-badges", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
-       lb.badge_type, lb.activity_conditions, ubu.unlocked_at
+       lb.badge_type, lb.tier, lb.activity_conditions, ubu.unlocked_at
      FROM legendary_badges lb
      INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
      WHERE ubu.user_id = ?
@@ -1118,7 +1306,7 @@ app.get("/api/me/legendary-badges", async (req, res) => {
       badgeType: String(row.badge_type ?? "limited"),
       activityConditions: badgeActivityConditions(row.activity_conditions),
       unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
-      tier: "legend" as const
+      tier: specialBadgeTier(row.tier)
     }))
   });
 });
@@ -1132,7 +1320,7 @@ app.get("/api/me/badge-collection", async (req, res) => {
   );
   const [legendaryRows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
-       lb.badge_type, lb.activity_conditions, ubu.unlocked_at
+       lb.badge_type, lb.tier, lb.activity_conditions, ubu.unlocked_at
      FROM legendary_badges lb
      INNER JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
      WHERE ubu.user_id = ?
@@ -1156,7 +1344,7 @@ app.get("/api/me/badge-collection", async (req, res) => {
       badgeType: String(row.badge_type ?? "limited"),
       activityConditions: badgeActivityConditions(row.activity_conditions),
       unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
-      tier: "legend" as const
+      tier: specialBadgeTier(row.tier)
     })),
     equippedBadge: equippedBadge(freshUser?.equipped_badge_key, freshUser?.equipped_badge_icon_url)
   });
@@ -1417,6 +1605,8 @@ app.post("/api/soups", async (req, res) => {
   const id = nanoid();
   const soup = parsed.data;
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
+  const duplicate = await findDuplicateSoup(soup);
+  if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
   const usage = user.role === "admin" ? null : await getSoupPublishUsage(user.id);
   if (usage && usage.autoRejectCount >= 3) return sendError(res, 429, "今日自动审核未通过次数已达3次，请明天再试");
   if (usage && usage.publishedCount >= 5) return sendError(res, 429, "您今日已发布5篇海龟汤，明天再继续分享吧");
@@ -1699,6 +1889,8 @@ app.put("/api/soups/:id", async (req, res) => {
   if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
   const next = parsed.data;
   if (next.isOriginal && !next.author) return sendError(res, 400, "原创海龟汤需要填写作者");
+  const duplicate = await findDuplicateSoup(next, req.params.id);
+  if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
   let review;
   try {
     review = await reviewSoupContent({ title: next.title, surface: next.surface, bottom: next.bottom });
@@ -1964,6 +2156,7 @@ app.get("/api/access-requests", async (req, res) => {
     total: Number(totalRow.total ?? 0),
     requests: rows.map((row) => ({
       id: row.id,
+      applicationType: "申请汤底",
       soupId: row.soup_id,
       soupTitle: row.soup_title,
       requesterId: row.requester_id,
@@ -2012,6 +2205,105 @@ app.post("/api/access-requests/:id/decision", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/admin/excellent-author-applications", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const requestedLimit = Number(req.query.limit);
+  const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : 10;
+  const offset = Math.max(0, Number(req.query.offset ?? 0));
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id FROM excellent_author_applications
+     ORDER BY created_at DESC
+     LIMIT ? OFFSET ?`,
+    [limit, offset]
+  );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM excellent_author_applications");
+  const applications = (await Promise.all(rows.map((row) => getExcellentAuthorApplicationDetail(String(row.id)))))
+    .filter((item) => item !== null)
+    .map((item) => ({
+      id: item.id,
+      applicationType: item.applicationType,
+      applicantId: item.applicantId,
+      applicantName: item.applicantName,
+      primarySoupId: item.primarySoup?.id ?? null,
+      primarySoupTitle: item.primarySoup?.title ?? "海龟汤已删除",
+      heatValue: item.primarySoup?.heatValue ?? 0,
+      averageTotal: item.primarySoup?.averageTotal ?? null,
+      status: item.status,
+      createdAt: item.createdAt,
+      handledAt: item.handledAt,
+      handledBy: item.handledBy
+    }));
+  res.json({ applications, total: Number(totalRow.total ?? 0) });
+});
+
+app.get("/api/admin/excellent-author-applications/:id", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const application = await getExcellentAuthorApplicationDetail(req.params.id);
+  if (!application) return sendError(res, 404, "优秀作者认证申请不存在");
+  res.json({ application });
+});
+
+app.post("/api/admin/excellent-author-applications/:id/decision", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = z.object({ decision: z.enum(["approved", "rejected"]) }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "审批结果不正确");
+  const application = await getExcellentAuthorApplicationDetail(req.params.id);
+  if (!application) return sendError(res, 404, "优秀作者认证申请不存在");
+  if (application.status !== "pending") return sendError(res, 409, "申请已处理");
+
+  if (parsed.data.decision === "approved") {
+    const currentSoups = await getCreatorCertificationSoups(application.applicantId);
+    const currentById = new Map(currentSoups.map((soup) => [soup.id, soup]));
+    const qualificationIds = application.qualificationSoups.map((soup) => soup.id);
+    const qualificationsStillValid = qualificationIds.length === 5 && qualificationIds.every((id) => {
+      const soup = currentById.get(id);
+      return soup ? isQualificationSoup(soup) : false;
+    });
+    const primarySoup = application.primarySoup ? currentById.get(application.primarySoup.id) : null;
+    if (!qualificationsStillValid || !primarySoup || !qualificationIds.includes(primarySoup.id) || !isPrimaryCertificationSoup(primarySoup)) {
+      return sendError(res, 409, "申请作品当前已不满足优秀作者认证条件，无法通过");
+    }
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [updated] = await connection.query<mysql.ResultSetHeader>(
+      `UPDATE excellent_author_applications
+       SET status = ?, handled_at = NOW(), handled_by = ?
+       WHERE id = ? AND status = 'pending'`,
+      [parsed.data.decision, admin.id, req.params.id]
+    );
+    if (updated.affectedRows !== 1) {
+      await connection.rollback();
+      return sendError(res, 409, "申请已处理");
+    }
+    if (parsed.data.decision === "approved") {
+      await connection.query(
+        "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, 'excellentAuthor:epic', NULL)",
+        [application.applicantId]
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  await notify(
+    application.applicantId,
+    "excellent_author_result",
+    parsed.data.decision === "approved" ? "优秀作者认证已通过" : "优秀作者认证未通过",
+    parsed.data.decision === "approved" ? "恭喜你通过优秀作者认证，已获得优秀作者徽章" : "你的优秀作者认证申请已被驳回，可调整作品后重新申请",
+    application.id,
+    admin.id
+  );
+  res.json({ ok: true });
+});
+
 app.get("/api/notifications", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
@@ -2036,7 +2328,13 @@ app.get("/api/notifications", async (req, res) => {
       title: row.title,
       content: row.content,
       relatedId: row.soup_id,
-      link: row.type === "badge_unlock" ? "/mine/achievements" : row.soup_id ? `/soup/${row.soup_id}` : null,
+      link: row.type === "badge_unlock"
+        ? "/mine/achievements"
+        : row.type === "excellent_author_result"
+          ? "/mine/excellent-author"
+          : row.type === "excellent_author_application"
+            ? "/admin"
+          : row.soup_id ? `/soup/${row.soup_id}` : null,
       isRead: bool(row.is_read),
       createdAt: new Date(row.created_at).toISOString()
     }))
@@ -2301,7 +2599,7 @@ app.get("/api/admin/badges", async (req, res) => {
   if (!(await requireAdmin(req, res))) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
-      lb.badge_type, lb.activity_conditions,
+      lb.badge_type, lb.tier, lb.activity_conditions,
       COUNT(ubu.user_id) AS owner_count
      FROM legendary_badges lb
      LEFT JOIN user_badge_unlocks ubu ON ubu.badge_key = CONCAT('legendary:', lb.id)
@@ -2319,7 +2617,7 @@ app.get("/api/admin/badges", async (req, res) => {
       achievementPoints: Number(row.achievement_points ?? 0),
       badgeType: String(row.badge_type ?? "limited"),
       activityConditions: badgeActivityConditions(row.activity_conditions),
-      tier: "legend" as const,
+      tier: specialBadgeTier(row.tier),
       ownerCount: Number(row.owner_count ?? 0)
     }))
   });
@@ -2424,8 +2722,9 @@ app.post("/api/admin/badges/users/:userId/legendary/:badgeId", async (req, res) 
   if (!actor) return;
   const [[target]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id = ? LIMIT 1", [req.params.userId]);
   if (!target) return sendError(res, 404, "用户不存在");
-  const [[badge]] = await pool.query<mysql.RowDataPacket[]>("SELECT id, name FROM legendary_badges WHERE id = ? LIMIT 1", [req.params.badgeId]);
+  const [[badge]] = await pool.query<mysql.RowDataPacket[]>("SELECT id, name, badge_type FROM legendary_badges WHERE id = ? LIMIT 1", [req.params.badgeId]);
   if (!badge) return sendError(res, 404, "传说徽章不存在");
+  if (String(badge.badge_type) !== "limited") return sendError(res, 403, "只有限定徽章支持管理员直接发放");
   const key = `legendary:${badge.id}`;
   const [result] = await pool.query<mysql.ResultSetHeader>(
     "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",

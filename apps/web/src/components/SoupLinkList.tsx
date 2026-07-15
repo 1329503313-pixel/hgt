@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Eye, ChevronRight, ThumbsUp, Star, Sparkles, ArrowLeft, FileText, Flame } from "lucide-react";
+import { Eye, ChevronRight, ThumbsUp, Star, Sparkles, FileText, Flame } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import type { SoupSummary } from "../shared/types";
@@ -7,6 +7,7 @@ import { formatViews } from "../context/AppContext";
 import { PageTopBar } from "./PageTopBar";
 import { useApp } from "../context/AppContext";
 import { useNavigate } from "react-router-dom";
+import { MineBackButton } from "./MineBackButton";
 
 export function SoupLinkList({
   soups,
@@ -190,13 +191,8 @@ export function SubListPage({
 
   return (
     <section className="space-y-3">
-      <PageTopBar title="我的" unread={unread} />
-      <div className="flex items-center gap-3">
-        <button className="btn btn-secondary px-3" onClick={onBack}>
-          <ArrowLeft size={18} />
-        </button>
-        <h1 className="text-xl font-black text-ink">{title}</h1>
-      </div>
+      <PageTopBar title={title} unread={unread} />
+      <MineBackButton onBack={onBack} />
       <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} emptyHint={emptyHint} showHeatValue={showHeatValue} />
 
       {/* 导出汤名悬浮按钮 */}

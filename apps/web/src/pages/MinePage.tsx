@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, ChevronRight, ImagePlus, Medal, Pencil, Plus, Trophy, Key, X } from "lucide-react";
+import { Award, Check, ChevronRight, ImagePlus, Medal, Pencil, Plus, Trophy, Key, X } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { api, StatsResponse, NicknameResponse, AvatarResponse, PasswordResponse } from "../api";
@@ -267,6 +267,20 @@ export default function MinePage() {
           <span className="text-2xl font-black text-ink">{stats.evaluationCount}</span>
           <span className="mt-0.5 text-xs font-semibold text-muted">我评价的</span>
           <ChevronRight size={14} className="mt-1 text-primary" />
+        </button>
+      </div>
+
+      {/* Excellent author certification */}
+      <div className="card p-4">
+        <button className="flex min-h-11 w-full items-center justify-between text-left" onClick={() => navigate("/mine/excellent-author")}>
+          <span className="flex items-center gap-3">
+            <Award size={20} className="text-amber-500" />
+            <span>
+              <span className="block text-base font-semibold text-ink">优秀作者认证</span>
+              <span className="mt-1 block text-xs text-muted">申请认证并获得优秀作者徽章</span>
+            </span>
+          </span>
+          <ChevronRight size={18} className="text-primary" />
         </button>
       </div>
 

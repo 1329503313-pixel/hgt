@@ -1,9 +1,9 @@
 import { cloneElement, isValidElement, useState, useEffect, useRef } from "react";
 import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { MineBackButton } from "../components/MineBackButton";
 import { api, BadgeUnlocksResponse, StatsResponse } from "../api";
-import { activityConditionText, BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
+import { BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 
 // ============================================================
 // 类型定义
@@ -115,6 +115,7 @@ const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints" | "badgeType" | "unl
   { series: "heat", tier: "rare", tierIndex: 2, label: "炽热瞩目", description: "你的故事赢得了万众瞩目", icon: <img src="/badges/heat-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "发布的单篇原创海龟汤获得100000热力值", nextBadgeLabel: "狂热巅峰", progressCurrent: 0, progressTarget: 100000, earned: false },
   { series: "heat", tier: "epic", tierIndex: 3, label: "狂热巅峰", description: "你的故事走上了巅峰", icon: <img src="/badges/heat-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "发布的单篇原创海龟汤获得300000热力值", nextBadgeLabel: "登峰造极", progressCurrent: 0, progressTarget: 300000, earned: false },
   { series: "heat", tier: "legend", tierIndex: 4, label: "登峰造极", description: "你的故事成为了传说", icon: legendarySystemBadgeIcon("/badges/heat-legend.png", "登峰造极"), requirement: "发布的单篇原创海龟汤获得1000000热力值", progressCurrent: 0, progressTarget: 1000000, earned: false },
+  { series: "excellentAuthor", tier: "epic", tierIndex: 1, label: "优秀作者", description: "平台认证的优秀海龟汤创作者", icon: <img src="/badges/excellent-author.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "优秀作者认证经平台后台审核通过", progressCurrent: 0, progressTarget: 1, earned: false },
 ];
 
 export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
@@ -128,7 +129,8 @@ export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "receivedComment:normal": 10, "receivedComment:rare": 40, "receivedComment:epic": 100,
   "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
   "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120,
-  "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450
+  "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450,
+  "excellentAuthor:epic": 150
 };
 
 // 徽章文件名未包含内容哈希，版本号用于在图片更新时主动刷新浏览器长期缓存。
@@ -154,12 +156,17 @@ export function buildBadgesFromStats(stats: StatsResponse, unlockDates: Record<s
     aiClear: stats.aiCompletionCount,
     heat: stats.maxOriginalSoupHeat,
   };
-  return BADGES.map((badge) => ({
-    ...badge,
-    progressCurrent: progressBySeries[badge.series] ?? 0,
-    earned: (progressBySeries[badge.series] ?? 0) >= badge.progressTarget,
-    unlockedAt: unlockDates[getBadgeKey(badge)] ?? null,
-  }));
+  return BADGES.map((badge) => {
+    const unlockedAt = unlockDates[getBadgeKey(badge)] ?? null;
+    const approvalBased = badge.series === "excellentAuthor";
+    const progressCurrent = approvalBased ? (unlockedAt ? 1 : 0) : (progressBySeries[badge.series] ?? 0);
+    return {
+      ...badge,
+      progressCurrent,
+      earned: approvalBased ? Boolean(unlockedAt) : progressCurrent >= badge.progressTarget,
+      unlockedAt,
+    };
+  });
 }
 
 export function getBadgeKey(badge: BadgeDef) {
@@ -239,15 +246,14 @@ function formatBadgeDate(value: string) {
 }
 
 export function legendaryToBadgeDef(badge: LegendaryBadge): BadgeDef {
-  const activityRequirement = badge.activityConditions.map(activityConditionText).join("；");
   return {
     series: badge.key,
-    tier: "legend",
+    tier: badge.tier,
     tierIndex: 1,
     label: badge.name,
     description: badge.description,
     icon: <LegendaryBadgeIcon badge={badge} className="h-full w-full rounded-2xl" />,
-    requirement: badge.requirement || activityRequirement || "无",
+    requirement: badge.requirement || "无",
     achievementPoints: badge.achievementPoints,
     badgeType: badge.badgeType,
     unlockedAt: badge.unlockedAt ?? null,
@@ -262,10 +268,10 @@ function legendaryToDisplayBadge(badge: LegendaryBadge): DisplayBadge {
   return {
     series: def.series,
     label: def.label,
-    tier: "legend",
-    tierLabel: TIER_LABEL.legend,
+    tier: badge.tier,
+    tierLabel: TIER_LABEL[badge.tier],
     icon: def.icon,
-    colors: TIER_COLORS_EARNED.legend,
+    colors: TIER_COLORS_EARNED[badge.tier],
     achievementPoints: def.achievementPoints,
     earned: true,
     highestEarnedIndex: 1,
@@ -506,7 +512,7 @@ function BadgeDetail({
 
         {/* 文字 — 400ms 渐显 */}
         <div
-          className={`flex flex-col items-center text-center transition-opacity ${
+          className={`flex w-screen max-w-sm flex-col items-center px-6 text-center transition-opacity sm:px-8 ${
             showText ? "opacity-100" : "opacity-0"
           }`}
           style={{
@@ -542,7 +548,6 @@ function BadgeDetail({
 
           {/* 升级路径 */}
           {(() => {
-            if (allTiers.length <= 1) return null;
             return (
               <div className="mt-4 flex items-center justify-center gap-1">
                 {allTiers.map((t, i) => (
@@ -696,13 +701,7 @@ export default function MyAchievementsPage() {
     <section className="space-y-3">
       <PageTopBar title="我的成就" />
 
-      <button
-        className="flex min-h-10 items-center gap-2 px-4 text-sm font-bold text-muted"
-        onClick={() => navigate("/mine")}
-      >
-        <ArrowLeft size={18} />
-        <span>返回</span>
-      </button>
+      <MineBackButton />
 
       <div className="mx-4 flex items-center justify-between rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 shadow-sm">
         <div>
