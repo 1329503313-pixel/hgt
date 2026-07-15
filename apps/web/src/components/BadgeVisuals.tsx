@@ -15,6 +15,10 @@ const BADGE_ASSET_URLS: Record<string, string> = {
   "/badges/favorite-normal.png": "/badges/favorite-normal.5187dbccf6.webp",
   "/badges/favorite-rare.png": "/badges/favorite-rare.67d5394500.webp",
   "/badges/founder-turtle-legend.png": "/badges/founder-turtle-legend.b557ad37cf.webp",
+  "/badges/heat-epic.png": "/badges/heat-epic.ceb928dea1.webp",
+  "/badges/heat-legend.png": "/badges/heat-legend.eb07af5566.webp",
+  "/badges/heat-normal.png": "/badges/heat-normal.d64fdee438.webp",
+  "/badges/heat-rare.png": "/badges/heat-rare.c292403518.webp",
   "/badges/insight-epic.png": "/badges/insight-epic.380ce14f05.webp",
   "/badges/insight-normal.png": "/badges/insight-normal.de9ad0c3aa.webp",
   "/badges/insight-rare.png": "/badges/insight-rare.277c428d82.webp",
@@ -91,7 +95,7 @@ export function EquippedBadgeIcon({
   animated?: boolean;
 }) {
   if (!badge) return null;
-  const legendary = badge.key.startsWith("legendary:");
+  const legendary = badge.key.startsWith("legendary:") || badge.key.endsWith(":legend");
   return (
     <span
       className={`${legendary ? `legendary-badge-icon bg-white shadow-sm ${animated ? "" : "equipped-badge-static"}` : ""} relative inline-flex shrink-0 overflow-hidden rounded-md align-middle ${className}`}

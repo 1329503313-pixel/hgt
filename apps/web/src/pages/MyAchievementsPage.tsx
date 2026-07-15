@@ -70,6 +70,14 @@ function versionBadgeIcon(icon: React.ReactNode) {
   });
 }
 
+function legendarySystemBadgeIcon(src: string, alt: string) {
+  return (
+    <span className="legendary-badge-icon block h-full w-full rounded-2xl">
+      <img className="h-full w-full object-cover" src={versionBadgeAssetUrl(src)} alt={alt} loading="lazy" decoding="async" draggable={false} />
+    </span>
+  );
+}
+
 const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints">[] = [
   { series: "publish", tier: "normal", tierIndex: 1, label: "熬汤新秀", description: "你已经是一个合格的厨子了", icon: <img src="/badges/publish-normal.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布一篇海龟汤", nextBadgeLabel: "熬汤达人", progressCurrent: 0, progressTarget: 1, earned: false },
   { series: "publish", tier: "rare", tierIndex: 2, label: "熬汤达人", description: "没有你该怎么办？", icon: <img src="/badges/publish-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布十篇海龟汤", nextBadgeLabel: "熬汤大师", progressCurrent: 0, progressTarget: 10, earned: false },
@@ -101,6 +109,10 @@ const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints">[] = [
   { series: "aiClear", tier: "normal", tierIndex: 1, label: "初识汤灵", description: "原来AI真的会带汤", icon: <img src="/badges/ai-clear-normal.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计通关1次AI玩汤（同一局游戏重复结算只记录一次）", nextBadgeLabel: "汤灵搭档", progressCurrent: 0, progressTarget: 1, earned: false },
   { series: "aiClear", tier: "rare", tierIndex: 2, label: "汤灵搭档", description: "你负责带汤，我负责找到真相", icon: <img src="/badges/ai-clear-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计通关10次AI玩汤（同一局游戏重复结算只记录一次）", nextBadgeLabel: "AI破局王", progressCurrent: 0, progressTarget: 10, earned: false },
   { series: "aiClear", tier: "epic", tierIndex: 3, label: "AI破局王", description: "AI也藏不住最后的真相", icon: <img src="/badges/ai-clear-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计通关50次AI玩汤（同一局游戏重复结算只记录一次）", progressCurrent: 0, progressTarget: 50, earned: false },
+  { series: "heat", tier: "normal", tierIndex: 1, label: "热力小子", description: "属于你的故事开始了", icon: <img src="/badges/heat-normal.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "发布的单篇原创海龟汤获得10000热力值", nextBadgeLabel: "炽热瞩目", progressCurrent: 0, progressTarget: 10000, earned: false },
+  { series: "heat", tier: "rare", tierIndex: 2, label: "炽热瞩目", description: "你的故事赢得了万众瞩目", icon: <img src="/badges/heat-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "发布的单篇原创海龟汤获得100000热力值", nextBadgeLabel: "狂热巅峰", progressCurrent: 0, progressTarget: 100000, earned: false },
+  { series: "heat", tier: "epic", tierIndex: 3, label: "狂热巅峰", description: "你的故事走上了巅峰", icon: <img src="/badges/heat-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "发布的单篇原创海龟汤获得300000热力值", nextBadgeLabel: "登峰造极", progressCurrent: 0, progressTarget: 300000, earned: false },
+  { series: "heat", tier: "legend", tierIndex: 4, label: "登峰造极", description: "你的故事成为了传说", icon: legendarySystemBadgeIcon("/badges/heat-legend.png", "登峰造极"), requirement: "发布的单篇原创海龟汤获得1000000热力值", progressCurrent: 0, progressTarget: 1000000, earned: false },
 ];
 
 export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
@@ -113,7 +125,8 @@ export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "creatorFavorite:normal": 10, "creatorFavorite:rare": 30, "creatorFavorite:epic": 120,
   "receivedComment:normal": 10, "receivedComment:rare": 40, "receivedComment:epic": 100,
   "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
-  "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120
+  "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120,
+  "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450
 };
 
 // 徽章文件名未包含内容哈希，版本号用于在图片更新时主动刷新浏览器长期缓存。
@@ -135,6 +148,7 @@ export function buildBadgesFromStats(stats: StatsResponse): BadgeDef[] {
     receivedComment: stats.receivedCommentCount,
     commenter: stats.writtenCommentCount,
     aiClear: stats.aiCompletionCount,
+    heat: stats.maxOriginalSoupHeat,
   };
   return BADGES.map((badge) => ({
     ...badge,

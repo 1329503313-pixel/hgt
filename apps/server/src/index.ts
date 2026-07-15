@@ -287,7 +287,8 @@ const SYSTEM_BADGE_ICON_BASE: Record<string, string> = {
   creatorFavorite: "creator-favorite",
   receivedComment: "received-comment",
   commenter: "commenter",
-  aiClear: "ai-clear"
+  aiClear: "ai-clear",
+  heat: "heat"
 };
 
 async function ownedBadgeIconUrl(userId: string, badgeKey: string) {
@@ -305,7 +306,7 @@ async function ownedBadgeIconUrl(userId: string, badgeKey: string) {
   }
   const [series, tier] = badgeKey.split(":");
   const base = SYSTEM_BADGE_ICON_BASE[series];
-  return base && ["normal", "rare", "epic"].includes(tier) ? `/badges/${base}-${tier}.png` : null;
+  return base && ["normal", "rare", "epic", "legend"].includes(tier) ? `/badges/${base}-${tier}.png` : null;
 }
 
 function jsonList(value: unknown): string[] {
@@ -461,6 +462,7 @@ type AchievementStats = {
   receivedCommentCount: number;
   writtenCommentCount: number;
   aiCompletionCount: number;
+  maxOriginalSoupHeat: number;
 };
 
 const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; target: number }> = [
@@ -493,7 +495,11 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "commenter:epic", stat: "writtenCommentCount", target: 300 },
   { key: "aiClear:normal", stat: "aiCompletionCount", target: 1 },
   { key: "aiClear:rare", stat: "aiCompletionCount", target: 10 },
-  { key: "aiClear:epic", stat: "aiCompletionCount", target: 50 }
+  { key: "aiClear:epic", stat: "aiCompletionCount", target: 50 },
+  { key: "heat:normal", stat: "maxOriginalSoupHeat", target: 10_000 },
+  { key: "heat:rare", stat: "maxOriginalSoupHeat", target: 100_000 },
+  { key: "heat:epic", stat: "maxOriginalSoupHeat", target: 300_000 },
+  { key: "heat:legend", stat: "maxOriginalSoupHeat", target: 1_000_000 }
 ];
 
 const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
@@ -506,10 +512,11 @@ const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "creatorFavorite:normal": 10, "creatorFavorite:rare": 30, "creatorFavorite:epic": 120,
   "receivedComment:normal": 10, "receivedComment:rare": 40, "receivedComment:epic": 100,
   "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
-  "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120
+  "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120,
+  "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450
 };
 
-const BADGE_NOTIFICATION_LABELS: Record<string, [string, string, string]> = {
+const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
   publish: ["熬汤新秀", "熬汤达人", "熬汤大师"],
   insight: ["灵光乍现", "洞察之眼", "全知全能"],
   favorite: ["私藏一汤", "藏汤百味", "万汤宝库"],
@@ -519,13 +526,30 @@ const BADGE_NOTIFICATION_LABELS: Record<string, [string, string, string]> = {
   creatorFavorite: ["值得珍藏", "收藏达人", "镇馆之汤"],
   receivedComment: ["初有回响", "热议之汤", "话题之王"],
   commenter: ["初次开麦", "评论达人", "妙语连珠"],
-  aiClear: ["初识汤灵", "汤灵搭档", "AI破局王"]
+  aiClear: ["初识汤灵", "汤灵搭档", "AI破局王"],
+  heat: ["热力小子", "炽热瞩目", "狂热巅峰", "登峰造极"]
 };
 
 function badgeNotificationLabel(key: string) {
   const [series, tier] = key.split(":");
-  const tierIndex = tier === "normal" ? 0 : tier === "rare" ? 1 : 2;
+  const tierIndex = tier === "normal" ? 0 : tier === "rare" ? 1 : tier === "epic" ? 2 : 3;
   return BADGE_NOTIFICATION_LABELS[series]?.[tierIndex] ?? key;
+}
+
+async function getMaxOriginalSoupHeat(userId: string) {
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COALESCE(MAX(
+       (COALESCE(e.comprehensive_score, 0) + 1) *
+       (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25)
+     ), 0) AS max_heat
+     FROM soups s
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
+     WHERE s.creator_id = ? AND s.is_original = TRUE`,
+    [userId]
+  );
+  return Math.round(Number(row?.max_heat ?? 0));
 }
 
 async function getAchievementStats(userId: string): Promise<AchievementStats> {
@@ -540,7 +564,8 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     [receivedFavoriteRows],
     [receivedCommentRows],
     [writtenCommentRows],
-    [aiCompletionRows]
+    [aiCompletionRows],
+    maxOriginalSoupHeat
   ] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [userId]),
@@ -552,7 +577,8 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorite_history WHERE creator_id = ?", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE creator_id = ? AND is_original = TRUE", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE reviewer_id = ?", [userId]),
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM game_completions WHERE user_id = ?", [userId])
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM game_completions WHERE user_id = ?", [userId]),
+    getMaxOriginalSoupHeat(userId)
   ]);
 
   return {
@@ -566,7 +592,8 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     receivedFavoriteCount: Number(receivedFavoriteRows[0]?.count ?? 0),
     receivedCommentCount: Number(receivedCommentRows[0]?.count ?? 0),
     writtenCommentCount: Number(writtenCommentRows[0]?.count ?? 0),
-    aiCompletionCount: Number(aiCompletionRows[0]?.count ?? 0)
+    aiCompletionCount: Number(aiCompletionRows[0]?.count ?? 0),
+    maxOriginalSoupHeat
   };
 }
 
@@ -2004,7 +2031,7 @@ app.get("/api/admin/badges/users", async (req, res) => {
       COALESCE(SUM(ubu.badge_key LIKE '%:normal'), 0) AS normal_count,
       COALESCE(SUM(ubu.badge_key LIKE '%:rare'), 0) AS rare_count,
       COALESCE(SUM(ubu.badge_key LIKE '%:epic'), 0) AS epic_count,
-      COALESCE(SUM(ubu.badge_key LIKE 'legendary:%'), 0) AS legend_count
+      COALESCE(SUM(ubu.badge_key LIKE 'legendary:%' OR ubu.badge_key LIKE '%:legend'), 0) AS legend_count
      FROM users u
      LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
      ${where}

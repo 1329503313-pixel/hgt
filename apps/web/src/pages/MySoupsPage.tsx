@@ -10,7 +10,7 @@ function useWaitForUser() {
   return { user, loading: loadingUser };
 }
 
-function MyListPage({ title, endpoint, emptyHint }: { title: string; endpoint: string; emptyHint: string }) {
+function MyListPage({ title, endpoint, emptyHint, showHeatValue = false }: { title: string; endpoint: string; emptyHint: string; showHeatValue?: boolean }) {
   const navigate = useNavigate();
   const { loading: loadingUser } = useWaitForUser();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
@@ -35,9 +35,9 @@ function MyListPage({ title, endpoint, emptyHint }: { title: string; endpoint: s
     );
   }
 
-  return <SubListPage title={title} soups={soups} emptyHint={emptyHint} onBack={() => navigate("/mine")} />;
+  return <SubListPage title={title} soups={soups} emptyHint={emptyHint} onBack={() => navigate("/mine")} showHeatValue={showHeatValue} />;
 }
 
 export default function MySoupsPage() {
-  return <MyListPage title="我发布的" endpoint="/api/me/soups" emptyHint="还没有发布海龟汤。" />;
+  return <MyListPage title="我发布的" endpoint="/api/me/soups" emptyHint="还没有发布海龟汤。" showHeatValue />;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Eye, ChevronRight, ThumbsUp, Star, Sparkles, ArrowLeft, FileText } from "lucide-react";
+import { Eye, ChevronRight, ThumbsUp, Star, Sparkles, ArrowLeft, FileText, Flame } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import type { SoupSummary } from "../shared/types";
@@ -11,11 +11,13 @@ import { useNavigate } from "react-router-dom";
 export function SoupLinkList({
   soups,
   onOpen,
-  emptyHint
+  emptyHint,
+  showHeatValue = false
 }: {
   soups: SoupSummary[];
   onOpen: (id: string) => void;
   emptyHint: string;
+  showHeatValue?: boolean;
 }) {
   if (soups.length === 0) {
     return <div className="card p-4 text-center text-sm text-muted">{emptyHint}</div>;
@@ -45,6 +47,11 @@ export function SoupLinkList({
                     <Sparkles size={13} /> {Number(soup.averageTotal.toFixed(1))}
                   </span>
                 )}
+                {showHeatValue && (
+                  <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-bold text-red-500" title={`热力值 ${soup.heatValue}`}>
+                    <Flame size={13} className="fill-red-500" /> {soup.heatValue.toLocaleString()}
+                  </span>
+                )}
               </span>
               <span className="avatar-name-gap mt-1 flex items-center truncate text-xs text-muted">
                 {soup.isOriginal ? (
@@ -68,12 +75,14 @@ export function SubListPage({
   title,
   soups,
   emptyHint,
-  onBack
+  onBack,
+  showHeatValue = false
 }: {
   title: string;
   soups: SoupSummary[];
   emptyHint: string;
   onBack: () => void;
+  showHeatValue?: boolean;
 }) {
   const navigate = useNavigate();
   const { setExportReady } = useApp();
@@ -182,7 +191,7 @@ export function SubListPage({
         </button>
         <h1 className="text-xl font-black text-ink">{title}</h1>
       </div>
-      <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} emptyHint={emptyHint} />
+      <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} emptyHint={emptyHint} showHeatValue={showHeatValue} />
 
       {/* 导出汤名悬浮按钮 */}
       <button

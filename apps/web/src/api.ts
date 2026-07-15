@@ -51,6 +51,7 @@ export type StatsResponse = {
   receivedCommentCount: number;
   writtenCommentCount: number;
   aiCompletionCount: number;
+  maxOriginalSoupHeat: number;
 };
 export type BadgeUnlocksResponse = { unlocks: string[]; stats: StatsResponse };
 export type PasswordResponse = { ok: boolean };
