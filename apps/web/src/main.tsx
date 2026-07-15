@@ -5,6 +5,10 @@ import { AppProvider } from "./context/AppContext";
 import App from "./App";
 import "./styles.css";
 
+if (/MicroMessenger/i.test(window.navigator.userAgent)) {
+  document.documentElement.classList.add("wechat-webview");
+}
+
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>

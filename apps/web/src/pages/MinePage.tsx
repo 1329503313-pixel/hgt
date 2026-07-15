@@ -196,7 +196,7 @@ export default function MinePage() {
             title={user.equippedBadge ? "更换或卸下徽章" : "装配徽章"}
           >
             {user.equippedBadge
-              ? <EquippedBadgeIcon badge={user.equippedBadge} className="h-full w-full rounded-xl" title="当前装配徽章" />
+              ? <EquippedBadgeIcon badge={user.equippedBadge} className="h-full w-full rounded-xl" title="当前装配徽章" animated />
               : <Plus size={24} />}
           </button>
         </div>

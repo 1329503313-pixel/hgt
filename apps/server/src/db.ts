@@ -186,12 +186,26 @@ export async function initDatabase() {
       messages JSON NOT NULL,
       revealed_keys JSON NOT NULL,
       revealed_supplements JSON NULL,
+      content_hash VARCHAR(64) NULL,
       progress INT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_game_user_soup (soup_id, user_id),
       CONSTRAINT fk_game_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
       CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // AI 请求共享配额：所有服务实例共用每分钟和每日计数
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_game_usage (
+      user_id VARCHAR(64) PRIMARY KEY,
+      minute_window_start DATETIME NOT NULL,
+      minute_request_count INT NOT NULL DEFAULT 0,
+      daily_date DATE NOT NULL,
+      daily_request_count INT NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_ai_game_usage_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -341,6 +355,7 @@ export async function initDatabase() {
     WHERE hit.key_id IS NOT NULL
   `);
   await ensureColumn("game_sessions", "revealed_supplements", "revealed_supplements JSON NULL AFTER revealed_keys");
+  await ensureColumn("game_sessions", "content_hash", "content_hash VARCHAR(64) NULL AFTER revealed_supplements");
   await ensureColumn("soups", "key_facts", "key_facts JSON NULL AFTER enable_ai_game");
   await ensureColumn("soups", "key_facts_hash", "key_facts_hash VARCHAR(64) NULL AFTER key_facts");
   await ensureColumn("soups", "key_facts_customized", "key_facts_customized TINYINT(1) NOT NULL DEFAULT 0 AFTER key_facts_hash");

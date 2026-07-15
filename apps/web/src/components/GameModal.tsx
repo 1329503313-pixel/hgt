@@ -25,7 +25,7 @@ export function GameModal({
   soup: SoupDetail;
   onBack: () => void;
 }) {
-  const { checkBadgeUnlocks } = useApp();
+  const { checkBadgeUnlocks, showToast } = useApp();
   const [state, setState] = useState<GameState>({
     messages: [],
     progress: 0,
@@ -47,15 +47,17 @@ export function GameModal({
       sessionId: string;
       messages: ChatMessage[];
       progress: number;
+      completed: boolean;
       revealedSupplements: { surfaces: number[]; bottoms: number[] };
     }>(`/api/game/${soup.id}/start`, { method: "POST" })
       .then((data) => {
-        setState({ messages: data.messages, progress: data.progress, revealedSupplements: data.revealedSupplements, completed: false, loading: false });
+        setState({ messages: data.messages, progress: data.progress, revealedSupplements: data.revealedSupplements, completed: data.completed, loading: false });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        showToast(error instanceof Error ? error.message : "游戏加载失败，请稍后重试");
         setState((s) => ({ ...s, loading: false }));
       });
-  }, [soup.id]);
+  }, [soup.id, showToast]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -88,11 +90,12 @@ export function GameModal({
         messages: [...s.messages, { role: "assistant", content: data.answer }]
       }));
       await checkBadgeUnlocks();
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI 服务暂时不可用，请稍后重试";
       setState((s) => ({
         ...s,
         loading: false,
-        messages: [...s.messages, { role: "assistant", content: "网络错误，请重试。" }]
+        messages: [...s.messages, { role: "assistant", content: `发送失败：${message}` }]
       }));
     }
   }
@@ -121,7 +124,8 @@ export function GameModal({
         ]
       }));
       await checkBadgeUnlocks();
-    } catch {
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "提示获取失败，请稍后重试");
       setState((s) => ({ ...s, loading: false }));
     }
   }
@@ -134,16 +138,18 @@ export function GameModal({
         sessionId: string;
         messages: ChatMessage[];
         progress: number;
+        completed: boolean;
         revealedSupplements: { surfaces: number[]; bottoms: number[] };
       }>(`/api/game/${soup.id}/restart`, { method: "POST" });
       setState({
         messages: data.messages,
         progress: data.progress,
         revealedSupplements: data.revealedSupplements,
-        completed: false,
+        completed: data.completed,
         loading: false
       });
-    } catch {
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "重新开始失败，请稍后重试");
       setState((s) => ({ ...s, loading: false }));
     }
   }

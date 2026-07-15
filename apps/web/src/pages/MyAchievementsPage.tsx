@@ -62,8 +62,12 @@ interface DisplayBadge {
 // ============================================================
 
 function versionBadgeIcon(icon: React.ReactNode) {
-  if (!isValidElement<{ src?: string }>(icon) || !icon.props.src?.startsWith("/badges/")) return icon;
-  return cloneElement(icon, { src: versionBadgeAssetUrl(icon.props.src) });
+  if (!isValidElement<{ src?: string; loading?: "eager" | "lazy"; decoding?: "async" | "auto" | "sync" }>(icon) || !icon.props.src?.startsWith("/badges/")) return icon;
+  return cloneElement(icon, {
+    src: versionBadgeAssetUrl(icon.props.src),
+    loading: "lazy",
+    decoding: "async"
+  });
 }
 
 const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints">[] = [

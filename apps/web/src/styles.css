@@ -599,6 +599,25 @@ textarea {
   opacity: 0.36;
 }
 
+/* 昵称旁的全局装配徽章保持静态，避免长列表产生大量常驻合成图层。 */
+.equipped-badge-static::before,
+.equipped-badge-static::after {
+  display: none;
+}
+
+/* 微信 WebView 在混合模式和渐变动画下容易掉帧，保留质感但关闭持续动画。 */
+.wechat-webview .badge-legend-shimmer,
+.wechat-webview .badge-legend-text,
+.wechat-webview .legendary-badge-icon::before,
+.wechat-webview .legendary-badge-icon::after {
+  animation: none;
+}
+
+.wechat-webview .legendary-badge-icon::before,
+.wechat-webview .legendary-badge-icon::after {
+  display: none;
+}
+
 /* 徽章翻转背面：统一银色金属底与压印龟甲纹。 */
 .badge-metal-back {
   position: relative;

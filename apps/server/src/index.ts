@@ -11,7 +11,7 @@ import sharp from "sharp";
 import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
-import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts } from "./game.js";
+import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgressListener } from "./game.js";
 import { PublicUser } from "./types.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -376,7 +376,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     createdAt: new Date(row.created_at).toISOString(),
     evaluationCount: evaluations,
     averageTotal: num(row.average_total),
-    heatValue: Math.round((comprehensiveScore + 2) * (views + (likes + 1) * (favorites + 1) * (evaluations + 1) * 5)),
+    heatValue: Math.round((comprehensiveScore + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25)),
     radar: {
       writing: num(row.avg_writing),
       logic: num(row.avg_logic),
@@ -446,6 +446,7 @@ async function recordLoginDay(userId: string) {
     ),
     pool.query("UPDATE users SET last_login_at = UTC_TIMESTAMP() WHERE id = ?", [userId])
   ]);
+  queueSystemBadgeSync([userId]);
 }
 
 type AchievementStats = {
@@ -591,21 +592,42 @@ async function syncSystemBadgeUnlocks(userId: string) {
   return { stats, newKeys };
 }
 
-let rankingBadgeSyncPromise: Promise<void> | null = null;
-let rankingBadgeSyncedAt = 0;
+const pendingBadgeSyncUsers = new Set<string>();
+let badgeSyncTimer: NodeJS.Timeout | null = null;
 
-async function ensureRankingBadgeUnlocksCurrent() {
-  if (Date.now() - rankingBadgeSyncedAt < 30_000) return;
-  if (rankingBadgeSyncPromise) return rankingBadgeSyncPromise;
-  rankingBadgeSyncPromise = (async () => {
-    const [users] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'user'");
-    for (let index = 0; index < users.length; index += 5) {
-      await Promise.all(users.slice(index, index + 5).map((row) => syncSystemBadgeUnlocks(String(row.id))));
+function queueSystemBadgeSync(userIds: string[]) {
+  userIds.filter(Boolean).forEach((userId) => pendingBadgeSyncUsers.add(userId));
+  if (badgeSyncTimer) return;
+  badgeSyncTimer = setTimeout(async () => {
+    badgeSyncTimer = null;
+    const batch = [...pendingBadgeSyncUsers];
+    pendingBadgeSyncUsers.clear();
+    for (let index = 0; index < batch.length; index += 5) {
+      await Promise.all(batch.slice(index, index + 5).map(async (userId) => {
+        try {
+          const [rows] = await pool.query<mysql.RowDataPacket[]>(
+            "SELECT badges_initialized FROM users WHERE id = ? LIMIT 1",
+            [userId]
+          );
+          if (rows.length === 0) return;
+          const wasInitialized = Boolean(rows[0].badges_initialized);
+          const { newKeys } = await syncSystemBadgeUnlocks(userId);
+          if (!wasInitialized) {
+            await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [userId]);
+            return;
+          }
+          await Promise.all(newKeys.map((key) => (
+            notify(userId, "badge_unlock", "获得新徽章", `恭喜你获得徽章「${badgeNotificationLabel(key)}」`, key, userId)
+          )));
+        } catch (error) {
+          console.error("badge event sync failed", { userId, error });
+        }
+      }));
     }
-    rankingBadgeSyncedAt = Date.now();
-  })().finally(() => { rankingBadgeSyncPromise = null; });
-  return rankingBadgeSyncPromise;
+  }, 0);
 }
+
+setBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 
 async function generateThumbnail(base64: string): Promise<string | null> {
   try {
@@ -904,7 +926,6 @@ app.patch("/api/me/equipped-badge", async (req, res) => {
 
 app.get("/api/rankings", async (req, res) => {
   if (!(await requireAuth(req, res))) return;
-  await ensureRankingBadgeUnlocksCurrent();
 
   const [hotSoupRows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT s.id, s.title, s.author, s.view_count,
@@ -912,8 +933,8 @@ app.get("/api/rankings", async (req, res) => {
        COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
        COALESCE(l.like_count, 0) AS like_count,
        COALESCE(f.favorite_count, 0) AS favorite_count,
-       (COALESCE(e.comprehensive_score, 0) + 2) *
-         (s.view_count + (COALESCE(l.like_count, 0) + 1) * (COALESCE(f.favorite_count, 0) + 1) * (COALESCE(e.evaluation_count, 0) + 1) * 5) AS heat_value
+       (COALESCE(e.comprehensive_score, 0) + 1) *
+         (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) AS heat_value
      FROM soups s
      LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
      LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
@@ -1158,6 +1179,7 @@ app.post("/api/soups", async (req, res) => {
       user.nickname
     ]
   );
+  queueSystemBadgeSync([user.id]);
   res.status(201).json({ id });
 
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
@@ -1300,6 +1322,7 @@ app.post("/api/soups/:id/like", async (req, res) => {
       user.id
     );
   }
+  queueSystemBadgeSync([user.id, String(soup.creator_id)]);
   const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
   res.status(201).json({ isLiked: true, likeCount: Number(c2.cnt) });
 });
@@ -1370,6 +1393,7 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
       user.id
     );
   }
+  queueSystemBadgeSync([user.id, String(soup.creator_id)]);
   const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
   res.status(201).json({ isFavorited: true, favoriteCount: Number(c2.cnt) });
 });
@@ -1490,6 +1514,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
       );
     }
+    queueSystemBadgeSync([user.id, String(soup.creator_id)]);
     return res.json({ id: existing.id });
   }
 
@@ -1529,6 +1554,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
       user.id
     );
   }
+  queueSystemBadgeSync([user.id, String(soup.creator_id)]);
   res.status(201).json({ id });
 });
 
@@ -1848,8 +1874,8 @@ app.get("/api/admin/dashboard", async (req, res) => {
         COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(f.favorite_count, 0) AS favorite_count,
-        (COALESCE(e.comprehensive_score, 0) + 2) *
-          (s.view_count + (COALESCE(l.like_count, 0) + 1) * (COALESCE(f.favorite_count, 0) + 1) * (COALESCE(e.evaluation_count, 0) + 1) * 5) AS heat_value
+        (COALESCE(e.comprehensive_score, 0) + 1) *
+          (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) AS heat_value
        FROM soups s
        LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
        LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id

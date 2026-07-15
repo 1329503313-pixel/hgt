@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useCallback, useMemo, useState, useEffect, useRef } from "react";
 import type { SoupSummary } from "../shared/types";
 import { SoupCard } from "./SoupCard";
 
@@ -32,6 +32,13 @@ export function MasonryList({
   const [colCount, setColCount] = useState(getColumnCount);
   const [heights, setHeights] = useState<Record<string, number>>({});
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const handleHeight = useCallback((id: string, height: number) => {
+    setHeights((old) => (
+      Math.abs((old[id] ?? 0) - height) < 1
+        ? old
+        : { ...old, [id]: height }
+    ));
+  }, []);
 
   useEffect(() => {
     const update = () => setColCount(getColumnCount());
@@ -80,9 +87,7 @@ export function MasonryList({
                 key={soup.id}
                 soup={soup}
                 onOpen={onOpen}
-                onHeight={(h) => {
-                  setHeights((old) => (Math.abs((old[soup.id] ?? 0) - h) < 1 ? old : { ...old, [soup.id]: h }));
-                }}
+                onHeight={handleHeight}
               />
             ))}
           </div>
@@ -100,19 +105,19 @@ function MeasuredSoupCard({
 }: {
   soup: SoupSummary;
   onOpen: (id: string) => void;
-  onHeight: (h: number) => void;
+  onHeight: (id: string, height: number) => void;
 }) {
   const ref = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const measure = () => onHeight(node.getBoundingClientRect().height);
+    const measure = () => onHeight(soup.id, node.getBoundingClientRect().height);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [onHeight]);
+  }, [onHeight, soup.id]);
 
   return <SoupCard refTarget={ref} soup={soup} onOpen={onOpen} />;
 }
