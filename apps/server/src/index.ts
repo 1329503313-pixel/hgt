@@ -183,6 +183,40 @@ function badgeActivityConditions(value: unknown): ActivityBadgeCondition[] {
 function specialBadgeTier(value: unknown): "epic" | "legend" {
   return String(value) === "epic" ? "epic" : "legend";
 }
+
+const BADGE_OWNERSHIP_REFRESH_MS = 60 * 60 * 1000;
+let badgeOwnershipRates: Record<string, number> = {};
+let equippedSpecialBadgeMetadata: Record<string, { name: string; tier: "epic" | "legend" }> = {};
+
+async function refreshEquippedSpecialBadgeMetadata() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id, name, tier FROM legendary_badges");
+  equippedSpecialBadgeMetadata = Object.fromEntries(rows.map((row) => [
+    `legendary:${row.id}`,
+    { name: String(row.name), tier: specialBadgeTier(row.tier) }
+  ]));
+}
+
+async function refreshBadgeOwnershipRates() {
+  const [[[totalRow]], [ownerRows]] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM users WHERE role = 'user'"),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT ubu.badge_key, COUNT(DISTINCT ubu.user_id) AS owner_count
+       FROM user_badge_unlocks ubu
+       INNER JOIN users u ON u.id = ubu.user_id
+       WHERE u.role = 'user'
+       GROUP BY ubu.badge_key`
+    )
+  ]);
+  const totalUsers = Number(totalRow?.total ?? 0);
+  badgeOwnershipRates = Object.fromEntries(ownerRows.map((row) => [
+    String(row.badge_key),
+    totalUsers > 0 ? Number(((Number(row.owner_count ?? 0) / totalUsers) * 100).toFixed(1)) : 0
+  ]));
+}
+
+function cachedBadgeOwnershipRates() {
+  return badgeOwnershipRates;
+}
 const optionalScore = z
   .union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null(), z.literal("")])
   .optional()
@@ -337,8 +371,14 @@ function bool(value: unknown) {
   return Boolean(Number(value));
 }
 
-function equippedBadge(key: unknown, iconUrl: unknown) {
-  return key && iconUrl ? { key: String(key), iconUrl: String(iconUrl) } : null;
+function equippedBadge(key: unknown, iconUrl: unknown): PublicUser["equippedBadge"] {
+  if (!key || !iconUrl) return null;
+  const badgeKey = String(key);
+  const special = equippedSpecialBadgeMetadata[badgeKey];
+  if (special) return { key: badgeKey, iconUrl: String(iconUrl), ...special };
+  const rawTier = badgeKey.split(":").at(-1);
+  const tier = rawTier === "rare" || rawTier === "epic" || rawTier === "legend" ? rawTier : "normal";
+  return { key: badgeKey, iconUrl: String(iconUrl), name: badgeNotificationLabel(badgeKey), tier };
 }
 
 const SYSTEM_BADGE_ICON_BASE: Record<string, string> = {
@@ -1333,6 +1373,7 @@ app.get("/api/me/badge-collection", async (req, res) => {
   );
   res.json({
     badgeKeys: unlockRows.map((row) => String(row.badge_key)),
+    ownershipRates: cachedBadgeOwnershipRates(),
     legendaryBadges: legendaryRows.map((row) => ({
       id: String(row.id),
       key: `legendary:${row.id}`,
@@ -1368,7 +1409,7 @@ app.patch("/api/me/equipped-badge", async (req, res) => {
     "UPDATE users SET equipped_badge_key = ?, equipped_badge_icon_url = ? WHERE id = ?",
     [parsed.data.badgeKey, iconUrl, user.id]
   );
-  res.json({ equippedBadge: { key: parsed.data.badgeKey, iconUrl } });
+  res.json({ equippedBadge: equippedBadge(parsed.data.badgeKey, iconUrl) });
 });
 
 app.get("/api/rankings", async (req, res) => {
@@ -2900,6 +2941,12 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 });
 
 await initDatabase();
+await refreshEquippedSpecialBadgeMetadata();
+await refreshBadgeOwnershipRates();
+const badgeOwnershipRefreshTimer = setInterval(() => {
+  refreshBadgeOwnershipRates().catch((error) => console.error("Badge ownership rate refresh failed:", error));
+}, BADGE_OWNERSHIP_REFRESH_MS);
+badgeOwnershipRefreshTimer.unref();
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);
 });

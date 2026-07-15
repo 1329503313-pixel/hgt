@@ -85,6 +85,7 @@ export type LegendaryBadge = {
   requirement: string | null;
   iconUrl: string;
   achievementPoints: number;
+  ownershipRate?: number;
   badgeType: BadgeType;
   activityConditions: ActivityBadgeCondition[];
   unlockedAt?: string | null;
@@ -95,6 +96,8 @@ export type LegendaryBadge = {
 export type EquippedBadgeVisual = {
   key: string;
   iconUrl: string;
+  name: string;
+  tier: "normal" | "rare" | "epic" | "legend";
 };
 
 export function versionBadgeAssetUrl(url: string) {
@@ -132,22 +135,38 @@ export function EquippedBadgeIcon({
   badge,
   className = "h-4 w-4",
   title = "已装配徽章",
-  animated = false
+  animated = false,
+  showName = true
 }: {
   badge: EquippedBadgeVisual | null | undefined;
   className?: string;
   title?: string;
   animated?: boolean;
+  showName?: boolean;
 }) {
   if (!badge) return null;
-  const legendary = (badge.key.startsWith("legendary:") && badge.key !== "legendary:excellent-author") || badge.key.endsWith(":legend");
-  return (
+  const legendary = badge.tier === "legend";
+  const icon = (
     <span
       className={`${legendary ? `legendary-badge-icon bg-white shadow-sm ${animated ? "" : "equipped-badge-static"}` : ""} relative inline-flex shrink-0 overflow-hidden rounded-md align-middle ${className}`}
       title={title}
       aria-label={title}
     >
       <img className="h-full w-full object-cover" src={versionBadgeAssetUrl(badge.iconUrl)} alt="" loading="lazy" decoding="async" draggable={false} />
+    </span>
+  );
+  if (!showName) return icon;
+  const nameColor = badge.tier === "legend"
+    ? "badge-legend-text"
+    : badge.tier === "epic"
+      ? "text-amber-600"
+      : badge.tier === "rare"
+        ? "text-purple-600"
+        : "text-blue-600";
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 align-middle" title={`${badge.name} · ${badge.tier === "legend" ? "传说" : badge.tier === "epic" ? "史诗" : badge.tier === "rare" ? "稀有" : "普通"}`}>
+      {icon}
+      <span className={`${nameColor} whitespace-nowrap text-[11px] font-black leading-none`}>{badge.name}</span>
     </span>
   );
 }

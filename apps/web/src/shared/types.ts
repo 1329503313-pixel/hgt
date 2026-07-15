@@ -7,6 +7,8 @@ export type SoupReviewStatus = "approved" | "pending" | "rejected";
 export type EquippedBadge = {
   key: string;
   iconUrl: string;
+  name: string;
+  tier: "normal" | "rare" | "epic" | "legend";
 };
 
 export type PublicUser = {

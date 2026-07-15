@@ -38,6 +38,7 @@ export interface BadgeDef {
   icon: React.ReactNode;
   requirement: string;
   achievementPoints: number;
+  ownershipRate: number;
   badgeType: BadgeType;
   unlockedAt: string | null;
   nextBadgeLabel?: string;
@@ -80,7 +81,7 @@ function legendarySystemBadgeIcon(src: string, alt: string) {
   );
 }
 
-const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints" | "badgeType" | "unlockedAt">[] = [
+const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints" | "ownershipRate" | "badgeType" | "unlockedAt">[] = [
   { series: "publish", tier: "normal", tierIndex: 1, label: "熬汤新秀", description: "你已经是一个合格的厨子了", icon: <img src="/badges/publish-normal.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布一篇海龟汤", nextBadgeLabel: "熬汤达人", progressCurrent: 0, progressTarget: 1, earned: false },
   { series: "publish", tier: "rare", tierIndex: 2, label: "熬汤达人", description: "没有你该怎么办？", icon: <img src="/badges/publish-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布十篇海龟汤", nextBadgeLabel: "熬汤大师", progressCurrent: 0, progressTarget: 10, earned: false },
   { series: "publish", tier: "epic", tierIndex: 3, label: "熬汤大师", description: "再……再来一口汤……", icon: <img src="/badges/publish-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布五十篇海龟汤", progressCurrent: 0, progressTarget: 50, earned: false },
@@ -137,12 +138,13 @@ export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
 export const BADGES: BadgeDef[] = BADGE_DEFINITIONS.map((badge) => ({
   ...badge,
   achievementPoints: BADGE_ACHIEVEMENT_POINTS[`${badge.series}:${badge.tier}`] ?? 0,
+  ownershipRate: 0,
   badgeType: "achievement",
   unlockedAt: null,
   icon: versionBadgeIcon(badge.icon)
 }));
 
-export function buildBadgesFromStats(stats: StatsResponse, unlockDates: Record<string, string> = {}): BadgeDef[] {
+export function buildBadgesFromStats(stats: StatsResponse, unlockDates: Record<string, string> = {}, ownershipRates: Record<string, number> = {}): BadgeDef[] {
   const progressBySeries: Record<string, number> = {
     publish: stats.soupCount,
     insight: stats.criticalHitCount,
@@ -162,6 +164,7 @@ export function buildBadgesFromStats(stats: StatsResponse, unlockDates: Record<s
     const progressCurrent = approvalBased ? (unlockedAt ? 1 : 0) : (progressBySeries[badge.series] ?? 0);
     return {
       ...badge,
+      ownershipRate: ownershipRates[getBadgeKey(badge)] ?? 0,
       progressCurrent,
       earned: approvalBased ? Boolean(unlockedAt) : progressCurrent >= badge.progressTarget,
       unlockedAt,
@@ -255,6 +258,7 @@ export function legendaryToBadgeDef(badge: LegendaryBadge): BadgeDef {
     icon: <LegendaryBadgeIcon badge={badge} className="h-full w-full rounded-2xl" />,
     requirement: badge.requirement || "无",
     achievementPoints: badge.achievementPoints,
+    ownershipRate: badge.ownershipRate ?? 0,
     badgeType: badge.badgeType,
     unlockedAt: badge.unlockedAt ?? null,
     progressCurrent: 1,
@@ -490,17 +494,11 @@ function BadgeDetail({
 
       <div
         className="relative z-10 flex flex-col items-center text-center"
-        onClick={(event) => event.stopPropagation()}
       >
         {/* 徽章 — ref 挂载点 */}
         <div
           ref={badgeRef}
-          className="cursor-pointer"
-          role="button"
-          tabIndex={0}
-          aria-label="收起徽章详情"
-          onClick={onClickBackdrop}
-          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onClickBackdrop(); }}
+          onClick={(event) => event.stopPropagation()}
         >
           <div
             style={{ width: BADGE_SIZE, height: BADGE_SIZE, transform: `scale(${SCALE})` }}
@@ -530,6 +528,11 @@ function BadgeDetail({
           {def.earned && def.unlockedAt && (
             <p className="mt-1 text-xs font-semibold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7),0_0_8px_rgba(0,0,0,0.4)]">
               获得日期：{formatBadgeDate(def.unlockedAt)}
+            </p>
+          )}
+          {def.earned && (
+            <p className="mt-1 text-xs font-semibold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7),0_0_8px_rgba(0,0,0,0.4)]">
+              有{def.ownershipRate.toFixed(1)}%的用户拥有此勋章
             </p>
           )}
           {def.nextBadgeLabel && (
@@ -604,9 +607,9 @@ export default function MyAchievementsPage() {
   useEffect(() => {
     api<BadgeUnlocksResponse>("/api/me/badge-unlocks/sync", { method: "POST" })
       .then(async ({ stats }) => {
-        const collection = await api<{ legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string> }>("/api/me/badge-collection");
-        setBadges(buildBadgesFromStats(stats, collection.unlockDates));
-        setLegendaryBadges(collection.legendaryBadges);
+        const collection = await api<{ legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string>; ownershipRates: Record<string, number> }>("/api/me/badge-collection");
+        setBadges(buildBadgesFromStats(stats, collection.unlockDates, collection.ownershipRates));
+        setLegendaryBadges(collection.legendaryBadges.map((badge) => ({ ...badge, ownershipRate: collection.ownershipRates[badge.key] ?? 0 })));
       }).catch(() => {});
   }, []);
 
@@ -691,7 +694,7 @@ export default function MyAchievementsPage() {
         >
           <LegendaryBadgeIcon badge={badge} />
           <span className={`text-xs font-semibold leading-tight text-ink transition-opacity duration-200 ${isThis ? "opacity-0" : "opacity-100"}`}>{badge.name}</span>
-          <span className={`badge-legend-text text-[11px] font-black transition-opacity duration-200 ${isThis ? "opacity-0" : "opacity-100"}`}>传说</span>
+          <span className={`${displayBadge.colors.label} text-[11px] font-black transition-opacity duration-200 ${isThis ? "opacity-0" : "opacity-100"}`}>{displayBadge.tierLabel}</span>
         </div>
       );
     });
