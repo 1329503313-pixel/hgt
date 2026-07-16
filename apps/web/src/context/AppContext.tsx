@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { PublicUser, SoupDetail, KeyFact } from "../shared/types";
+import type { AccountUser, SoupDetail, KeyFact } from "../shared/types";
 import { api, BadgeUnlocksResponse, MeResponse, SpecialBadgeUnlock, StatsResponse } from "../api";
 
 export type BadgeUnlockEvent = { key: string; stats: StatsResponse; specialBadge?: SpecialBadgeUnlock };
@@ -79,8 +79,8 @@ export const emptyEval: EvalForm = {
 // ---------- Context 类型 ----------
 type AppContextValue = {
   // 用户
-  user: PublicUser | null;
-  setUser: (u: PublicUser | null) => void;
+  user: AccountUser | null;
+  setUser: (u: AccountUser | null) => void;
   loadingUser: boolean;
 
   // Toast
@@ -140,7 +140,7 @@ export function useApp() {
 
 // ---------- Provider ----------
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<PublicUser | null>(null);
+  const [user, setUser] = useState<AccountUser | null>(null);
   const [loadingUser, setLoadingUser] = useState(true); // 初始 true，等待 /me 返回
   const [toast, setToastRaw] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);

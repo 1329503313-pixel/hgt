@@ -31,7 +31,6 @@ export function ProfileHero({
               <h1 className="truncate text-xl font-black">{profile.nickname}</h1>
               {showBadge && profile.equippedBadge && <EquippedBadgeIcon badge={profile.equippedBadge} className="h-8 w-8 rounded-lg" title={profile.equippedBadge.name} animated={false} showName={false} />}
             </div>
-            <p className="mt-1 truncate text-sm text-white/80">@{profile.username}</p>
           </div>
           {actions && <div className="shrink-0">{actions}</div>}
         </div>

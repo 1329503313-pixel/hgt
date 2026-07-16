@@ -1,12 +1,14 @@
 import { ArrowLeft, Bell, LogOut, Shield } from "lucide-react";
-import type { PublicUser } from "../shared/types";
+import type { AccountUser } from "../shared/types";
 import { useApp } from "../context/AppContext";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { parentRoute } from "../shared/routeHierarchy";
 
 export function PageTopBar({ title, titleContent, titleTo = "/", unread = 0, backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; unread?: number; backTo?: string; rightAction?: React.ReactNode }) {
   const { user } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <div className="top-nav-shell">
@@ -20,7 +22,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", unread = 0, bac
               <UserMenuDropdown user={user} />
               {rightAction}
               {backTo ? (
-                <button className="grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate(backTo)} aria-label="返回">
+                <button className="grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate(parentRoute(location.pathname), { replace: true })} aria-label="返回">
                   <ArrowLeft size={20} />
                 </button>
               ) : (
@@ -48,7 +50,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", unread = 0, bac
   );
 }
 
-function UserMenuDropdown({ user }: { user: PublicUser }) {
+function UserMenuDropdown({ user }: { user: AccountUser }) {
   const { setUser, showToast, triggerRefresh } = useApp();
   const navigate = useNavigate();
 

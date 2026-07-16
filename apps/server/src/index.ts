@@ -15,6 +15,8 @@ import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgr
 import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
 import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
+import { getSticker, stickerSeries } from "./stickers.js";
+import { isAdminRelatedNickname } from "./nickname.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const insecureJwtSecrets = new Set([
@@ -409,6 +411,11 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
     createdAt: new Date(row.created_at).toISOString(),
     equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
   };
+}
+
+function withoutPrivateUsername(user: PublicUser) {
+  const { username: _username, ...publicUser } = user;
+  return publicUser;
 }
 
 function toJwtPayload(row: mysql.RowDataPacket) {
@@ -1069,6 +1076,11 @@ async function generateThumbnail(base64: string): Promise<string | null> {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+app.get("/api/stickers", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
+  res.json({ series: stickerSeries });
+});
+
 app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   const parsed = z
     .object({
@@ -1080,6 +1092,7 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "注册信息不完整");
 
   const { username, password, nickname } = parsed.data;
+  if (isAdminRelatedNickname(nickname)) return sendError(res, 400, "该昵称为管理员专用，请更换昵称");
   const [exists] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id FROM users WHERE username = ? LIMIT 1",
     [username]
@@ -1192,6 +1205,9 @@ app.patch("/api/me/nickname", async (req, res) => {
   if (!user) return;
   const parsed = z.object({ nickname: text.max(8, "昵称不超过 8 个字符") }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "昵称信息不正确");
+  if (user.role !== "admin" && isAdminRelatedNickname(parsed.data.nickname)) {
+    return sendError(res, 400, "该昵称为管理员专用，请更换昵称");
+  }
 
   // 更新用户昵称
   await pool.query("UPDATE users SET nickname = ? WHERE id = ?", [parsed.data.nickname, user.id]);
@@ -1444,7 +1460,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const follow = followRows[0] ?? {};
   res.json({
     profile: {
-      ...toUser(target),
+      ...withoutPrivateUsername(toUser(target)),
       receivedLikeCount: Number(likeRows[0]?.received_like_count ?? 0),
       followingCount: Number(follow.following_count ?? 0),
       followerCount: Number(follow.follower_count ?? 0),
@@ -1490,7 +1506,7 @@ app.get("/api/users/:id/follows", async (req, res) => {
     [viewer.id, req.params.id]
   );
   res.json({
-    users: rows.map((row) => ({ ...toUser(row), isFollowing: bool(row.is_following), isSelf: row.id === viewer.id }))
+    users: rows.map((row) => ({ ...withoutPrivateUsername(toUser(row)), isFollowing: bool(row.is_following), isSelf: row.id === viewer.id }))
   });
 });
 
@@ -1529,21 +1545,21 @@ app.get("/api/me/soups/:id/interactions", async (req, res) => {
   let rows: mysql.RowDataPacket[] = [];
   if (type === "likes") {
     [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.username, u.nickname, u.avatar, sl.created_at
+      `SELECT u.id, u.nickname, u.avatar, sl.created_at
        FROM soup_likes sl INNER JOIN users u ON u.id = sl.user_id
        WHERE sl.soup_id = ? ORDER BY sl.created_at DESC`,
       [req.params.id]
     );
   } else if (type === "favorites") {
     [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.username, u.nickname, u.avatar, sf.created_at
+      `SELECT u.id, u.nickname, u.avatar, sf.created_at
        FROM soup_favorites sf INNER JOIN users u ON u.id = sf.user_id
        WHERE sf.soup_id = ? ORDER BY sf.created_at DESC`,
       [req.params.id]
     );
   } else if (type === "evaluations") {
     [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.username, u.nickname, u.avatar, e.total, e.content, e.created_at
+      `SELECT u.id, u.nickname, u.avatar, e.total, e.content, e.created_at
        FROM evaluations e INNER JOIN users u ON u.id = e.reviewer_id
        WHERE e.soup_id = ? ORDER BY e.created_at DESC`,
       [req.params.id]
@@ -1556,7 +1572,6 @@ app.get("/api/me/soups/:id/interactions", async (req, res) => {
     type,
     interactions: rows.map((row) => ({
       userId: String(row.id),
-      username: String(row.username),
       nickname: String(row.nickname),
       avatar: row.avatar ? String(row.avatar) : null,
       total: row.total == null ? null : Number(row.total),
@@ -1603,8 +1618,9 @@ app.get("/api/conversations", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT c.id, c.last_message_at,
-       u.id AS other_id, u.username AS other_username, u.nickname AS other_nickname, u.avatar AS other_avatar,
-       pm.content AS last_content, pm.sender_id AS last_sender_id, pm.created_at AS message_created_at,
+       u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar,
+       pm.content AS last_content, pm.message_type AS last_message_type, pm.sticker_id AS last_sticker_id,
+       pm.sender_id AS last_sender_id, pm.created_at AS message_created_at,
        (SELECT COUNT(*) FROM private_messages unread
         WHERE unread.conversation_id = c.id AND unread.sender_id <> ? AND unread.read_at IS NULL) AS unread_count
      FROM conversations c
@@ -1622,12 +1638,13 @@ app.get("/api/conversations", async (req, res) => {
     id: String(row.id),
     otherUser: {
       id: String(row.other_id),
-      username: String(row.other_username),
       nickname: String(row.other_nickname),
       avatar: row.other_avatar ? String(row.other_avatar) : null
     },
     lastMessage: row.last_content == null ? null : {
       content: String(row.last_content),
+      type: row.last_message_type === "sticker" ? "sticker" : "text",
+      stickerId: row.last_sticker_id ? String(row.last_sticker_id) : null,
       isMine: String(row.last_sender_id) === user.id,
       createdAt: new Date(row.message_created_at).toISOString()
     },
@@ -1638,7 +1655,7 @@ app.get("/api/conversations", async (req, res) => {
 
 async function conversationForUser(conversationId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT c.*, u.id AS other_id, u.username AS other_username, u.nickname AS other_nickname, u.avatar AS other_avatar
+    `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar
      FROM conversations c
      INNER JOIN users u ON u.id = IF(c.user_a_id = ?, c.user_b_id, c.user_a_id)
      WHERE c.id = ? AND (c.user_a_id = ? OR c.user_b_id = ?) LIMIT 1`,
@@ -1658,7 +1675,7 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
   );
   if (readResult.affectedRows > 0) emitUnreadChanged(user.id, "private_message_read");
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, sender_id, content, read_at, created_at
+    `SELECT id, sender_id, content, message_type, sticker_id, read_at, created_at
      FROM private_messages WHERE conversation_id = ?
      ORDER BY created_at ASC, id ASC`,
     [req.params.id]
@@ -1667,12 +1684,14 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
     conversation: {
       id: String(conversation.id),
       otherUser: {
-        id: String(conversation.other_id), username: String(conversation.other_username),
+        id: String(conversation.other_id),
         nickname: String(conversation.other_nickname), avatar: conversation.other_avatar ? String(conversation.other_avatar) : null
       }
     },
     messages: rows.map((row) => ({
       id: String(row.id), senderId: String(row.sender_id), content: String(row.content),
+      type: row.message_type === "sticker" ? "sticker" : "text",
+      stickerId: row.sticker_id ? String(row.sticker_id) : null,
       isMine: String(row.sender_id) === user.id,
       isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString()
     }))
@@ -1682,8 +1701,19 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
 app.post("/api/conversations/:id/messages", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  const parsed = z.object({ content: text.max(1000, "单条消息不能超过1000字") }).safeParse(req.body);
+  const parsed = z.object({
+    content: text.max(1000, "单条消息不能超过1000字").optional(),
+    stickerId: z.string().trim().min(1).max(64).optional()
+  }).superRefine((value, ctx) => {
+    if (Boolean(value.content) === Boolean(value.stickerId)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文本和表情必须且只能发送一种" });
+    }
+  }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
+  const sticker = parsed.data.stickerId ? getSticker(parsed.data.stickerId) : null;
+  if (parsed.data.stickerId && !sticker) return sendError(res, 400, "表情不存在或已下架");
+  const messageType = sticker ? "sticker" : "text";
+  const content = parsed.data.content ?? "";
   const conversation = await conversationForUser(req.params.id, user.id);
   if (!conversation) return sendError(res, 404, "会话不存在");
   const id = nanoid();
@@ -1691,8 +1721,8 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   try {
     await connection.beginTransaction();
     await connection.query(
-      "INSERT INTO private_messages (id, conversation_id, sender_id, content) VALUES (?, ?, ?, ?)",
-      [id, req.params.id, user.id, parsed.data.content]
+      "INSERT INTO private_messages (id, conversation_id, sender_id, content, message_type, sticker_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, req.params.id, user.id, content, messageType, sticker?.id ?? null]
     );
     await connection.query("UPDATE conversations SET last_message_at = CURRENT_TIMESTAMP WHERE id = ?", [req.params.id]);
     await connection.commit();
@@ -1706,10 +1736,11 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     conversationId: req.params.id,
     messageId: id,
     senderId: user.id,
-    senderUsername: user.username,
     senderNickname: user.nickname,
     senderAvatar: user.avatar,
-    content: parsed.data.content
+    content,
+    type: messageType,
+    stickerId: sticker?.id ?? null
   });
   emitUnreadChanged(String(conversation.other_id), "private_message");
   res.status(201).json({ id, createdAt: new Date().toISOString() });
@@ -2615,7 +2646,6 @@ app.post("/api/soups/:id/access-requests", async (req, res) => {
       soupId: req.params.id,
       soupTitle: String(soup.title),
       requesterId: user.id,
-      requesterUsername: user.username,
       requesterName: user.nickname,
       requesterAvatar: user.avatar
     });
@@ -3516,6 +3546,9 @@ app.patch("/api/admin/users/:id", async (req, res) => {
   if (!actor) return;
   const parsed = z.object({ nickname: text.max(50), role: z.enum(["admin", "user"]) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "用户信息不正确");
+  if (parsed.data.role === "user" && isAdminRelatedNickname(parsed.data.nickname)) {
+    return sendError(res, 400, "普通用户不能使用管理员相关昵称");
+  }
   if (actor.id === req.params.id && parsed.data.role !== "admin") return sendError(res, 400, "不能取消自己的管理员权限");
   const [targetRows] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
   if (!targetRows[0]) return sendError(res, 404, "用户不存在");

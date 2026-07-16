@@ -83,13 +83,11 @@ export function SubListPage({
   title,
   soups,
   emptyHint,
-  onBack,
   showHeatValue = false
 }: {
   title: string;
   soups: SoupSummary[];
   emptyHint: string;
-  onBack: () => void;
   showHeatValue?: boolean;
 }) {
   const navigate = useNavigate();
@@ -193,7 +191,7 @@ export function SubListPage({
   return (
     <section className="space-y-3">
       <PageTopBar title={title} unread={unread} />
-      <MineBackButton onBack={onBack} />
+      <MineBackButton />
       <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} emptyHint={emptyHint} showHeatValue={showHeatValue} />
 
       {/* 导出汤名悬浮按钮 */}

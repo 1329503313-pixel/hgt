@@ -1,6 +1,7 @@
 import type {
   Evaluation,
   NotificationItem,
+  AccountUser,
   PublicUser,
   ExcellentAuthorApplicationDetail,
   ExcellentAuthorApplicationItem,
@@ -36,7 +37,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   return data as T;
 }
 
-export type MeResponse = { user: PublicUser | null };
+export type MeResponse = { user: AccountUser | null };
 export type SoupsResponse = { soups: SoupSummary[]; total: number; hasMore: boolean };
 export type SoupResponse = { soup: SoupDetail };
 export type NotificationsResponse = { notifications: NotificationItem[] };

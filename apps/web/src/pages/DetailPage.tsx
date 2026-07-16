@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, Gamepad2, ChevronDown, ChevronUp } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
@@ -14,6 +14,7 @@ import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import { DetailSkeleton } from "../components/Skeletons";
 import { refreshMineContentCache } from "../shared/mineContentCache";
+import { parentRoute } from "../shared/routeHierarchy";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -34,6 +35,7 @@ function CollapsibleSection({ children, defaultOpen = false }: { children: React
 export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);
@@ -61,7 +63,7 @@ export default function DetailPage() {
     if (!soup || !confirm("确定删除这条海龟汤吗？相关评价也会删除。")) return;
     await api(`/api/soups/${soup.id}`, { method: "DELETE" });
     if (user && soup.creatorId === user.id) void refreshMineContentCache(user.id, "published").catch(() => {});
-    navigate("/");
+    navigate(parentRoute(location.pathname), { replace: true });
   }
 
   async function handleFavorite() {
@@ -221,7 +223,7 @@ export default function DetailPage() {
       {/* Header */}
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-          <button className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink" onClick={() => navigate("/")}>
+          <button className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink" onClick={() => navigate(parentRoute(location.pathname), { replace: true })}>
             <ArrowLeft size={18} /> <span>返回列表</span>
           </button>
           <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">

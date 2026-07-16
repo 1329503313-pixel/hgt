@@ -49,7 +49,7 @@ export function AdminTopBar({
             <RefreshCw size={16} />
             <span className="hidden sm:inline ml-1">刷新</span>
           </button>
-          <button className="btn btn-secondary rounded-full px-4" onClick={() => navigate("/")}>
+          <button className="btn btn-secondary rounded-full px-4" onClick={() => navigate("/", { replace: true })}>
             <ArrowLeft size={16} />
             <span className="hidden sm:inline ml-1">返回首页</span>
           </button>

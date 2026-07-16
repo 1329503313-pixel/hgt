@@ -8,7 +8,6 @@ type PrivateMessagePayload = {
   conversationId: string;
   messageId: string;
   senderId: string;
-  senderUsername?: string;
   senderNickname?: string;
   senderAvatar?: string | null;
   content: string;
@@ -19,7 +18,6 @@ type ViewRequestPayload = {
   soupId: string;
   soupTitle: string;
   requesterId: string;
-  requesterUsername?: string;
   requesterName: string;
   requesterAvatar?: string | null;
 };
@@ -28,7 +26,6 @@ type BannerItem = {
   key: string;
   kind: "private" | "request";
   sourceName: string;
-  sourceAccount?: string;
   sourceAvatar?: string | null;
   title: string;
   detail: string;
@@ -86,8 +83,7 @@ export function IncomingMessageBanner() {
       enqueue({
         key: `private:${payload.messageId}`,
         kind: "private",
-        sourceName: payload.senderNickname || payload.senderUsername || "新消息",
-        sourceAccount: payload.senderUsername,
+        sourceName: payload.senderNickname || "新消息",
         sourceAvatar: payload.senderAvatar,
         title: "私信消息",
         detail: payload.content,
@@ -100,8 +96,7 @@ export function IncomingMessageBanner() {
       enqueue({
         key: `request:${payload.requestId}`,
         kind: "request",
-        sourceName: payload.requesterName || payload.requesterUsername || "新申请",
-        sourceAccount: payload.requesterUsername,
+        sourceName: payload.requesterName || "新申请",
         sourceAvatar: payload.requesterAvatar,
         title: "申请查看汤底",
         detail: `申请查看《${payload.soupTitle}》的汤底和主持人手册`,
@@ -230,7 +225,6 @@ export function IncomingMessageBanner() {
                 {current.title}
               </span>
             </span>
-            {current.sourceAccount && <span className="mt-0.5 block truncate text-[11px] text-muted">@{current.sourceAccount}</span>}
             <span className="mt-1.5 block line-clamp-2 text-sm leading-5 text-slate-600">{current.detail}</span>
           </span>
         </div>

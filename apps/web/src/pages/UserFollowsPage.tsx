@@ -47,7 +47,7 @@ export default function UserFollowsPage({ type }: { type: "following" | "followe
         {users.map((item) => (
           <div key={item.id} className="flex items-center gap-3 border-b border-line px-4 py-3">
             <button className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-blue-100 font-black text-primary" onClick={() => navigate(`/users/${item.id}`)}>{item.avatar ? <img className="h-full w-full object-cover" src={item.avatar} alt="" /> : item.nickname.slice(0, 1)}</button>
-            <button className="min-w-0 flex-1 text-left" onClick={() => navigate(`/users/${item.id}`)}><p className="truncate text-sm font-black text-ink">{item.nickname}</p><p className="truncate text-xs text-muted">@{item.username}</p></button>
+            <button className="min-w-0 flex-1 text-left" onClick={() => navigate(`/users/${item.id}`)}><p className="truncate text-sm font-black text-ink">{item.nickname}</p></button>
             {!item.isSelf && <button className={`rounded-lg px-3 py-2 text-xs font-bold ${item.isFollowing ? "bg-slate-100 text-ink" : "bg-primary text-white"}`} onClick={() => void toggleFollow(item)}>{item.isFollowing ? "已关注" : "关注"}</button>}
           </div>
         ))}

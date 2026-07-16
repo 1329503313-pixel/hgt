@@ -444,6 +444,8 @@ export async function initDatabase() {
       conversation_id VARCHAR(64) NOT NULL,
       sender_id VARCHAR(64) NOT NULL,
       content VARCHAR(1000) NOT NULL,
+      message_type VARCHAR(16) NOT NULL DEFAULT 'text',
+      sticker_id VARCHAR(64) NULL,
       read_at DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_private_messages_conversation_time (conversation_id, created_at),
@@ -452,6 +454,8 @@ export async function initDatabase() {
       CONSTRAINT fk_private_message_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("private_messages", "message_type", "message_type VARCHAR(16) NOT NULL DEFAULT 'text' AFTER content");
+  await ensureColumn("private_messages", "sticker_id", "sticker_id VARCHAR(64) NULL AFTER message_type");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS game_completions (

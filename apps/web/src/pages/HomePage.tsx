@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, SlidersHorizontal, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, SlidersHorizontal, FileText } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
-import type { ConversationItem, SoupSummary } from "../shared/types";
+import type { ConversationItem, PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse, NotificationsResponse, RequestsResponse } from "../api";
 import { getMessageUnreadCounts } from "../shared/messageUnread";
 import { useApp, soupTypes } from "../context/AppContext";
@@ -12,11 +12,14 @@ import { MasonryList } from "../components/MasonryList";
 import { homeBannerUrl } from "../shared/staticAssets";
 import { CoverGridSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
+import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "hasMore">;
+type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge">;
+type UserSearchResponse = { users: SearchUser[]; total: number };
 
 export default function HomePage() {
-  const { user, refreshKey, setExportReady } = useApp();
+  const { user, refreshKey, setExportReady, openAuth } = useApp();
   const navigate = useNavigate();
 
   const [soups, setSoups] = useState<SoupSummary[]>([]);
@@ -25,6 +28,10 @@ export default function HomePage() {
   const loadingRef = useRef(false);
   const offsetRef = useRef(0);
   const [unread, setUnread] = useState(0);
+  const [matchedUsers, setMatchedUsers] = useState<SearchUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersExpanded, setUsersExpanded] = useState(false);
+  const userSearchRequestRef = useRef(0);
   const [showExportConfirm, setShowExportConfirm] = useState(false);
 
   const [filters, setFilters] = useState({
@@ -85,6 +92,32 @@ export default function HomePage() {
   useEffect(() => {
     loadSoups(false);
   }, [filters, refreshKey]);
+
+  useEffect(() => {
+    const keyword = filters.keyword.trim();
+    const requestId = ++userSearchRequestRef.current;
+    setUsersExpanded(false);
+    if (!keyword) {
+      setMatchedUsers([]);
+      setUsersLoading(false);
+      return;
+    }
+    const cacheKey = `hgt:user-search:${keyword}`;
+    const cached = readSessionCache<UserSearchResponse>(cacheKey, 60_000);
+    if (cached) setMatchedUsers(cached.users);
+    else setMatchedUsers([]);
+    setUsersLoading(!cached);
+    void api<UserSearchResponse>(`/api/users/search?keyword=${encodeURIComponent(keyword)}&limit=50`)
+      .then((data) => {
+        if (requestId !== userSearchRequestRef.current) return;
+        setMatchedUsers(data.users);
+        writeSessionCache(cacheKey, data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (requestId === userSearchRequestRef.current) setUsersLoading(false);
+      });
+  }, [filters.keyword]);
 
   // 加载未读消息数
   useEffect(() => {
@@ -210,7 +243,7 @@ export default function HomePage() {
         <div className="relative min-w-0 flex-1">
           <input
             className="field h-12 rounded-full bg-white pl-4 pr-11 text-[15px] shadow-soft"
-            placeholder="搜索海龟汤标题、作者或摘要..."
+            placeholder="搜索海龟汤或用户昵称..."
             value={searchKeyword}
             onChange={(e) => setSearchKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submitSearch(); }}
@@ -265,6 +298,54 @@ export default function HomePage() {
           <img src={homeBannerUrl} alt="故事背后藏着的真的是真相吗？" />
         </div>
       )}
+
+      {filters.keyword && (usersLoading || matchedUsers.length > 0) && (
+        <section className="overflow-hidden rounded-2xl bg-white shadow-soft">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-base font-black text-ink">用户</h2>
+          </div>
+          <div className="divide-y divide-line">
+            {usersLoading && matchedUsers.length === 0 && Array.from({ length: 2 }, (_, index) => (
+              <div key={index} className="flex animate-pulse items-center gap-3 px-4 py-3">
+                <span className="h-12 w-12 shrink-0 rounded-full bg-slate-200" />
+                <span className="flex-1 space-y-2"><span className="block h-4 w-24 rounded bg-slate-200" /><span className="block h-3 w-32 rounded bg-slate-100" /></span>
+              </div>
+            ))}
+            {(usersExpanded ? matchedUsers : matchedUsers.slice(0, 2)).map((matchedUser) => (
+              <button
+                key={matchedUser.id}
+                type="button"
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50 active:bg-slate-100"
+                onClick={() => user ? navigate(`/users/${matchedUser.id}`) : openAuth()}
+              >
+                <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-base font-black text-primary">
+                  {matchedUser.avatar ? <img className="h-full w-full object-cover" src={matchedUser.avatar} alt="" /> : matchedUser.nickname.slice(0, 1)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-black text-ink">{matchedUser.nickname}</span>
+                  {matchedUser.equippedBadge && (
+                    <span className="mt-1 inline-flex max-w-full">
+                      <EquippedBadgeIcon badge={matchedUser.equippedBadge} className="h-5 w-5 rounded-md" animated={false} />
+                    </span>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+          {matchedUsers.length > 2 && (
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-1.5 border-t border-line px-4 py-2.5 text-xs font-bold text-primary transition hover:bg-blue-50"
+              onClick={() => setUsersExpanded((expanded) => !expanded)}
+              aria-label={usersExpanded ? "收起更多用户" : "展开更多用户"}
+            >
+              {usersExpanded ? <><ChevronUp size={17} />收起</> : <><ChevronDown size={17} />展开更多用户（{matchedUsers.length - 2}）</>}
+            </button>
+          )}
+        </section>
+      )}
+
+      {filters.keyword && <h2 className="px-1 pt-1 text-base font-black text-ink">海龟汤</h2>}
 
       <MasonryList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} hasMore={hasMore} loading={loading} onLoadMore={handleLoadMore} />
 

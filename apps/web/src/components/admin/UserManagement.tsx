@@ -8,6 +8,7 @@ import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
 
 type AdminUser = PublicUser & {
+  username: string;
   lastLoginAt: string | null;
   loggedInToday: boolean;
   stats: { soupCount: number; evaluationCount: number; likeCount: number; favoriteCount: number };

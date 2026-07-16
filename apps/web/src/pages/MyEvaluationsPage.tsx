@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import type { SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -13,7 +12,6 @@ function useWaitForUser() {
 }
 
 function MyListPage({ title, endpoint, emptyHint }: { title: string; endpoint: string; emptyHint: string }) {
-  const navigate = useNavigate();
   const { user, loading: loadingUser } = useWaitForUser();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +34,7 @@ function MyListPage({ title, endpoint, emptyHint }: { title: string; endpoint: s
     );
   }
 
-  return <SubListPage title={title} soups={soups} emptyHint={emptyHint} onBack={() => navigate("/mine")} />;
+  return <SubListPage title={title} soups={soups} emptyHint={emptyHint} />;
 }
 
 export default function MyEvaluationsPage() {

@@ -13,7 +13,6 @@ export type EquippedBadge = {
 
 export type PublicUser = {
   id: string;
-  username: string;
   nickname: string;
   avatar: string | null;
   role: UserRole;
@@ -126,6 +125,10 @@ export type ViewRequestItem = {
   handledBy: string | null;
 };
 
+export type AccountUser = PublicUser & {
+  username: string;
+};
+
 export type SocialProfile = PublicUser & {
   receivedLikeCount: number;
   followingCount: number;
@@ -141,8 +144,8 @@ export type SocialUser = PublicUser & {
 
 export type ConversationItem = {
   id: string;
-  otherUser: Pick<PublicUser, "id" | "username" | "nickname" | "avatar">;
-  lastMessage: { content: string; isMine: boolean; createdAt: string } | null;
+  otherUser: Pick<PublicUser, "id" | "nickname" | "avatar">;
+  lastMessage: { content: string; type: "text" | "sticker"; stickerId: string | null; isMine: boolean; createdAt: string } | null;
   unreadCount: number;
   updatedAt: string;
 };
@@ -151,9 +154,28 @@ export type PrivateMessageItem = {
   id: string;
   senderId: string;
   content: string;
+  type: "text" | "sticker";
+  stickerId: string | null;
   isMine: boolean;
   isRead: boolean;
   createdAt: string;
+};
+
+export type StickerAsset = {
+  id: string;
+  name: string;
+  text: string;
+  staticUrl: string;
+  animatedUrl: string;
+  width: number;
+  height: number;
+};
+
+export type StickerSeries = {
+  id: string;
+  name: string;
+  characterName: string;
+  stickers: StickerAsset[];
 };
 
 export type ExcellentAuthorApplicationStatus = {
