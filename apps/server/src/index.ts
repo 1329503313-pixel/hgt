@@ -273,6 +273,33 @@ const excellentAuthorApplicationSchema = z.object({
   primarySoupId: z.string().min(1)
 });
 
+const adminNoticeSchema = z.object({
+  title: text.max(200),
+  author: text.max(100),
+  content: z.string().trim().min(1, "正文不能为空").max(5_000_000, "正文内容过大"),
+  validDays: z.coerce.number().int().min(0).max(3650),
+  validHours: z.coerce.number().int().min(0).max(23)
+}).refine((value) => value.validDays > 0 || value.validHours > 0, {
+  message: "有效时间至少为 1 小时"
+});
+
+function noticePayload(row: mysql.RowDataPacket) {
+  const expiresAt = row.expires_at ? new Date(row.expires_at).toISOString() : null;
+  const validDurationMinutes = Number(row.valid_duration_minutes ?? 0);
+  return {
+    id: String(row.id),
+    title: String(row.title),
+    author: String(row.author),
+    ...(row.content == null ? {} : { content: String(row.content) }),
+    publishedAt: new Date(row.published_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+    expiresAt,
+    validDurationMinutes,
+    status: expiresAt && new Date(expiresAt).getTime() <= Date.now() ? "expired" : "published",
+    readCount: Number(row.read_count ?? 0)
+  };
+}
+
 function sendError(res: express.Response, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
@@ -2177,7 +2204,8 @@ app.get("/api/access-requests", async (req, res) => {
   }
   const requestedLimit = Number(req.query.limit);
   const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : null;
-  const offset = Math.max(0, Number(req.query.offset ?? 0));
+  const requestedOffset = Number(req.query.offset ?? 0);
+  const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT vr.*, s.title AS soup_title
@@ -2394,6 +2422,60 @@ app.patch("/api/notifications/:id/read", async (req, res) => {
   if (!user) return;
   await pool.query("UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?", [req.params.id, user.id]);
   res.json({ ok: true });
+});
+
+app.get("/api/notices", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const requestedLimit = Number(req.query.limit ?? 50);
+  const limit = Math.min(100, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 50));
+  const requestedOffset = Number(req.query.offset ?? 0);
+  const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT n.id, n.title, n.author, n.published_at, n.updated_at, n.expires_at, n.valid_duration_minutes,
+       EXISTS (
+         SELECT 1 FROM admin_notice_reads nr
+         WHERE nr.notice_id = n.id AND nr.user_id = ?
+       ) AS is_read
+     FROM admin_notices n
+     WHERE n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP
+     ORDER BY n.published_at DESC, n.id DESC
+     LIMIT ? OFFSET ?`,
+    [user.id, limit, offset]
+  );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT COUNT(*) AS total FROM admin_notices WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP"
+  );
+  res.json({
+    total: Number(totalRow.total ?? 0),
+    notices: rows.map((row) => ({
+      id: String(row.id),
+      title: String(row.title),
+      author: String(row.author),
+      publishedAt: new Date(row.published_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+      expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+      isRead: bool(row.is_read)
+    }))
+  });
+});
+
+app.get("/api/notices/:id", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, title, author, content, published_at, updated_at, expires_at, valid_duration_minutes
+     FROM admin_notices
+     WHERE id = ? AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+     LIMIT 1`,
+    [req.params.id]
+  );
+  if (!rows[0]) return sendError(res, 404, "通知不存在");
+  await pool.query(
+    "INSERT IGNORE INTO admin_notice_reads (notice_id, user_id) VALUES (?, ?)",
+    [req.params.id, user.id]
+  );
+  res.json({ notice: { ...noticePayload(rows[0]), isRead: true } });
 });
 
 const DASHBOARD_DAY_MS = 24 * 60 * 60 * 1000;
@@ -2788,6 +2870,135 @@ app.delete("/api/admin/badges/users/:userId/legendary/:badgeId", async (req, res
     "UPDATE users SET equipped_badge_key = NULL, equipped_badge_icon_url = NULL WHERE id = ? AND equipped_badge_key = ?",
     [req.params.userId, `legendary:${req.params.badgeId}`]
   );
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/notices", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const keyword = req.query.keyword ? String(req.query.keyword).trim().slice(0, 200) : "";
+  const requestedLimit = Number(req.query.limit ?? 10);
+  const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : 10;
+  const offset = Math.max(0, Number(req.query.offset ?? 0));
+  const where = keyword ? "WHERE (n.title LIKE ? OR n.author LIKE ?)" : "";
+  const params = keyword ? [`%${keyword}%`, `%${keyword}%`] : [];
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT n.id, n.title, n.author, n.published_at, n.updated_at, n.expires_at, n.valid_duration_minutes,
+       (SELECT COUNT(*) FROM admin_notice_reads nr WHERE nr.notice_id = n.id) AS read_count
+     FROM admin_notices n
+     ${where}
+     ORDER BY n.published_at DESC, n.id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM admin_notices n ${where}`,
+    params
+  );
+  res.json({ notices: rows.map(noticePayload), total: Number(totalRow.total ?? 0) });
+});
+
+app.post("/api/admin/notices", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = adminNoticeSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "通知内容不正确");
+  const id = nanoid();
+  const validDurationMinutes = parsed.data.validDays * 1440 + parsed.data.validHours * 60;
+  await pool.query(
+    `INSERT INTO admin_notices
+       (id, title, author, content, created_by, valid_duration_minutes, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ? MINUTE))`,
+    [id, parsed.data.title, parsed.data.author, parsed.data.content, admin.id, validDurationMinutes, validDurationMinutes]
+  );
+  res.status(201).json({ id });
+});
+
+app.post("/api/admin/notices/bulk-delete", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = z.object({ ids: z.array(z.string().min(1)).min(1).max(100) }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "请选择要删除的通知");
+  const ids = [...new Set(parsed.data.ids)];
+  const placeholders = ids.map(() => "?").join(",");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `DELETE FROM admin_notices WHERE id IN (${placeholders})`,
+    ids
+  );
+  res.json({ ok: true, deleted: result.affectedRows });
+});
+
+app.get("/api/admin/notices/:id/readers", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [noticeRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, title FROM admin_notices WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  if (!noticeRows[0]) return sendError(res, 404, "通知不存在");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT u.id, u.nickname, u.username, nr.read_at
+     FROM admin_notice_reads nr
+     INNER JOIN users u ON u.id = nr.user_id
+     WHERE nr.notice_id = ?
+     ORDER BY nr.read_at DESC`,
+    [req.params.id]
+  );
+  res.json({
+    title: String(noticeRows[0].title),
+    readers: rows.map((row) => ({
+      id: String(row.id),
+      nickname: String(row.nickname),
+      username: String(row.username),
+      readAt: new Date(row.read_at).toISOString()
+    }))
+  });
+});
+
+app.get("/api/admin/notices/:id", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT n.*,
+       (SELECT COUNT(*) FROM admin_notice_reads nr WHERE nr.notice_id = n.id) AS read_count
+     FROM admin_notices n WHERE n.id = ? LIMIT 1`,
+    [req.params.id]
+  );
+  if (!rows[0]) return sendError(res, 404, "通知不存在");
+  if (req.query.trackRead !== "false") {
+    await pool.query(
+      "INSERT IGNORE INTO admin_notice_reads (notice_id, user_id) VALUES (?, ?)",
+      [req.params.id, admin.id]
+    );
+  }
+  const [[countRow]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT COUNT(*) AS read_count FROM admin_notice_reads WHERE notice_id = ?",
+    [req.params.id]
+  );
+  rows[0].read_count = countRow.read_count;
+  res.json({ notice: noticePayload(rows[0]) });
+});
+
+app.put("/api/admin/notices/:id", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = adminNoticeSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "通知内容不正确");
+  const validDurationMinutes = parsed.data.validDays * 1440 + parsed.data.validHours * 60;
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE admin_notices
+     SET title = ?, author = ?, content = ?, valid_duration_minutes = ?,
+         expires_at = DATE_ADD(published_at, INTERVAL ? MINUTE)
+     WHERE id = ?`,
+    [parsed.data.title, parsed.data.author, parsed.data.content, validDurationMinutes, validDurationMinutes, req.params.id]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, "通知不存在");
+  res.json({ ok: true });
+});
+
+app.delete("/api/admin/notices/:id", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "DELETE FROM admin_notices WHERE id = ?",
+    [req.params.id]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, "通知不存在");
   res.json({ ok: true });
 });
 

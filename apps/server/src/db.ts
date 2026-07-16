@@ -202,6 +202,45 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_notices (
+      id VARCHAR(64) PRIMARY KEY,
+      title VARCHAR(200) NOT NULL,
+      author VARCHAR(100) NOT NULL,
+      content LONGTEXT NOT NULL,
+      created_by VARCHAR(64) NULL,
+      valid_duration_minutes INT UNSIGNED NOT NULL DEFAULT 10080,
+      expires_at DATETIME NULL,
+      published_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_admin_notices_published (published_at),
+      CONSTRAINT fk_admin_notice_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_notice_reads (
+      notice_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      read_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (notice_id, user_id),
+      INDEX idx_admin_notice_reads_time (notice_id, read_at),
+      CONSTRAINT fk_admin_notice_read_notice FOREIGN KEY (notice_id) REFERENCES admin_notices(id) ON DELETE CASCADE,
+      CONSTRAINT fk_admin_notice_read_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn(
+    "admin_notices",
+    "valid_duration_minutes",
+    "valid_duration_minutes INT UNSIGNED NOT NULL DEFAULT 10080 AFTER created_by"
+  );
+  await ensureColumn("admin_notices", "expires_at", "expires_at DATETIME NULL AFTER valid_duration_minutes");
+  await pool.query(
+    "UPDATE admin_notices SET expires_at = DATE_ADD(published_at, INTERVAL valid_duration_minutes MINUTE) WHERE expires_at IS NULL"
+  );
+  await ensureIndex("admin_notices", "idx_admin_notices_expires", "expires_at");
+  await ensureAdminNoticeCreatorConstraint();
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS excellent_author_applications (
       id VARCHAR(64) PRIMARY KEY,
       applicant_id VARCHAR(64) NOT NULL,
@@ -457,6 +496,28 @@ async function ensureColumn(table: string, column: string, ddl: string) {
         throw error;
       }
     }
+  }
+}
+
+async function ensureAdminNoticeCreatorConstraint() {
+  await pool.query("ALTER TABLE admin_notices MODIFY COLUMN created_by VARCHAR(64) NULL");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT rc.CONSTRAINT_NAME, rc.DELETE_RULE
+     FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+     WHERE rc.CONSTRAINT_SCHEMA = ?
+       AND rc.TABLE_NAME = 'admin_notices'
+       AND rc.CONSTRAINT_NAME = 'fk_admin_notice_creator'
+     LIMIT 1`,
+    [config.db.database]
+  );
+  if (rows[0] && String(rows[0].DELETE_RULE).toUpperCase() !== "SET NULL") {
+    await pool.query("ALTER TABLE admin_notices DROP FOREIGN KEY fk_admin_notice_creator");
+    rows.length = 0;
+  }
+  if (!rows[0]) {
+    await pool.query(
+      "ALTER TABLE admin_notices ADD CONSTRAINT fk_admin_notice_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL"
+    );
   }
 }
 

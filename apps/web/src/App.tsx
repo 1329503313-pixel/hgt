@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Navigate, Routes, Route } from "react-router-dom";
 import { X } from "lucide-react";
 import { useApp } from "./context/AppContext";
 import { AuthModal, ExportPreview } from "./components/AuthModal";
@@ -13,6 +13,8 @@ import DetailPage from "./pages/DetailPage";
 import MessagesPage from "./pages/MessagesPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import RequestsPage from "./pages/RequestsPage";
+import NoticesPage from "./pages/NoticesPage";
+import NoticeDetailPage from "./pages/NoticeDetailPage";
 import MinePage from "./pages/MinePage";
 import MySoupsPage from "./pages/MySoupsPage";
 import MyFavoritesPage from "./pages/MyFavoritesPage";
@@ -48,8 +50,12 @@ export default function App() {
 
         {/* Messages / Notifications / Requests / Admin */}
         <Route path="messages" element={<MessagesPage />} />
-        <Route path="messages/notifications" element={<NotificationsPage />} />
+        <Route path="messages/system" element={<NotificationsPage category="system" />} />
+        <Route path="messages/interactions" element={<NotificationsPage category="interactions" />} />
+        <Route path="messages/notifications" element={<Navigate to="/messages/system" replace />} />
         <Route path="messages/requests" element={<RequestsPage />} />
+        <Route path="messages/notices" element={<NoticesPage />} />
+        <Route path="messages/notices/:id" element={<NoticeDetailPage />} />
         <Route path="admin" element={<AdminPage />} />
       </Routes>
       </ErrorBoundary>

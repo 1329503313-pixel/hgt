@@ -8,6 +8,7 @@ import { EvaluationManagement } from "../components/admin/EvaluationManagement";
 import { ApprovalManagement } from "../components/admin/ApprovalManagement";
 import { AdminDashboard } from "../components/admin/AdminDashboard";
 import { BadgeManagement } from "../components/admin/BadgeManagement";
+import { NoticeManagement } from "../components/admin/NoticeManagement";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -33,6 +34,7 @@ export default function AdminPage() {
         {activeTab === "approvals" && <ApprovalManagement />}
         {activeTab === "soups" && <SoupManagement />}
         {activeTab === "evaluations" && <EvaluationManagement />}
+        {activeTab === "notices" && <NoticeManagement />}
       </div>
     </section>
   );

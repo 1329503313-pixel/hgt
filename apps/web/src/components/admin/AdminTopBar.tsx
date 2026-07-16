@@ -1,7 +1,7 @@
-import { ArrowLeft, Award, BarChart3, ClipboardCheck, RefreshCw, Users, Soup, MessageSquare } from "lucide-react";
+import { ArrowLeft, Award, BarChart3, Bell, ClipboardCheck, RefreshCw, Users, Soup, MessageSquare } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-export type AdminTab = "data" | "users" | "badges" | "approvals" | "soups" | "evaluations";
+export type AdminTab = "data" | "users" | "badges" | "approvals" | "soups" | "evaluations" | "notices";
 
 export function AdminTopBar({
   activeTab,
@@ -18,7 +18,8 @@ export function AdminTopBar({
     { key: "badges", label: "徽章", icon: <Award size={16} /> },
     { key: "approvals", label: "审批", icon: <ClipboardCheck size={16} /> },
     { key: "soups", label: "汤品", icon: <Soup size={16} /> },
-    { key: "evaluations", label: "评价", icon: <MessageSquare size={16} /> }
+    { key: "evaluations", label: "评价", icon: <MessageSquare size={16} /> },
+    { key: "notices", label: "通知", icon: <Bell size={16} /> }
   ];
 
   return (

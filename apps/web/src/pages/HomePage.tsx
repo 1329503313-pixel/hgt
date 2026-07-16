@@ -75,8 +75,14 @@ export default function HomePage() {
   // 加载未读消息数
   useEffect(() => {
     if (!user) { setUnread(0); return; }
-    api<NotificationsResponse>("/api/notifications").then((d) => {
-      setUnread(d.notifications.filter((n) => !n.isRead).length);
+    Promise.all([
+      api<NotificationsResponse>("/api/notifications"),
+      api<{ notices: { isRead: boolean }[] }>("/api/notices")
+    ]).then(([messageData, noticeData]) => {
+      setUnread(
+        messageData.notifications.filter((item) => !item.isRead).length
+        + noticeData.notices.filter((item) => !item.isRead).length
+      );
     }).catch(() => {});
   }, [user, refreshKey]);
 

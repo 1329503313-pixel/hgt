@@ -190,6 +190,46 @@ textarea {
   font-style: italic;
 }
 
+.notice-rich-editor:empty::before {
+  color: #9ca3af;
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+.notice-rich-editor img,
+.notice-rich-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem auto;
+  border-radius: 12px;
+}
+
+.notice-rich-editor ul,
+.notice-rich-content ul {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+  list-style: disc;
+}
+
+.notice-rich-editor ol,
+.notice-rich-content ol {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+  list-style: decimal;
+}
+
+.notice-rich-editor p,
+.notice-rich-content p {
+  margin: 0.75rem 0;
+}
+
+.notice-rich-content {
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  line-height: 1.9;
+}
+
 .export-sheet {
   width: 720px;
   padding: 28px;
