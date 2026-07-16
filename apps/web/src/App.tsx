@@ -1,42 +1,49 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Routes, Route } from "react-router-dom";
 import { X } from "lucide-react";
 import { useApp } from "./context/AppContext";
-import { AuthModal, ExportPreview } from "./components/AuthModal";
-import { SoupEditor } from "./components/SoupEditor";
-import { EvalEditor } from "./components/EvalEditor";
-import { AchievementUnlockOverlay } from "./components/AchievementUnlockOverlay";
 import { IncomingMessageBanner } from "./components/IncomingMessageBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import MainLayout from "./layouts/MainLayout";
 
-import HomePage from "./pages/HomePage";
-import DetailPage from "./pages/DetailPage";
-import MessagesPage from "./pages/MessagesPage";
-import NotificationsPage from "./pages/NotificationsPage";
-import RequestsPage from "./pages/RequestsPage";
-import NoticesPage from "./pages/NoticesPage";
-import NoticeDetailPage from "./pages/NoticeDetailPage";
-import ChatPage from "./pages/ChatPage";
-import MinePage from "./pages/MinePage";
-import MySoupsPage from "./pages/MySoupsPage";
-import MyFavoritesPage from "./pages/MyFavoritesPage";
-import MyEvaluationsPage from "./pages/MyEvaluationsPage";
-import MyLikesPage from "./pages/MyLikesPage";
-import MyAchievementsPage from "./pages/MyAchievementsPage";
-import RankingsPage from "./pages/RankingsPage";
-import ExcellentAuthorPage from "./pages/ExcellentAuthorPage";
-import AdminPage from "./pages/AdminPage";
-import UserProfilePage from "./pages/UserProfilePage";
-import UserFollowsPage from "./pages/UserFollowsPage";
-import AccountSettingsPage from "./pages/AccountSettingsPage";
-import ResetPasswordPage from "./pages/ResetPasswordPage";
+const HomePage = lazy(() => import("./pages/HomePage"));
+const DetailPage = lazy(() => import("./pages/DetailPage"));
+const MessagesPage = lazy(() => import("./pages/MessagesPage"));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
+const RequestsPage = lazy(() => import("./pages/RequestsPage"));
+const NoticesPage = lazy(() => import("./pages/NoticesPage"));
+const NoticeDetailPage = lazy(() => import("./pages/NoticeDetailPage"));
+const ChatPage = lazy(() => import("./pages/ChatPage"));
+const MinePage = lazy(() => import("./pages/MinePage"));
+const MySoupsPage = lazy(() => import("./pages/MySoupsPage"));
+const MyFavoritesPage = lazy(() => import("./pages/MyFavoritesPage"));
+const MyEvaluationsPage = lazy(() => import("./pages/MyEvaluationsPage"));
+const MyLikesPage = lazy(() => import("./pages/MyLikesPage"));
+const MyAchievementsPage = lazy(() => import("./pages/MyAchievementsPage"));
+const RankingsPage = lazy(() => import("./pages/RankingsPage"));
+const ExcellentAuthorPage = lazy(() => import("./pages/ExcellentAuthorPage"));
+const AdminPage = lazy(() => import("./pages/AdminPage"));
+const UserProfilePage = lazy(() => import("./pages/UserProfilePage"));
+const UserFollowsPage = lazy(() => import("./pages/UserFollowsPage"));
+const AccountSettingsPage = lazy(() => import("./pages/AccountSettingsPage"));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
+const AchievementUnlockOverlay = lazy(() => import("./components/AchievementUnlockOverlay").then((module) => ({ default: module.AchievementUnlockOverlay })));
+const AuthModal = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.AuthModal })));
+const ExportPreview = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.ExportPreview })));
+const SoupEditor = lazy(() => import("./components/SoupEditor").then((module) => ({ default: module.SoupEditor })));
+const EvalEditor = lazy(() => import("./components/EvalEditor").then((module) => ({ default: module.EvalEditor })));
+
+function RouteFallback() {
+  return <div className="mx-auto mt-24 h-28 max-w-3xl animate-pulse rounded-2xl bg-slate-200/70" aria-label="页面加载中" />;
+}
 
 export default function App() {
-  const { toast, showToast, authMode, showSoupForm, showEvalForm, badgeUnlock } = useApp();
+  const { toast, showToast, authMode, showSoupForm, showEvalForm, exportReady, badgeUnlock } = useApp();
 
   return (
     <div className="app-shell min-h-screen bg-page">
       <ErrorBoundary>
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
         {/* Main layout group — BottomNav visible */}
         <Route element={<MainLayout />}>
@@ -70,6 +77,7 @@ export default function App() {
         <Route path="users/:id/followers" element={<UserFollowsPage type="followers" />} />
         <Route path="admin" element={<AdminPage />} />
       </Routes>
+        </Suspense>
       </ErrorBoundary>
 
       <IncomingMessageBanner />
@@ -83,11 +91,13 @@ export default function App() {
       )}
 
       {/* Global modals */}
-      {authMode && <AuthModal />}
-      {showSoupForm && <SoupEditor />}
-      {showEvalForm && <EvalEditor />}
-      <ExportPreview />
-      {badgeUnlock && <AchievementUnlockOverlay key={badgeUnlock.key} />}
+      <Suspense fallback={null}>
+        {authMode && <AuthModal />}
+        {showSoupForm && <SoupEditor />}
+        {showEvalForm && <EvalEditor />}
+        {exportReady && <ExportPreview />}
+      </Suspense>
+      {badgeUnlock && <Suspense fallback={null}><AchievementUnlockOverlay key={badgeUnlock.key} /></Suspense>}
     </div>
   );
 }

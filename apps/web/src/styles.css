@@ -728,3 +728,7 @@ textarea {
     transition-duration: 120ms;
   }
 }
+.chat-message-row {
+  content-visibility: auto;
+  contain-intrinsic-size: 72px;
+}

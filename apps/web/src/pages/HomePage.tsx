@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, FileText } from "lucide-react";
-import { toPng } from "html-to-image";
-import QRCode from "qrcode";
 import type { ConversationItem, PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse, NotificationsResponse, RequestsResponse } from "../api";
 import { getMessageUnreadCounts } from "../shared/messageUnread";
@@ -13,6 +11,7 @@ import { homeBannerUrl } from "../shared/staticAssets";
 import { CoverGridSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge">;
@@ -67,7 +66,7 @@ export default function HomePage() {
       }
       setLoading(append || !cached);
       try {
-        const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
+        const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`, { cacheTtlMs: append ? 0 : 30_000 });
         if (append) {
           setSoups((old) => {
             const seen = new Set(old.map((s) => s.id));
@@ -107,7 +106,7 @@ export default function HomePage() {
     if (cached) setMatchedUsers(cached.users);
     else setMatchedUsers([]);
     setUsersLoading(!cached);
-    void api<UserSearchResponse>(`/api/users/search?keyword=${encodeURIComponent(keyword)}&limit=50`)
+    void api<UserSearchResponse>(`/api/users/search?keyword=${encodeURIComponent(keyword)}&limit=50`, { cacheTtlMs: 60_000 })
       .then((data) => {
         if (requestId !== userSearchRequestRef.current) return;
         setMatchedUsers(data.users);
@@ -136,10 +135,8 @@ export default function HomePage() {
       }).total);
     }).catch(() => {});
     void loadUnread();
-    const events = new EventSource("/api/events", { withCredentials: true });
     const onUnreadChanged = () => { void loadUnread(); };
-    events.addEventListener("unread_changed", onUnreadChanged);
-    return () => { events.removeEventListener("unread_changed", onUnreadChanged); events.close(); };
+    return subscribeServerEvent("unread_changed", onUnreadChanged);
   }, [user, refreshKey]);
 
   const handleLoadMore = () => loadSoups(true);
@@ -148,6 +145,10 @@ export default function HomePage() {
     setShowExportConfirm(false);
     const latest = soups.slice(0, 10);
     if (latest.length === 0) return;
+    const [{ toPng }, { default: QRCode }] = await Promise.all([
+      import("html-to-image"),
+      import("qrcode")
+    ]);
 
     const sheet = document.createElement("div");
     sheet.className = "export-sheet";

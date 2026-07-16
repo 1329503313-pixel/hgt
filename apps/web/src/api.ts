@@ -13,28 +13,56 @@ import type {
 
 const API_URL = "";
 
-type ApiOptions = Omit<RequestInit, "body"> & { body?: BodyInit | object | null };
+type ApiOptions = Omit<RequestInit, "body"> & {
+  body?: BodyInit | object | null;
+  cacheTtlMs?: number;
+  dedupe?: boolean;
+};
+
+type CacheEntry = { expiresAt: number; value: unknown };
+const responseCache = new Map<string, CacheEntry>();
+const inFlightRequests = new Map<string, Promise<unknown>>();
 
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
-  const headers = new Headers(options.headers);
-  if (options.body && !(options.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
+  const { cacheTtlMs = 0, dedupe = true, ...fetchOptions } = options;
+  const method = String(fetchOptions.method ?? "GET").toUpperCase();
+  const cacheKey = method === "GET" && !fetchOptions.body ? path : "";
+  const cached = cacheKey ? responseCache.get(cacheKey) : null;
+  if (cached && cached.expiresAt > Date.now()) return cached.value as T;
+  if (cacheKey && dedupe) {
+    const pending = inFlightRequests.get(cacheKey);
+    if (pending) return pending as Promise<T>;
   }
 
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    credentials: "include",
-    headers,
-    body:
-      options.body && !(options.body instanceof FormData) && typeof options.body !== "string"
-        ? JSON.stringify(options.body)
-        : (options.body as BodyInit | null | undefined)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error ?? "请求失败");
+  const request = (async () => {
+    const headers = new Headers(fetchOptions.headers);
+    if (fetchOptions.body && !(fetchOptions.body instanceof FormData)) headers.set("Content-Type", "application/json");
+    const response = await fetch(`${API_URL}${path}`, {
+      ...fetchOptions,
+      credentials: "include",
+      headers,
+      body:
+        fetchOptions.body && !(fetchOptions.body instanceof FormData) && typeof fetchOptions.body !== "string"
+          ? JSON.stringify(fetchOptions.body)
+          : (fetchOptions.body as BodyInit | null | undefined)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error ?? "请求失败");
+    if (cacheKey && cacheTtlMs > 0) responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtlMs, value: data });
+    if (method !== "GET") responseCache.clear();
+    return data as T;
+  })();
+
+  if (cacheKey && dedupe) inFlightRequests.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    if (cacheKey) inFlightRequests.delete(cacheKey);
   }
-  return data as T;
+}
+
+export function prefetchApi<T>(path: string, cacheTtlMs = 30_000) {
+  return api<T>(path, { cacheTtlMs }).then(() => undefined).catch(() => undefined);
 }
 
 export type MeResponse = { user: AccountUser | null };

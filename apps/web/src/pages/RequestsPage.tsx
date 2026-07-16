@@ -6,6 +6,7 @@ import { useApp } from "../context/AppContext";
 import { RequestList } from "../components/Lists";
 import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 export default function RequestsPage() {
   const { user, loadingUser, showToast } = useApp();
@@ -26,10 +27,8 @@ export default function RequestsPage() {
 
   useEffect(() => {
     if (!user) return;
-    const events = new EventSource("/api/events", { withCredentials: true });
     const onUnreadChanged = () => { void loadRequests().catch(() => {}); };
-    events.addEventListener("unread_changed", onUnreadChanged);
-    return () => { events.removeEventListener("unread_changed", onUnreadChanged); events.close(); };
+    return subscribeServerEvent("unread_changed", onUnreadChanged);
   }, [user?.id]);
 
   async function decideRequest(id: string, decision: "approved" | "rejected") {

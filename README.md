@@ -43,6 +43,17 @@ docker compose ps
 | `ADMIN_DEFAULT_PASSWORD` | 管理员初始密码 |
 | `DB_PASSWORD` | MySQL 密码 |
 | `WEB_ORIGIN` | 前端域名（替换为实际域名） |
+| `RUN_DB_MIGRATIONS` | 启动时自动补齐表和索引，默认 `true`；多实例部署时可先单独执行迁移再设为 `false` |
+
+### 安全部署数据库迁移
+
+当前仍保持原有的“应用启动时自动迁移”行为，不会改变单实例部署流程。多实例或对启动时间敏感的环境，建议先备份数据库，再只运行一次：
+
+```bash
+npm run migrate:prod -w apps/server
+```
+
+迁移成功后将应用实例的 `RUN_DB_MIGRATIONS` 设为 `false` 再滚动发布，避免每个实例重复执行结构检查。
 
 ### 部署到阿里云
 

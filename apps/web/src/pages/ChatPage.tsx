@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Send, Smile, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
@@ -6,18 +6,22 @@ import { useApp } from "../context/AppContext";
 import type { PrivateMessageItem, PublicUser, StickerAsset, StickerSeries } from "../shared/types";
 import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 type ChatResponse = {
   conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar"> };
   messages: PrivateMessageItem[];
+  hasMore?: boolean;
+  nextCursor?: string | null;
 };
+
+type SendMessageResponse = { id: string; createdAt: string; message?: PrivateMessageItem };
 
 export default function ChatPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { user, loadingUser, showToast } = useApp();
   const [chat, setChat] = useState<ChatResponse | null>(null);
-  const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
   const [showStickers, setShowStickers] = useState(false);
@@ -25,14 +29,36 @@ export default function ChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const initialScrollDoneRef = useRef(false);
   const shouldFollowBottomRef = useRef(true);
+  const loadingOlderRef = useRef(false);
 
   async function loadMessages() {
-    const data = await api<ChatResponse>(`/api/conversations/${id}/messages`);
+    const data = await api<ChatResponse>(`/api/conversations/${id}/messages?limit=50`);
     setChat(data);
   }
 
+  async function loadOlderMessages() {
+    if (!chat?.hasMore || !chat.nextCursor || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    const container = messagesRef.current;
+    const previousHeight = container?.scrollHeight ?? 0;
+    try {
+      const data = await api<ChatResponse>(`/api/conversations/${id}/messages?limit=50&before=${encodeURIComponent(chat.nextCursor)}`);
+      setChat((current) => current ? {
+        ...current,
+        messages: [...data.messages, ...current.messages],
+        hasMore: data.hasMore,
+        nextCursor: data.nextCursor
+      } : data);
+      requestAnimationFrame(() => {
+        if (container) container.scrollTop += container.scrollHeight - previousHeight;
+      });
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }
+
   useEffect(() => {
-    void api<{ series: StickerSeries[] }>("/api/stickers")
+    void api<{ series: StickerSeries[] }>("/api/stickers", { cacheTtlMs: 30 * 60_000 })
       .then((data) => setStickerSeries(data.series))
       .catch((error) => showToast((error as Error).message));
   }, []);
@@ -61,35 +87,66 @@ export default function ChatPage() {
   }, [chat?.messages.length, chat?.conversation.id]);
   useEffect(() => {
     if (!user || !id) return;
-    const events = new EventSource("/api/events", { withCredentials: true });
-    const onMessage = (event: Event) => {
-      const payload = JSON.parse((event as MessageEvent<string>).data) as { conversationId?: string };
-      if (payload.conversationId === id) void loadMessages();
+    const onMessage = (event: MessageEvent<string>) => {
+      const payload = JSON.parse(event.data) as { conversationId?: string; message?: PrivateMessageItem };
+      if (payload.conversationId !== id) return;
+      if (!payload.message) {
+        void loadMessages().catch(() => {});
+        return;
+      }
+      shouldFollowBottomRef.current = true;
+      setChat((current) => current && !current.messages.some((item) => item.id === payload.message!.id)
+        ? { ...current, messages: [...current.messages, payload.message!] }
+        : current);
+      void api(`/api/conversations/${id}/read`, { method: "PATCH" }).catch(() => {});
     };
-    events.addEventListener("private_message", onMessage);
-    return () => { events.removeEventListener("private_message", onMessage); events.close(); };
+    return subscribeServerEvent("private_message", onMessage);
   }, [id, user?.id]);
 
-  async function send(event: FormEvent) {
-    event.preventDefault();
-    const value = content.trim();
-    if (!value || sending) return;
+  async function send(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed || sending || !user) return false;
+    const optimisticId = `pending-${Date.now()}`;
+    const optimisticMessage: PrivateMessageItem = {
+      id: optimisticId,
+      senderId: user.id,
+      content: trimmed,
+      type: "text",
+      stickerId: null,
+      isMine: true,
+      isRead: false,
+      createdAt: new Date().toISOString()
+    };
+    shouldFollowBottomRef.current = true;
+    setChat((current) => current ? { ...current, messages: [...current.messages, optimisticMessage] } : current);
     setSending(true);
     try {
-      await api(`/api/conversations/${id}/messages`, { method: "POST", body: { content: value } });
-      shouldFollowBottomRef.current = true;
-      setContent(""); await loadMessages();
-    } catch (error) { showToast((error as Error).message); } finally { setSending(false); }
+      const result = await api<SendMessageResponse>(`/api/conversations/${id}/messages`, { method: "POST", body: { content: trimmed } });
+      if (result.message) {
+        setChat((current) => current ? {
+          ...current,
+          messages: current.messages.map((message) => message.id === optimisticId ? result.message! : message)
+        } : current);
+      } else {
+        await loadMessages();
+      }
+      return true;
+    } catch (error) {
+      setChat((current) => current ? { ...current, messages: current.messages.filter((message) => message.id !== optimisticId) } : current);
+      showToast((error as Error).message);
+      return false;
+    } finally { setSending(false); }
   }
 
   async function sendSticker(sticker: StickerAsset) {
     if (sending) return;
     setSending(true);
     try {
-      await api(`/api/conversations/${id}/messages`, { method: "POST", body: { stickerId: sticker.id } });
       shouldFollowBottomRef.current = true;
       setShowStickers(false);
-      await loadMessages();
+      const data = await api<SendMessageResponse>(`/api/conversations/${id}/messages`, { method: "POST", body: { stickerId: sticker.id } });
+      if (data.message) setChat((current) => current ? { ...current, messages: [...current.messages, data.message!] } : current);
+      else await loadMessages();
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -97,9 +154,9 @@ export default function ChatPage() {
     }
   }
 
-  const stickersById = new Map(
+  const stickersById = useMemo(() => new Map(
     stickerSeries.flatMap((series) => series.stickers.map((sticker) => [sticker.id, sticker] as const))
-  );
+  ), [stickerSeries]);
 
   if (loadingUser || !chat) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="私信" backTo="/messages" /><div className="mx-auto max-w-3xl px-4"><ListSkeleton rows={7} /></div></section>;
 
@@ -131,11 +188,20 @@ export default function ChatPage() {
             setShowScrollBottom(!nearBottom);
           }}
         >
+          {chat.hasMore && (
+            <button
+              type="button"
+              className="mx-auto block rounded-full bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm"
+              onClick={() => void loadOlderMessages()}
+            >
+              加载更早消息
+            </button>
+          )}
           {chat.messages.map((message) => {
             const sender = message.isMine ? user : chat.conversation.otherUser;
             const sticker = message.stickerId ? stickersById.get(message.stickerId) : null;
             return (
-            <div key={message.id} className={`flex items-start gap-2.5 ${message.isMine ? "flex-row-reverse" : "flex-row"}`}>
+            <div key={message.id} className={`chat-message-row flex items-start gap-2.5 ${message.isMine ? "flex-row-reverse" : "flex-row"}`}>
               <button
                 type="button"
                 className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary"
@@ -203,14 +269,59 @@ export default function ChatPage() {
             </div>
           </div>
         )}
-        <form className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 p-3 backdrop-blur" onSubmit={send}>
-          <div className="mx-auto flex max-w-3xl items-end gap-2">
-            <textarea className="field h-11 max-h-28 min-h-11 flex-1 resize-none py-[10px] leading-[22px]" rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} placeholder="输入消息" onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-            <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${showStickers ? "btn-primary" : "btn-secondary"}`} onClick={() => setShowStickers((current) => !current)} aria-label="打开表情包"><Smile size={24} /></button>
-            <button className="btn btn-primary h-11 w-11 shrink-0 p-0" disabled={!content.trim() || sending} aria-label="发送"><Send size={22} /></button>
-          </div>
-        </form>
+        <ChatComposer
+          sending={sending}
+          showStickers={showStickers}
+          onToggleStickers={() => setShowStickers((current) => !current)}
+          onSend={send}
+        />
       </div>
     </section>
+  );
+}
+
+function ChatComposer({
+  sending,
+  showStickers,
+  onToggleStickers,
+  onSend
+}: {
+  sending: boolean;
+  showStickers: boolean;
+  onToggleStickers: () => void;
+  onSend: (value: string) => Promise<boolean>;
+}) {
+  const [content, setContent] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const value = content.trim();
+    if (!value || sending) return;
+    setContent("");
+    const sent = await onSend(value);
+    if (!sent) setContent((current) => current || value);
+  }
+
+  return (
+    <form className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 p-3 backdrop-blur" onSubmit={submit}>
+      <div className="mx-auto flex max-w-3xl items-end gap-2">
+        <textarea
+          className="field h-11 max-h-28 min-h-11 flex-1 resize-none py-[10px] leading-[22px]"
+          rows={1}
+          maxLength={1000}
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          placeholder="输入消息"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
+        />
+        <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${showStickers ? "btn-primary" : "btn-secondary"}`} onClick={onToggleStickers} aria-label="打开表情包"><Smile size={24} /></button>
+        <button className="btn btn-primary h-11 w-11 shrink-0 p-0" disabled={!content.trim() || sending} aria-label="发送"><Send size={22} /></button>
+      </div>
+    </form>
   );
 }

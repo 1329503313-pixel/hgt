@@ -3,6 +3,7 @@ import { FileClock, MessageCircle } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 type PrivateMessagePayload = {
   conversationId: string;
@@ -76,7 +77,6 @@ export function IncomingMessageBanner() {
       setCurrent(null);
       return;
     }
-    const events = new EventSource("/api/events", { withCredentials: true });
     const onPrivateMessage = (event: Event) => {
       const payload = eventPayload<PrivateMessagePayload>(event);
       if (!payload?.conversationId || !payload.messageId) return;
@@ -104,12 +104,11 @@ export function IncomingMessageBanner() {
         requestId: payload.requestId
       });
     };
-    events.addEventListener("private_message", onPrivateMessage);
-    events.addEventListener("view_request", onViewRequest);
+    const unsubscribePrivate = subscribeServerEvent("private_message", onPrivateMessage);
+    const unsubscribeRequest = subscribeServerEvent("view_request", onViewRequest);
     return () => {
-      events.removeEventListener("private_message", onPrivateMessage);
-      events.removeEventListener("view_request", onViewRequest);
-      events.close();
+      unsubscribePrivate();
+      unsubscribeRequest();
     };
   }, [user?.id, enqueue]);
 

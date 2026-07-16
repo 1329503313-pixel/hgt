@@ -1,6 +1,7 @@
 import "express-async-errors";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
+import compression from "compression";
 import cors from "cors";
 import express, { Request, Response, NextFunction } from "express";
 import { createHash } from "node:crypto";
@@ -88,6 +89,7 @@ function createRateLimiter(windowMs: number, maxRequests: number, keyFor: (req: 
 
 const loginRateLimiter = createRateLimiter(15 * 60_000, 10, (req) => `login:${req.ip ?? "unknown"}`);
 const registerRateLimiter = createRateLimiter(60 * 60_000, 10, (req) => `register:${req.ip ?? "unknown"}`);
+const performanceRateLimiter = createRateLimiter(60_000, 120, (req) => `performance:${req.ip ?? "unknown"}`);
 
 function setAuthCookie(res: Response, token: string) {
   res.cookie("hgt_token", token, {
@@ -142,8 +144,24 @@ function extractAuthClaims(req: Request): AuthClaims | null {
 }
 
 app.use(cors({ origin: config.webOrigin, credentials: true }));
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => req.path !== "/api/events" && compression.filter(req, res)
+}));
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  const requestId = nanoid(10);
+  res.setHeader("X-Request-Id", requestId);
+  res.on("finish", () => {
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= 500) {
+      console.warn(JSON.stringify({ kind: "slow_request", requestId, method: req.method, path: req.path, status: res.statusCode, durationMs }));
+    }
+  });
+  next();
+});
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -263,7 +281,10 @@ const soupSchema = z.object({
     .string()
     .optional()
     .default("")
-    .refine((value) => !value || /^data:image\/(png|jpeg);base64,/.test(value), "封面仅支持 JPG 或 PNG"),
+    .refine(
+      (value) => !value || /^data:image\/(png|jpeg);base64,/.test(value) || /^\/api\/media\/soups\/[^/]+\/cover$/.test(value),
+      "封面仅支持 JPG 或 PNG"
+    ),
   isOriginal: z.boolean().default(true),
   isSensitive: z.boolean(),
   surface: text,
@@ -336,10 +357,71 @@ function sendError(res: express.Response, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
 
+function avatarUrl(userId: unknown, stored: unknown, hasAvatar = false) {
+  if (!stored && !hasAvatar) return null;
+  const value = stored ? String(stored) : "";
+  return value && !value.startsWith("data:image/") ? value : `/api/media/users/${encodeURIComponent(String(userId))}/avatar`;
+}
+
+function soupImageUrl(soupId: unknown, stored: unknown, variant: "thumbnail" | "cover") {
+  if (!stored) return null;
+  const value = String(stored);
+  return value.startsWith("data:image/")
+    ? `/api/media/soups/${encodeURIComponent(String(soupId))}/${variant}`
+    : value;
+}
+
+function decodeDataImage(value: string) {
+  const match = /^data:(image\/(?:png|jpeg|jpg|webp));base64,([\s\S]+)$/i.exec(value);
+  if (!match) return null;
+  return { contentType: match[1].toLowerCase().replace("image/jpg", "image/jpeg"), buffer: Buffer.from(match[2], "base64") };
+}
+
+const optimizedImageCache = new Map<string, Buffer>();
+
+async function sendStoredImage(req: express.Request, res: express.Response, value: unknown, maxWidth: number) {
+  if (!value) return sendError(res, 404, "图片不存在");
+  const stored = String(value);
+  if (!stored.startsWith("data:image/")) return res.redirect(302, stored);
+  const decoded = decodeDataImage(stored);
+  if (!decoded) return sendError(res, 415, "图片格式不受支持");
+
+  const etag = `\"${createHash("sha1").update(decoded.buffer).update(String(maxWidth)).digest("hex")}\"`;
+  res.setHeader("ETag", etag);
+  res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+  if (reqHeaderMatches(req.headers["if-none-match"], etag)) return res.status(304).end();
+  let output = optimizedImageCache.get(etag);
+  if (!output) {
+    output = await sharp(decoded.buffer)
+      .rotate()
+      .resize({ width: maxWidth, height: maxWidth, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 78, effort: 4 })
+      .toBuffer();
+    optimizedImageCache.set(etag, output);
+    if (optimizedImageCache.size > 200) optimizedImageCache.delete(optimizedImageCache.keys().next().value!);
+  }
+  res.setHeader("Content-Type", "image/webp");
+  res.setHeader("Content-Length", output.length);
+  return res.send(output);
+}
+
+function reqHeaderMatches(header: string | string[] | undefined, etag: string) {
+  return typeof header === "string" && header.split(",").map((value) => value.trim()).some((value) => value === "*" || value === etag);
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
 async function currentUser(req: express.Request): Promise<AuthenticatedUser | null> {
   const claims = extractAuthClaims(req);
   if (!claims) return null;
-  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM users WHERE id = ? LIMIT 1", [claims.id]);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, username, nickname, role, token_version, created_at,
+       equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
+     FROM users WHERE id = ? LIMIT 1`,
+    [claims.id]
+  );
   const row = rows[0];
   if (!row || Number(row.token_version ?? 0) !== claims.tokenVersion) return null;
   return { ...toUser(row), tokenVersion: Number(row.token_version ?? 0) };
@@ -406,7 +488,7 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
     id: row.id,
     username: row.username,
     nickname: row.nickname,
-    avatar: row.avatar ? String(row.avatar) : null,
+    avatar: avatarUrl(row.id, row.avatar, Boolean(row.has_avatar)),
     role: row.role,
     createdAt: new Date(row.created_at).toISOString(),
     equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
@@ -505,7 +587,7 @@ function mapEvaluation(row: mysql.RowDataPacket) {
     total: Number(row.total),
     reviewer: row.reviewer,
     reviewerId: row.reviewer_id,
-    reviewerAvatar: row.reviewer_avatar ? String(row.reviewer_avatar) : null,
+    reviewerAvatar: avatarUrl(row.reviewer_id, row.reviewer_avatar),
     reviewerEquippedBadge: equippedBadge(row.reviewer_badge_key, row.reviewer_badge_icon_url),
     writing: num(row.writing),
     logic: num(row.logic),
@@ -530,11 +612,11 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     author: row.author,
     type: row.type,
     summary: row.summary ?? "",
-    coverImage: row.cover_thumbnail ? String(row.cover_thumbnail) : null,
+    coverImage: soupImageUrl(row.id, row.cover_thumbnail, "thumbnail"),
     isOriginal: bool(row.is_original ?? 1),
     creatorId: row.creator_id,
     creatorName: row.creator_name,
-    creatorAvatar: row.creator_avatar ? String(row.creator_avatar) : null,
+    creatorAvatar: avatarUrl(row.creator_id, row.creator_avatar),
     creatorEquippedBadge: equippedBadge(row.creator_badge_key, row.creator_badge_icon_url),
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
@@ -564,7 +646,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
 function mapSoupDetail(row: mysql.RowDataPacket) {
   return {
     ...mapSoupSummary(row),
-    coverImage: row.cover_image ? String(row.cover_image) : null
+    coverImage: soupImageUrl(row.id, row.cover_image, "cover")
   };
 }
 
@@ -1064,11 +1146,17 @@ function queueActivityBadgeSync(userIds: string[]) {
 
 setBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 
-async function generateThumbnail(base64: string): Promise<string | null> {
+async function optimizeCoverImage(base64: string): Promise<{ full: string; thumbnail: string } | null> {
   try {
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
-    const thumb = await sharp(buf).resize(400, undefined, { withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-    return `data:image/jpeg;base64,${thumb.toString("base64")}`;
+    const [full, thumbnail] = await Promise.all([
+      sharp(buf).rotate().resize({ width: 1600, withoutEnlargement: true }).webp({ quality: 82, effort: 4 }).toBuffer(),
+      sharp(buf).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 76, effort: 4 }).toBuffer()
+    ]);
+    return {
+      full: `data:image/webp;base64,${full.toString("base64")}`,
+      thumbnail: `data:image/webp;base64,${thumbnail.toString("base64")}`
+    };
   } catch {
     return null;
   }
@@ -1161,18 +1249,53 @@ app.post("/api/auth/password", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/telemetry/performance", performanceRateLimiter, (req, res) => {
+  const parsed = z.object({
+    name: z.enum(["navigation", "lcp", "long-task", "interaction"]),
+    value: z.number().nonnegative().max(120_000),
+    route: z.string().max(160)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(204).end();
+  console.info(JSON.stringify({ kind: "web_performance", ...parsed.data }));
+  res.status(204).end();
+});
+
+app.get("/api/media/users/:id/avatar", async (req, res) => {
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT avatar FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!row) return sendError(res, 404, "用户不存在");
+  return sendStoredImage(req, res, row.avatar, 160);
+});
+
+app.get("/api/media/soups/:id/thumbnail", async (req, res) => {
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT cover_thumbnail, review_status, creator_id FROM soups WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  if (!row) return sendError(res, 404, "作品不存在");
+  const viewer = row.review_status === "approved" ? null : await currentUser(req);
+  if (row.review_status !== "approved" && viewer?.role !== "admin" && viewer?.id !== String(row.creator_id)) {
+    return sendError(res, 404, "作品不存在");
+  }
+  return sendStoredImage(req, res, row.cover_thumbnail, 480);
+});
+
+app.get("/api/media/soups/:id/cover", async (req, res) => {
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT cover_image, review_status, creator_id FROM soups WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  if (!row) return sendError(res, 404, "作品不存在");
+  const viewer = row.review_status === "approved" ? null : await currentUser(req);
+  if (row.review_status !== "approved" && viewer?.role !== "admin" && viewer?.id !== String(row.creator_id)) {
+    return sendError(res, 404, "作品不存在");
+  }
+  return sendStoredImage(req, res, row.cover_image, 1280);
+});
+
 app.get("/api/auth/me", async (req, res) => {
   const user = await currentUser(req);
   if (user) {
     await recordLoginDay(user.id);
-    // JWT 不再包含 avatar（缩小 token 体积），需要从数据库查
-    const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT avatar FROM users WHERE id = ? LIMIT 1",
-      [user.id]
-    );
-    if (rows.length) {
-      user.avatar = rows[0].avatar ? String(rows[0].avatar) : null;
-    }
   }
   if (!user) return res.json({ user: null });
   const { tokenVersion: _tokenVersion, ...publicUser } = user;
@@ -1238,12 +1361,22 @@ app.patch("/api/me/avatar", async (req, res) => {
     .safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "头像格式不正确");
 
-  const avatar = parsed.data.avatar || null;
+  let avatar = parsed.data.avatar || null;
+  if (avatar) {
+    const decoded = decodeDataImage(avatar);
+    if (!decoded) return sendError(res, 400, "头像格式不正确");
+    const optimized = await sharp(decoded.buffer)
+      .rotate()
+      .resize({ width: 256, height: 256, fit: "cover", withoutEnlargement: true })
+      .webp({ quality: 78, effort: 4 })
+      .toBuffer();
+    avatar = `data:image/webp;base64,${optimized.toString("base64")}`;
+  }
   await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
 
   const token = signToken({ id: user.id, tokenVersion: user.tokenVersion });
   setAuthCookie(res, token);
-  res.json({ ok: true, avatar });
+  res.json({ ok: true, avatar: avatarUrl(user.id, avatar) });
 });
 
 app.get("/api/me/soup-publish-quota", async (req, res) => {
@@ -1410,10 +1543,50 @@ app.get("/api/me/stats", async (req, res) => {
   res.json(await getAchievementStats(user.id));
 });
 
+app.get("/api/users/search", async (req, res) => {
+  const keyword = String(req.query.keyword ?? "").trim();
+  if (!keyword) return res.json({ users: [], total: 0 });
+  if (keyword.length > 50) return sendError(res, 400, "搜索关键词过长");
+
+  const requestedLimit = Number(req.query.limit ?? 20);
+  const limit = Math.min(50, Math.max(1, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 20));
+  const escapedKeyword = escapeLikePattern(keyword);
+  const likeKeyword = `%${escapedKeyword}%`;
+  const prefixKeyword = `${escapedKeyword}%`;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, nickname, avatar, role, created_at, equipped_badge_key, equipped_badge_icon_url
+     FROM users
+     WHERE nickname LIKE ?
+     ORDER BY CASE WHEN nickname = ? THEN 0 WHEN nickname LIKE ? THEN 1 ELSE 2 END, created_at DESC
+     LIMIT ?`,
+    [likeKeyword, keyword, prefixKeyword, limit]
+  );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT COUNT(*) AS total FROM users WHERE nickname LIKE ?",
+    [likeKeyword]
+  );
+  res.json({
+    total: Number(totalRow.total ?? 0),
+    users: rows.map((row) => ({
+      id: String(row.id),
+      nickname: String(row.nickname),
+      avatar: avatarUrl(row.id, row.avatar),
+      role: String(row.role),
+      createdAt: new Date(row.created_at).toISOString(),
+      equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
+    }))
+  });
+});
+
 app.get("/api/users/:id/profile", async (req, res) => {
   const viewer = await requireAuth(req, res);
   if (!viewer) return;
-  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, username, nickname, role, created_at, equipped_badge_key, equipped_badge_icon_url,
+       avatar IS NOT NULL AS has_avatar
+     FROM users WHERE id = ? LIMIT 1`,
+    [req.params.id]
+  );
   const target = rows[0];
   if (!target) return sendError(res, 404, "用户不存在");
   const includeSoups = req.query.includeSoups !== "false";
@@ -1526,7 +1699,7 @@ app.get("/api/me/received-interactions", async (req, res) => {
   res.json({ soups: rows.map((row) => ({
     id: String(row.id),
     title: String(row.title),
-    coverImage: row.cover_thumbnail ? String(row.cover_thumbnail) : null,
+    coverImage: soupImageUrl(row.id, row.cover_thumbnail, "thumbnail"),
     likeCount: Number(row.like_count ?? 0),
     favoriteCount: Number(row.favorite_count ?? 0),
     evaluationCount: Number(row.evaluation_count ?? 0)
@@ -1573,7 +1746,7 @@ app.get("/api/me/soups/:id/interactions", async (req, res) => {
     interactions: rows.map((row) => ({
       userId: String(row.id),
       nickname: String(row.nickname),
-      avatar: row.avatar ? String(row.avatar) : null,
+      avatar: avatarUrl(row.id, row.avatar),
       total: row.total == null ? null : Number(row.total),
       content: row.content ? String(row.content) : null,
       createdAt: new Date(row.created_at).toISOString()
@@ -1639,7 +1812,7 @@ app.get("/api/conversations", async (req, res) => {
     otherUser: {
       id: String(row.other_id),
       nickname: String(row.other_nickname),
-      avatar: row.other_avatar ? String(row.other_avatar) : null
+      avatar: avatarUrl(row.other_id, row.other_avatar)
     },
     lastMessage: row.last_content == null ? null : {
       content: String(row.last_content),
@@ -1674,18 +1847,37 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
     [req.params.id, user.id]
   );
   if (readResult.affectedRows > 0) emitUnreadChanged(user.id, "private_message_read");
+  const requestedLimit = Number(req.query.limit ?? 50);
+  const limit = Math.min(100, Math.max(10, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 50));
+  const before = String(req.query.before ?? "").trim();
+  const params: unknown[] = [req.params.id];
+  let beforeClause = "";
+  if (before) {
+    const [[cursor]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT created_at, id FROM private_messages WHERE id = ? AND conversation_id = ? LIMIT 1",
+      [before, req.params.id]
+    );
+    if (!cursor) return sendError(res, 400, "消息游标无效");
+    beforeClause = "AND (created_at < ? OR (created_at = ? AND id < ?))";
+    params.push(cursor.created_at, cursor.created_at, cursor.id);
+  }
+  params.push(limit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT id, sender_id, content, message_type, sticker_id, read_at, created_at
-     FROM private_messages WHERE conversation_id = ?
-     ORDER BY created_at ASC, id ASC`,
-    [req.params.id]
+     FROM private_messages WHERE conversation_id = ? ${beforeClause}
+     ORDER BY created_at DESC, id DESC
+     LIMIT ?`,
+    params
   );
+  const hasMore = rows.length > limit;
+  if (hasMore) rows.pop();
+  rows.reverse();
   res.json({
     conversation: {
       id: String(conversation.id),
       otherUser: {
         id: String(conversation.other_id),
-        nickname: String(conversation.other_nickname), avatar: conversation.other_avatar ? String(conversation.other_avatar) : null
+        nickname: String(conversation.other_nickname), avatar: avatarUrl(conversation.other_id, conversation.other_avatar)
       }
     },
     messages: rows.map((row) => ({
@@ -1694,8 +1886,23 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
       stickerId: row.sticker_id ? String(row.sticker_id) : null,
       isMine: String(row.sender_id) === user.id,
       isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString()
-    }))
+    })),
+    hasMore,
+    nextCursor: hasMore && rows[0] ? String(rows[0].id) : null
   });
+});
+
+app.patch("/api/conversations/:id/read", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const conversation = await conversationForUser(req.params.id, user.id);
+  if (!conversation) return sendError(res, 404, "会话不存在");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "UPDATE private_messages SET read_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND sender_id <> ? AND read_at IS NULL",
+    [req.params.id, user.id]
+  );
+  if (result.affectedRows > 0) emitUnreadChanged(user.id, "private_message_read");
+  res.json({ ok: true, updated: result.affectedRows });
 });
 
 app.post("/api/conversations/:id/messages", async (req, res) => {
@@ -1732,6 +1939,17 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   } finally {
     connection.release();
   }
+  const createdAt = new Date().toISOString();
+  const message = {
+    id,
+    senderId: user.id,
+    content,
+    type: messageType,
+    stickerId: sticker?.id ?? null,
+    isMine: true,
+    isRead: false,
+    createdAt
+  };
   emitUserEvent(String(conversation.other_id), "private_message", {
     conversationId: req.params.id,
     messageId: id,
@@ -1740,10 +1958,12 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     senderAvatar: user.avatar,
     content,
     type: messageType,
-    stickerId: sticker?.id ?? null
+    stickerId: sticker?.id ?? null,
+    createdAt,
+    message: { ...message, isMine: false }
   });
   emitUnreadChanged(String(conversation.other_id), "private_message");
-  res.status(201).json({ id, createdAt: new Date().toISOString() });
+  res.status(201).json({ id, createdAt, message });
 });
 
 app.post("/api/me/badge-unlocks/sync", async (req, res) => {
@@ -2054,9 +2274,9 @@ app.get("/api/soups", async (req, res) => {
 
   const limit = Math.min(Number(req.query.limit ?? 10), 50);
   const offset = Number(req.query.offset ?? 0);
-  const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RAND";
-
-  const orderClause = order === "RAND" ? "RAND()" : `s.created_at ${order}`;
+  const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RANDOM";
+  const randomSeed = String(req.query.seed ?? new Date().toISOString().slice(0, 10)).slice(0, 32);
+  const orderClause = order === "RANDOM" ? "CRC32(CONCAT(s.id, ?))" : `s.created_at ${order}`;
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
@@ -2086,7 +2306,7 @@ app.get("/api/soups", async (req, res) => {
     ORDER BY ${orderClause}
     LIMIT ${limit + 1} OFFSET ${offset}
     `,
-    [...(user ? [user.id, user.id] : []), ...params]
+    [...(user ? [user.id, user.id] : []), ...params, ...(order === "RANDOM" ? [randomSeed] : [])]
   );
 
   const hasMore = rows.length > limit;
@@ -2133,7 +2353,8 @@ app.post("/api/soups", async (req, res) => {
   }
 
   const author = soup.isOriginal ? soup.author : "佚名";
-  const thumbnail = soup.coverImage ? await generateThumbnail(soup.coverImage) : null;
+  const optimizedCover = soup.coverImage ? await optimizeCoverImage(soup.coverImage) : null;
+  if (soup.coverImage && !optimizedCover) return sendError(res, 400, "封面图片无法处理");
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -2153,7 +2374,7 @@ app.post("/api/soups", async (req, res) => {
       `INSERT INTO soups
         (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, ai_prompt, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, soup.title, author, soup.type, soup.summary, soup.coverImage || null, thumbnail, soup.isOriginal, soup.isSensitive,
+      [id, soup.title, author, soup.type, soup.summary, optimizedCover?.full ?? null, optimizedCover?.thumbnail ?? null, soup.isOriginal, soup.isSensitive,
         soup.surface, JSON.stringify(soup.supplementalSurfaces), soup.bottom, JSON.stringify(soup.supplementalBottoms), soup.manual || null,
         soup.isSurfacePublic, soup.isBottomPublic, soup.enableAiGame, review.decision, review.reason, 1, soup.aiPrompt || null,
         soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null, null, soup.keyFactsCustomized ? 1 : 0, user.id, user.nickname]
@@ -2418,7 +2639,11 @@ app.put("/api/soups/:id", async (req, res) => {
   }
   if (review.decision === "rejected") return sendError(res, 422, review.reason ?? "内容未通过自动审核");
   const author = next.isOriginal ? next.author : "佚名";
-  const thumbnail = next.coverImage ? await generateThumbnail(next.coverImage) : null;
+  const existingCoverSelected = next.coverImage.startsWith(`/api/media/soups/${req.params.id}/cover`);
+  const optimizedCover = next.coverImage && !existingCoverSelected ? await optimizeCoverImage(next.coverImage) : null;
+  if (next.coverImage && !existingCoverSelected && !optimizedCover) return sendError(res, 400, "封面图片无法处理");
+  const coverImage = existingCoverSelected ? soup.cover_image : (optimizedCover?.full ?? null);
+  const thumbnail = existingCoverSelected ? soup.cover_thumbnail : (optimizedCover?.thumbnail ?? null);
   await pool.query(
     `UPDATE soups
      SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
@@ -2430,7 +2655,7 @@ app.put("/api/soups/:id", async (req, res) => {
       author,
       next.type,
       next.summary,
-      next.coverImage || null,
+      coverImage,
       thumbnail,
       next.isOriginal,
       next.isSensitive,
@@ -3243,7 +3468,7 @@ app.get("/api/admin/badges/users", async (req, res) => {
     total: Number(totalRow.total ?? 0),
     users: rows.map((row) => ({
       id: String(row.id), username: String(row.username), nickname: String(row.nickname),
-      avatar: row.avatar ? String(row.avatar) : null,
+      avatar: avatarUrl(row.id, row.avatar),
       badgeCount: Number(row.badge_count ?? 0),
       normalCount: Number(row.normal_count ?? 0), rareCount: Number(row.rare_count ?? 0),
       epicCount: Number(row.epic_count ?? 0), legendCount: Number(row.legend_count ?? 0)
@@ -3264,7 +3489,7 @@ app.get("/api/admin/badges/users/:id", async (req, res) => {
   );
   const row = userRows[0];
   res.json({
-    user: { id: String(row.id), username: String(row.username), nickname: String(row.nickname), avatar: row.avatar ? String(row.avatar) : null },
+    user: { id: String(row.id), username: String(row.username), nickname: String(row.nickname), avatar: avatarUrl(row.id, row.avatar) },
     badgeKeys: badgeRows.map((badge) => String(badge.badge_key))
   });
 });
@@ -3304,7 +3529,7 @@ app.get("/api/admin/badges/:id/owners", async (req, res) => {
   );
   res.json({
     badge: { id: String(badgeRows[0].id), name: String(badgeRows[0].name) },
-    users: rows.map((row) => ({ id: String(row.id), username: String(row.username), nickname: String(row.nickname), avatar: row.avatar ? String(row.avatar) : null }))
+    users: rows.map((row) => ({ id: String(row.id), username: String(row.username), nickname: String(row.nickname), avatar: avatarUrl(row.id, row.avatar) }))
   });
 });
 
@@ -3622,11 +3847,15 @@ app.use("/api/game", async (req, _res, next) => {
 }, gameRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if ((err as { type?: string }).type === "entity.parse.failed") {
+    return res.status(400).json({ error: "请求内容不是有效的 JSON" });
+  }
   console.error(err);
   res.status(500).json({ error: "服务暂时不可用" });
 });
 
-await initDatabase();
+if (config.runDatabaseMigrations) await initDatabase();
+else await pool.query("SELECT 1");
 await refreshEquippedSpecialBadgeMetadata();
 await refreshBadgeOwnershipRates();
 const badgeOwnershipRefreshTimer = setInterval(() => {

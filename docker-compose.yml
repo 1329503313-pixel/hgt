@@ -18,6 +18,7 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set}
       - DB_NAME=hgt
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - RUN_DB_MIGRATIONS=${RUN_DB_MIGRATIONS:-true}
     networks:
       - mysql-docker_default
 

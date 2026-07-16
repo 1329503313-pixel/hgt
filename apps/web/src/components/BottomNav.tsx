@@ -45,6 +45,7 @@ export function BottomNav() {
         <button
           className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isHomeActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}
           onClick={handleHome}
+          onPointerEnter={() => { void import("../pages/HomePage"); }}
         >
           <Home size={20} />
           <span>首页</span>
@@ -58,6 +59,7 @@ export function BottomNav() {
         <button
           className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isMineActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}
           onClick={handleMine}
+          onPointerEnter={() => { if (user) void import("../pages/MinePage"); }}
         >
           <User size={20} />
           <span>我的</span>

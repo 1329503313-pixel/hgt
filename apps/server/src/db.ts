@@ -176,6 +176,7 @@ export async function initDatabase() {
   await ensureIndex("notifications", "uq_notification_actor_event", "user_id, type, related_id, actor_id", true);
   await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
   await ensureIndex("users", "idx_users_created_at", "created_at");
+  await ensureIndex("users", "idx_users_nickname", "nickname");
   await ensureIndex("soups", "idx_soups_created_at", "created_at");
   await ensureIndex("soups", "idx_soups_type_created", "type, created_at");
   await ensureIndex("evaluations", "idx_evaluations_created_at", "created_at");
@@ -456,6 +457,7 @@ export async function initDatabase() {
   `);
   await ensureColumn("private_messages", "message_type", "message_type VARCHAR(16) NOT NULL DEFAULT 'text' AFTER content");
   await ensureColumn("private_messages", "sticker_id", "sticker_id VARCHAR(64) NULL AFTER message_type");
+  await ensureIndex("private_messages", "idx_private_messages_conversation_cursor", "conversation_id, created_at, id");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS game_completions (

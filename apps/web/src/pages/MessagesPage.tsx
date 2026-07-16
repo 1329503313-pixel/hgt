@@ -7,6 +7,7 @@ import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { getMessageUnreadCounts } from "../shared/messageUnread";
 import { CardSkeleton, ListSkeleton } from "../components/Skeletons";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 type NoticeSummary = { id: string; isRead: boolean };
 
@@ -41,10 +42,8 @@ export default function MessagesPage() {
 
   useEffect(() => {
     if (!user) return;
-    const events = new EventSource("/api/events", { withCredentials: true });
     const onUnreadChanged = () => { void loadMessageData(); };
-    events.addEventListener("unread_changed", onUnreadChanged);
-    return () => { events.removeEventListener("unread_changed", onUnreadChanged); events.close(); };
+    return subscribeServerEvent("unread_changed", onUnreadChanged);
   }, [user?.id, loadMessageData]);
 
   const counts = useMemo(() => getMessageUnreadCounts({ notifications, requests, notices, conversations }), [notifications, requests, notices, conversations]);

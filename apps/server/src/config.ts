@@ -32,6 +32,7 @@ export const config = {
     : process.env.COOKIE_SECURE === "true" || process.env.COOKIE_SECURE === "1",
   sessionSecret: process.env.SESSION_SECRET ?? "dev-session-secret-change-me",
   adminDefaultPassword: process.env.ADMIN_DEFAULT_PASSWORD ?? "",
+  runDatabaseMigrations: process.env.RUN_DB_MIGRATIONS !== "false",
   deepseekApiKey: readSecret("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_FILE"),
   db: {
     host: process.env.DB_HOST ?? "127.0.0.1",
