@@ -11,6 +11,7 @@ const BADGE_ASSET_URLS: Record<string, string> = {
   "/badges/creator-like-epic.png": "/badges/creator-like-epic.c379d483e3.webp",
   "/badges/creator-like-normal.png": "/badges/creator-like-normal.e8868ef42e.webp",
   "/badges/creator-like-rare.png": "/badges/creator-like-rare.2a418d621d.webp",
+  "/badges/crimson-moon-covenant-legend.png": "/badges/crimson-moon-covenant-legend.7bddb9bbfa.webp",
   "/badges/favorite-epic.png": "/badges/favorite-epic.ff673d8c49.webp",
   "/badges/favorite-normal.png": "/badges/favorite-normal.5187dbccf6.webp",
   "/badges/favorite-rare.png": "/badges/favorite-rare.67d5394500.webp",

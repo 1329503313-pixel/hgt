@@ -104,9 +104,9 @@ export default function HomePage() {
     }).catch(() => {});
     void loadUnread();
     const events = new EventSource("/api/events", { withCredentials: true });
-    const onPrivateMessage = () => { void loadUnread(); };
-    events.addEventListener("private_message", onPrivateMessage);
-    return () => { events.removeEventListener("private_message", onPrivateMessage); events.close(); };
+    const onUnreadChanged = () => { void loadUnread(); };
+    events.addEventListener("unread_changed", onUnreadChanged);
+    return () => { events.removeEventListener("unread_changed", onUnreadChanged); events.close(); };
   }, [user, refreshKey]);
 
   const handleLoadMore = () => loadSoups(true);

@@ -5,6 +5,7 @@ import { AuthModal, ExportPreview } from "./components/AuthModal";
 import { SoupEditor } from "./components/SoupEditor";
 import { EvalEditor } from "./components/EvalEditor";
 import { AchievementUnlockOverlay } from "./components/AchievementUnlockOverlay";
+import { IncomingMessageBanner } from "./components/IncomingMessageBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import MainLayout from "./layouts/MainLayout";
 
@@ -70,6 +71,8 @@ export default function App() {
         <Route path="admin" element={<AdminPage />} />
       </Routes>
       </ErrorBoundary>
+
+      <IncomingMessageBanner />
 
       {/* Global toast */}
       {toast && (

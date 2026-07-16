@@ -24,6 +24,14 @@ export default function RequestsPage() {
     void loadRequests().catch((error) => showToast((error as Error).message)).finally(() => setLoading(false));
   }, [user, loadingUser]);
 
+  useEffect(() => {
+    if (!user) return;
+    const events = new EventSource("/api/events", { withCredentials: true });
+    const onUnreadChanged = () => { void loadRequests().catch(() => {}); };
+    events.addEventListener("unread_changed", onUnreadChanged);
+    return () => { events.removeEventListener("unread_changed", onUnreadChanged); events.close(); };
+  }, [user?.id]);
+
   async function decideRequest(id: string, decision: "approved" | "rejected") {
     try {
       await api(`/api/access-requests/${id}/decision`, { method: "POST", body: { decision } });

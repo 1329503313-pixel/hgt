@@ -11,16 +11,15 @@ import { BADGES, getBadgeKey } from "./MyAchievementsPage";
 import { ProfileHero, SoupCoverGrid } from "../components/ProfileViews";
 import { CoverGridSkeleton, ProfileSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
+import { MINE_CONTENT_CACHE_MAX_AGE, mineCountsCacheKey, mineListCacheKey, type MineContentCounts, type MineContentTab, type MineContentTabData } from "../shared/mineContentCache";
 
 type BadgeCollectionResponse = { badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; equippedBadge: EquippedBadge | null };
-type TabKey = "published" | "favorites" | "likes";
-type TabData = { soups: SoupSummary[]; total: number; hasMore: boolean; loaded: boolean; loading: boolean };
-type TabCounts = Record<TabKey, number>;
+type TabKey = MineContentTab;
+type TabData = MineContentTabData;
+type TabCounts = MineContentCounts;
 
 const emptyTab = (): TabData => ({ soups: [], total: 0, hasMore: false, loaded: false, loading: false });
 const profileCacheKey = (userId: string) => `hgt:mine:profile:${userId}`;
-const countsCacheKey = (userId: string) => `hgt:mine:counts:${userId}`;
-const listCacheKey = (userId: string, tab: TabKey) => `hgt:mine:list:${userId}:${tab}`;
 const listEndpoints: Record<TabKey, string> = { published: "/api/me/soups", favorites: "/api/me/favorites", likes: "/api/me/likes" };
 
 export default function MinePage() {
@@ -48,7 +47,7 @@ export default function MinePage() {
       likes: { ...state.likes, total: counts.likes }
     }));
     setCountsReady(true);
-    writeSessionCache(countsCacheKey(userId), counts);
+    writeSessionCache(mineCountsCacheKey(userId), counts);
   }
 
   async function loadTab(tab: TabKey, append = false) {
@@ -67,7 +66,7 @@ export default function MinePage() {
           loaded: true,
           loading: false
         };
-        if (!append) writeSessionCache(listCacheKey(user.id, tab), next);
+        if (!append) writeSessionCache(mineListCacheKey(user.id, tab), next);
         return { ...state, [tab]: next };
       });
     } catch (error) {
@@ -79,8 +78,8 @@ export default function MinePage() {
   useEffect(() => {
     if (!user) { setProfile(null); setTabs({ published: emptyTab(), favorites: emptyTab(), likes: emptyTab() }); setCountsReady(false); return; }
     const cachedProfile = readSessionCache<SocialProfile>(profileCacheKey(user.id), 5 * 60_000);
-    const cachedCounts = readSessionCache<TabCounts>(countsCacheKey(user.id), 2 * 60_000);
-    const cachedPublished = readSessionCache<TabData>(listCacheKey(user.id, "published"), 2 * 60_000);
+    const cachedCounts = readSessionCache<TabCounts>(mineCountsCacheKey(user.id), MINE_CONTENT_CACHE_MAX_AGE);
+    const cachedPublished = readSessionCache<TabData>(mineListCacheKey(user.id, "published"), MINE_CONTENT_CACHE_MAX_AGE);
     if (cachedProfile) setProfile(cachedProfile);
     if (cachedCounts) {
       setTabs((state) => ({
@@ -100,10 +99,26 @@ export default function MinePage() {
 
   useEffect(() => {
     if (activeTab === "published" || !user || tabs[activeTab].loaded || tabs[activeTab].loading) return;
-    const cached = readSessionCache<TabData>(listCacheKey(user.id, activeTab), 2 * 60_000);
+    const cached = readSessionCache<TabData>(mineListCacheKey(user.id, activeTab), MINE_CONTENT_CACHE_MAX_AGE);
     if (cached) setTabs((state) => ({ ...state, [activeTab]: { ...cached, loading: false } }));
     void loadTab(activeTab);
   }, [activeTab, user?.id, tabs[activeTab].loaded, tabs[activeTab].loading]);
+
+  useEffect(() => {
+    if (!user) return;
+    const handleCacheUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ userId: string; tab: TabKey; counts: TabCounts; tabData: TabData }>).detail;
+      if (!detail || detail.userId !== user.id) return;
+      setCountsReady(true);
+      setTabs((state) => ({
+        published: { ...state.published, total: detail.counts.published, ...(detail.tab === "published" ? detail.tabData : {}) },
+        favorites: { ...state.favorites, total: detail.counts.favorites, ...(detail.tab === "favorites" ? detail.tabData : {}) },
+        likes: { ...state.likes, total: detail.counts.likes, ...(detail.tab === "likes" ? detail.tabData : {}) }
+      }));
+    };
+    window.addEventListener("hgt:mine-content-cache-updated", handleCacheUpdate);
+    return () => window.removeEventListener("hgt:mine-content-cache-updated", handleCacheUpdate);
+  }, [user?.id]);
 
   if (loadingUser) return <section><PageTopBar title="我的" /><ProfileSkeleton /></section>;
   if (!user) return <section><PageTopBar title="我的" /><div className="card p-6 text-center"><p className="text-sm text-muted">登录后查看个人主页</p><button className="btn btn-primary mt-4 w-full" onClick={openAuth}>登录</button></div></section>;

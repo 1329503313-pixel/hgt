@@ -13,6 +13,7 @@ import { GameModal } from "../components/GameModal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import { DetailSkeleton } from "../components/Skeletons";
+import { refreshMineContentCache } from "../shared/mineContentCache";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -59,6 +60,7 @@ export default function DetailPage() {
   async function handleDelete() {
     if (!soup || !confirm("确定删除这条海龟汤吗？相关评价也会删除。")) return;
     await api(`/api/soups/${soup.id}`, { method: "DELETE" });
+    if (user && soup.creatorId === user.id) void refreshMineContentCache(user.id, "published").catch(() => {});
     navigate("/");
   }
 
@@ -67,6 +69,7 @@ export default function DetailPage() {
     if (!user) { openAuth(); return; }
     const data = await api<{ isFavorited: boolean; favoriteCount: number }>(`/api/soups/${soup.id}/favorite`, { method: "POST" });
     setSoup((old) => old ? { ...old, isFavorited: data.isFavorited, favoriteCount: data.favoriteCount } : old);
+    void refreshMineContentCache(user.id, "favorites").catch(() => {});
     if (data.isFavorited) await checkBadgeUnlocks();
   }
 
@@ -75,6 +78,7 @@ export default function DetailPage() {
     if (!user) { openAuth(); return; }
     const data = await api<{ isLiked: boolean; likeCount: number }>(`/api/soups/${soup.id}/like`, { method: "POST" });
     setSoup((old) => old ? { ...old, isLiked: data.isLiked, likeCount: data.likeCount } : old);
+    void refreshMineContentCache(user.id, "likes").catch(() => {});
     if (data.isLiked) await checkBadgeUnlocks();
   }
 

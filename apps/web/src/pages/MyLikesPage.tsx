@@ -6,6 +6,7 @@ import { useApp } from "../context/AppContext";
 import { SubListPage } from "../components/SoupLinkList";
 import { ListSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
+import { MINE_CONTENT_CACHE_MAX_AGE } from "../shared/mineContentCache";
 
 function useWaitForUser() {
   const { user, loadingUser } = useApp();
@@ -21,7 +22,7 @@ function MyListPage({ title, endpoint, emptyHint }: { title: string; endpoint: s
   useEffect(() => {
     if (loadingUser || !user) return;
     const cacheKey = `hgt:mine:legacy-list:${user.id}:${endpoint}`;
-    const cached = readSessionCache<SoupSummary[]>(cacheKey, 2 * 60_000);
+    const cached = readSessionCache<SoupSummary[]>(cacheKey, MINE_CONTENT_CACHE_MAX_AGE);
     if (cached) { setSoups(cached); setLoading(false); }
     else setLoading(true);
     api<SoupsResponse>(endpoint)

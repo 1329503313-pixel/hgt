@@ -49,6 +49,15 @@ function emitUserEvent(userId: string, event: string, payload: unknown) {
   for (const client of clients) client.write(data);
 }
 
+function emitUnreadChanged(userId: string, source: string) {
+  emitUserEvent(userId, "unread_changed", { source, at: new Date().toISOString() });
+}
+
+async function broadcastUnreadChanged(source: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users");
+  for (const row of rows) emitUnreadChanged(String(row.id), source);
+}
+
 type RateLimitEntry = { count: number; resetAt: number };
 
 function createRateLimiter(windowMs: number, maxRequests: number, keyFor: (req: Request) => string) {
@@ -672,10 +681,11 @@ async function notify(
   relatedId: string | null,
   actorId: string | null = null
 ) {
-  await pool.query(
+  const [result] = await pool.query<mysql.ResultSetHeader>(
     "INSERT IGNORE INTO notifications (id, user_id, type, title, content, related_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
     [nanoid(), userId, type, title, content, relatedId, actorId]
   );
+  if (result.affectedRows > 0) emitUnreadChanged(userId, type);
 }
 
 async function adminIds() {
@@ -1642,14 +1652,15 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
   if (!user) return;
   const conversation = await conversationForUser(req.params.id, user.id);
   if (!conversation) return sendError(res, 404, "会话不存在");
-  await pool.query(
+  const [readResult] = await pool.query<mysql.ResultSetHeader>(
     "UPDATE private_messages SET read_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND sender_id <> ? AND read_at IS NULL",
     [req.params.id, user.id]
   );
+  if (readResult.affectedRows > 0) emitUnreadChanged(user.id, "private_message_read");
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT id, sender_id, content, read_at, created_at
      FROM private_messages WHERE conversation_id = ?
-     ORDER BY created_at ASC, id ASC LIMIT 200`,
+     ORDER BY created_at ASC, id ASC`,
     [req.params.id]
   );
   res.json({
@@ -1676,17 +1687,31 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   const conversation = await conversationForUser(req.params.id, user.id);
   if (!conversation) return sendError(res, 404, "会话不存在");
   const id = nanoid();
-  await pool.query(
-    "INSERT INTO private_messages (id, conversation_id, sender_id, content) VALUES (?, ?, ?, ?)",
-    [id, req.params.id, user.id, parsed.data.content]
-  );
-  await pool.query("UPDATE conversations SET last_message_at = CURRENT_TIMESTAMP WHERE id = ?", [req.params.id]);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      "INSERT INTO private_messages (id, conversation_id, sender_id, content) VALUES (?, ?, ?, ?)",
+      [id, req.params.id, user.id, parsed.data.content]
+    );
+    await connection.query("UPDATE conversations SET last_message_at = CURRENT_TIMESTAMP WHERE id = ?", [req.params.id]);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
   emitUserEvent(String(conversation.other_id), "private_message", {
     conversationId: req.params.id,
     messageId: id,
     senderId: user.id,
+    senderUsername: user.username,
+    senderNickname: user.nickname,
+    senderAvatar: user.avatar,
     content: parsed.data.content
   });
+  emitUnreadChanged(String(conversation.other_id), "private_message");
   res.status(201).json({ id, createdAt: new Date().toISOString() });
 });
 
@@ -2584,6 +2609,17 @@ app.post("/api/soups/:id/access-requests", async (req, res) => {
       notify(recipient, "view_request", "新的查看申请", `${user.nickname} 申请查看《${soup.title}》的汤底和主持人手册`, id)
     )
   );
+  for (const recipient of recipients) {
+    emitUserEvent(String(recipient), "view_request", {
+      requestId: id,
+      soupId: req.params.id,
+      soupTitle: String(soup.title),
+      requesterId: user.id,
+      requesterUsername: user.username,
+      requesterName: user.nickname,
+      requesterAvatar: user.avatar
+    });
+  }
   res.status(201).json({ id });
 });
 
@@ -2665,6 +2701,8 @@ app.post("/api/access-requests/:id/decision", async (req, res) => {
     `你对该海龟汤完整内容的查看申请已${parsed.data.decision === "approved" ? "通过" : "拒绝"}`,
     request.soup_id
   );
+  const requestRecipients = new Set([String(request.owner_id), ...(await adminIds())]);
+  for (const recipient of requestRecipients) emitUnreadChanged(recipient, "view_request_decision");
   res.json({ ok: true });
 });
 
@@ -2810,6 +2848,7 @@ app.patch("/api/notifications/read-all", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   await pool.query("UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE", [user.id]);
+  emitUnreadChanged(user.id, "notifications_read");
   res.json({ ok: true });
 });
 
@@ -2817,6 +2856,7 @@ app.patch("/api/notifications/:id/read", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   await pool.query("UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?", [req.params.id, user.id]);
+  emitUnreadChanged(user.id, "notification_read");
   res.json({ ok: true });
 });
 
@@ -2867,10 +2907,11 @@ app.get("/api/notices/:id", async (req, res) => {
     [req.params.id]
   );
   if (!rows[0]) return sendError(res, 404, "通知不存在");
-  await pool.query(
+  const [noticeReadResult] = await pool.query<mysql.ResultSetHeader>(
     "INSERT IGNORE INTO admin_notice_reads (notice_id, user_id) VALUES (?, ?)",
     [req.params.id, user.id]
   );
+  if (noticeReadResult.affectedRows > 0) emitUnreadChanged(user.id, "notice_read");
   res.json({ notice: { ...noticePayload(rows[0]), isRead: true } });
 });
 
@@ -3307,6 +3348,7 @@ app.post("/api/admin/notices", async (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ? MINUTE))`,
     [id, parsed.data.title, parsed.data.author, parsed.data.content, admin.id, validDurationMinutes, validDurationMinutes]
   );
+  await broadcastUnreadChanged("notice_created");
   res.status(201).json({ id });
 });
 
@@ -3320,6 +3362,7 @@ app.post("/api/admin/notices/bulk-delete", async (req, res) => {
     `DELETE FROM admin_notices WHERE id IN (${placeholders})`,
     ids
   );
+  if (result.affectedRows > 0) await broadcastUnreadChanged("notice_deleted");
   res.json({ ok: true, deleted: result.affectedRows });
 });
 
@@ -3386,6 +3429,7 @@ app.put("/api/admin/notices/:id", async (req, res) => {
     [parsed.data.title, parsed.data.author, parsed.data.content, validDurationMinutes, validDurationMinutes, req.params.id]
   );
   if (result.affectedRows === 0) return sendError(res, 404, "通知不存在");
+  await broadcastUnreadChanged("notice_updated");
   res.json({ ok: true });
 });
 
@@ -3396,6 +3440,7 @@ app.delete("/api/admin/notices/:id", async (req, res) => {
     [req.params.id]
   );
   if (result.affectedRows === 0) return sendError(res, 404, "通知不存在");
+  await broadcastUnreadChanged("notice_deleted");
   res.json({ ok: true });
 });
 

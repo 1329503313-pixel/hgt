@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, FileClock, Heart, MessageCircle, ShieldCheck } from "lucide-react";
 import type { ConversationItem, NotificationItem, ViewRequestItem } from "../shared/types";
@@ -19,29 +19,33 @@ export default function MessagesPage() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  async function loadConversations() {
+  const loadConversations = useCallback(async () => {
     const data = await api<{ conversations: ConversationItem[] }>("/api/conversations");
     setConversations(data.conversations);
-  }
+  }, []);
 
-  useEffect(() => {
-    if (loadingUser || !user) return;
-    setLoading(true);
-    void Promise.all([
+  const loadMessageData = useCallback(async () => {
+    await Promise.all([
       api<NotificationsResponse>("/api/notifications").then((data) => setNotifications(data.notifications)),
       api<RequestsResponse>("/api/access-requests").then((data) => setRequests(data.requests)),
       api<{ notices: NoticeSummary[] }>("/api/notices").then((data) => setNotices(data.notices)),
       loadConversations()
-    ]).catch(() => {}).finally(() => setLoading(false));
-  }, [user, loadingUser]);
+    ]);
+  }, [loadConversations]);
+
+  useEffect(() => {
+    if (loadingUser || !user) return;
+    setLoading(true);
+    void loadMessageData().catch(() => {}).finally(() => setLoading(false));
+  }, [user, loadingUser, loadMessageData]);
 
   useEffect(() => {
     if (!user) return;
     const events = new EventSource("/api/events", { withCredentials: true });
-    const onPrivateMessage = () => { void loadConversations(); };
-    events.addEventListener("private_message", onPrivateMessage);
-    return () => { events.removeEventListener("private_message", onPrivateMessage); events.close(); };
-  }, [user?.id]);
+    const onUnreadChanged = () => { void loadMessageData(); };
+    events.addEventListener("unread_changed", onUnreadChanged);
+    return () => { events.removeEventListener("unread_changed", onUnreadChanged); events.close(); };
+  }, [user?.id, loadMessageData]);
 
   const counts = useMemo(() => getMessageUnreadCounts({ notifications, requests, notices, conversations }), [notifications, requests, notices, conversations]);
 

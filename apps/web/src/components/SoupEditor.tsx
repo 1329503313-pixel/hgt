@@ -7,6 +7,7 @@ import { CheckRow } from "./FormWidgets";
 import { useApp } from "../context/AppContext";
 import { api } from "../api";
 import { useNavigate } from "react-router-dom";
+import { refreshMineContentCache } from "../shared/mineContentCache";
 
 function SupplementEditor({
   title,
@@ -174,6 +175,7 @@ export function SoupEditor() {
 
     try {
       const result = await api<{ id?: string; reviewStatus?: "approved" | "pending" | "rejected" }>(path, { method, body: payload });
+      if (user) void refreshMineContentCache(user.id, "published").catch(() => {});
       closeSoupEditor();
       if (result.reviewStatus === "pending") {
         showToast("您发布的海龟汤可能存在不当言论，目前正在由管理员进行审核");

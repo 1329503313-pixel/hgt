@@ -659,4 +659,12 @@ async function seedLegendaryBadges() {
        achievement_points = VALUES(achievement_points), badge_type = 'activity', tier = 'epic'`,
     ["original-shareholder", "原始股东", "我就是原始股东！", "平台初创用户可获得", "/badges/original-shareholder-epic.png", 150]
   );
+  await pool.query(
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier)
+     VALUES (?, ?, ?, ?, ?, ?, 'limited', 'legend')
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
+       achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend'`,
+    ["crimson-moon-covenant", "绯月契约", "以绯月为契，倾听封存故事的低语", null, "/badges/crimson-moon-covenant-legend.png", 300]
+  );
 }
