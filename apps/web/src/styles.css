@@ -6,6 +6,12 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  touch-action: pan-x pan-y;
+}
+
 body {
   margin: 0;
   background: #f5f7fa;
@@ -188,6 +194,16 @@ textarea {
 }
 .content-block em {
   font-style: italic;
+}
+
+/* iOS 会自动放大字号小于 16px 的输入控件。 */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea,
+  .field {
+    font-size: 16px !important;
+  }
 }
 
 .notice-rich-editor:empty::before {

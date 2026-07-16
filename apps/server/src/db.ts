@@ -366,7 +366,7 @@ export async function initDatabase() {
     WHERE badge_key = 'legendary:excellent-author'
   `);
   await pool.query(
-    "UPDATE users SET equipped_badge_key = 'excellentAuthor:epic', equipped_badge_icon_url = '/badges/excellent-author.png' WHERE equipped_badge_key = 'legendary:excellent-author'"
+    "UPDATE users SET equipped_badge_key = 'excellentAuthor:epic', equipped_badge_icon_url = '/badges/excellent-author.webp' WHERE equipped_badge_key = 'legendary:excellent-author'"
   );
   await pool.query("DELETE FROM user_badge_unlocks WHERE badge_key = 'legendary:excellent-author'");
   await pool.query("DELETE FROM legendary_badges WHERE id = 'excellent-author'");
@@ -655,7 +655,7 @@ async function seedLegendaryBadges() {
      ON DUPLICATE KEY UPDATE
        name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
        achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend'`,
-    ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.png", 300]
+    ["founder-turtle", "创始神龟", "海龟汤应用创始者之一", null, "/badges/founder-turtle-legend.webp", 300]
   );
   await pool.query(
     `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier)
@@ -663,7 +663,7 @@ async function seedLegendaryBadges() {
      ON DUPLICATE KEY UPDATE
        name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
        achievement_points = VALUES(achievement_points), badge_type = 'activity', tier = 'epic'`,
-    ["original-shareholder", "原始股东", "我就是原始股东！", "平台初创用户可获得", "/badges/original-shareholder-epic.png", 150]
+    ["original-shareholder", "原始股东", "我就是原始股东！", "平台初创用户可获得", "/badges/original-shareholder-epic.webp", 150]
   );
   await pool.query(
     `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier)
@@ -671,6 +671,6 @@ async function seedLegendaryBadges() {
      ON DUPLICATE KEY UPDATE
        name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
        achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend'`,
-    ["crimson-moon-covenant", "绯月契约", "以绯月为契，倾听封存故事的低语", null, "/badges/crimson-moon-covenant-legend.png", 300]
+    ["crimson-moon-covenant", "绯月契约", "以绯月为契，倾听封存故事的低语", null, "/badges/crimson-moon-covenant-legend.webp", 300]
   );
 }

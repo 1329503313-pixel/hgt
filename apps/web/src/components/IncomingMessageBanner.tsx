@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { subscribeServerEvent } from "../shared/serverEvents";
+import { privateMessagePreview } from "../shared/messagePreview";
 
 type PrivateMessagePayload = {
   conversationId: string;
@@ -12,6 +13,8 @@ type PrivateMessagePayload = {
   senderNickname?: string;
   senderAvatar?: string | null;
   content: string;
+  type?: "text" | "sticker";
+  stickerName?: string | null;
 };
 
 type ViewRequestPayload = {
@@ -86,7 +89,7 @@ export function IncomingMessageBanner() {
         sourceName: payload.senderNickname || "新消息",
         sourceAvatar: payload.senderAvatar,
         title: "私信消息",
-        detail: payload.content,
+        detail: privateMessagePreview({ content: payload.content, type: payload.type ?? "text", stickerName: payload.stickerName }),
         href: `/messages/chat/${payload.conversationId}`
       });
     };

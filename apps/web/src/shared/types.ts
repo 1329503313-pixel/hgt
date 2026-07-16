@@ -145,7 +145,7 @@ export type SocialUser = PublicUser & {
 export type ConversationItem = {
   id: string;
   otherUser: Pick<PublicUser, "id" | "nickname" | "avatar">;
-  lastMessage: { content: string; type: "text" | "sticker"; stickerId: string | null; isMine: boolean; createdAt: string } | null;
+  lastMessage: { content: string; type: "text" | "sticker"; stickerId: string | null; stickerName?: string | null; isMine: boolean; createdAt: string } | null;
   unreadCount: number;
   updatedAt: string;
 };
@@ -156,6 +156,7 @@ export type PrivateMessageItem = {
   content: string;
   type: "text" | "sticker";
   stickerId: string | null;
+  stickerName?: string | null;
   isMine: boolean;
   isRead: boolean;
   createdAt: string;

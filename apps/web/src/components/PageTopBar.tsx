@@ -4,11 +4,13 @@ import { useApp } from "../context/AppContext";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { parentRoute } from "../shared/routeHierarchy";
+import { useMessageUnread } from "../shared/useMessageUnread";
 
-export function PageTopBar({ title, titleContent, titleTo = "/", unread = 0, backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; unread?: number; backTo?: string; rightAction?: React.ReactNode }) {
+export function PageTopBar({ title, titleContent, titleTo = "/", backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; backTo?: string; rightAction?: React.ReactNode }) {
   const { user } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
+  const unread = useMessageUnread(user?.id, Boolean(user && !backTo));
 
   return (
     <div className="top-nav-shell">

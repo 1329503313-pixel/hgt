@@ -94,8 +94,6 @@ export function SubListPage({
   const { setExportReady } = useApp();
   const [showExportConfirm, setShowExportConfirm] = useState(false);
 
-  // 计算 unread（简化：如果没有 user 则为 0）
-  const unread = 0;
 
   async function handleExportSoups() {
     setShowExportConfirm(false);
@@ -190,7 +188,7 @@ export function SubListPage({
 
   return (
     <section className="space-y-3">
-      <PageTopBar title={title} unread={unread} />
+      <PageTopBar title={title} />
       <MineBackButton />
       <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} emptyHint={emptyHint} showHeatValue={showHeatValue} />
 

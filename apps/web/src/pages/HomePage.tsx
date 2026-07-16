@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, FileText } from "lucide-react";
-import type { ConversationItem, PublicUser, SoupSummary } from "../shared/types";
-import { api, SoupsResponse, NotificationsResponse, RequestsResponse } from "../api";
-import { getMessageUnreadCounts } from "../shared/messageUnread";
+import type { PublicUser, SoupSummary } from "../shared/types";
+import { api, SoupsResponse } from "../api";
 import { useApp, soupTypes } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { MasonryList } from "../components/MasonryList";
@@ -11,7 +10,6 @@ import { homeBannerUrl } from "../shared/staticAssets";
 import { CoverGridSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
-import { subscribeServerEvent } from "../shared/serverEvents";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge">;
@@ -26,7 +24,6 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const loadingRef = useRef(false);
   const offsetRef = useRef(0);
-  const [unread, setUnread] = useState(0);
   const [matchedUsers, setMatchedUsers] = useState<SearchUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersExpanded, setUsersExpanded] = useState(false);
@@ -117,27 +114,6 @@ export default function HomePage() {
         if (requestId === userSearchRequestRef.current) setUsersLoading(false);
       });
   }, [filters.keyword]);
-
-  // 加载未读消息数
-  useEffect(() => {
-    if (!user) { setUnread(0); return; }
-    const loadUnread = () => Promise.all([
-      api<NotificationsResponse>("/api/notifications"),
-      api<RequestsResponse>("/api/access-requests"),
-      api<{ notices: { isRead: boolean }[] }>("/api/notices"),
-      api<{ conversations: ConversationItem[] }>("/api/conversations")
-    ]).then(([messageData, requestData, noticeData, conversationData]) => {
-      setUnread(getMessageUnreadCounts({
-        notifications: messageData.notifications,
-        requests: requestData.requests,
-        notices: noticeData.notices,
-        conversations: conversationData.conversations
-      }).total);
-    }).catch(() => {});
-    void loadUnread();
-    const onUnreadChanged = () => { void loadUnread(); };
-    return subscribeServerEvent("unread_changed", onUnreadChanged);
-  }, [user, refreshKey]);
 
   const handleLoadMore = () => loadSoups(true);
 
@@ -238,7 +214,7 @@ export default function HomePage() {
 
   return (
     <section className="space-y-3">
-      <PageTopBar title="海龟汤" unread={unread} />
+      <PageTopBar title="海龟汤" />
 
       <div className="home-search-sticky flex gap-2">
         <div className="relative min-w-0 flex-1">

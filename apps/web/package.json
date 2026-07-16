@@ -4,8 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "prebuild": "npm run optimize:images && npm run check:images",
     "build": "vite build",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run check:images && tsc -p tsconfig.json --noEmit",
+    "optimize:images": "node scripts/optimize-images.mjs",
+    "check:images": "node scripts/optimize-images.mjs --check",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -26,6 +29,7 @@
   },
   "devDependencies": {
     "@types/react": "^19.0.8",
-    "@types/react-dom": "^19.0.3"
+    "@types/react-dom": "^19.0.3",
+    "sharp": "^0.35.3"
   }
 }

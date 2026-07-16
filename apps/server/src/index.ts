@@ -557,7 +557,7 @@ async function ownedBadgeIconUrl(userId: string, badgeKey: string) {
   }
   const [series, tier] = badgeKey.split(":");
   const base = SYSTEM_BADGE_ICON_BASE[series];
-  return base && ["normal", "rare", "epic", "legend"].includes(tier) ? `/badges/${base}-${tier}.png` : null;
+  return base && ["normal", "rare", "epic", "legend"].includes(tier) ? `/badges/${base}-${tier}.webp` : null;
 }
 
 function jsonList(value: unknown): string[] {
@@ -1818,6 +1818,7 @@ app.get("/api/conversations", async (req, res) => {
       content: String(row.last_content),
       type: row.last_message_type === "sticker" ? "sticker" : "text",
       stickerId: row.last_sticker_id ? String(row.last_sticker_id) : null,
+      stickerName: row.last_sticker_id ? getSticker(String(row.last_sticker_id))?.name ?? null : null,
       isMine: String(row.last_sender_id) === user.id,
       createdAt: new Date(row.message_created_at).toISOString()
     },
@@ -1884,6 +1885,7 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
       id: String(row.id), senderId: String(row.sender_id), content: String(row.content),
       type: row.message_type === "sticker" ? "sticker" : "text",
       stickerId: row.sticker_id ? String(row.sticker_id) : null,
+      stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
       isMine: String(row.sender_id) === user.id,
       isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString()
     })),
@@ -1946,6 +1948,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     content,
     type: messageType,
     stickerId: sticker?.id ?? null,
+    stickerName: sticker?.name ?? null,
     isMine: true,
     isRead: false,
     createdAt
@@ -1959,6 +1962,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     content,
     type: messageType,
     stickerId: sticker?.id ?? null,
+    stickerName: sticker?.name ?? null,
     createdAt,
     message: { ...message, isMine: false }
   });

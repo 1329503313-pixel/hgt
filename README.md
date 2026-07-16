@@ -12,6 +12,18 @@ npm run dev
 - 前端：http://localhost:5173
 - 后端：http://localhost:4000
 
+### 图片资源约束
+
+前端生产构建会先运行 `apps/web/scripts/optimize-images.mjs`：徽章自动生成 256px WebP，并压缩旧客户端使用的 PNG 回退文件；随后校验全部公开图片的尺寸和体积。缺少 WebP 或超过限制时构建会失败，禁止未压缩原图进入发布产物。
+
+```bash
+# 主动优化图片
+npm run optimize:images -w apps/web
+
+# 只校验，不改文件
+npm run check:images -w apps/web
+```
+
 
 ## Docker 部署（阿里云）
 

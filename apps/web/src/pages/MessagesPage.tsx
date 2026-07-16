@@ -8,6 +8,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { getMessageUnreadCounts } from "../shared/messageUnread";
 import { CardSkeleton, ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
+import { privateMessagePreview } from "../shared/messagePreview";
 
 type NoticeSummary = { id: string; isRead: boolean };
 
@@ -95,7 +96,7 @@ export default function MessagesPage() {
                   </span>
                   {conversation.unreadCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full border-2 border-white bg-red-500 px-1 text-[10px] leading-none text-white">{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</span>}
                 </span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-ink">{conversation.otherUser.nickname}</span><span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? `${conversation.lastMessage.isMine ? "我：" : ""}${conversation.lastMessage.type === "sticker" ? "[表情]" : conversation.lastMessage.content}` : "开始聊天吧"}</span></span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-ink">{conversation.otherUser.nickname}</span><span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? `${conversation.lastMessage.isMine ? "我：" : ""}${privateMessagePreview(conversation.lastMessage)}` : "开始聊天吧"}</span></span>
                 <span className="shrink-0 text-xs text-muted">{new Date(conversation.lastMessage?.createdAt ?? conversation.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>
               </button>
             ))}
