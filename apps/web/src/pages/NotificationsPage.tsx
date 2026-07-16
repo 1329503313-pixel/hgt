@@ -6,10 +6,10 @@ import { api, NotificationsResponse } from "../api";
 import { useApp } from "../context/AppContext";
 import { NotificationList } from "../components/Lists";
 import { PageTopBar } from "../components/PageTopBar";
+import { interactionNotificationTypes } from "../shared/messageUnread";
+import { ListSkeleton } from "../components/Skeletons";
 
 type NotificationCategory = "system" | "interactions";
-const interactionTypes = new Set(["soup_like", "soup_favorite", "soup_evaluation", "user_follow"]);
-
 export default function NotificationsPage({ category }: { category: NotificationCategory }) {
   const { user, loadingUser, showToast } = useApp();
   const navigate = useNavigate();
@@ -27,7 +27,7 @@ export default function NotificationsPage({ category }: { category: Notification
 
   const visible = useMemo(() => notifications.filter((item) => {
     if (item.type === "view_request") return false;
-    return category === "interactions" ? interactionTypes.has(item.type) : !interactionTypes.has(item.type);
+    return category === "interactions" ? interactionNotificationTypes.has(item.type) : !interactionNotificationTypes.has(item.type);
   }), [category, notifications]);
 
   async function markRead(id: string) {
@@ -57,7 +57,7 @@ export default function NotificationsPage({ category }: { category: Notification
               </button>
             </div>
           )}
-          {loading ? <p className="py-16 text-center text-sm text-muted">正在加载……</p> : (
+          {loading ? <ListSkeleton rows={6} /> : (
             <NotificationList notifications={visible} onRead={(id) => void markRead(id)} onOpen={navigate} />
           )}
         </div>

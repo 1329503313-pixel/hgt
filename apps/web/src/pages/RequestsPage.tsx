@@ -5,6 +5,7 @@ import { api, RequestsResponse } from "../api";
 import { useApp } from "../context/AppContext";
 import { RequestList } from "../components/Lists";
 import { PageTopBar } from "../components/PageTopBar";
+import { ListSkeleton } from "../components/Skeletons";
 
 export default function RequestsPage() {
   const { user, loadingUser, showToast } = useApp();
@@ -38,7 +39,7 @@ export default function RequestsPage() {
       <PageTopBar title="申请" backTo="/messages" />
       <div className="mx-auto max-w-3xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
-          {loading ? <p className="py-16 text-center text-sm text-muted">正在加载……</p> : (
+          {loading ? <ListSkeleton rows={6} /> : (
             <RequestList requests={requests} onDecision={(id, decision) => void decideRequest(id, decision)} onOpenSoup={(id) => navigate(`/soup/${id}`)} />
           )}
         </div>

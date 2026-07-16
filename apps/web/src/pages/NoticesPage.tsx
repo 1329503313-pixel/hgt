@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
+import { ListSkeleton } from "../components/Skeletons";
 
 export type NoticeItem = {
   id: string;
@@ -43,7 +44,7 @@ export default function NoticesPage() {
       <PageTopBar title="通知" backTo="/messages" />
       <div className="mx-auto max-w-3xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
-          {loading ? <p className="py-16 text-center text-sm text-muted">正在加载……</p> : activeNotices.length === 0 ? (
+          {loading ? <ListSkeleton rows={6} /> : activeNotices.length === 0 ? (
             <p className="py-16 text-center text-sm text-muted">暂无通知</p>
           ) : (
             <div className="divide-y divide-line">

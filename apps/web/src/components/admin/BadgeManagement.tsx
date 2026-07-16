@@ -6,6 +6,7 @@ import { BADGES, getBadgeKey, TIER_COLORS_EARNED, TIER_LABEL, type BadgeDef } fr
 import { ACTIVITY_CONDITION_LABELS, ActivityBadgeCondition, ActivityConditionKind, LegendaryBadge, LegendaryBadgeIcon, LegendaryBadgeTile, activityConditionText } from "../BadgeVisuals";
 import { Modal } from "../Modal";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
+import { CardSkeleton, ListSkeleton } from "../Skeletons";
 
 type BadgeAdminUser = {
   id: string;
@@ -226,6 +227,7 @@ export function BadgeManagement() {
               </div>
             </div>
           </div>
+          {loading && <ListSkeleton rows={6} />}
           {!loading && users.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无符合条件的用户</p>}
           <AdminPagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size); }} />
         </section>
@@ -274,7 +276,7 @@ export function BadgeManagement() {
       {userAction && (
         <Modal full onClose={closeUserModal}>
           <div className="flex items-center justify-between border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">{userAction === "view" ? "查看徽章" : userAction === "grant" ? "发放徽章" : "收回徽章"}</h2>{userDetail && <p className="mt-1 text-sm text-muted">{userDetail.user.nickname}（@{userDetail.user.username}）</p>}</div><button className="btn btn-secondary px-3" onClick={closeUserModal}><X size={17} /></button></div>
-          {modalLoading && !userDetail ? <div className="grid h-48 place-items-center text-sm text-muted">加载中……</div> : userDetail && (
+          {modalLoading && !userDetail ? <div className="py-5"><CardSkeleton rows={5} /></div> : userDetail && (
             <div className="py-5">
               {userAction === "view" && <div className="space-y-6">
                 <div><h3 className="mb-3 text-sm font-black text-ink">成就徽章</h3><div className="grid grid-cols-3 gap-5 sm:grid-cols-5 md:grid-cols-6">{ownedSystemBadges.map((badge) => <SystemBadgeTile key={getBadgeKey(badge)} badge={badge} />)}{ownedAchievementSpecialBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}</div></div>

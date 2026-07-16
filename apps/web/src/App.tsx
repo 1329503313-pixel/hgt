@@ -15,6 +15,7 @@ import NotificationsPage from "./pages/NotificationsPage";
 import RequestsPage from "./pages/RequestsPage";
 import NoticesPage from "./pages/NoticesPage";
 import NoticeDetailPage from "./pages/NoticeDetailPage";
+import ChatPage from "./pages/ChatPage";
 import MinePage from "./pages/MinePage";
 import MySoupsPage from "./pages/MySoupsPage";
 import MyFavoritesPage from "./pages/MyFavoritesPage";
@@ -24,6 +25,10 @@ import MyAchievementsPage from "./pages/MyAchievementsPage";
 import RankingsPage from "./pages/RankingsPage";
 import ExcellentAuthorPage from "./pages/ExcellentAuthorPage";
 import AdminPage from "./pages/AdminPage";
+import UserProfilePage from "./pages/UserProfilePage";
+import UserFollowsPage from "./pages/UserFollowsPage";
+import AccountSettingsPage from "./pages/AccountSettingsPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 
 export default function App() {
   const { toast, showToast, authMode, showSoupForm, showEvalForm, badgeUnlock } = useApp();
@@ -43,6 +48,8 @@ export default function App() {
           <Route path="mine/achievements" element={<MyAchievementsPage />} />
           <Route path="mine/excellent-author" element={<ExcellentAuthorPage />} />
           <Route path="mine/rankings" element={<RankingsPage />} />
+          <Route path="mine/settings" element={<AccountSettingsPage />} />
+          <Route path="mine/settings/password" element={<ResetPasswordPage />} />
         </Route>
 
         {/* Detail page — independent layout, no BottomNav */}
@@ -56,6 +63,10 @@ export default function App() {
         <Route path="messages/requests" element={<RequestsPage />} />
         <Route path="messages/notices" element={<NoticesPage />} />
         <Route path="messages/notices/:id" element={<NoticeDetailPage />} />
+        <Route path="messages/chat/:id" element={<ChatPage />} />
+        <Route path="users/:id" element={<UserProfilePage />} />
+        <Route path="users/:id/following" element={<UserFollowsPage type="following" />} />
+        <Route path="users/:id/followers" element={<UserFollowsPage type="followers" />} />
         <Route path="admin" element={<AdminPage />} />
       </Routes>
       </ErrorBoundary>

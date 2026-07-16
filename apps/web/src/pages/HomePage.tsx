@@ -3,11 +3,17 @@ import { useNavigate } from "react-router-dom";
 import { Search, SlidersHorizontal, FileText } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
-import type { SoupSummary } from "../shared/types";
-import { api, SoupsResponse, NotificationsResponse } from "../api";
+import type { ConversationItem, SoupSummary } from "../shared/types";
+import { api, SoupsResponse, NotificationsResponse, RequestsResponse } from "../api";
+import { getMessageUnreadCounts } from "../shared/messageUnread";
 import { useApp, soupTypes } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { MasonryList } from "../components/MasonryList";
+import { homeBannerUrl } from "../shared/staticAssets";
+import { CoverGridSkeleton } from "../components/Skeletons";
+import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
+
+type HomeCacheData = Pick<SoupsResponse, "soups" | "hasMore">;
 
 export default function HomePage() {
   const { user, refreshKey, setExportReady } = useApp();
@@ -39,14 +45,21 @@ export default function HomePage() {
       if (loadingRef.current) return;
       if (append && !hasMore) return;
       loadingRef.current = true;
-      setLoading(true);
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value && value !== "all") params.set(key, value);
+      });
+      params.set("limit", "10");
+      params.set("offset", String(append ? offsetRef.current : 0));
+      const cacheKey = `hgt:home:${user?.id ?? "guest"}:${params.toString()}`;
+      const cached = append ? null : readSessionCache<HomeCacheData>(cacheKey, 45_000);
+      if (cached) {
+        setSoups(cached.soups);
+        offsetRef.current = cached.soups.length;
+        setHasMore(cached.hasMore);
+      }
+      setLoading(append || !cached);
       try {
-        const params = new URLSearchParams();
-        Object.entries(filters).forEach(([key, value]) => {
-          if (value && value !== "all") params.set(key, value);
-        });
-        params.set("limit", "10");
-        params.set("offset", String(append ? offsetRef.current : 0));
         const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
         if (append) {
           setSoups((old) => {
@@ -58,6 +71,7 @@ export default function HomePage() {
         } else {
           setSoups(data.soups);
           offsetRef.current = data.soups.length;
+          writeSessionCache(cacheKey, { soups: data.soups, hasMore: data.hasMore } satisfies HomeCacheData);
         }
         setHasMore(data.hasMore);
       } finally {
@@ -65,7 +79,7 @@ export default function HomePage() {
         setLoading(false);
       }
     },
-    [filters, hasMore]
+    [filters, hasMore, user?.id]
   );
 
   useEffect(() => {
@@ -75,15 +89,24 @@ export default function HomePage() {
   // 加载未读消息数
   useEffect(() => {
     if (!user) { setUnread(0); return; }
-    Promise.all([
+    const loadUnread = () => Promise.all([
       api<NotificationsResponse>("/api/notifications"),
-      api<{ notices: { isRead: boolean }[] }>("/api/notices")
-    ]).then(([messageData, noticeData]) => {
-      setUnread(
-        messageData.notifications.filter((item) => !item.isRead).length
-        + noticeData.notices.filter((item) => !item.isRead).length
-      );
+      api<RequestsResponse>("/api/access-requests"),
+      api<{ notices: { isRead: boolean }[] }>("/api/notices"),
+      api<{ conversations: ConversationItem[] }>("/api/conversations")
+    ]).then(([messageData, requestData, noticeData, conversationData]) => {
+      setUnread(getMessageUnreadCounts({
+        notifications: messageData.notifications,
+        requests: requestData.requests,
+        notices: noticeData.notices,
+        conversations: conversationData.conversations
+      }).total);
     }).catch(() => {});
+    void loadUnread();
+    const events = new EventSource("/api/events", { withCredentials: true });
+    const onPrivateMessage = () => { void loadUnread(); };
+    events.addEventListener("private_message", onPrivateMessage);
+    return () => { events.removeEventListener("private_message", onPrivateMessage); events.close(); };
   }, [user, refreshKey]);
 
   const handleLoadMore = () => loadSoups(true);
@@ -239,7 +262,7 @@ export default function HomePage() {
 
       {!isResultMode && (
         <div className="home-hero-banner">
-          <img src="/home-banner.png" alt="故事背后藏着的真的是真相吗？" />
+          <img src={homeBannerUrl} alt="故事背后藏着的真的是真相吗？" />
         </div>
       )}
 
@@ -248,7 +271,7 @@ export default function HomePage() {
       {soups.length === 0 && !loading && (
         <div className="card p-8 text-center text-sm text-muted">{user ? "暂无符合条件的海龟汤" : "暂无公开海龟汤"}</div>
       )}
-      {loading && <div className="flex items-center justify-center py-8 text-sm text-muted">正在喝汤中……</div>}
+      {loading && <CoverGridSkeleton count={soups.length ? 2 : 6} />}
 
       {/* 导出汤名悬浮按钮 */}
       <button

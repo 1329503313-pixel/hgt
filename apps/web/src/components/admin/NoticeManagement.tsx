@@ -19,6 +19,7 @@ import { api } from "../../api";
 import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
+import { ListSkeleton } from "../Skeletons";
 
 type NoticeSummary = {
   id: string;
@@ -349,7 +350,7 @@ export function NoticeManagement() {
       </div>
 
       {!notices.length && !loading && <p className="py-10 text-center text-sm text-muted">暂无通知</p>}
-      {loading && <p className="py-10 text-center text-sm text-muted">正在加载……</p>}
+      {loading && <ListSkeleton rows={6} />}
       <AdminPagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size); }} />
 
       {(editingId !== null || form.author || form.title || form.content) && (

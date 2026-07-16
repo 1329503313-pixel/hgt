@@ -13,6 +13,7 @@ import { SoupCard } from "../SoupCard";
 import { useApp } from "../../context/AppContext";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
+import { ListSkeleton } from "../Skeletons";
 
 type ApprovalTab = "bottom" | "excellent-author";
 type BottomColumn = "applicationType" | "soup" | "requester" | "status" | "createdAt" | "handledAt" | "actions";
@@ -58,13 +59,17 @@ function BottomApprovalList() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<AdminPageSize>(10);
   const [visibleColumns, setVisibleColumns] = useState<Set<BottomColumn>>(() => new Set(bottomColumns.map((column) => column.key)));
+  const [loading, setLoading] = useState(true);
   const template = useMemo(() => gridTemplate(bottomColumns, visibleColumns), [visibleColumns]);
 
   const loadRequests = useCallback(async () => {
-    const params = new URLSearchParams({ limit: String(pageSize), offset: String((page - 1) * pageSize) });
-    const data = await api<RequestsResponse>(`/api/access-requests?${params.toString()}`);
-    setRequests(data.requests);
-    setTotal(data.total);
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String((page - 1) * pageSize) });
+      const data = await api<RequestsResponse>(`/api/access-requests?${params.toString()}`);
+      setRequests(data.requests);
+      setTotal(data.total);
+    } finally { setLoading(false); }
   }, [page, pageSize]);
 
   useEffect(() => { loadRequests().catch(() => {}); }, [loadRequests]);
@@ -100,7 +105,8 @@ function BottomApprovalList() {
           </div>
         </div>
       </div>
-      {requests.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无申请</p>}
+      {loading && <ListSkeleton rows={6} />}
+      {!loading && requests.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无申请</p>}
       <AdminPagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size); }} />
     </div>
   );
@@ -114,12 +120,16 @@ function ExcellentAuthorApprovalList() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<AdminPageSize>(10);
+  const [loading, setLoading] = useState(true);
 
   const loadApplications = useCallback(async () => {
-    const params = new URLSearchParams({ limit: String(pageSize), offset: String((page - 1) * pageSize) });
-    const data = await api<ExcellentAuthorApplicationsResponse>(`/api/admin/excellent-author-applications?${params.toString()}`);
-    setApplications(data.applications);
-    setTotal(data.total);
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String((page - 1) * pageSize) });
+      const data = await api<ExcellentAuthorApplicationsResponse>(`/api/admin/excellent-author-applications?${params.toString()}`);
+      setApplications(data.applications);
+      setTotal(data.total);
+    } finally { setLoading(false); }
   }, [page, pageSize]);
 
   useEffect(() => { loadApplications().catch(() => {}); }, [loadApplications]);
@@ -168,7 +178,8 @@ function ExcellentAuthorApprovalList() {
           </div>
         </div>
       </div>
-      {applications.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无优秀作者认证申请</p>}
+      {loading && <ListSkeleton rows={6} />}
+      {!loading && applications.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无优秀作者认证申请</p>}
       <AdminPagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size); }} />
 
       {detail && (

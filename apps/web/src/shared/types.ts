@@ -126,6 +126,36 @@ export type ViewRequestItem = {
   handledBy: string | null;
 };
 
+export type SocialProfile = PublicUser & {
+  receivedLikeCount: number;
+  followingCount: number;
+  followerCount: number;
+  isFollowing: boolean;
+  isSelf: boolean;
+};
+
+export type SocialUser = PublicUser & {
+  isFollowing: boolean;
+  isSelf: boolean;
+};
+
+export type ConversationItem = {
+  id: string;
+  otherUser: Pick<PublicUser, "id" | "username" | "nickname" | "avatar">;
+  lastMessage: { content: string; isMine: boolean; createdAt: string } | null;
+  unreadCount: number;
+  updatedAt: string;
+};
+
+export type PrivateMessageItem = {
+  id: string;
+  senderId: string;
+  content: string;
+  isMine: boolean;
+  isRead: boolean;
+  createdAt: string;
+};
+
 export type ExcellentAuthorApplicationStatus = {
   id: string;
   status: RequestStatus;

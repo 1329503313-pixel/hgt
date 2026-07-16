@@ -8,6 +8,7 @@ import { PageTopBar } from "./PageTopBar";
 import { useApp } from "../context/AppContext";
 import { useNavigate } from "react-router-dom";
 import { MineBackButton } from "./MineBackButton";
+import { defaultCoverUrl, turtleAvatarUrl } from "../shared/staticAssets";
 
 export function SoupLinkList({
   soups,
@@ -38,7 +39,7 @@ export function SoupLinkList({
             {soup.coverImage ? (
               <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />
             ) : (
-              <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src="/default-cover.png" alt="" />
+              <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src={defaultCoverUrl} alt="" />
             )}
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 truncate">
@@ -66,7 +67,7 @@ export function SoupLinkList({
                     <img className="h-3.5 w-3.5 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
                   ) : null
                 ) : (
-                  <img className="h-3.5 w-3.5 rounded-full object-cover" src="/turtle-avatar.png" alt="" />
+                  <img className="h-3.5 w-3.5 rounded-full object-cover" src={turtleAvatarUrl} alt="" />
                 )}
                 {soup.author || soup.creatorName} · <ThumbsUp size={12} /> {soup.likeCount} · <Star size={12} /> {soup.favoriteCount} · <Eye size={12} /> {formatViews(soup.viewCount)}
               </span>

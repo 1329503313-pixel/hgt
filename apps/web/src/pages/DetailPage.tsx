@@ -11,6 +11,8 @@ import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
 import { GameModal } from "../components/GameModal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
+import { defaultCoverUrl } from "../shared/staticAssets";
+import { DetailSkeleton } from "../components/Skeletons";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -199,7 +201,7 @@ export default function DetailPage() {
     navigate("/");
   }
 
-  if (loading) return <div className="flex items-center justify-center py-20 text-sm text-muted">正在喝汤中……</div>;
+  if (loading) return <main className="mx-auto max-w-6xl px-4 py-20"><DetailSkeleton /></main>;
   if (!soup) return <div className="card p-8 text-center text-sm text-muted">海龟汤不存在</div>;
   if (showGame) return <GameModal soup={soup} onBack={() => setShowGame(false)} />;
 
@@ -264,7 +266,7 @@ export default function DetailPage() {
 
       {/* Meta card */}
       <div className="card p-4">
-        <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage ?? "/default-cover.png"} alt={`${soup.title} 封面`} />
+        <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage ?? defaultCoverUrl} alt={`${soup.title} 封面`} />
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-end justify-between gap-3">
@@ -303,9 +305,12 @@ export default function DetailPage() {
               <span className="pill">{soup.type}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
             </div>
-            <p className="avatar-name-gap mt-3 flex items-center text-sm text-muted">
-              {soup.creatorAvatar ? <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" /> : <User size={14} />}
-              <span>作者 {soup.author} · 发布者 {soup.creatorName}</span>
+            <p className="mt-3 flex flex-wrap items-center gap-1.5 text-sm text-muted">
+              <span>作者 {soup.author} · 发布者</span>
+              <button className="grid h-5 w-5 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-primary" onClick={() => navigate(`/users/${soup.creatorId}`)} aria-label={`查看${soup.creatorName}的个人主页`}>
+                {soup.creatorAvatar ? <img className="h-full w-full object-cover" src={soup.creatorAvatar} alt={`${soup.creatorName}头像`} /> : <User size={13} />}
+              </button>
+              <button className="font-bold text-primary hover:underline" onClick={() => navigate(`/users/${soup.creatorId}`)}>{soup.creatorName}</button>
               <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />
               <span>· 评分 {soup.averageTotal ?? "-"}</span>
             </p>

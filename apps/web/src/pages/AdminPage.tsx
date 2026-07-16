@@ -9,6 +9,7 @@ import { ApprovalManagement } from "../components/admin/ApprovalManagement";
 import { AdminDashboard } from "../components/admin/AdminDashboard";
 import { BadgeManagement } from "../components/admin/BadgeManagement";
 import { NoticeManagement } from "../components/admin/NoticeManagement";
+import { CardSkeleton } from "../components/Skeletons";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -21,7 +22,7 @@ export default function AdminPage() {
   }, [user, loadingUser]);
 
   if (loadingUser) {
-    return <div className="flex items-center justify-center py-20 text-sm text-muted">正在喝汤中……</div>;
+    return <main className="mx-auto max-w-7xl space-y-4 px-4 py-20"><CardSkeleton rows={4} /><CardSkeleton rows={6} /></main>;
   }
 
   return (

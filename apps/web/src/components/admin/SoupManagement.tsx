@@ -6,6 +6,7 @@ import { api, SoupsResponse } from "../../api";
 import { soupTypes } from "../../context/AppContext";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
+import { ListSkeleton } from "../Skeletons";
 
 type SoupColumn = "title" | "review" | "original" | "likes" | "favorites" | "evaluations" | "creator" | "createdAt" | "actions";
 
@@ -173,6 +174,7 @@ export function SoupManagement() {
         </div>
       </div>
 
+      {loading && <ListSkeleton rows={6} />}
       {soups.length === 0 && !loading && (
         <p className="py-8 text-center text-sm text-muted">暂无可管理的汤品</p>
       )}

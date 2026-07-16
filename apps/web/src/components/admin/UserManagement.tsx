@@ -5,6 +5,7 @@ import { api } from "../../api";
 import { Modal } from "../Modal";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
+import { ListSkeleton } from "../Skeletons";
 
 type AdminUser = PublicUser & {
   lastLoginAt: string | null;
@@ -47,18 +48,22 @@ export function UserManagement() {
   const [resetError, setResetError] = useState("");
   const [resetting, setResetting] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumn>>(() => new Set(userColumns.map((column) => column.key)));
+  const [loading, setLoading] = useState(true);
 
   const loadUsers = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (submittedKeyword) params.set("keyword", submittedKeyword);
-    if (todayFilter !== "all") params.set("loggedToday", todayFilter);
-    params.set("limit", String(pageSize));
-    params.set("offset", String((page - 1) * pageSize));
-    params.set("sortBy", sortBy);
-    params.set("sortOrder", sortOrder);
-    const data = await api<UsersResponseExt>(`/api/admin/users?${params.toString()}`);
-    setUsers(data.users);
-    setTotal(data.total);
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (submittedKeyword) params.set("keyword", submittedKeyword);
+      if (todayFilter !== "all") params.set("loggedToday", todayFilter);
+      params.set("limit", String(pageSize));
+      params.set("offset", String((page - 1) * pageSize));
+      params.set("sortBy", sortBy);
+      params.set("sortOrder", sortOrder);
+      const data = await api<UsersResponseExt>(`/api/admin/users?${params.toString()}`);
+      setUsers(data.users);
+      setTotal(data.total);
+    } finally { setLoading(false); }
   }, [submittedKeyword, todayFilter, page, pageSize, sortBy, sortOrder]);
 
   useEffect(() => { loadUsers().catch(() => {}); }, [loadUsers]);
@@ -192,7 +197,8 @@ export function UserManagement() {
           </div>
         </div>
       </div>
-      {users.length === 0 && <p className="py-8 text-center text-sm text-muted">没有符合条件的用户</p>}
+      {loading && <ListSkeleton rows={6} />}
+      {!loading && users.length === 0 && <p className="py-8 text-center text-sm text-muted">没有符合条件的用户</p>}
       <AdminPagination
         page={page}
         pageSize={pageSize}

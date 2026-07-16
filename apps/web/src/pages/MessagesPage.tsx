@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, FileClock, Heart, MessageCircle, ShieldCheck } from "lucide-react";
-import type { NotificationItem, ViewRequestItem } from "../shared/types";
+import type { ConversationItem, NotificationItem, ViewRequestItem } from "../shared/types";
 import { api, NotificationsResponse, RequestsResponse } from "../api";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
+import { getMessageUnreadCounts } from "../shared/messageUnread";
+import { CardSkeleton, ListSkeleton } from "../components/Skeletons";
 
 type NoticeSummary = { id: string; isRead: boolean };
-
-const interactionTypes = new Set(["soup_like", "soup_favorite", "soup_evaluation", "user_follow"]);
 
 export default function MessagesPage() {
   const { user, loadingUser } = useApp();
@@ -16,22 +16,34 @@ export default function MessagesPage() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [requests, setRequests] = useState<ViewRequestItem[]>([]);
   const [notices, setNotices] = useState<NoticeSummary[]>([]);
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  async function loadConversations() {
+    const data = await api<{ conversations: ConversationItem[] }>("/api/conversations");
+    setConversations(data.conversations);
+  }
 
   useEffect(() => {
     if (loadingUser || !user) return;
+    setLoading(true);
     void Promise.all([
       api<NotificationsResponse>("/api/notifications").then((data) => setNotifications(data.notifications)),
       api<RequestsResponse>("/api/access-requests").then((data) => setRequests(data.requests)),
-      api<{ notices: NoticeSummary[] }>("/api/notices").then((data) => setNotices(data.notices))
-    ]).catch(() => {});
+      api<{ notices: NoticeSummary[] }>("/api/notices").then((data) => setNotices(data.notices)),
+      loadConversations()
+    ]).catch(() => {}).finally(() => setLoading(false));
   }, [user, loadingUser]);
 
-  const counts = useMemo(() => ({
-    system: notifications.filter((item) => item.type !== "view_request" && !interactionTypes.has(item.type) && !item.isRead).length,
-    interactions: notifications.filter((item) => interactionTypes.has(item.type) && !item.isRead).length,
-    requests: requests.filter((item) => item.status === "pending").length,
-    notices: notices.filter((item) => !item.isRead).length
-  }), [notifications, requests, notices]);
+  useEffect(() => {
+    if (!user) return;
+    const events = new EventSource("/api/events", { withCredentials: true });
+    const onPrivateMessage = () => { void loadConversations(); };
+    events.addEventListener("private_message", onPrivateMessage);
+    return () => { events.removeEventListener("private_message", onPrivateMessage); events.close(); };
+  }, [user?.id]);
+
+  const counts = useMemo(() => getMessageUnreadCounts({ notifications, requests, notices, conversations }), [notifications, requests, notices, conversations]);
 
   const entries = [
     { label: "系统", path: "/messages/system", count: counts.system, icon: ShieldCheck, iconClass: "bg-blue-100 text-blue-600" },
@@ -39,6 +51,8 @@ export default function MessagesPage() {
     { label: "申请", path: "/messages/requests", count: counts.requests, icon: FileClock, iconClass: "bg-amber-100 text-amber-600" },
     { label: "通知", path: "/messages/notices", count: counts.notices, icon: Bell, iconClass: "bg-violet-100 text-violet-600" }
   ];
+
+  if (loadingUser || loading) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="消息" backTo="/" /><div className="mx-auto max-w-3xl space-y-4 px-4 pb-10"><CardSkeleton rows={2} /><ListSkeleton rows={6} /></div></section>;
 
   return (
     <section className="min-h-screen bg-page pt-[72px]">
@@ -67,15 +81,28 @@ export default function MessagesPage() {
         <div className="mt-5 overflow-hidden rounded-2xl bg-white shadow-soft">
           <div className="flex items-center justify-between border-b border-line px-4 py-4">
             <h2 className="text-lg font-black text-ink">消息</h2>
-            <span className="inline-flex items-center gap-1 text-xs text-muted">私聊消息 <ChevronRight size={14} /></span>
+            <span className="inline-flex items-center gap-1 text-xs text-muted">{counts.privateMessages} 条未读 <ChevronRight size={14} /></span>
           </div>
-          <div className="flex min-h-[300px] flex-col items-center justify-center px-6 py-12 text-center">
+          {conversations.length ? <div className="divide-y divide-line">
+            {conversations.map((conversation) => (
+              <button key={conversation.id} className="flex w-full items-center gap-3 px-4 py-4 text-left hover:bg-slate-50" onClick={() => navigate(`/messages/chat/${conversation.id}`)}>
+                <span className="relative h-12 w-12 shrink-0">
+                  <span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 font-black text-primary">
+                    {conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={conversation.otherUser.avatar} alt="" /> : conversation.otherUser.nickname.slice(0, 1)}
+                  </span>
+                  {conversation.unreadCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full border-2 border-white bg-red-500 px-1 text-[10px] leading-none text-white">{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</span>}
+                </span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-ink">{conversation.otherUser.nickname}</span><span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? `${conversation.lastMessage.isMine ? "我：" : ""}${conversation.lastMessage.content}` : "开始聊天吧"}</span></span>
+                <span className="shrink-0 text-xs text-muted">{new Date(conversation.lastMessage?.createdAt ?? conversation.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>
+              </button>
+            ))}
+          </div> : <div className="flex min-h-[300px] flex-col items-center justify-center px-6 py-12 text-center">
             <span className="grid h-16 w-16 place-items-center rounded-full bg-slate-100 text-slate-400">
               <MessageCircle size={30} />
             </span>
             <p className="mt-4 font-bold text-ink">暂无消息</p>
-            <p className="mt-1 text-sm text-muted">私聊功能即将开放</p>
-          </div>
+            <p className="mt-1 text-sm text-muted">关注用户后可以发起私信</p>
+          </div>}
         </div>
       </div>
     </section>

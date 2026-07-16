@@ -411,6 +411,49 @@ export async function initDatabase() {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_follows (
+      follower_id VARCHAR(64) NOT NULL,
+      following_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (follower_id, following_id),
+      INDEX idx_user_follows_following_time (following_id, created_at),
+      INDEX idx_user_follows_follower_time (follower_id, created_at),
+      CONSTRAINT fk_user_follow_follower FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_follow_following FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id VARCHAR(64) PRIMARY KEY,
+      user_a_id VARCHAR(64) NOT NULL,
+      user_b_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_message_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_conversation_users (user_a_id, user_b_id),
+      INDEX idx_conversations_user_a_time (user_a_id, last_message_at),
+      INDEX idx_conversations_user_b_time (user_b_id, last_message_at),
+      CONSTRAINT fk_conversation_user_a FOREIGN KEY (user_a_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_conversation_user_b FOREIGN KEY (user_b_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS private_messages (
+      id VARCHAR(64) PRIMARY KEY,
+      conversation_id VARCHAR(64) NOT NULL,
+      sender_id VARCHAR(64) NOT NULL,
+      content VARCHAR(1000) NOT NULL,
+      read_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_private_messages_conversation_time (conversation_id, created_at),
+      INDEX idx_private_messages_unread (conversation_id, sender_id, read_at),
+      CONSTRAINT fk_private_message_conversation FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      CONSTRAINT fk_private_message_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS game_completions (
       session_id VARCHAR(64) NOT NULL,
       user_id VARCHAR(64) NOT NULL,

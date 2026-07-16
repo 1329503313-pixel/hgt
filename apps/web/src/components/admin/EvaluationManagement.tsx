@@ -5,6 +5,7 @@ import type { Evaluation } from "../../shared/types";
 import { api, EvaluationsResponse } from "../../api";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
+import { ListSkeleton } from "../Skeletons";
 
 type EvalRow = Evaluation & { soupTitle: string };
 type EvaluationColumn = "reviewer" | "total" | "soup" | "content" | "dimensions" | "createdAt" | "actions";
@@ -112,6 +113,7 @@ export function EvaluationManagement() {
         </div>
       </div>
 
+      {loading && <ListSkeleton rows={6} />}
       {evaluations.length === 0 && !loading && <p className="py-8 text-center text-sm text-muted">暂无可管理的评价</p>}
       <AdminPagination
         page={page}

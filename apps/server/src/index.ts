@@ -40,6 +40,15 @@ const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
+const userEventClients = new Map<string, Set<Response>>();
+
+function emitUserEvent(userId: string, event: string, payload: unknown) {
+  const clients = userEventClients.get(userId);
+  if (!clients?.size) return;
+  const data = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of clients) client.write(data);
+}
+
 type RateLimitEntry = { count: number; resetAt: number };
 
 function createRateLimiter(windowMs: number, maxRequests: number, keyFor: (req: Request) => string) {
@@ -141,9 +150,21 @@ if (config.nodeEnv === "production") {
     maxAge: "1y",
     immutable: true
   }));
+  app.use("/assets", express.static(path.resolve(frontendDist, "assets"), {
+    index: false,
+    maxAge: "1y",
+    immutable: true
+  }));
+  app.use((req, res, next) => {
+    if (req.path === "/turtle-avatar.png" || req.path === "/turtle-watermark.png") {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    }
+    next();
+  });
   app.use(express.static(frontendDist, { index: false }));
   app.get("*", (_req, res, next) => {
     if (_req.path.startsWith("/api/")) return next();
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile("index.html", { root: frontendDist });
   });
 }
@@ -1135,6 +1156,27 @@ app.get("/api/auth/me", async (req, res) => {
   res.json({ user: publicUser });
 });
 
+app.get("/api/events", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  const clients = userEventClients.get(user.id) ?? new Set<Response>();
+  clients.add(res);
+  userEventClients.set(user.id, clients);
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+  const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 25_000);
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    clients.delete(res);
+    if (clients.size === 0) userEventClients.delete(user.id);
+  });
+});
+
 app.patch("/api/me/nickname", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
@@ -1194,9 +1236,30 @@ app.get("/api/me/soup-publish-quota", async (req, res) => {
   });
 });
 
+app.get("/api/me/content-counts", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT
+       (SELECT COUNT(*) FROM soups WHERE creator_id = ?) AS published_count,
+       (SELECT COUNT(*) FROM soup_favorites f INNER JOIN soups s ON s.id = f.soup_id WHERE f.user_id = ? AND s.review_status = 'approved') AS favorite_count,
+       (SELECT COUNT(*) FROM soup_likes lk INNER JOIN soups s ON s.id = lk.soup_id WHERE lk.user_id = ? AND s.review_status = 'approved') AS like_count`,
+    [user.id, user.id, user.id]
+  );
+  res.json({
+    published: Number(row?.published_count ?? 0),
+    favorites: Number(row?.favorite_count ?? 0),
+    likes: Number(row?.like_count ?? 0)
+  });
+});
+
 app.get("/api/me/soups", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  const limit = 10;
+  const rawOffset = Number(req.query.offset ?? 0);
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM soups WHERE creator_id = ?", [user.id]);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u.avatar AS creator_avatar,
@@ -1216,11 +1279,13 @@ app.get("/api/me/soups", async (req, res) => {
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.creator_id = ?
     GROUP BY s.id
-    ORDER BY s.created_at DESC
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT ? OFFSET ?
     `,
-    [user.id]
+    [user.id, limit, offset]
   );
-  res.json({ soups: rows.map(mapSoupSummary) });
+  const total = Number(totalRow.total ?? 0);
+  res.json({ soups: rows.map(mapSoupSummary), total, hasMore: offset + rows.length < total });
 });
 
 app.get("/api/me/excellent-author-application", async (req, res) => {
@@ -1317,6 +1382,312 @@ app.get("/api/me/stats", async (req, res) => {
   if (!user) return;
   await recordLoginDay(user.id);
   res.json(await getAchievementStats(user.id));
+});
+
+app.get("/api/users/:id/profile", async (req, res) => {
+  const viewer = await requireAuth(req, res);
+  if (!viewer) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+  const target = rows[0];
+  if (!target) return sendError(res, 404, "用户不存在");
+  const includeSoups = req.query.includeSoups !== "false";
+  const soupPromise = includeSoups ? pool.query<mysql.RowDataPacket[]>(
+      `SELECT s.*, u.avatar AS creator_avatar,
+        u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+        (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+        (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+        EXISTS (SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,
+        EXISTS (SELECT 1 FROM soup_favorites WHERE soup_id = s.id AND user_id = ?) AS is_favorited,
+        COUNT(e.id) AS evaluation_count,
+        AVG(e.total) AS average_total,
+        AVG(e.writing) AS avg_writing,
+        AVG(e.logic) AS avg_logic,
+        AVG(e.share) AS avg_share,
+        AVG(e.mechanism) AS avg_mechanism,
+        AVG(e.twist) AS avg_twist,
+        AVG(e.depth) AS avg_depth
+       FROM soups s
+       LEFT JOIN users u ON u.id = s.creator_id
+       LEFT JOIN evaluations e ON e.soup_id = s.id
+       WHERE s.creator_id = ? AND s.review_status = 'approved' AND s.is_surface_public = TRUE
+       GROUP BY s.id
+       ORDER BY s.created_at DESC
+       LIMIT 10`,
+      [viewer.id, viewer.id, req.params.id]
+    ) : Promise.resolve([[], []] as unknown as [mysql.RowDataPacket[], mysql.FieldPacket[]]);
+  const [[likeRows], [followRows], [soupRows]] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS received_like_count
+       FROM soup_likes sl INNER JOIN soups s ON s.id = sl.soup_id
+       WHERE s.creator_id = ?`,
+      [req.params.id]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM user_follows WHERE follower_id = ?) AS following_count,
+         (SELECT COUNT(*) FROM user_follows WHERE following_id = ?) AS follower_count,
+         EXISTS (SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?) AS is_following`,
+      [req.params.id, req.params.id, viewer.id, req.params.id]
+    ),
+    soupPromise
+  ]);
+  const follow = followRows[0] ?? {};
+  res.json({
+    profile: {
+      ...toUser(target),
+      receivedLikeCount: Number(likeRows[0]?.received_like_count ?? 0),
+      followingCount: Number(follow.following_count ?? 0),
+      followerCount: Number(follow.follower_count ?? 0),
+      isFollowing: bool(follow.is_following),
+      isSelf: viewer.id === req.params.id
+    },
+    soups: soupRows.map(mapSoupSummary)
+  });
+});
+
+app.post("/api/users/:id/follow", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (user.id === req.params.id) return sendError(res, 400, "不能关注自己");
+  const [targetRows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!targetRows[0]) return sendError(res, 404, "用户不存在");
+  const [existing] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT follower_id FROM user_follows WHERE follower_id = ? AND following_id = ? LIMIT 1",
+    [user.id, req.params.id]
+  );
+  if (existing[0]) {
+    await pool.query("DELETE FROM user_follows WHERE follower_id = ? AND following_id = ?", [user.id, req.params.id]);
+    return res.json({ isFollowing: false });
+  }
+  await pool.query("INSERT INTO user_follows (follower_id, following_id) VALUES (?, ?)", [user.id, req.params.id]);
+  await notify(req.params.id, "user_follow", "新增关注", `${user.nickname} 关注了你`, user.id, user.id);
+  res.status(201).json({ isFollowing: true });
+});
+
+app.get("/api/users/:id/follows", async (req, res) => {
+  const viewer = await requireAuth(req, res);
+  if (!viewer) return;
+  const type = req.query.type === "followers" ? "followers" : "following";
+  const joinCondition = type === "followers" ? "u.id = f.follower_id" : "u.id = f.following_id";
+  const whereColumn = type === "followers" ? "f.following_id" : "f.follower_id";
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT u.*,
+       EXISTS (SELECT 1 FROM user_follows mine WHERE mine.follower_id = ? AND mine.following_id = u.id) AS is_following
+     FROM user_follows f
+     INNER JOIN users u ON ${joinCondition}
+     WHERE ${whereColumn} = ?
+     ORDER BY f.created_at DESC`,
+    [viewer.id, req.params.id]
+  );
+  res.json({
+    users: rows.map((row) => ({ ...toUser(row), isFollowing: bool(row.is_following), isSelf: row.id === viewer.id }))
+  });
+});
+
+app.get("/api/me/received-interactions", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT s.id, s.title, s.cover_thumbnail,
+       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+       (SELECT COUNT(*) FROM evaluations WHERE soup_id = s.id) AS evaluation_count
+     FROM soups s
+     WHERE s.creator_id = ?
+     ORDER BY s.created_at DESC`,
+    [user.id]
+  );
+  res.json({ soups: rows.map((row) => ({
+    id: String(row.id),
+    title: String(row.title),
+    coverImage: row.cover_thumbnail ? String(row.cover_thumbnail) : null,
+    likeCount: Number(row.like_count ?? 0),
+    favoriteCount: Number(row.favorite_count ?? 0),
+    evaluationCount: Number(row.evaluation_count ?? 0)
+  })) });
+});
+
+app.get("/api/me/soups/:id/interactions", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [soupRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, title FROM soups WHERE id = ? AND creator_id = ? LIMIT 1",
+    [req.params.id, user.id]
+  );
+  if (!soupRows[0]) return sendError(res, 404, "作品不存在或无权查看");
+  const type = String(req.query.type ?? "likes");
+  let rows: mysql.RowDataPacket[] = [];
+  if (type === "likes") {
+    [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.username, u.nickname, u.avatar, sl.created_at
+       FROM soup_likes sl INNER JOIN users u ON u.id = sl.user_id
+       WHERE sl.soup_id = ? ORDER BY sl.created_at DESC`,
+      [req.params.id]
+    );
+  } else if (type === "favorites") {
+    [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.username, u.nickname, u.avatar, sf.created_at
+       FROM soup_favorites sf INNER JOIN users u ON u.id = sf.user_id
+       WHERE sf.soup_id = ? ORDER BY sf.created_at DESC`,
+      [req.params.id]
+    );
+  } else if (type === "evaluations") {
+    [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.username, u.nickname, u.avatar, e.total, e.content, e.created_at
+       FROM evaluations e INNER JOIN users u ON u.id = e.reviewer_id
+       WHERE e.soup_id = ? ORDER BY e.created_at DESC`,
+      [req.params.id]
+    );
+  } else {
+    return sendError(res, 400, "互动类型不正确");
+  }
+  res.json({
+    title: String(soupRows[0].title),
+    type,
+    interactions: rows.map((row) => ({
+      userId: String(row.id),
+      username: String(row.username),
+      nickname: String(row.nickname),
+      avatar: row.avatar ? String(row.avatar) : null,
+      total: row.total == null ? null : Number(row.total),
+      content: row.content ? String(row.content) : null,
+      createdAt: new Date(row.created_at).toISOString()
+    }))
+  });
+});
+
+app.post("/api/conversations", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const parsed = z.object({ userId: z.string().min(1).max(64) }).safeParse(req.body);
+  if (!parsed.success || parsed.data.userId === user.id) return sendError(res, 400, "私信对象不正确");
+  const [targetRows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id = ? LIMIT 1", [parsed.data.userId]);
+  if (!targetRows[0]) return sendError(res, 404, "用户不存在");
+  const [userA, userB] = [user.id, parsed.data.userId].sort((a, b) => a.localeCompare(b));
+  const [existing] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id FROM conversations WHERE user_a_id = ? AND user_b_id = ? LIMIT 1",
+    [userA, userB]
+  );
+  if (existing[0]) return res.json({ id: String(existing[0].id) });
+  const [followRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT follower_id FROM user_follows WHERE follower_id = ? AND following_id = ? LIMIT 1",
+    [user.id, parsed.data.userId]
+  );
+  if (!followRows[0]) return sendError(res, 403, "关注对方后才能发起私信");
+  const id = nanoid();
+  try {
+    await pool.query("INSERT INTO conversations (id, user_a_id, user_b_id) VALUES (?, ?, ?)", [id, userA, userB]);
+    res.status(201).json({ id });
+  } catch (error) {
+    if ((error as { code?: string }).code !== "ER_DUP_ENTRY") throw error;
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM conversations WHERE user_a_id = ? AND user_b_id = ? LIMIT 1",
+      [userA, userB]
+    );
+    res.json({ id: String(rows[0].id) });
+  }
+});
+
+app.get("/api/conversations", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT c.id, c.last_message_at,
+       u.id AS other_id, u.username AS other_username, u.nickname AS other_nickname, u.avatar AS other_avatar,
+       pm.content AS last_content, pm.sender_id AS last_sender_id, pm.created_at AS message_created_at,
+       (SELECT COUNT(*) FROM private_messages unread
+        WHERE unread.conversation_id = c.id AND unread.sender_id <> ? AND unread.read_at IS NULL) AS unread_count
+     FROM conversations c
+     INNER JOIN users u ON u.id = IF(c.user_a_id = ?, c.user_b_id, c.user_a_id)
+     LEFT JOIN private_messages pm ON pm.id = (
+       SELECT latest.id FROM private_messages latest
+       WHERE latest.conversation_id = c.id
+       ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+     )
+     WHERE c.user_a_id = ? OR c.user_b_id = ?
+     ORDER BY c.last_message_at DESC`,
+    [user.id, user.id, user.id, user.id]
+  );
+  res.json({ conversations: rows.map((row) => ({
+    id: String(row.id),
+    otherUser: {
+      id: String(row.other_id),
+      username: String(row.other_username),
+      nickname: String(row.other_nickname),
+      avatar: row.other_avatar ? String(row.other_avatar) : null
+    },
+    lastMessage: row.last_content == null ? null : {
+      content: String(row.last_content),
+      isMine: String(row.last_sender_id) === user.id,
+      createdAt: new Date(row.message_created_at).toISOString()
+    },
+    unreadCount: Number(row.unread_count ?? 0),
+    updatedAt: new Date(row.last_message_at).toISOString()
+  })) });
+});
+
+async function conversationForUser(conversationId: string, userId: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT c.*, u.id AS other_id, u.username AS other_username, u.nickname AS other_nickname, u.avatar AS other_avatar
+     FROM conversations c
+     INNER JOIN users u ON u.id = IF(c.user_a_id = ?, c.user_b_id, c.user_a_id)
+     WHERE c.id = ? AND (c.user_a_id = ? OR c.user_b_id = ?) LIMIT 1`,
+    [userId, conversationId, userId, userId]
+  );
+  return rows[0] ?? null;
+}
+
+app.get("/api/conversations/:id/messages", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const conversation = await conversationForUser(req.params.id, user.id);
+  if (!conversation) return sendError(res, 404, "会话不存在");
+  await pool.query(
+    "UPDATE private_messages SET read_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND sender_id <> ? AND read_at IS NULL",
+    [req.params.id, user.id]
+  );
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, sender_id, content, read_at, created_at
+     FROM private_messages WHERE conversation_id = ?
+     ORDER BY created_at ASC, id ASC LIMIT 200`,
+    [req.params.id]
+  );
+  res.json({
+    conversation: {
+      id: String(conversation.id),
+      otherUser: {
+        id: String(conversation.other_id), username: String(conversation.other_username),
+        nickname: String(conversation.other_nickname), avatar: conversation.other_avatar ? String(conversation.other_avatar) : null
+      }
+    },
+    messages: rows.map((row) => ({
+      id: String(row.id), senderId: String(row.sender_id), content: String(row.content),
+      isMine: String(row.sender_id) === user.id,
+      isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString()
+    }))
+  });
+});
+
+app.post("/api/conversations/:id/messages", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const parsed = z.object({ content: text.max(1000, "单条消息不能超过1000字") }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
+  const conversation = await conversationForUser(req.params.id, user.id);
+  if (!conversation) return sendError(res, 404, "会话不存在");
+  const id = nanoid();
+  await pool.query(
+    "INSERT INTO private_messages (id, conversation_id, sender_id, content) VALUES (?, ?, ?, ?)",
+    [id, req.params.id, user.id, parsed.data.content]
+  );
+  await pool.query("UPDATE conversations SET last_message_at = CURRENT_TIMESTAMP WHERE id = ?", [req.params.id]);
+  emitUserEvent(String(conversation.other_id), "private_message", {
+    conversationId: req.params.id,
+    messageId: id,
+    senderId: user.id,
+    content: parsed.data.content
+  });
+  res.status(201).json({ id, createdAt: new Date().toISOString() });
 });
 
 app.post("/api/me/badge-unlocks/sync", async (req, res) => {
@@ -1439,8 +1810,11 @@ app.patch("/api/me/equipped-badge", async (req, res) => {
   res.json({ equippedBadge: equippedBadge(parsed.data.badgeKey, iconUrl) });
 });
 
+let rankingsCache: { expiresAt: number; payload: unknown } | null = null;
+
 app.get("/api/rankings", async (req, res) => {
   if (!(await requireAuth(req, res))) return;
+  if (rankingsCache && rankingsCache.expiresAt > Date.now()) return res.json(rankingsCache.payload);
 
   const [hotSoupRows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT s.id, s.title, s.author, s.view_count,
@@ -1492,7 +1866,7 @@ app.get("/api/rankings", async (req, res) => {
     .slice(0, 10)
     .map((item, index) => ({ rank: index + 1, id: item.id, nickname: item.nickname, achievementPoints: item.achievementPoints }));
 
-  res.json({
+  const payload = {
     hotSoups: hotSoupRows.map((row, index) => ({
       rank: index + 1,
       id: String(row.id),
@@ -1501,12 +1875,21 @@ app.get("/api/rankings", async (req, res) => {
       heatValue: Math.round(Number(row.heat_value ?? 0))
     })),
     achievementUsers
-  });
+  };
+  rankingsCache = { expiresAt: Date.now() + 60_000, payload };
+  res.json(payload);
 });
 
 app.get("/api/me/favorites", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  const limit = 10;
+  const rawOffset = Number(req.query.offset ?? 0);
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM soup_favorites f INNER JOIN soups s ON s.id = f.soup_id WHERE f.user_id = ? AND s.review_status = 'approved'`,
+    [user.id]
+  );
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u.avatar AS creator_avatar,
@@ -1527,11 +1910,13 @@ app.get("/api/me/favorites", async (req, res) => {
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE f.user_id = ? AND s.review_status = 'approved'
     GROUP BY s.id
-    ORDER BY f.created_at DESC
+    ORDER BY f.created_at DESC, s.id DESC
+    LIMIT ? OFFSET ?
     `,
-    [user.id]
+    [user.id, limit, offset]
   );
-  res.json({ soups: rows.map(mapSoupSummary) });
+  const total = Number(totalRow.total ?? 0);
+  res.json({ soups: rows.map(mapSoupSummary), total, hasMore: offset + rows.length < total });
 });
 
 app.get("/api/me/evaluations", async (req, res) => {
@@ -1877,6 +2262,13 @@ app.post("/api/soups/:id/like", async (req, res) => {
 app.get("/api/me/likes", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  const limit = 10;
+  const rawOffset = Number(req.query.offset ?? 0);
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM soup_likes lk INNER JOIN soups s ON s.id = lk.soup_id WHERE lk.user_id = ? AND s.review_status = 'approved'`,
+    [user.id]
+  );
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT s.*, u2.avatar AS creator_avatar,
@@ -1897,11 +2289,13 @@ app.get("/api/me/likes", async (req, res) => {
     LEFT JOIN users u2 ON u2.id = s.creator_id
     WHERE lk.user_id = ? AND s.review_status = 'approved'
     GROUP BY s.id
-    ORDER BY lk.created_at DESC
+    ORDER BY lk.created_at DESC, s.id DESC
+    LIMIT ? OFFSET ?
     `,
-    [user.id]
+    [user.id, limit, offset]
   );
-  res.json({ soups: rows.map(mapSoupSummary) });
+  const total = Number(totalRow.total ?? 0);
+  res.json({ soups: rows.map(mapSoupSummary), total, hasMore: offset + rows.length < total });
 });
 
 app.post("/api/soups/:id/favorite", async (req, res) => {
@@ -2399,6 +2793,8 @@ app.get("/api/notifications", async (req, res) => {
       relatedId: row.soup_id,
       link: row.type === "badge_unlock"
         ? "/mine/achievements"
+        : row.type === "user_follow" && row.actor_id
+          ? `/users/${row.actor_id}`
         : row.type === "excellent_author_result"
           ? "/mine/excellent-author"
           : row.type === "excellent_author_application"
@@ -2760,10 +3156,11 @@ app.get("/api/admin/badges/users", async (req, res) => {
       COUNT(ubu.badge_key) AS badge_count,
       COALESCE(SUM(ubu.badge_key LIKE '%:normal'), 0) AS normal_count,
       COALESCE(SUM(ubu.badge_key LIKE '%:rare'), 0) AS rare_count,
-      COALESCE(SUM(ubu.badge_key LIKE '%:epic'), 0) AS epic_count,
-      COALESCE(SUM(ubu.badge_key LIKE 'legendary:%' OR ubu.badge_key LIKE '%:legend'), 0) AS legend_count
+      COALESCE(SUM(ubu.badge_key LIKE '%:epic' OR lb.tier = 'epic'), 0) AS epic_count,
+      COALESCE(SUM(ubu.badge_key LIKE '%:legend' OR lb.tier = 'legend'), 0) AS legend_count
      FROM users u
      LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
+     LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
      ${where}
      GROUP BY u.id
      ORDER BY u.created_at DESC

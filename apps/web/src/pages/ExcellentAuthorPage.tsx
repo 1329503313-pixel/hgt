@@ -7,6 +7,8 @@ import { PageTopBar } from "../components/PageTopBar";
 import { MineBackButton } from "../components/MineBackButton";
 import { useApp } from "../context/AppContext";
 import type { SoupSummary } from "../shared/types";
+import { CardSkeleton, ListSkeleton } from "../components/Skeletons";
+import { defaultCoverUrl } from "../shared/staticAssets";
 
 type SelectorMode = "qualification" | "primary" | null;
 
@@ -80,6 +82,8 @@ export default function ExcellentAuthorPage() {
       setSubmitting(false);
     }
   }
+
+  if (loadingUser || loading) return <section className="space-y-4"><PageTopBar title="优秀作者认证" /><MineBackButton /><CardSkeleton rows={4} /><ListSkeleton rows={5} /></section>;
 
   return (
     <section className="space-y-4">
@@ -156,7 +160,7 @@ export default function ExcellentAuthorPage() {
               return (
                 <button key={soup.id} type="button" className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition ${selected ? "border-primary bg-blue-50 ring-2 ring-blue-100" : "border-line bg-white hover:border-blue-200"}`}
                   onClick={() => selectorMode === "qualification" ? toggleQualification(soup.id) : setPrimarySoupId(soup.id)}>
-                  <img className="h-16 w-16 shrink-0 rounded-lg object-cover" src={soup.coverImage ?? "/default-cover.png"} alt="" />
+                  <img className="h-16 w-16 shrink-0 rounded-lg object-cover" src={soup.coverImage ?? defaultCoverUrl} alt="" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-black text-ink">{soup.title}</p>
                     <div className="mt-2 flex flex-wrap gap-3 text-xs font-bold">

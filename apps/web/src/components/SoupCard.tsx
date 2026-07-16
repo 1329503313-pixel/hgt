@@ -3,6 +3,7 @@ import type { SoupSummary } from "../shared/types";
 import { Flame, Star, User, ThumbsUp, Sparkles } from "lucide-react";
 import { formatViews } from "../context/AppContext";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
+import { defaultCoverUrl } from "../shared/staticAssets";
 
 export function SoupCard({
   soup,
@@ -26,7 +27,7 @@ export function SoupCard({
       {soup.coverImage ? (
         <CoverImage src={soup.coverImage} alt={`${soup.title} 封面`} />
       ) : (
-        <CoverImage src="/default-cover.png" alt={`${soup.title} 封面`} />
+        <CoverImage src={defaultCoverUrl} alt={`${soup.title} 封面`} />
       )}
       <div className="p-3">
         <h2 className="line-clamp-2 text-[16px] font-black leading-snug text-ink">

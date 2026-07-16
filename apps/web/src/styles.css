@@ -26,7 +26,7 @@ body {
   z-index: 0;
   pointer-events: none;
   content: "";
-  background-image: url("/turtle-watermark.png");
+  background-image: url("/turtle-watermark.png?v=9785-20260716");
   background-position: 22px 28px;
   background-repeat: repeat;
   background-size: 146px 146px;
@@ -510,6 +510,18 @@ textarea {
 .rounded-t-lg {
   border-top-left-radius: 20px;
   border-top-right-radius: 20px;
+}
+
+.profile-gradient {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255,255,255,0.28), transparent 30%),
+    linear-gradient(135deg, #2563eb 0%, #0ea5e9 55%, #14b8a6 100%);
+}
+
+.soup-cover-fallback {
+  background:
+    radial-gradient(circle at 72% 22%, rgba(255,255,255,0.35), transparent 24%),
+    linear-gradient(145deg, #bfdbfe 0%, #93c5fd 38%, #5eead4 100%);
 }
 
 .home-search-sticky {

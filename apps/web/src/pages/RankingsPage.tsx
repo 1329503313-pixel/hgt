@@ -5,6 +5,8 @@ import { api } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
 import { MineBackButton } from "../components/MineBackButton";
 import { useApp } from "../context/AppContext";
+import { ListSkeleton } from "../components/Skeletons";
+import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 
 type HotSoupRank = {
   rank: number;
@@ -47,14 +49,21 @@ export default function RankingsPage() {
 
   useEffect(() => {
     if (!user) return;
-    setLoading(true);
+    const cacheKey = "hgt:rankings:v1";
+    const cached = readSessionCache<RankingsResponse>(cacheKey, 2 * 60_000);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     api<RankingsResponse>("/api/rankings")
-      .then(setData)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "排行榜加载失败"))
+      .then((result) => { setData(result); setError(""); writeSessionCache(cacheKey, result); })
+      .catch((reason) => { if (!cached) setError(reason instanceof Error ? reason.message : "排行榜加载失败"); })
       .finally(() => setLoading(false));
-  }, [user]);
+  }, [user?.id]);
 
-  if (loadingUser) return <section className="space-y-3"><PageTopBar title="排行榜" /><MineBackButton /><div className="card p-8 text-center text-sm text-muted">正在加载排行榜…</div></section>;
+  if (loadingUser) return <section className="space-y-3"><PageTopBar title="排行榜" /><MineBackButton /><ListSkeleton rows={8} /></section>;
   if (!user) return (
     <section className="space-y-3">
       <PageTopBar title="排行榜" />
@@ -87,7 +96,7 @@ export default function RankingsPage() {
           <div><h2 className="font-black text-ink">{tab === "soups" ? "热门海龟汤 Top 10" : "用户成就点 Top 10"}</h2><p className="mt-0.5 text-xs text-muted">{tab === "soups" ? "按平台热力值从高到低排列" : "同分时，先达到当前成就点的用户优先"}</p></div>
         </div>
 
-        {loading ? <div className="p-10 text-center text-sm text-muted">正在加载排行榜…</div> : error ? <div className="p-10 text-center text-sm text-danger">{error}</div> : tab === "soups" ? (
+        {loading ? <ListSkeleton rows={8} /> : error ? <div className="p-10 text-center text-sm text-danger">{error}</div> : tab === "soups" ? (
           <div>
             <div className="grid grid-cols-[44px_minmax(0,1fr)_80px_80px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[60px_minmax(0,1fr)_140px_120px]">
               <span>排名</span><span>汤名</span><span>作者</span><span className="text-right">热力值</span>
@@ -108,11 +117,11 @@ export default function RankingsPage() {
               <span>排名</span><span>昵称</span><span className="text-right">成就点</span>
             </div>
             {(data?.achievementUsers ?? []).map((item) => (
-              <div key={item.id} className="grid grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 last:border-0 sm:grid-cols-[80px_minmax(0,1fr)_160px]">
+              <button key={item.id} className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-blue-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
                 <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
                 <span className="text-right text-sm font-black text-amber-600">{item.achievementPoints.toLocaleString()}</span>
-              </div>
+              </button>
             ))}
             {data?.achievementUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无用户成就点数据</div>}
           </div>

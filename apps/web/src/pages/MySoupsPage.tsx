@@ -4,6 +4,8 @@ import type { SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
 import { SubListPage } from "../components/SoupLinkList";
+import { ListSkeleton } from "../components/Skeletons";
+import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 
 function useWaitForUser() {
   const { user, loadingUser } = useApp();
@@ -12,26 +14,25 @@ function useWaitForUser() {
 
 function MyListPage({ title, endpoint, emptyHint, showHeatValue = false }: { title: string; endpoint: string; emptyHint: string; showHeatValue?: boolean }) {
   const navigate = useNavigate();
-  const { loading: loadingUser } = useWaitForUser();
+  const { user, loading: loadingUser } = useWaitForUser();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (loadingUser) return;
-    setLoading(true);
+    if (loadingUser || !user) return;
+    const cacheKey = `hgt:mine:legacy-list:${user.id}:${endpoint}`;
+    const cached = readSessionCache<SoupSummary[]>(cacheKey, 2 * 60_000);
+    if (cached) { setSoups(cached); setLoading(false); }
+    else setLoading(true);
     api<SoupsResponse>(endpoint)
-      .then((d) => setSoups(d.soups))
+      .then((d) => { setSoups(d.soups); writeSessionCache(cacheKey, d.soups); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [loadingUser, endpoint]);
+  }, [loadingUser, endpoint, user?.id]);
 
   if (loadingUser || loading) {
     return (
-      <section className="space-y-3 pt-[72px]">
-        <div className="card flex items-center justify-center p-8">
-          <p className="text-sm text-muted">正在喝汤中……</p>
-        </div>
-      </section>
+      <section className="space-y-3"><ListSkeleton rows={6} /></section>
     );
   }
 

@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
+import { DetailSkeleton } from "../components/Skeletons";
 
 type NoticeDetail = {
   id: string;
@@ -33,7 +34,7 @@ export default function NoticeDetailPage() {
     <section className="min-h-screen bg-page pt-[72px]">
       <PageTopBar title="通知详情" backTo="/messages/notices" />
       <div className="mx-auto max-w-3xl px-4 pb-10 pt-4">
-        {loading ? <p className="py-16 text-center text-sm text-muted">正在加载……</p> : notice ? (
+        {loading ? <DetailSkeleton /> : notice ? (
           <article className="rounded-2xl bg-white px-5 py-6 shadow-soft sm:px-8 sm:py-8">
             <header className="border-b border-line pb-5 text-center">
               <h1 className="text-2xl font-black leading-snug text-ink">{notice.title}</h1>
