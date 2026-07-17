@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoorOpen, LockKeyhole, MessageCircleQuestion, RefreshCw, Search, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
 import { Modal } from "../components/Modal";
 import { useApp } from "../context/AppContext";
@@ -9,6 +9,15 @@ import { connectOnlineSoupLobbySocket } from "../shared/onlineSoupSocket";
 import type { OnlineSoupLobbyRoom } from "../shared/types";
 
 const statusText = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
+type InvitePreview = {
+  id: string;
+  code: string;
+  name: string;
+  type: "public" | "password";
+  status: "preparing" | "playing" | "ended" | "closed";
+  hasPassword: boolean;
+};
+type PendingInvite = { roomId: string; inviteToken: string; room: InvitePreview };
 
 export default function OnlineSoupLobbyPage() {
   const { user, openAuth, showToast } = useApp();
@@ -23,6 +32,10 @@ export default function OnlineSoupLobbyPage() {
   const [password, setPassword] = useState("");
   const [joinRole, setJoinRole] = useState<"player" | "spectator">("player");
   const [creating, setCreating] = useState(false);
+  const [pendingInvite, setPendingInvite] = useState<PendingInvite | null>(null);
+  const [pendingInvitePassword, setPendingInvitePassword] = useState("");
+  const [joiningInvite, setJoiningInvite] = useState(false);
+  const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", type: "public" as "public" | "password", password: "" });
 
   const loadRooms = useCallback(async () => {
@@ -55,6 +68,56 @@ export default function OnlineSoupLobbyPage() {
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => document.removeEventListener("visibilitychange", refreshWhenVisible);
   }, [loadRooms]);
+
+  useEffect(() => {
+    if (!user || pendingInvite) return;
+    const raw = sessionStorage.getItem("onlineSoupPendingInvite");
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as { roomId?: string; inviteToken?: string };
+      if (!saved.roomId) throw new Error("invalid invite");
+      void api<{ room: InvitePreview }>(`/api/online-soup/rooms/${saved.roomId}/invite-preview`, { bypassCache: true })
+        .then(({ room }) => setPendingInvite({ roomId: saved.roomId!, inviteToken: saved.inviteToken ?? "", room }))
+        .catch((error) => {
+          sessionStorage.removeItem("onlineSoupPendingInvite");
+          showToast(error instanceof Error ? error.message : "邀请房间不存在或已关闭");
+        });
+    } catch {
+      sessionStorage.removeItem("onlineSoupPendingInvite");
+    }
+  }, [pendingInvite, showToast, user]);
+
+  function cancelPendingInvite() {
+    sessionStorage.removeItem("onlineSoupPendingInvite");
+    setPendingInvite(null);
+    setPendingInvitePassword("");
+  }
+
+  async function enterPendingInvite() {
+    if (!pendingInvite || joiningInvite) return;
+    if (pendingInvite.room.hasPassword && !pendingInvite.inviteToken && pendingInvitePassword.length !== 4) {
+      return showToast("请输入 4 位房间密码");
+    }
+    setJoiningInvite(true);
+    try {
+      const joined = await api<{ role: "player" | "spectator" }>(`/api/online-soup/rooms/${pendingInvite.roomId}/join-auto`, {
+        method: "POST",
+        body: { inviteToken: pendingInvite.inviteToken, password: pendingInvitePassword }
+      });
+      sessionStorage.removeItem("onlineSoupPendingInvite");
+      if (joined.role === "spectator") showToast("玩家席位已满，已作为旁观者进入");
+      navigate(`/online-soup/rooms/${pendingInvite.roomId}`, { replace: true });
+    } catch (error) {
+      if (error instanceof ApiError && (error.code === "ROOM_FULL" || error.code === "ROOM_CLOSED")) {
+        setInviteEntryError(error.message);
+        cancelPendingInvite();
+      } else {
+        showToast(error instanceof Error ? error.message : "加入房间失败");
+      }
+    } finally {
+      setJoiningInvite(false);
+    }
+  }
 
   function openCreate() {
     if (!user) { openAuth(); return; }
@@ -155,6 +218,22 @@ export default function OnlineSoupLobbyPage() {
       {joinOpen && <Modal onClose={() => setJoinOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">通过房间号加入</h2><div className="flex gap-2"><input className="field flex-1 text-center text-lg tracking-[.3em]" inputMode="numeric" maxLength={6} value={roomCode} onChange={(e) => setRoomCode(e.target.value.replace(/\D/g, ""))} placeholder="6 位房间号" /><button className="btn btn-primary" onClick={lookupRoom}><Search size={17} /> 查找</button></div></div></Modal>}
 
       {passwordRoom && <Modal onClose={() => setPasswordRoom(null)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">加入「{passwordRoom.name}」</h2><p className="mt-1 text-sm text-muted">#{passwordRoom.code} · 当前 {passwordRoom.playerCount}/8 名玩家</p></div>{passwordRoom.hasPassword && <input className="field w-full" type="password" maxLength={4} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="输入 4 位房间密码" />}<div className="grid grid-cols-2 gap-2"><button className={`btn ${joinRole === "player" ? "btn-primary" : "btn-secondary"}`} disabled={passwordRoom.playerCount >= 8} onClick={() => setJoinRole("player")}>作为玩家</button><button className={`btn ${joinRole === "spectator" ? "btn-primary" : "btn-secondary"}`} onClick={() => setJoinRole("spectator")}>作为旁观者</button></div><button className="btn btn-primary w-full" onClick={() => joinRoom()}>进入房间</button></div></Modal>}
+
+      {pendingInvite && <Modal onClose={cancelPendingInvite}>
+        <div className="space-y-5">
+          <div className="text-center"><h2 className="text-xl font-black text-ink">您是否进入这个房间？</h2><p className="mt-2 text-sm text-muted">好友邀请你一起在线玩汤</p></div>
+          <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
+            <p className="text-xs font-bold text-muted">房间名称</p><p className="mt-1 text-lg font-black text-ink">{pendingInvite.room.name}</p>
+            <p className="mt-3 text-xs font-bold text-muted">房间号</p><p className="mt-1 font-mono text-xl font-black tracking-[.18em] text-primary">{pendingInvite.room.code}</p>
+          </div>
+          {pendingInvite.room.hasPassword && !pendingInvite.inviteToken && <input className="field w-full text-center text-lg tracking-[.3em]" type="password" inputMode="numeric" maxLength={4} value={pendingInvitePassword} onChange={(event) => setPendingInvitePassword(event.target.value.replace(/\D/g, ""))} placeholder="输入 4 位房间密码" />}
+          <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={cancelPendingInvite}>取消</button><button className="btn btn-primary" disabled={joiningInvite} onClick={() => void enterPendingInvite()}>{joiningInvite ? "进入中…" : "进入"}</button></div>
+        </div>
+      </Modal>}
+
+      {inviteEntryError && <Modal onClose={() => setInviteEntryError(null)}>
+        <div className="space-y-4 text-center"><h2 className="text-xl font-black text-ink">{inviteEntryError}</h2><p className="text-sm text-muted">暂时无法进入该房间</p><button className="btn btn-primary w-full" onClick={() => setInviteEntryError(null)}>确认</button></div>
+      </Modal>}
 
       <div className="fixed right-5 bottom-[calc(92px+env(safe-area-inset-bottom))] z-30 flex flex-col gap-3">
         <button

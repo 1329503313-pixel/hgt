@@ -24,6 +24,18 @@ type CacheEntry = { expiresAt: number; value: unknown };
 const responseCache = new Map<string, CacheEntry>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
 
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code ?? null;
+  }
+}
+
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const { cacheTtlMs = 0, dedupe = true, bypassCache = false, ...fetchOptions } = options;
   const method = String(fetchOptions.method ?? "GET").toUpperCase();
@@ -49,7 +61,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
           : (fetchOptions.body as BodyInit | null | undefined)
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error ?? "请求失败");
+    if (!response.ok) throw new ApiError(data.error ?? "请求失败", response.status, data.code);
     if (cacheKey && cacheTtlMs > 0) responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtlMs, value: data });
     if (method !== "GET") responseCache.clear();
     return data as T;

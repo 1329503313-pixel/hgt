@@ -1,25 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, FileClock, Heart, MessageCircle, ShieldCheck } from "lucide-react";
-import type { ConversationItem, NotificationItem, ViewRequestItem } from "../shared/types";
-import { api, NotificationsResponse, RequestsResponse } from "../api";
+import type { ConversationItem } from "../shared/types";
+import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
-import { getMessageUnreadCounts } from "../shared/messageUnread";
 import { CardSkeleton, ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { privateMessagePreview } from "../shared/messagePreview";
-
-type NoticeSummary = { id: string; isRead: boolean };
+import { useMessageUnreadCounts } from "../shared/useMessageUnread";
 
 export default function MessagesPage() {
   const { user, loadingUser } = useApp();
   const navigate = useNavigate();
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [requests, setRequests] = useState<ViewRequestItem[]>([]);
-  const [notices, setNotices] = useState<NoticeSummary[]>([]);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const counts = useMessageUnreadCounts(user?.id, Boolean(user));
 
   const loadConversations = useCallback(async () => {
     const data = await api<{ conversations: ConversationItem[] }>("/api/conversations");
@@ -27,12 +23,7 @@ export default function MessagesPage() {
   }, []);
 
   const loadMessageData = useCallback(async () => {
-    await Promise.all([
-      api<NotificationsResponse>("/api/notifications").then((data) => setNotifications(data.notifications)),
-      api<RequestsResponse>("/api/access-requests").then((data) => setRequests(data.requests)),
-      api<{ notices: NoticeSummary[] }>("/api/notices").then((data) => setNotices(data.notices)),
-      loadConversations()
-    ]);
+    await loadConversations();
   }, [loadConversations]);
 
   useEffect(() => {
@@ -43,11 +34,16 @@ export default function MessagesPage() {
 
   useEffect(() => {
     if (!user) return;
-    const onUnreadChanged = () => { void loadMessageData(); };
+    const onUnreadChanged = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as { source?: string };
+        if (payload.source?.startsWith("private_message")) void loadConversations();
+      } catch {
+        void loadConversations();
+      }
+    };
     return subscribeServerEvent("unread_changed", onUnreadChanged);
-  }, [user?.id, loadMessageData]);
-
-  const counts = useMemo(() => getMessageUnreadCounts({ notifications, requests, notices, conversations }), [notifications, requests, notices, conversations]);
+  }, [user?.id, loadConversations]);
 
   const entries = [
     { label: "系统", path: "/messages/system", count: counts.system, icon: ShieldCheck, iconClass: "bg-blue-100 text-blue-600" },

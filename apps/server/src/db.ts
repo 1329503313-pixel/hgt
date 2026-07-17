@@ -313,6 +313,11 @@ export async function initDatabase() {
     "room_id, message_sequence"
   );
   await ensureIndex(
+    "online_soup_messages",
+    "idx_online_messages_round_type_sequence",
+    "round_id, message_type, message_sequence"
+  );
+  await ensureIndex(
     "online_soup_members",
     "idx_online_members_presence",
     "is_active, last_seen_at"
@@ -802,5 +807,13 @@ async function seedLegendaryBadges() {
        name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
        achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend'`,
     ["crimson-moon-covenant", "绯月契约", "以绯月为契，倾听封存故事的低语", null, "/badges/crimson-moon-covenant-legend.webp", 300]
+  );
+  await pool.query(
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier)
+     VALUES (?, ?, ?, ?, ?, ?, 'limited', 'legend')
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
+       achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend'`,
+    ["permission-turtle-soup", "权限龟汤汤", "权限龟汤汤本龟！", null, "/badges/permission-turtle-soup-legend.webp", 300]
   );
 }

@@ -2,7 +2,9 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { config } from "./config.js";
 import { pool } from "./db.js";
 import { getSticker } from "./stickers.js";
 
@@ -22,6 +24,8 @@ export function setOnlineSoupLobbyEventEmitter(emitter: LobbyEventEmitter) {
 const router = Router();
 const HOST_ONLINE_SECONDS = 75;
 const MESSAGE_PAGE_SIZE = 100;
+const PLAYER_CAPACITY = 8;
+const SPECTATOR_CAPACITY = 20;
 const answerValues = ["yes", "no", "both", "unknown", "irrelevant"] as const;
 const badgeNames: Record<string, string[]> = {
   publish: ["熬汤新秀", "熬汤达人", "熬汤大师"],
@@ -42,8 +46,21 @@ function userOf(req: any): OnlineUser | null {
   return req.user ?? null;
 }
 
-function fail(res: any, status: number, error: string) {
-  return res.status(status).json({ error });
+function fail(res: any, status: number, error: string, code?: string) {
+  return res.status(status).json({ error, ...(code ? { code } : {}) });
+}
+
+function roomInviteToken(roomId: string) {
+  return createHmac("sha256", config.sessionSecret)
+    .update(`online-soup-invite:${roomId}`)
+    .digest("base64url")
+    .slice(0, 32);
+}
+
+function validRoomInviteToken(roomId: string, token: string) {
+  const expected = roomInviteToken(roomId);
+  if (token.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(token), Buffer.from(expected));
 }
 
 function iso(value: unknown) {
@@ -169,11 +186,11 @@ async function systemMessage(roomId: string, roundId: string | null, content: st
 
 async function requireMember(req: any, res: any) {
   const user = userOf(req);
-  if (!user) { fail(res, 401, "请先登录"); return null; }
+  if (!user) { fail(res, 401, "请先登录", "LOGIN_REQUIRED"); return null; }
   const room = await roomById(req.params.roomId);
-  if (!room || room.status === "closed") { fail(res, 404, "房间不存在或已关闭"); return null; }
+  if (!room || room.status === "closed") { fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED"); return null; }
   const member = await activeMember(room.id, user.id);
-  if (!member && user.role !== "admin") { fail(res, 403, "你尚未加入该房间"); return null; }
+  if (!member && user.role !== "admin") { fail(res, 403, "你尚未加入该房间", "NOT_MEMBER"); return null; }
   const isHost = room.host_id === user.id;
   await touch(room.id, user, isHost);
   if (isHost) room.host_last_seen_at = new Date();
@@ -344,6 +361,113 @@ router.get("/rooms/lookup/:code", async (req, res) => {
   res.json({ room: lobbyRoom({ ...room, player_count: count.player_count } as mysql.RowDataPacket) });
 });
 
+router.get("/rooms/:roomId/invite-preview", async (req, res) => {
+  const room = await roomById(req.params.roomId);
+  if (!room || room.status === "closed") return fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED");
+  const [[counts]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT
+       SUM(CASE WHEN member_role = 'player' AND is_active = 1 THEN 1 ELSE 0 END) AS player_count,
+       SUM(CASE WHEN member_role = 'spectator' AND is_active = 1 THEN 1 ELSE 0 END) AS spectator_count
+     FROM online_soup_members WHERE room_id = ?`,
+    [room.id]
+  );
+  res.json({
+    room: {
+      id: String(room.id),
+      code: String(room.room_code),
+      name: String(room.name),
+      type: String(room.room_type),
+      status: String(room.status),
+      host: { id: String(room.host_id), nickname: String(room.host_name) },
+      playerCount: Number(counts.player_count ?? 0),
+      spectatorCount: Number(counts.spectator_count ?? 0),
+      playerCapacity: PLAYER_CAPACITY,
+      spectatorCapacity: SPECTATOR_CAPACITY,
+      hasPassword: room.room_type === "password"
+    }
+  });
+});
+
+router.get("/rooms/:roomId/invite", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  res.json({ token: roomInviteToken(context.room.id) });
+});
+
+router.post("/rooms/:roomId/join-auto", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录", "LOGIN_REQUIRED");
+  const parsed = z.object({
+    password: z.string().max(4).optional().default(""),
+    inviteToken: z.string().max(100).optional().default("")
+  }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "加入信息不正确", "INVALID_JOIN");
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT * FROM online_soup_rooms WHERE id = ? FOR UPDATE",
+      [req.params.roomId]
+    );
+    const room = rows[0];
+    if (!room || room.status === "closed") {
+      await connection.rollback();
+      return fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED");
+    }
+    await releaseStaleSeats(String(room.id), connection);
+    const existing = await activeMember(room.id, user.id, connection);
+    if (existing) {
+      await connection.commit();
+      return res.json({ roomId: String(room.id), role: String(existing.member_role), joined: false });
+    }
+
+    const invited = Boolean(parsed.data.inviteToken) && validRoomInviteToken(String(room.id), parsed.data.inviteToken);
+    if (room.host_id !== user.id && room.room_type === "password" && !invited) {
+      if (!parsed.data.password) {
+        await connection.rollback();
+        return fail(res, 403, "请输入房间密码", "PASSWORD_REQUIRED");
+      }
+      if (!(await bcrypt.compare(parsed.data.password, String(room.password_hash)))) {
+        await connection.rollback();
+        return fail(res, 403, "房间密码错误", "INVALID_PASSWORD");
+      }
+    }
+
+    const [[counts]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN member_role = 'player' AND is_active = 1 THEN 1 ELSE 0 END) AS player_count,
+         SUM(CASE WHEN member_role = 'spectator' AND is_active = 1 THEN 1 ELSE 0 END) AS spectator_count
+       FROM online_soup_members WHERE room_id = ?`,
+      [room.id]
+    );
+    const role = Number(counts.player_count ?? 0) < PLAYER_CAPACITY
+      ? "player"
+      : Number(counts.spectator_count ?? 0) < SPECTATOR_CAPACITY
+        ? "spectator"
+        : null;
+    if (!role) {
+      await connection.rollback();
+      return fail(res, 409, "房间已满", "ROOM_FULL");
+    }
+
+    await connection.query(
+      `INSERT INTO online_soup_members (room_id, user_id, member_role) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE member_role = VALUES(member_role), is_active = 1, joined_at = NOW(), last_seen_at = NOW(), left_at = NULL`,
+      [room.id, user.id, role]
+    );
+    await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection);
+    await connection.commit();
+    res.json({ roomId: String(room.id), role, joined: true });
+    void notifyRoom(String(room.id), "member_joined");
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+});
+
 router.get("/soups/eligible", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
@@ -446,12 +570,21 @@ router.post("/rooms/:roomId/join", async (req, res) => {
       await connection.rollback(); return fail(res, 403, "房间密码错误");
     }
     const existing = await activeMember(room.id, user.id, connection);
-    if (!existing && parsed.data.role === "player") {
+    if (!existing) {
       const [[count]] = await connection.query<mysql.RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM online_soup_members WHERE room_id = ? AND member_role = 'player' AND is_active = 1",
-        [room.id]
+        "SELECT COUNT(*) AS total FROM online_soup_members WHERE room_id = ? AND member_role = ? AND is_active = 1",
+        [room.id, parsed.data.role]
       );
-      if (Number(count.total) >= 8) { await connection.rollback(); return fail(res, 409, "玩家席位已满，可以选择旁观"); }
+      const capacity = parsed.data.role === "player" ? PLAYER_CAPACITY : SPECTATOR_CAPACITY;
+      if (Number(count.total) >= capacity) {
+        await connection.rollback();
+        return fail(
+          res,
+          409,
+          parsed.data.role === "player" ? "玩家席位已满，可以选择旁观" : "房间已满",
+          parsed.data.role === "player" ? "PLAYER_FULL" : "ROOM_FULL"
+        );
+      }
     }
     if (!existing) {
       await connection.query(
@@ -492,6 +625,53 @@ router.get("/rooms/:roomId/messages", async (req, res) => {
   }).safeParse(req.query);
   if (!parsed.success) return fail(res, 400, "消息游标不正确");
   res.json(await roomMessagePage(context.room, parsed.data.before, parsed.data.limit, parsed.data.after));
+});
+
+router.get("/rooms/:roomId/progress", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!context.room.current_round_id) {
+    return res.json({ questions: [], hasMore: false, nextCursor: null });
+  }
+  const parsed = z.object({
+    after: z.string().regex(/^\d+$/).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(100)
+  }).safeParse(req.query);
+  if (!parsed.success) return fail(res, 400, "进度游标不正确");
+  const params: Array<string | number> = [String(context.room.current_round_id)];
+  const afterClause = parsed.data.after ? "AND m.message_sequence > ?" : "";
+  if (parsed.data.after) params.push(parsed.data.after);
+  params.push(parsed.data.limit + 1);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT m.id, m.message_sequence, m.content, m.question_number, m.answer, m.created_at,
+       m.sender_id, u.nickname AS sender_name, u.avatar IS NOT NULL AS sender_has_avatar
+     FROM online_soup_messages m
+     LEFT JOIN users u ON u.id = m.sender_id
+     WHERE m.round_id = ? AND m.message_type = 'question' ${afterClause}
+     ORDER BY m.message_sequence ASC LIMIT ?`,
+    params
+  );
+  const hasMore = rows.length > parsed.data.limit;
+  if (hasMore) rows.pop();
+  res.json({
+    questions: rows.map((row) => ({
+      id: String(row.id),
+      sequence: String(row.message_sequence),
+      number: Number(row.question_number ?? 0),
+      content: String(row.content),
+      answer: row.answer ? String(row.answer) : null,
+      sender: {
+        id: row.sender_id ? String(row.sender_id) : null,
+        nickname: row.sender_name ? String(row.sender_name) : "未知用户",
+        avatar: row.sender_id && row.sender_has_avatar
+          ? `/api/media/users/${encodeURIComponent(String(row.sender_id))}/avatar`
+          : null
+      },
+      createdAt: iso(row.created_at)
+    })),
+    hasMore,
+    nextCursor: hasMore && rows.length ? String(rows[rows.length - 1].message_sequence) : null
+  });
 });
 
 router.post("/rooms/:roomId/ping", async (req, res) => {

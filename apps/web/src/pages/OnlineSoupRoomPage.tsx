@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRightLeft, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, LogOut, Menu, MessageCircle, Play, RefreshCw, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { ArrowLeft, ArrowRightLeft, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LogOut, Menu, MessageCircle, Play, Plus, RefreshCw, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
+import { OnlineSoupInviteModal } from "../components/OnlineSoupInviteModal";
 import { useApp } from "../context/AppContext";
 import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
@@ -14,6 +15,16 @@ const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
 type MessagePage = { messages: OnlineSoupMessage[]; hasMore: boolean; nextCursor: string | null };
 type RoomState = Pick<OnlineSoupSnapshot, "room" | "me" | "members">;
+type ProgressQuestion = {
+  id: string;
+  sequence: string;
+  number: number;
+  content: string;
+  answer: OnlineSoupAnswer | null;
+  sender: { id: string | null; nickname: string; avatar: string | null };
+  createdAt: string;
+};
+type ProgressPage = { questions: ProgressQuestion[]; hasMore: boolean; nextCursor: string | null };
 const structuralRoomEvents = new Set([
   "member_joined", "member_left", "soup_selected", "round_started",
   "supplemental_surface_published", "bottom_published", "round_ended"
@@ -31,8 +42,10 @@ function mergeMessages(older: OnlineSoupMessage[], newer: OnlineSoupMessage[]) {
 
 export default function OnlineSoupRoomPage() {
   const { roomId = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const inviteToken = searchParams.get("invite") ?? "";
   const navigate = useNavigate();
-  const { showToast } = useApp();
+  const { showToast, user, loadingUser, openAuth } = useApp();
   const [snapshot, setSnapshot] = useState<OnlineSoupSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(false);
@@ -43,8 +56,12 @@ export default function OnlineSoupRoomPage() {
   const [soupExpanded, setSoupExpanded] = useState(true);
   const [soupTab, setSoupTab] = useState<"surface" | "bottom" | "manual">("surface");
   const [membersOpen, setMembersOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [clueOpen, setClueOpen] = useState(false);
   const [clueListOpen, setClueListOpen] = useState(false);
+  const [cluePanelTab, setCluePanelTab] = useState<"clues" | "progress">("clues");
+  const [progressQuestions, setProgressQuestions] = useState<ProgressQuestion[]>([]);
+  const [progressLoading, setProgressLoading] = useState(false);
   const [surfacePublishOpen, setSurfacePublishOpen] = useState(false);
   const [clue, setClue] = useState("");
   const [publishOpen, setPublishOpen] = useState(false);
@@ -55,6 +72,9 @@ export default function OnlineSoupRoomPage() {
   const [stickerDragging, setStickerDragging] = useState(false);
   const [hostActionsOpen, setHostActionsOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"back" | "close" | null>(null);
+  const [entryPasswordOpen, setEntryPasswordOpen] = useState(false);
+  const [entryPassword, setEntryPassword] = useState("");
+  const [entryError, setEntryError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
@@ -65,6 +85,9 @@ export default function OnlineSoupRoomPage() {
   const historyExpanded = useRef(false);
   const newestMessageId = useRef<string | null>(null);
   const snapshotRef = useRef<OnlineSoupSnapshot | null>(null);
+  const entryStarted = useRef(false);
+  const progressLoadedRoundId = useRef<string | null>(null);
+  const progressPending = useRef(false);
 
   const load = useCallback(async (quiet = false) => {
     if (refreshPending.current) return;
@@ -82,11 +105,44 @@ export default function OnlineSoupRoomPage() {
       });
       if (data.room.status === "closed") { showToast("房间已关闭"); navigate("/online-soup", { replace: true }); }
     } catch (error) {
-      if (!quiet) showToast(error instanceof Error ? error.message : "房间加载失败");
+      if (!quiet && error instanceof ApiError && error.code === "NOT_MEMBER") {
+        try {
+          const joined = await api<{ roomId: string; role: "player" | "spectator" }>(`/api/online-soup/rooms/${roomId}/join-auto`, {
+            method: "POST",
+            body: { inviteToken }
+          });
+          if (joined.role === "spectator") showToast("玩家席位已满，已作为旁观者进入");
+          const data = await api<OnlineSoupSnapshot>(`/api/online-soup/rooms/${roomId}`, { bypassCache: true, dedupe: false });
+          setSnapshot(data);
+        } catch (joinError) {
+          if (joinError instanceof ApiError && joinError.code === "PASSWORD_REQUIRED") {
+            setEntryPasswordOpen(true);
+          } else if (joinError instanceof ApiError && joinError.code === "ROOM_FULL") {
+            setEntryError("房间已满");
+          } else if (joinError instanceof ApiError && joinError.code === "ROOM_CLOSED") {
+            setEntryError("房间不存在或已关闭");
+          } else {
+            showToast(joinError instanceof Error ? joinError.message : "加入房间失败");
+          }
+        }
+      } else if (!quiet) {
+        setEntryError(error instanceof ApiError && error.code === "ROOM_CLOSED" ? "房间不存在或已关闭" : null);
+        showToast(error instanceof Error ? error.message : "房间加载失败");
+      }
     } finally { refreshPending.current = false; setLoading(false); }
-  }, [roomId, navigate, showToast]);
+  }, [inviteToken, roomId, navigate, showToast]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (loadingUser || entryStarted.current) return;
+    entryStarted.current = true;
+    if (!user) {
+      sessionStorage.setItem("onlineSoupPendingInvite", JSON.stringify({ roomId, inviteToken }));
+      navigate("/online-soup", { replace: true });
+      window.setTimeout(openAuth, 0);
+      return;
+    }
+    void load();
+  }, [inviteToken, load, loadingUser, navigate, openAuth, roomId, user]);
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
   useEffect(() => {
     void api<{ series: StickerSeries[] }>("/api/stickers", { cacheTtlMs: 30 * 60_000 })
@@ -145,6 +201,34 @@ export default function OnlineSoupRoomPage() {
     }
   }, [load, roomId]);
 
+  const loadProgress = useCallback(async (force = false) => {
+    const roundId = snapshotRef.current?.room.currentRoundId;
+    if (!roundId || progressPending.current) return;
+    if (!force && progressLoadedRoundId.current === roundId) return;
+    progressPending.current = true;
+    setProgressLoading(true);
+    try {
+      let after = "";
+      let hasMore = true;
+      const questions: ProgressQuestion[] = [];
+      while (hasMore) {
+        const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
+        const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false });
+        questions.push(...page.questions);
+        hasMore = page.hasMore;
+        if (!page.nextCursor) break;
+        after = page.nextCursor;
+      }
+      setProgressQuestions(questions);
+      progressLoadedRoundId.current = roundId;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "推理进度加载失败");
+    } finally {
+      progressPending.current = false;
+      setProgressLoading(false);
+    }
+  }, [roomId, showToast]);
+
   useEffect(() => connectOnlineSoupSocket(roomId, (reason, payload) => {
     if (reason === "room_closed") {
       showToast("主持人已关闭房间");
@@ -152,6 +236,7 @@ export default function OnlineSoupRoomPage() {
       return;
     }
     if (reason === "message" || reason === "clue") {
+      if (reason === "message") progressLoadedRoundId.current = null;
       void loadNewMessages();
       return;
     }
@@ -161,6 +246,7 @@ export default function OnlineSoupRoomPage() {
         ...current,
         messages: current.messages.map((message) => message.id === payload.messageId ? { ...message, answer: nextAnswer } : message)
       } : current);
+      setProgressQuestions((current) => current.map((question) => question.id === payload.messageId ? { ...question, answer: nextAnswer } : question));
       return;
     }
     if (structuralRoomEvents.has(reason)) {
@@ -181,6 +267,9 @@ export default function OnlineSoupRoomPage() {
     newestMessageId.current = latestMessageId;
     bottomRef.current?.scrollIntoView({ behavior });
   }, [latestMessageId]);
+  useEffect(() => {
+    if (clueListOpen && cluePanelTab === "progress") void loadProgress();
+  }, [clueListOpen, cluePanelTab, latestMessageId, loadProgress, snapshot?.room.currentRoundId]);
   useEffect(() => {
     const input = messageInputRef.current;
     if (!input) return;
@@ -301,6 +390,27 @@ export default function OnlineSoupRoomPage() {
     navigate(`/users/${userId}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } });
   }
 
+  async function submitEntryPassword() {
+    if (entryPassword.length !== 4) return showToast("请输入 4 位房间密码");
+    try {
+      const joined = await api<{ role: "player" | "spectator" }>(`/api/online-soup/rooms/${roomId}/join-auto`, {
+        method: "POST",
+        body: { password: entryPassword }
+      });
+      setEntryPasswordOpen(false);
+      if (joined.role === "spectator") showToast("玩家席位已满，已作为旁观者进入");
+      setLoading(true);
+      await load();
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "ROOM_FULL") {
+        setEntryPasswordOpen(false);
+        setEntryError("房间已满");
+      } else {
+        showToast(error instanceof Error ? error.message : "加入房间失败");
+      }
+    }
+  }
+
   async function leaveRoom() {
     try {
       await api(`/api/online-soup/rooms/${roomId}/leave`, { method: "POST" });
@@ -326,7 +436,19 @@ export default function OnlineSoupRoomPage() {
     .filter(({ index }) => !snapshot?.room.soup?.publishedSurfaceIndices?.includes(index));
   const clueMessages = snapshot?.messages.filter((message) => message.type === "clue" && message.roundId === snapshot.room.currentRoundId) ?? [];
 
-  if (loading || !snapshot) return <div className="min-h-screen bg-page p-4 pt-24"><div className="mx-auto h-48 max-w-5xl animate-pulse rounded-2xl bg-slate-200" /></div>;
+  if (loading || !snapshot) return <div className="min-h-screen bg-page p-4 pt-24">
+    {!entryPasswordOpen && !entryError && <div className="mx-auto h-48 max-w-5xl animate-pulse rounded-2xl bg-slate-200" />}
+    {entryPasswordOpen && <Modal onClose={() => navigate("/online-soup", { replace: true })}>
+      <div className="space-y-4">
+        <div><h2 className="text-xl font-black text-ink">输入房间密码</h2><p className="mt-1 text-sm text-muted">该房间需要验证四位密码</p></div>
+        <input className="field w-full text-center text-xl tracking-[.35em]" type="password" inputMode="numeric" maxLength={4} value={entryPassword} onChange={(event) => setEntryPassword(event.target.value.replace(/\D/g, ""))} placeholder="••••" />
+        <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => navigate("/online-soup", { replace: true })}>取消</button><button className="btn btn-primary" onClick={() => void submitEntryPassword()}>进入房间</button></div>
+      </div>
+    </Modal>}
+    {entryError && <Modal onClose={() => navigate("/online-soup", { replace: true })}>
+      <div className="space-y-4 text-center"><h2 className="text-xl font-black text-ink">{entryError}</h2><p className="text-sm text-muted">暂时无法进入该房间</p><button className="btn btn-primary w-full" onClick={() => navigate("/online-soup", { replace: true })}>确认</button></div>
+    </Modal>}
+  </div>;
 
   return (
     <div className="h-[100dvh] overflow-hidden bg-page">
@@ -398,6 +520,7 @@ export default function OnlineSoupRoomPage() {
 
         <section className="flex min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:min-h-0 lg:flex-col lg:overflow-x-hidden lg:overflow-y-auto" aria-label="房间成员头像">
           {snapshot.members.map((member) => <button key={member.id} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.role === "host" ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} onClick={() => openMemberProfile(member.id)} aria-label={`查看${member.nickname}的主页`} title={`${member.nickname} · ${member.role === "host" ? "主持人" : member.role === "player" ? "玩家" : "旁观者"}`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.role === "host" && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}</button>)}
+          <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
         </section>
 
         <section className="card flex min-h-0 flex-col overflow-hidden">
@@ -494,10 +617,20 @@ export default function OnlineSoupRoomPage() {
           <FloatingAction tone="danger" label="关闭房间" onClick={() => { setHostActionsOpen(false); setConfirmAction("close"); }} />
         </div>}
         <button className={`grid h-12 w-12 place-items-center rounded-full border shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${hostActionsOpen ? "border-blue-500 bg-primary text-white" : "border-blue-200 bg-white text-primary"}`} onClick={() => setHostActionsOpen((open) => !open)} aria-label="主持人更多操作" title="主持人更多操作"><Menu size={22} /></button>
-      </div> : <button className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 grid h-12 w-12 place-items-center rounded-full border border-amber-200 bg-amber-50 text-amber-700 shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`} onClick={() => setClueListOpen(true)} aria-label={`查看主持人线索，共 ${clueMessages.length} 条`} title={`主持人线索 · ${clueMessages.length} 条`}><Lightbulb size={22} /><span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-4 text-white ring-2 ring-white">{clueMessages.length}</span></button>}
+      </div> : <button className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 grid h-12 w-12 place-items-center rounded-full border border-amber-200 bg-gradient-to-br from-amber-50 to-blue-50 text-amber-700 shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`} onClick={() => { setCluePanelTab("clues"); setClueListOpen(true); }} aria-label={`查看线索与推理进度，当前 ${clueMessages.length} 条线索`} title="线索与进度"><span className="flex items-center gap-0.5"><Lightbulb size={18} /><ListChecks size={16} className="text-primary" /></span><span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-4 text-white ring-2 ring-white">{clueMessages.length}</span></button>}
 
-      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/8</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}</div>}<button className="btn btn-secondary w-full" onClick={() => isHost ? setConfirmAction("back") : void leaveRoom()}><LogOut size={16} /> {isHost ? "退出并解散房间" : "退出并释放席位"}</button></div></Modal>}
-      {clueListOpen && <Modal onClose={() => setClueListOpen(false)}><div className="space-y-4"><div className="flex items-center gap-2"><span className="grid h-10 w-10 place-items-center rounded-full bg-amber-100 text-amber-700"><Lightbulb size={20} /></span><div><h2 className="text-xl font-black text-ink">主持人线索</h2><p className="text-sm text-muted">共 {clueMessages.length} 条</p></div></div>{clueMessages.length > 0 ? <div className="max-h-[60dvh] space-y-2 overflow-y-auto overscroll-contain">{clueMessages.map((message, index) => <article key={message.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {index + 1}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>}<button className="btn btn-secondary w-full" onClick={() => setClueListOpen(false)}>关闭</button></div></Modal>}
+      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/8</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">邀请好友</span><span className="block text-xs font-medium text-muted">分享房间邀请图片</span></span></button><button className="btn btn-secondary w-full" onClick={() => isHost ? setConfirmAction("back") : void leaveRoom()}><LogOut size={16} /> {isHost ? "退出并解散房间" : "退出并释放席位"}</button></div></Modal>}
+      {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
+      {clueListOpen && <Modal onClose={() => setClueListOpen(false)}><div className="space-y-4">
+        <div className="pr-10"><h2 className="text-xl font-black text-ink">推理辅助</h2><p className="mt-1 text-sm text-muted">{snapshot.room.soup?.title ?? "当前海龟汤"}</p></div>
+        <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+          <button className={`rounded-lg px-3 py-2 text-sm font-black transition ${cluePanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted"}`} onClick={() => setCluePanelTab("clues")}><span className="inline-flex items-center gap-1.5"><Lightbulb size={15} />线索<span className="rounded-full bg-amber-100 px-1.5 text-[10px]">{clueMessages.length}</span></span></button>
+          <button className={`rounded-lg px-3 py-2 text-sm font-black transition ${cluePanelTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => setCluePanelTab("progress")}><span className="inline-flex items-center gap-1.5"><ListChecks size={15} />进度{progressLoadedRoundId.current === snapshot.room.currentRoundId && <span className="rounded-full bg-blue-100 px-1.5 text-[10px]">{progressQuestions.length}</span>}</span></button>
+        </div>
+        {cluePanelTab === "clues" && (clueMessages.length > 0 ? <div className="max-h-[60dvh] space-y-2 overflow-y-auto overscroll-contain">{clueMessages.map((message, index) => <article key={message.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {index + 1}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>)}
+        {cluePanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : progressQuestions.length > 0 ? <div className="max-h-[60dvh] space-y-2 overflow-y-auto overscroll-contain">{progressQuestions.map((question) => <article key={question.id} className="rounded-xl border border-blue-100 bg-blue-50/60 p-3"><div className="flex items-center gap-2"><button className="shrink-0 rounded-full" disabled={!question.sender.id} onClick={() => question.sender.id && openMemberProfile(question.sender.id)}>{question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="shrink-0 text-xs font-black text-primary">#{question.number}</span><span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span><time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p></div></div><div className="mt-2 pl-10">{question.answer ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{answerLabels[question.answer]}</span> : <span className="inline-flex rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted">等待主持人回复</span>}</div></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
+        <button className="btn btn-secondary w-full" onClick={() => setClueListOpen(false)}>关闭</button>
+      </div></Modal>}
       {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "close" ? "确认解散房间？" : "确认返回并解散房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">主持人离开后房间将立即解散，所有玩家都会退出，此操作无法撤销。</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>确认解散</button></div></div></Modal>}
       {clueOpen && <Modal onClose={() => setClueOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">发布主持人线索</h2><textarea className="field min-h-32 w-full" maxLength={2000} value={clue} onChange={(e) => setClue(e.target.value)} placeholder="输入给所有玩家看的线索…" /><button className="btn btn-primary w-full" onClick={publishClue}><Lightbulb size={16} /> 发布线索</button></div></Modal>}
       {surfacePublishOpen && <Modal onClose={() => setSurfacePublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">发布补充汤面</h2><p className="mt-1 text-sm text-muted">选择一条尚未发布的补充汤面。</p></div><div className="space-y-2">{unpublishedSurfaces.map(({ content: surface, index }) => <button key={index} className="w-full rounded-xl border border-blue-200 bg-blue-50 p-3 text-left transition hover:border-blue-400" onClick={() => void publishSurface(index)}><span className="text-sm font-black text-blue-800">补充汤面 {index + 1}</span><span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{surface.replace(/<[^>]*>/g, "")}</span></button>)}</div><button className="btn btn-secondary w-full" onClick={() => setSurfacePublishOpen(false)}>取消</button></div></Modal>}

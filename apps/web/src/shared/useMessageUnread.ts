@@ -1,65 +1,89 @@
 import { useEffect, useState } from "react";
-import { api, type NotificationsResponse, type RequestsResponse } from "../api";
-import type { ConversationItem } from "./types";
-import { getMessageUnreadCounts } from "./messageUnread";
+import { api } from "../api";
 import { subscribeServerEvent } from "./serverEvents";
 
-const unreadByUser = new Map<string, number>();
-const loadedAtByUser = new Map<string, number>();
-const inFlightByUser = new Map<string, Promise<number>>();
-const listeners = new Set<(userId: string, unread: number) => void>();
-const CACHE_MAX_AGE = 15_000;
+export type MessageUnreadCounts = {
+  system: number;
+  interactions: number;
+  requests: number;
+  notices: number;
+  privateMessages: number;
+  total: number;
+};
 
-async function loadMessageUnread(userId: string, force = false) {
-  const cachedAt = loadedAtByUser.get(userId) ?? 0;
-  if (!force && Date.now() - cachedAt < CACHE_MAX_AGE) return unreadByUser.get(userId) ?? 0;
+const emptyCounts: MessageUnreadCounts = {
+  system: 0,
+  interactions: 0,
+  requests: 0,
+  notices: 0,
+  privateMessages: 0,
+  total: 0
+};
+const countsByUser = new Map<string, MessageUnreadCounts>();
+const inFlightByUser = new Map<string, Promise<MessageUnreadCounts>>();
+const refreshQueuedByUser = new Set<string>();
+const listeners = new Set<(userId: string, counts: MessageUnreadCounts) => void>();
+
+function publish(userId: string, counts: MessageUnreadCounts) {
+  countsByUser.set(userId, counts);
+  for (const listener of listeners) listener(userId, counts);
+}
+
+async function loadUnreadCounts(userId: string, force = false): Promise<MessageUnreadCounts> {
   const pending = inFlightByUser.get(userId);
-  if (pending) return pending;
+  if (pending) {
+    if (force) refreshQueuedByUser.add(userId);
+    return pending;
+  }
 
-  const request = Promise.all([
-    api<NotificationsResponse>("/api/notifications"),
-    api<RequestsResponse>("/api/access-requests"),
-    api<{ notices: { isRead: boolean }[] }>("/api/notices"),
-    api<{ conversations: ConversationItem[] }>("/api/conversations")
-  ]).then(([notificationData, requestData, noticeData, conversationData]) => {
-    const unread = getMessageUnreadCounts({
-      notifications: notificationData.notifications,
-      requests: requestData.requests,
-      notices: noticeData.notices,
-      conversations: conversationData.conversations
-    }).total;
-    unreadByUser.set(userId, unread);
-    loadedAtByUser.set(userId, Date.now());
-    for (const listener of listeners) listener(userId, unread);
-    return unread;
-  }).finally(() => inFlightByUser.delete(userId));
-
+  const request = api<{ counts: MessageUnreadCounts }>("/api/messages/unread-counts", {
+    bypassCache: true,
+    dedupe: false
+  }).then(({ counts }) => {
+    publish(userId, counts);
+    return counts;
+  }).finally(() => {
+    inFlightByUser.delete(userId);
+    if (refreshQueuedByUser.delete(userId)) void loadUnreadCounts(userId, true).catch(() => {});
+  });
   inFlightByUser.set(userId, request);
   return request;
 }
 
-export function useMessageUnread(userId: string | undefined, enabled = true) {
-  const [unread, setUnread] = useState(() => userId ? unreadByUser.get(userId) ?? 0 : 0);
+export function useMessageUnreadCounts(userId: string | undefined, enabled = true) {
+  const [counts, setCounts] = useState<MessageUnreadCounts>(() => userId ? countsByUser.get(userId) ?? emptyCounts : emptyCounts);
 
   useEffect(() => {
     if (!enabled || !userId) {
-      setUnread(0);
+      setCounts(emptyCounts);
       return;
     }
-    setUnread(unreadByUser.get(userId) ?? 0);
-    const listener = (changedUserId: string, value: number) => {
-      if (changedUserId === userId) setUnread(value);
+    setCounts(countsByUser.get(userId) ?? emptyCounts);
+    const listener = (changedUserId: string, value: MessageUnreadCounts) => {
+      if (changedUserId === userId) setCounts(value);
+    };
+    const refresh = () => void loadUnreadCounts(userId, true).catch(() => {});
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refresh();
     };
     listeners.add(listener);
-    void loadMessageUnread(userId).catch(() => {});
-    const unsubscribe = subscribeServerEvent("unread_changed", () => {
-      void loadMessageUnread(userId, true).catch(() => {});
-    });
+    void loadUnreadCounts(userId).catch(() => {});
+    const unsubscribe = subscribeServerEvent("unread_changed", refresh);
+    const fallbackTimer = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       listeners.delete(listener);
       unsubscribe();
+      window.clearInterval(fallbackTimer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [enabled, userId]);
 
-  return unread;
+  return counts;
+}
+
+export function useMessageUnread(userId: string | undefined, enabled = true) {
+  return useMessageUnreadCounts(userId, enabled).total;
 }

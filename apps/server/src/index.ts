@@ -1845,6 +1845,53 @@ app.get("/api/conversations", async (req, res) => {
   })) });
 });
 
+app.get("/api/messages/unread-counts", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const interactionTypes = ["soup_like", "soup_favorite", "soup_evaluation", "user_follow"];
+  const placeholders = interactionTypes.map(() => "?").join(",");
+  const requestWhere = user.role === "admin" ? "" : "AND owner_id = ?";
+  const requestParams = user.role === "admin" ? [] : [user.id];
+  const [[notificationCounts], [requestCounts], [noticeCounts], [privateMessageCounts]] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN is_read = 0 AND type <> 'view_request' AND type NOT IN (${placeholders}) THEN 1 ELSE 0 END) AS system_count,
+         SUM(CASE WHEN is_read = 0 AND type IN (${placeholders}) THEN 1 ELSE 0 END) AS interaction_count
+       FROM notifications WHERE user_id = ?`,
+      [...interactionTypes, ...interactionTypes, user.id]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS request_count FROM view_requests WHERE status = 'pending' ${requestWhere}`,
+      requestParams
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS notice_count
+       FROM admin_notices n
+       WHERE (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+         AND NOT EXISTS (
+           SELECT 1 FROM admin_notice_reads nr WHERE nr.notice_id = n.id AND nr.user_id = ?
+         )`,
+      [user.id]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS private_message_count
+       FROM private_messages pm
+       INNER JOIN conversations c ON c.id = pm.conversation_id
+       WHERE (c.user_a_id = ? OR c.user_b_id = ?)
+         AND pm.sender_id <> ? AND pm.read_at IS NULL`,
+      [user.id, user.id, user.id]
+    )
+  ]);
+  const counts = {
+    system: Number(notificationCounts[0]?.system_count ?? 0),
+    interactions: Number(notificationCounts[0]?.interaction_count ?? 0),
+    requests: Number(requestCounts[0]?.request_count ?? 0),
+    notices: Number(noticeCounts[0]?.notice_count ?? 0),
+    privateMessages: Number(privateMessageCounts[0]?.private_message_count ?? 0)
+  };
+  res.json({ counts: { ...counts, total: counts.system + counts.interactions + counts.requests + counts.notices + counts.privateMessages } });
+});
+
 async function conversationForUser(conversationId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar
