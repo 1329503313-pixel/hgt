@@ -15,6 +15,10 @@ type HomeCacheData = Pick<SoupsResponse, "soups" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge">;
 type UserSearchResponse = { users: SearchUser[]; total: number };
 
+function createHomeRandomSeed() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function HomePage() {
   const { user, refreshKey, setExportReady, openAuth } = useApp();
   const navigate = useNavigate();
@@ -24,6 +28,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const loadingRef = useRef(false);
   const offsetRef = useRef(0);
+  const previousRefreshKeyRef = useRef(refreshKey);
+  const randomSeedRef = useRef(createHomeRandomSeed());
   const [matchedUsers, setMatchedUsers] = useState<SearchUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersExpanded, setUsersExpanded] = useState(false);
@@ -44,7 +50,7 @@ export default function HomePage() {
   const submitSearch = () => setFilters((old) => ({ ...old, keyword: searchKeyword.trim() }));
 
   const loadSoups = useCallback(
-    async (append = false) => {
+    async (append = false, bypassCache = false) => {
       if (loadingRef.current) return;
       if (append && !hasMore) return;
       loadingRef.current = true;
@@ -54,8 +60,9 @@ export default function HomePage() {
       });
       params.set("limit", "10");
       params.set("offset", String(append ? offsetRef.current : 0));
+      params.set("seed", randomSeedRef.current);
       const cacheKey = `hgt:home:${user?.id ?? "guest"}:${params.toString()}`;
-      const cached = append ? null : readSessionCache<HomeCacheData>(cacheKey, 45_000);
+      const cached = append || bypassCache ? null : readSessionCache<HomeCacheData>(cacheKey, 45_000);
       if (cached) {
         setSoups(cached.soups);
         offsetRef.current = cached.soups.length;
@@ -63,7 +70,10 @@ export default function HomePage() {
       }
       setLoading(append || !cached);
       try {
-        const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`, { cacheTtlMs: append ? 0 : 30_000 });
+        const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`, {
+          cacheTtlMs: append ? 0 : 30_000,
+          bypassCache
+        });
         if (append) {
           setSoups((old) => {
             const seen = new Set(old.map((s) => s.id));
@@ -86,7 +96,10 @@ export default function HomePage() {
   );
 
   useEffect(() => {
-    loadSoups(false);
+    const bypassCache = previousRefreshKeyRef.current !== refreshKey;
+    previousRefreshKeyRef.current = refreshKey;
+    if (bypassCache) randomSeedRef.current = createHomeRandomSeed();
+    loadSoups(false, bypassCache);
   }, [filters, refreshKey]);
 
   useEffect(() => {

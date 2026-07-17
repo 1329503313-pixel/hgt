@@ -10,6 +10,7 @@ import { AdminDashboard } from "../components/admin/AdminDashboard";
 import { BadgeManagement } from "../components/admin/BadgeManagement";
 import { NoticeManagement } from "../components/admin/NoticeManagement";
 import { CardSkeleton } from "../components/Skeletons";
+import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomManagement";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -35,6 +36,7 @@ export default function AdminPage() {
         {activeTab === "approvals" && <ApprovalManagement />}
         {activeTab === "soups" && <SoupManagement />}
         {activeTab === "evaluations" && <EvaluationManagement />}
+        {activeTab === "online-soup" && <OnlineSoupRoomManagement />}
         {activeTab === "notices" && <NoticeManagement />}
       </div>
     </section>

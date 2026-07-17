@@ -202,6 +202,136 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  // 多人在线玩汤（与 AI 玩汤会话完全独立）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_rooms (
+      id VARCHAR(64) PRIMARY KEY,
+      room_code CHAR(6) NOT NULL UNIQUE,
+      name VARCHAR(50) NOT NULL,
+      host_id VARCHAR(64) NOT NULL,
+      room_type ENUM('public','password') NOT NULL DEFAULT 'public',
+      password_hash VARCHAR(128) NULL,
+      status ENUM('preparing','playing','ended','closed') NOT NULL DEFAULT 'preparing',
+      current_soup_id VARCHAR(64) NULL,
+      current_round_id VARCHAR(64) NULL,
+      host_last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      closed_at DATETIME NULL,
+      INDEX idx_online_rooms_lobby (room_type, status, updated_at),
+      CONSTRAINT fk_online_room_host FOREIGN KEY (host_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_room_soup FOREIGN KEY (current_soup_id) REFERENCES soups(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_rounds (
+      id VARCHAR(64) PRIMARY KEY,
+      room_id VARCHAR(64) NOT NULL,
+      soup_id VARCHAR(64) NOT NULL,
+      round_number INT UNSIGNED NOT NULL,
+      status ENUM('preparing','playing','ended') NOT NULL DEFAULT 'preparing',
+      question_count INT UNSIGNED NOT NULL DEFAULT 0,
+      published_surface_indices JSON NULL,
+      published_bottom_indices JSON NULL,
+      started_at DATETIME NULL,
+      ended_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_online_room_round_number (room_id, round_number),
+      INDEX idx_online_round_room_time (room_id, created_at),
+      CONSTRAINT fk_online_round_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_round_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_members (
+      room_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      member_role ENUM('host','player','spectator') NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      left_at DATETIME NULL,
+      PRIMARY KEY (room_id, user_id),
+      INDEX idx_online_members_room_active (room_id, is_active, member_role),
+      CONSTRAINT fk_online_member_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_member_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_messages (
+      id VARCHAR(64) PRIMARY KEY,
+      message_sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      room_id VARCHAR(64) NOT NULL,
+      round_id VARCHAR(64) NULL,
+      sender_id VARCHAR(64) NULL,
+      message_type ENUM('discussion','question','host','sticker','clue','supplemental_surface','bottom','manual','system') NOT NULL,
+      content TEXT NOT NULL,
+      sticker_id VARCHAR(64) NULL,
+      content_index INT UNSIGNED NULL,
+      question_number INT UNSIGNED NULL,
+      answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_online_message_sequence (message_sequence),
+      INDEX idx_online_messages_room_time (room_id, created_at, id),
+      CONSTRAINT fk_online_message_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_message_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE SET NULL,
+      CONSTRAINT fk_online_message_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn(
+    "online_soup_rounds",
+    "published_surface_indices",
+    "published_surface_indices JSON NULL AFTER question_count"
+  );
+  await ensureColumn(
+    "online_soup_rounds",
+    "published_bottom_indices",
+    "published_bottom_indices JSON NULL AFTER published_surface_indices"
+  );
+  await ensureColumn(
+    "online_soup_messages",
+    "message_sequence",
+    "message_sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE AFTER id"
+  );
+  await ensureColumn(
+    "online_soup_messages",
+    "content_index",
+    "content_index INT UNSIGNED NULL AFTER content"
+  );
+  await ensureColumn(
+    "online_soup_messages",
+    "sticker_id",
+    "sticker_id VARCHAR(64) NULL AFTER content"
+  );
+  await ensureIndex(
+    "online_soup_messages",
+    "idx_online_messages_room_sequence",
+    "room_id, message_sequence"
+  );
+  await ensureIndex(
+    "online_soup_members",
+    "idx_online_members_presence",
+    "is_active, last_seen_at"
+  );
+  await ensureIndex(
+    "online_soup_rooms",
+    "idx_online_rooms_status_updated",
+    "status, updated_at"
+  );
+  const [[onlineSoupMessageType]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_messages' AND COLUMN_NAME = 'message_type'`
+  );
+  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'sticker'")) {
+    await pool.query(
+      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','clue','supplemental_surface','bottom','manual','system') NOT NULL"
+    );
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admin_notices (
       id VARCHAR(64) PRIMARY KEY,

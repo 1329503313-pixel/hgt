@@ -1,4 +1,4 @@
-import { Home, Plus, User } from "lucide-react";
+import { Home, MessageCircleQuestion, Plus, User, CircleEllipsis } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { api } from "../api";
@@ -11,6 +11,7 @@ export function BottomNav() {
   const path = location.pathname;
   const isHomeActive = path === "/" || path.startsWith("/soup/");
   const isMineActive = path.startsWith("/mine");
+  const isOnlineSoupActive = path.startsWith("/online-soup");
 
   function handleHome() {
     if (path === "/") {
@@ -41,7 +42,7 @@ export function BottomNav() {
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 px-4 pb-[max(10px,env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-8px_24px_rgba(17,24,39,0.07)] backdrop-blur">
-      <div className="relative mx-auto grid max-w-md grid-cols-3 items-end gap-2">
+      <div className="relative mx-auto grid max-w-md grid-cols-5 items-end gap-1">
         <button
           className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isHomeActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}
           onClick={handleHome}
@@ -50,11 +51,22 @@ export function BottomNav() {
           <Home size={20} />
           <span>首页</span>
         </button>
+        <button
+          className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isOnlineSoupActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}
+          onClick={() => { if (!user) { openAuth(); return; } navigate("/online-soup"); }}
+        >
+          <MessageCircleQuestion size={20} />
+          <span>玩汤</span>
+        </button>
         <button className="flex min-h-[64px] flex-col items-center justify-end gap-1 text-xs font-semibold text-ink" onClick={handleCreate}>
-          <span className="-mt-7 grid h-16 w-16 place-items-center rounded-full border-[6px] border-page bg-primary text-white shadow-[0_10px_24px_rgba(37,99,235,0.32)]">
-            <Plus size={34} strokeWidth={2.2} />
+          <span className="grid h-11 w-11 place-items-center rounded-full bg-primary text-white shadow-[0_8px_20px_rgba(37,99,235,0.28)]">
+            <Plus size={26} strokeWidth={2.2} />
           </span>
           <span>创作</span>
+        </button>
+        <button className="flex min-h-[58px] cursor-default flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold text-slate-300" disabled aria-label="预留功能">
+          <CircleEllipsis size={20} />
+          <span>敬请期待</span>
         </button>
         <button
           className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isMineActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { MessageCircle, UserCheck, UserPlus } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import type { SocialProfile, SoupSummary } from "../shared/types";
@@ -8,6 +8,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { ProfileHero, SoupCoverGrid } from "../components/ProfileViews";
 import { ProfileSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
+import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 
 type ProfileResponse = { profile: SocialProfile; soups: SoupSummary[] };
 const profileCacheKey = (viewerId: string, targetId: string) => `hgt:user-profile:${viewerId}:${targetId}`;
@@ -16,6 +17,11 @@ export default function UserProfilePage() {
   const { id = "" } = useParams();
   const { user, loadingUser, showToast } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
+  const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean } | null;
+  const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
+  const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : "/";
+  useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
   const [profile, setProfile] = useState<SocialProfile | null>(null);
   const [soups, setSoups] = useState<SoupSummary[]>([]);
 
@@ -34,7 +40,7 @@ export default function UserProfilePage() {
     void loadProfile(cacheKey).catch((error) => { if (!cached) showToast((error as Error).message); });
   }, [id, user?.id, loadingUser]);
 
-  if (!profile) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="用户主页" backTo="/" /><div className="mx-auto max-w-3xl px-4"><ProfileSkeleton /></div></section>;
+  if (!profile) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="用户主页" backTo={backTarget} /><div className="mx-auto max-w-3xl px-4"><ProfileSkeleton /></div></section>;
 
   async function toggleFollow() {
     try {
@@ -57,7 +63,7 @@ export default function UserProfilePage() {
 
   return (
     <section className="min-h-screen bg-page pt-[72px]">
-      <PageTopBar title="用户主页" backTo="/" />
+      <PageTopBar title="用户主页" backTo={backTarget} />
       <div className="mx-auto max-w-3xl space-y-3 px-4 pb-10">
         <ProfileHero profile={profile} onFollowing={() => navigate(`/users/${profile.id}/following`)} onFollowers={() => navigate(`/users/${profile.id}/followers`)} actions={!profile.isSelf ? (
           <div className="flex gap-2">

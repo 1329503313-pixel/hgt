@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { createPortal } from "react-dom";
 
 export function Modal({
   children,
@@ -9,11 +10,11 @@ export function Modal({
   onClose: () => void;
   full?: boolean;
 }) {
-  return (
-    <div className="fixed inset-0 z-40 flex items-end bg-slate-900/30 p-0 sm:items-center sm:justify-center sm:p-4">
-      <div className={`w-full overflow-auto overscroll-contain bg-white p-4 shadow-soft sm:rounded-[20px] ${full ? "h-full max-w-3xl sm:h-[88vh]" : "max-h-[80vh] max-w-md rounded-t-lg"}`}>
+  const modal = (
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/40 px-3 pt-[max(12px,env(safe-area-inset-top))] pb-[max(12px,env(safe-area-inset-bottom))] sm:items-center sm:p-4">
+      <div className={`w-full overflow-auto overscroll-contain rounded-2xl bg-white p-4 shadow-soft ${full ? "h-full max-h-[calc(100dvh-24px)] max-w-3xl sm:h-[88vh]" : "max-h-[calc(100dvh-24px)] max-w-md"}`}>
         {!full && (
-          <div className="mb-3 flex justify-end sm:hidden">
+          <div className="sticky top-0 z-10 -mx-1 -mt-1 mb-2 flex justify-end bg-white/95 py-1 backdrop-blur sm:hidden">
             <button className="btn btn-secondary px-3" onClick={onClose}>
               <X size={18} />
             </button>
@@ -23,4 +24,5 @@ export function Modal({
       </div>
     </div>
   );
+  return createPortal(modal, document.body);
 }

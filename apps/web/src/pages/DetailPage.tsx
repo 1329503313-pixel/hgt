@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, Gamepad2, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, ChevronDown, ChevronUp } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import type { SoupDetail } from "../shared/types";
@@ -15,6 +15,7 @@ import { defaultCoverUrl } from "../shared/staticAssets";
 import { DetailSkeleton } from "../components/Skeletons";
 import { refreshMineContentCache } from "../shared/mineContentCache";
 import { parentRoute } from "../shared/routeHierarchy";
+import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -36,6 +37,9 @@ export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean } | null;
+  const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
+  useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
   const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);
@@ -44,6 +48,7 @@ export default function DetailPage() {
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
 
   const radarRef = useRef<HTMLDivElement | null>(null);
+  const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname);
 
   useEffect(() => {
     if (!id) return;
@@ -223,8 +228,8 @@ export default function DetailPage() {
       {/* Header */}
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-          <button className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink" onClick={() => navigate(parentRoute(location.pathname), { replace: true })}>
-            <ArrowLeft size={18} /> <span>返回列表</span>
+          <button className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink" onClick={() => navigate(backTarget, { replace: true })}>
+            <ArrowLeft size={18} /> <span>{onlineSoupRoomId ? "返回房间" : "返回列表"}</span>
           </button>
           <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
             {user ? (
@@ -436,11 +441,11 @@ export default function DetailPage() {
       {/* AI 玩汤 悬浮按钮 */}
       {user && soup.enableAiGame && isReviewApproved && (
         <button
-          className="fixed bottom-24 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-lg active:scale-95 transition-transform hover:shadow-xl"
+          className="fixed bottom-24 right-4 z-30 flex h-14 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-5 text-sm font-black text-white shadow-lg active:scale-95 transition-transform hover:shadow-xl"
           onClick={() => setShowGame(true)}
           aria-label="AI 玩汤"
         >
-          <Gamepad2 size={24} />
+          AI玩汤
         </button>
       )}
 

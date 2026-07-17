@@ -56,8 +56,8 @@ function SupplementEditor({
 
 function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-slate-900/35 p-0 sm:items-center sm:justify-center sm:p-4">
-      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-t-lg bg-white p-5 shadow-soft sm:rounded-[20px]">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/35 px-3 pt-[max(12px,env(safe-area-inset-top))] pb-[max(12px,env(safe-area-inset-bottom))] sm:items-center sm:p-4">
+      <div className="max-h-[calc(100dvh-24px)] w-full max-w-lg overflow-auto rounded-2xl bg-white p-5 shadow-soft">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-black text-ink">用户使用条款</h3>

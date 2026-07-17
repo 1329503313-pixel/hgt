@@ -319,7 +319,7 @@ export function AdminDashboard() {
         </ChartCard>
       </div>
 
-      <ChartCard title="热门汤品 Top 10" description="热力值 =（综合评分 + 1）×（浏览 +（点赞 + 1）× 15 +（收藏 + 1）× 20 +（评价 + 1）× 25），按热力值降序排列">
+      <ChartCard title="热门汤品 Top 10" description="热力值 =（综合评分 + 1）×（浏览 +（点赞 + 1）× 15 +（收藏 + 1）× 20 +（评价 + 1）× 25）− 61，按热力值降序排列">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
             <thead><tr className="border-b border-line text-xs text-muted"><th className="px-3 py-2">排名</th><th className="px-3 py-2">汤品</th><th className="px-3 py-2 text-right">综合评分</th><th className="px-3 py-2 text-right">热力值</th><th className="px-3 py-2 text-right">浏览</th><th className="px-3 py-2 text-right">评价</th><th className="px-3 py-2 text-right">点赞</th><th className="px-3 py-2 text-right">收藏</th></tr></thead>

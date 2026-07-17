@@ -18,6 +18,8 @@ import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarit
 import { PublicUser } from "./types.js";
 import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
+import { WebSocket, WebSocketServer } from "ws";
+import onlineSoupRouter, { cleanupOnlineSoupStaleSeats, setOnlineSoupEventEmitter, setOnlineSoupLobbyEventEmitter } from "./onlineSoup.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const insecureJwtSecrets = new Set([
@@ -44,6 +46,22 @@ app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 const userEventClients = new Map<string, Set<Response>>();
+const onlineSoupRoomSocketClients = new Map<string, Set<WebSocket>>();
+const onlineSoupLobbySocketClients = new Set<WebSocket>();
+
+function emitOnlineSoupSocketEvent(roomId: string, event: string, payload: unknown) {
+  const clients = onlineSoupRoomSocketClients.get(roomId);
+  if (!clients?.size) return;
+  const message = JSON.stringify({ event, payload });
+  for (const client of clients) if (client.readyState === WebSocket.OPEN) client.send(message);
+}
+
+setOnlineSoupEventEmitter(emitOnlineSoupSocketEvent);
+setOnlineSoupLobbyEventEmitter((event, payload) => {
+  if (!onlineSoupLobbySocketClients.size) return;
+  const message = JSON.stringify({ event, payload });
+  for (const client of onlineSoupLobbySocketClients) if (client.readyState === WebSocket.OPEN) client.send(message);
+});
 
 function emitUserEvent(userId: string, event: string, payload: unknown) {
   const clients = userEventClients.get(userId);
@@ -631,7 +649,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     reviewStatus: String(row.review_status ?? "approved"),
     reviewReason: row.review_reason ? String(row.review_reason) : null,
     reviewVersion: Number(row.review_version ?? 1),
-    heatValue: Math.round((comprehensiveScore + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25)),
+    heatValue: Math.round((comprehensiveScore + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25) - 61),
     radar: {
       writing: num(row.avg_writing),
       logic: num(row.avg_logic),
@@ -886,7 +904,7 @@ async function getMaxOriginalSoupHeat(userId: string) {
   const [[row]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COALESCE(MAX(
        (COALESCE(e.comprehensive_score, 0) + 1) *
-       (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25)
+       (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61
      ), 0) AS max_heat
      FROM soups s
      LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
@@ -2103,7 +2121,7 @@ app.get("/api/rankings", async (req, res) => {
        COALESCE(l.like_count, 0) AS like_count,
        COALESCE(f.favorite_count, 0) AS favorite_count,
        (COALESCE(e.comprehensive_score, 0) + 1) *
-         (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) AS heat_value
+         (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
      FROM soups s
      LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
      LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
@@ -3325,7 +3343,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(f.favorite_count, 0) AS favorite_count,
         (COALESCE(e.comprehensive_score, 0) + 1) *
-          (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) AS heat_value
+          (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
        FROM soups s
        LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
        LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
@@ -3850,6 +3868,12 @@ app.use("/api/game", async (req, _res, next) => {
   next();
 }, gameRouter);
 
+// ---------- 多人在线玩汤路由（独立于 AI 玩汤） ----------
+app.use("/api/online-soup", async (req, _res, next) => {
+  (req as any).user = await currentUser(req);
+  next();
+}, onlineSoupRouter);
+
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if ((err as { type?: string }).type === "entity.parse.failed") {
     return res.status(400).json({ error: "请求内容不是有效的 JSON" });
@@ -3860,6 +3884,11 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 
 if (config.runDatabaseMigrations) await initDatabase();
 else await pool.query("SELECT 1");
+await cleanupOnlineSoupStaleSeats();
+const onlineSoupSeatCleanupTimer = setInterval(() => {
+  cleanupOnlineSoupStaleSeats().catch((error) => console.error("Online soup stale seat cleanup failed:", error));
+}, 60_000);
+onlineSoupSeatCleanupTimer.unref();
 await refreshEquippedSpecialBadgeMetadata();
 await refreshBadgeOwnershipRates();
 const badgeOwnershipRefreshTimer = setInterval(() => {
@@ -3868,6 +3897,96 @@ const badgeOwnershipRefreshTimer = setInterval(() => {
 badgeOwnershipRefreshTimer.unref();
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);
+});
+
+const onlineSoupWebSocketServer = new WebSocketServer({ noServer: true });
+
+function cookieValue(header: string | undefined, name: string) {
+  if (!header) return null;
+  for (const item of header.split(";")) {
+    const [key, ...parts] = item.trim().split("=");
+    if (key === name) return decodeURIComponent(parts.join("="));
+  }
+  return null;
+}
+
+server.on("upgrade", async (request, socket, head) => {
+  try {
+    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    if (url.pathname === "/ws/online-soup-lobby") {
+      onlineSoupWebSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+        (webSocket as any).onlineSoupLobby = true;
+        onlineSoupWebSocketServer.emit("connection", webSocket, request);
+      });
+      return;
+    }
+    if (url.pathname !== "/ws/online-soup") return socket.destroy();
+    const roomId = url.searchParams.get("roomId");
+    const token = cookieValue(request.headers.cookie, "hgt_token");
+    const claims = token ? verifyToken(token) : null;
+    if (!roomId || !claims) return socket.destroy();
+    const [[user], [members]] = await Promise.all([
+      pool.query<mysql.RowDataPacket[]>("SELECT id, token_version FROM users WHERE id = ? LIMIT 1", [claims.id]),
+      pool.query<mysql.RowDataPacket[]>(
+        `SELECT m.user_id, r.host_id FROM online_soup_members m
+         JOIN online_soup_rooms r ON r.id = m.room_id
+         WHERE m.room_id = ? AND m.user_id = ? AND m.is_active = 1 AND r.status <> 'closed' LIMIT 1`,
+        [roomId, claims.id]
+      )
+    ]);
+    if (!user[0] || Number(user[0].token_version ?? 0) !== claims.tokenVersion || !members[0]) return socket.destroy();
+    onlineSoupWebSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+      (webSocket as any).onlineSoupUserId = claims.id;
+      (webSocket as any).onlineSoupRoomId = roomId;
+      (webSocket as any).onlineSoupIsHost = String(members[0].host_id) === String(claims.id);
+      onlineSoupWebSocketServer.emit("connection", webSocket, request);
+    });
+  } catch {
+    socket.destroy();
+  }
+});
+
+onlineSoupWebSocketServer.on("connection", (socket) => {
+  if ((socket as any).onlineSoupLobby) {
+    onlineSoupLobbySocketClients.add(socket);
+    socket.send(JSON.stringify({ event: "connected", payload: { scope: "lobby" } }));
+    socket.on("message", (raw) => {
+      try {
+        const message = JSON.parse(raw.toString());
+        if (message?.type === "ping") {
+          socket.send(JSON.stringify({ event: "pong", payload: { at: new Date().toISOString() } }));
+        }
+      } catch { /* Ignore malformed client frames. */ }
+    });
+    socket.on("close", () => onlineSoupLobbySocketClients.delete(socket));
+    return;
+  }
+  const userId = String((socket as any).onlineSoupUserId);
+  const roomId = String((socket as any).onlineSoupRoomId);
+  const isHost = Boolean((socket as any).onlineSoupIsHost);
+  let lastPresencePersistedAt = Date.now();
+  const clients = onlineSoupRoomSocketClients.get(roomId) ?? new Set<WebSocket>();
+  clients.add(socket);
+  onlineSoupRoomSocketClients.set(roomId, clients);
+  socket.send(JSON.stringify({ event: "connected", payload: { roomId } }));
+  void pool.query("UPDATE online_soup_members SET last_seen_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
+  if (isHost) void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
+
+  socket.on("message", (raw) => {
+    try {
+      const message = JSON.parse(raw.toString());
+      if (message?.type !== "ping") return;
+      socket.send(JSON.stringify({ event: "pong", payload: { at: new Date().toISOString() } }));
+      if (Date.now() - lastPresencePersistedAt < 60_000) return;
+      lastPresencePersistedAt = Date.now();
+      void pool.query("UPDATE online_soup_members SET last_seen_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
+      if (isHost) void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
+    } catch { /* Ignore malformed client frames. */ }
+  });
+  socket.on("close", () => {
+    clients.delete(socket);
+    if (clients.size === 0) onlineSoupRoomSocketClients.delete(roomId);
+  });
 });
 server.on("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {

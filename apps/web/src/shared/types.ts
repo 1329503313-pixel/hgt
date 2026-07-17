@@ -179,6 +179,87 @@ export type StickerSeries = {
   stickers: StickerAsset[];
 };
 
+export type OnlineSoupRoomStatus = "preparing" | "playing" | "ended" | "closed";
+export type OnlineSoupMemberRole = "host" | "player" | "spectator" | "admin";
+export type OnlineSoupAnswer = "yes" | "no" | "both" | "unknown" | "irrelevant";
+
+export type OnlineSoupLobbyRoom = {
+  id: string;
+  code: string;
+  name: string;
+  type: "public" | "password";
+  status: OnlineSoupRoomStatus;
+  host: { id: string; nickname: string };
+  soupTitle: string | null;
+  playerCount: number;
+  hasPassword: boolean;
+  createdAt: string;
+};
+
+export type OnlineSoupChoice = {
+  id: string;
+  title: string;
+  type: string;
+  author: string;
+  summary: string;
+  coverImage: string | null;
+  source: "mine" | "library";
+};
+
+export type OnlineSoupMessage = {
+  id: string;
+  sequence: string;
+  roundId: string | null;
+  soupId: string | null;
+  roundEnded: boolean;
+  allBottomsPublished: boolean;
+  senderId: string | null;
+  senderName: string | null;
+  senderAvatar: string | null;
+  senderEquippedBadge: EquippedBadge | null;
+  type: "discussion" | "question" | "host" | "sticker" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system";
+  content: string;
+  stickerId: string | null;
+  senderIsHost: boolean;
+  contentIndex: number | null;
+  questionNumber: number | null;
+  answer: OnlineSoupAnswer | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OnlineSoupSnapshot = {
+  room: {
+    id: string;
+    code: string;
+    name: string;
+    type: "public" | "password";
+    status: OnlineSoupRoomStatus;
+    hostOnline: boolean;
+    playerCount: number;
+    currentRoundId: string | null;
+    soup: {
+      id: string;
+      title: string;
+      type: string;
+      surface: string;
+      visibleSupplementalSurfaces: Array<{ index: number; content: string }>;
+      supplementalSurfaces?: string[];
+      bottom?: string;
+      supplementalBottoms?: string[];
+      manual?: string | null;
+      publishedSurfaceIndices?: number[];
+      publishedBottomIndices?: number[];
+    } | null;
+    createdAt: string;
+  };
+  me: { role: OnlineSoupMemberRole; isHost: boolean };
+  members: Array<{ id: string; nickname: string; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; joinedAt: string }>;
+  messages: OnlineSoupMessage[];
+  messagesHasMore: boolean;
+  messagesNextCursor: string | null;
+};
+
 export type ExcellentAuthorApplicationStatus = {
   id: string;
   status: RequestStatus;

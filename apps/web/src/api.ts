@@ -17,6 +17,7 @@ type ApiOptions = Omit<RequestInit, "body"> & {
   body?: BodyInit | object | null;
   cacheTtlMs?: number;
   dedupe?: boolean;
+  bypassCache?: boolean;
 };
 
 type CacheEntry = { expiresAt: number; value: unknown };
@@ -24,12 +25,13 @@ const responseCache = new Map<string, CacheEntry>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
 
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { cacheTtlMs = 0, dedupe = true, ...fetchOptions } = options;
+  const { cacheTtlMs = 0, dedupe = true, bypassCache = false, ...fetchOptions } = options;
   const method = String(fetchOptions.method ?? "GET").toUpperCase();
   const cacheKey = method === "GET" && !fetchOptions.body ? path : "";
-  const cached = cacheKey ? responseCache.get(cacheKey) : null;
+  const shouldDedupe = Boolean(cacheKey && dedupe && !bypassCache);
+  const cached = cacheKey && !bypassCache ? responseCache.get(cacheKey) : null;
   if (cached && cached.expiresAt > Date.now()) return cached.value as T;
-  if (cacheKey && dedupe) {
+  if (shouldDedupe) {
     const pending = inFlightRequests.get(cacheKey);
     if (pending) return pending as Promise<T>;
   }
@@ -53,11 +55,11 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     return data as T;
   })();
 
-  if (cacheKey && dedupe) inFlightRequests.set(cacheKey, request);
+  if (shouldDedupe) inFlightRequests.set(cacheKey, request);
   try {
     return await request;
   } finally {
-    if (cacheKey) inFlightRequests.delete(cacheKey);
+    if (shouldDedupe) inFlightRequests.delete(cacheKey);
   }
 }
 

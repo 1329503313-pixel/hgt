@@ -8,7 +8,7 @@ export type MineContentTabData = { soups: SoupSummary[]; total: number; hasMore:
 
 export const MINE_CONTENT_CACHE_MAX_AGE = Number.POSITIVE_INFINITY;
 export const mineCountsCacheKey = (userId: string) => `hgt:mine:counts:${userId}`;
-export const mineListCacheKey = (userId: string, tab: MineContentTab) => `hgt:mine:list:${userId}:${tab}`;
+export const mineListCacheKey = (userId: string, tab: MineContentTab) => `hgt:mine:list:v2:${userId}:${tab}`;
 
 const endpoints: Record<MineContentTab, string> = {
   published: "/api/me/soups",

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Award, Check, Medal, Plus, Trophy } from "lucide-react";
+import { ArrowLeft, Award, Check, ChevronLeft, ChevronRight, Medal, Plus, Trophy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -12,6 +12,7 @@ import { ProfileHero, SoupCoverGrid } from "../components/ProfileViews";
 import { CoverGridSkeleton, ProfileSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { MINE_CONTENT_CACHE_MAX_AGE, mineCountsCacheKey, mineListCacheKey, type MineContentCounts, type MineContentTab, type MineContentTabData } from "../shared/mineContentCache";
+import { SoupExportButton } from "../components/SoupExportButton";
 
 type BadgeCollectionResponse = { badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; equippedBadge: EquippedBadge | null };
 type TabKey = MineContentTab;
@@ -21,6 +22,15 @@ type TabCounts = MineContentCounts;
 const emptyTab = (): TabData => ({ soups: [], total: 0, hasMore: false, loaded: false, loading: false });
 const profileCacheKey = (userId: string) => `hgt:mine:profile:${userId}`;
 const listEndpoints: Record<TabKey, string> = { published: "/api/me/soups", favorites: "/api/me/favorites", likes: "/api/me/likes" };
+const tabLabels: Record<TabKey, string> = { published: "发布", favorites: "收藏", likes: "点赞" };
+const pageSize = 10;
+
+function paginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  if (currentPage <= 4) return [1, 2, 3, 4, 5, "ellipsis", totalPages];
+  if (currentPage >= totalPages - 3) return [1, "ellipsis", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages];
+}
 
 export default function MinePage() {
   const { user, loadingUser, openAuth, showToast, setUser } = useApp();
@@ -29,6 +39,7 @@ export default function MinePage() {
   const [tabs, setTabs] = useState<Record<TabKey, TabData>>({ published: emptyTab(), favorites: emptyTab(), likes: emptyTab() });
   const [countsReady, setCountsReady] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("published");
+  const [pages, setPages] = useState<Record<TabKey, number>>({ published: 1, favorites: 1, likes: 1 });
   const [badgePickerOpen, setBadgePickerOpen] = useState(false);
   const [badgeCollection, setBadgeCollection] = useState<BadgeCollectionResponse | null>(null);
   const [badgeSaving, setBadgeSaving] = useState(false);
@@ -50,23 +61,23 @@ export default function MinePage() {
     writeSessionCache(mineCountsCacheKey(userId), counts);
   }
 
-  async function loadTab(tab: TabKey, append = false) {
+  async function loadTab(tab: TabKey, page = 1) {
     if (!user) return;
     const current = tabs[tab];
-    if (current.loading || (append && !current.hasMore)) return;
-    const offset = append ? current.soups.length : 0;
+    if (current.loading) return;
+    const offset = (page - 1) * pageSize;
     setTabs((state) => ({ ...state, [tab]: { ...state[tab], loading: true } }));
     try {
       const data = await api<SoupsResponse>(`${listEndpoints[tab]}?offset=${offset}`);
       setTabs((state) => {
         const next: TabData = {
-          soups: append ? [...state[tab].soups, ...data.soups.filter((soup) => !state[tab].soups.some((item) => item.id === soup.id))] : data.soups,
+          soups: data.soups,
           total: data.total,
           hasMore: data.hasMore,
           loaded: true,
           loading: false
         };
-        if (!append) writeSessionCache(mineListCacheKey(user.id, tab), next);
+        if (page === 1) writeSessionCache(mineListCacheKey(user.id, tab), next);
         return { ...state, [tab]: next };
       });
     } catch (error) {
@@ -76,7 +87,7 @@ export default function MinePage() {
   }
 
   useEffect(() => {
-    if (!user) { setProfile(null); setTabs({ published: emptyTab(), favorites: emptyTab(), likes: emptyTab() }); setCountsReady(false); return; }
+    if (!user) { setProfile(null); setTabs({ published: emptyTab(), favorites: emptyTab(), likes: emptyTab() }); setPages({ published: 1, favorites: 1, likes: 1 }); setCountsReady(false); return; }
     const cachedProfile = readSessionCache<SocialProfile>(profileCacheKey(user.id), 5 * 60_000);
     const cachedCounts = readSessionCache<TabCounts>(mineCountsCacheKey(user.id), MINE_CONTENT_CACHE_MAX_AGE);
     const cachedPublished = readSessionCache<TabData>(mineListCacheKey(user.id, "published"), MINE_CONTENT_CACHE_MAX_AGE);
@@ -94,14 +105,15 @@ export default function MinePage() {
     void loadProfile(user.id).catch((error) => { if (!cachedProfile) showToast((error as Error).message); });
     void loadCounts(user.id).catch((error) => { if (!cachedCounts) showToast((error as Error).message); });
     if (cachedPublished) setTabs((state) => ({ ...state, published: { ...cachedPublished, loading: false } }));
-    void loadTab("published");
+    setPages({ published: 1, favorites: 1, likes: 1 });
+    void loadTab("published", 1);
   }, [user?.id]);
 
   useEffect(() => {
     if (activeTab === "published" || !user || tabs[activeTab].loaded || tabs[activeTab].loading) return;
     const cached = readSessionCache<TabData>(mineListCacheKey(user.id, activeTab), MINE_CONTENT_CACHE_MAX_AGE);
     if (cached) setTabs((state) => ({ ...state, [activeTab]: { ...cached, loading: false } }));
-    void loadTab(activeTab);
+    void loadTab(activeTab, pages[activeTab]);
   }, [activeTab, user?.id, tabs[activeTab].loaded, tabs[activeTab].loading]);
 
   useEffect(() => {
@@ -111,14 +123,22 @@ export default function MinePage() {
       if (!detail || detail.userId !== user.id) return;
       setCountsReady(true);
       setTabs((state) => ({
-        published: { ...state.published, total: detail.counts.published, ...(detail.tab === "published" ? detail.tabData : {}) },
-        favorites: { ...state.favorites, total: detail.counts.favorites, ...(detail.tab === "favorites" ? detail.tabData : {}) },
-        likes: { ...state.likes, total: detail.counts.likes, ...(detail.tab === "likes" ? detail.tabData : {}) }
+        published: { ...state.published, total: detail.counts.published, ...(detail.tab === "published" && pages.published === 1 ? detail.tabData : {}) },
+        favorites: { ...state.favorites, total: detail.counts.favorites, ...(detail.tab === "favorites" && pages.favorites === 1 ? detail.tabData : {}) },
+        likes: { ...state.likes, total: detail.counts.likes, ...(detail.tab === "likes" && pages.likes === 1 ? detail.tabData : {}) }
       }));
     };
     window.addEventListener("hgt:mine-content-cache-updated", handleCacheUpdate);
     return () => window.removeEventListener("hgt:mine-content-cache-updated", handleCacheUpdate);
-  }, [user?.id]);
+  }, [user?.id, pages]);
+
+  function changePage(tab: TabKey, page: number) {
+    const totalPages = Math.max(1, Math.ceil(tabs[tab].total / pageSize));
+    const nextPage = Math.min(totalPages, Math.max(1, page));
+    if (nextPage === pages[tab] || tabs[tab].loading) return;
+    setPages((state) => ({ ...state, [tab]: nextPage }));
+    void loadTab(tab, nextPage);
+  }
 
   if (loadingUser) return <section><PageTopBar title="我的" /><ProfileSkeleton /></section>;
   if (!user) return <section><PageTopBar title="我的" /><div className="card p-6 text-center"><p className="text-sm text-muted">登录后查看个人主页</p><button className="btn btn-primary mt-4 w-full" onClick={openAuth}>登录</button></div></section>;
@@ -182,9 +202,27 @@ export default function MinePage() {
         </div>
         {tabs[activeTab].loading && !tabs[activeTab].loaded ? <CoverGridSkeleton /> : <>
           <SoupCoverGrid soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} />
-          {tabs[activeTab].hasMore && <div className="border-t border-line p-3 text-center"><button className="btn btn-secondary min-w-32" onClick={() => void loadTab(activeTab, true)} disabled={tabs[activeTab].loading}>{tabs[activeTab].loading ? "" : "加载更多"}{tabs[activeTab].loading && <span className="inline-block h-4 w-16 animate-pulse rounded bg-slate-200" />}</button></div>}
+          {tabs[activeTab].total > pageSize && (
+            <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-line p-3">
+              <button className="btn btn-secondary h-9 px-2.5 text-xs" disabled={pages[activeTab] <= 1 || tabs[activeTab].loading} onClick={() => changePage(activeTab, pages[activeTab] - 1)}><ChevronLeft size={15} />上一页</button>
+              {paginationItems(pages[activeTab], Math.ceil(tabs[activeTab].total / pageSize)).map((item, index) => item === "ellipsis" ? (
+                <span key={`ellipsis-${index}`} className="grid h-9 w-7 place-items-center text-sm text-muted">…</span>
+              ) : (
+                <button key={item} className={`grid h-9 min-w-9 place-items-center rounded-lg px-2 text-sm font-bold ${item === pages[activeTab] ? "bg-primary text-white" : "border border-line bg-white text-ink"}`} disabled={tabs[activeTab].loading} onClick={() => changePage(activeTab, item)}>{item}</button>
+              ))}
+              <button className="btn btn-secondary h-9 px-2.5 text-xs" disabled={pages[activeTab] >= Math.ceil(tabs[activeTab].total / pageSize) || tabs[activeTab].loading} onClick={() => changePage(activeTab, pages[activeTab] + 1)}>下一页<ChevronRight size={15} /></button>
+            </div>
+          )}
         </>}
       </div>
+
+      <SoupExportButton
+        soups={tabs[activeTab].soups}
+        title={`我的${tabLabels[activeTab]} · 第 ${pages[activeTab]} 页`}
+        fileName={`我的${tabLabels[activeTab]}-第${pages[activeTab]}页.png`}
+        confirmText={`是否导出${tabLabels[activeTab]}栏当前页的 ${tabs[activeTab].soups.length} 条海龟汤列表？`}
+        disabled={tabs[activeTab].loading}
+      />
 
       {badgePickerOpen && <Modal full onClose={() => setBadgePickerOpen(false)}>
         <div className="flex items-center gap-3">
