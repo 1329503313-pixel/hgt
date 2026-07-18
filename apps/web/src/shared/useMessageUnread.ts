@@ -8,6 +8,8 @@ export type MessageUnreadCounts = {
   requests: number;
   notices: number;
   privateMessages: number;
+  circleMessages: number;
+  circleMentions: number;
   total: number;
 };
 
@@ -17,6 +19,8 @@ const emptyCounts: MessageUnreadCounts = {
   requests: 0,
   notices: 0,
   privateMessages: 0,
+  circleMessages: 0,
+  circleMentions: 0,
   total: 0
 };
 const countsByUser = new Map<string, MessageUnreadCounts>();

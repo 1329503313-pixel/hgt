@@ -2105,6 +2105,7 @@ app.patch("/api/circles/:id/read", async (req, res) => {
      WHERE circle_id = ? AND user_id = ?`,
     [req.params.id, req.params.id, user.id]
   );
+  emitUnreadChanged(user.id, "circle_message_read");
   res.json({ ok: true });
 });
 
@@ -2140,6 +2141,7 @@ app.patch("/api/circles/:id/mentions/:messageId/read", async (req, res) => {
      WHERE circle_id = ? AND message_id = ? AND user_id = ?`,
     [req.params.id, req.params.messageId, user.id]
   );
+  emitUnreadChanged(user.id, "circle_mention_read");
   res.json({ ok: true });
 });
 
@@ -2154,6 +2156,7 @@ app.patch("/api/circles/:id/mentions/read-all", async (req, res) => {
      WHERE circle_id = ? AND user_id = ? AND read_at IS NULL`,
     [req.params.id, user.id]
   );
+  emitUnreadChanged(user.id, "circle_mentions_read");
   res.json({ ok: true });
 });
 
@@ -2279,12 +2282,26 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   );
   const message = circleMessagePayload(stored);
   emitCircleSocketEvent(req.params.id, "circle_message_created", { circleId: req.params.id, message });
+  for (const mention of mentions) {
+    emitUserEvent(mention.userId, "circle_mention", {
+      circleId: req.params.id,
+      circleName: String(circle.name),
+      circleAvatar: circleAvatarUrl(circle.id, circle.avatar, circle.updated_at),
+      messageId: id,
+      senderId: user.id,
+      senderNickname: user.nickname,
+      senderAvatar: message.sender?.avatar ?? null,
+      content: message.content,
+      createdAt: message.createdAt
+    });
+  }
   const [circleRecipients] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT user_id FROM circle_members WHERE circle_id = ? AND user_id <> ?",
     [req.params.id, user.id]
   );
   for (const recipient of circleRecipients) {
     emitUserEvent(String(recipient.user_id), "circle_unread_changed", { circleId: req.params.id });
+    emitUnreadChanged(String(recipient.user_id), "circle_message");
   }
   res.status(201).json({ message });
 });
@@ -2518,7 +2535,7 @@ app.get("/api/messages/unread-counts", async (req, res) => {
   const placeholders = interactionTypes.map(() => "?").join(",");
   const requestWhere = user.role === "admin" ? "" : "AND owner_id = ?";
   const requestParams = user.role === "admin" ? [] : [user.id];
-  const [[notificationCounts], [requestCounts], [noticeCounts], [privateMessageCounts]] = await Promise.all([
+  const [[notificationCounts], [requestCounts], [noticeCounts], [privateMessageCounts], [circleMessageCounts], [circleMentionCounts]] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
       `SELECT
          SUM(CASE WHEN is_read = 0 AND type <> 'view_request' AND type NOT IN (${placeholders}) THEN 1 ELSE 0 END) AS system_count,
@@ -2546,6 +2563,20 @@ app.get("/api/messages/unread-counts", async (req, res) => {
        WHERE (c.user_a_id = ? OR c.user_b_id = ?)
          AND pm.sender_id <> ? AND pm.read_at IS NULL`,
       [user.id, user.id, user.id]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS circle_message_count
+       FROM circle_members member
+       INNER JOIN circle_messages message ON message.circle_id = member.circle_id
+         AND message.message_sequence > member.last_read_sequence
+       WHERE member.user_id = ?`,
+      [user.id]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS circle_mention_count
+       FROM circle_message_mentions
+       WHERE user_id = ? AND read_at IS NULL`,
+      [user.id]
     )
   ]);
   const counts = {
@@ -2553,7 +2584,9 @@ app.get("/api/messages/unread-counts", async (req, res) => {
     interactions: Number(notificationCounts[0]?.interaction_count ?? 0),
     requests: Number(requestCounts[0]?.request_count ?? 0),
     notices: Number(noticeCounts[0]?.notice_count ?? 0),
-    privateMessages: Number(privateMessageCounts[0]?.private_message_count ?? 0)
+    privateMessages: Number(privateMessageCounts[0]?.private_message_count ?? 0),
+    circleMessages: Number(circleMessageCounts[0]?.circle_message_count ?? 0),
+    circleMentions: Number(circleMentionCounts[0]?.circle_mention_count ?? 0)
   };
   res.json({ counts: { ...counts, total: counts.system + counts.interactions + counts.requests + counts.notices + counts.privateMessages } });
 });

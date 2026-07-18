@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileClock, MessageCircle } from "lucide-react";
+import { AtSign, FileClock, MessageCircle } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -28,14 +28,25 @@ type ViewRequestPayload = {
   requesterAvatar?: string | null;
 };
 
+type CircleMentionPayload = {
+  circleId: string;
+  circleName: string;
+  messageId: string;
+  senderId: string;
+  senderNickname?: string;
+  senderAvatar?: string | null;
+  content: string;
+};
+
 type BannerItem = {
   key: string;
-  kind: "private" | "request";
+  kind: "private" | "circle" | "request";
   sourceName: string;
   sourceAvatar?: string | null;
   title: string;
   detail: string;
   href: string;
+  navigationState?: Record<string, unknown>;
   requestId?: string;
 };
 
@@ -109,11 +120,27 @@ export function IncomingMessageBanner() {
         requestId: payload.requestId
       });
     };
+    const onCircleMention = (event: Event) => {
+      const payload = eventPayload<CircleMentionPayload>(event);
+      if (!payload?.circleId || !payload.messageId) return;
+      enqueue({
+        key: `circle-mention:${payload.messageId}`,
+        kind: "circle",
+        sourceName: payload.senderNickname || "圈子成员",
+        sourceAvatar: payload.senderAvatar,
+        title: "圈子@消息",
+        detail: `${payload.circleName || "圈子"} · ${payload.content}`,
+        href: `/circles/${payload.circleId}`,
+        navigationState: { circleMentionMessageId: payload.messageId }
+      });
+    };
     const unsubscribePrivate = subscribeServerEvent("private_message", onPrivateMessage);
     const unsubscribeRequest = subscribeServerEvent("view_request", onViewRequest);
+    const unsubscribeCircleMention = subscribeServerEvent("circle_mention", onCircleMention);
     return () => {
       unsubscribePrivate();
       unsubscribeRequest();
+      unsubscribeCircleMention();
     };
   }, [user?.id, enqueue]);
 
@@ -143,7 +170,7 @@ export function IncomingMessageBanner() {
 
   function openCurrent() {
     if (!current || gestureRef.current.moved) return;
-    navigate(current.href);
+    navigate(current.href, { state: current.navigationState });
     dismiss("up");
   }
 
@@ -225,7 +252,7 @@ export function IncomingMessageBanner() {
             <span className="flex items-center gap-2">
               <span className="truncate text-[15px] font-black text-ink">{current.sourceName}</span>
               <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${current.kind === "request" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-primary"}`}>
-                {current.kind === "request" ? <FileClock size={11} /> : <MessageCircle size={11} />}
+                {current.kind === "request" ? <FileClock size={11} /> : current.kind === "circle" ? <AtSign size={11} /> : <MessageCircle size={11} />}
                 {current.title}
               </span>
             </span>

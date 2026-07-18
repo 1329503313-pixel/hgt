@@ -5,6 +5,7 @@ import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { OnlineSoupInviteModal } from "../components/OnlineSoupInviteModal";
+import { StickerKeyboard } from "../components/StickerKeyboard";
 import { useApp } from "../context/AppContext";
 import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
@@ -72,10 +73,8 @@ export default function OnlineSoupRoomPage() {
   const [clue, setClue] = useState("");
   const [publishOpen, setPublishOpen] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
+  const [stickersLoading, setStickersLoading] = useState(true);
   const [stickersOpen, setStickersOpen] = useState(false);
-  const [stickerPage, setStickerPage] = useState(0);
-  const [stickerDragX, setStickerDragX] = useState(0);
-  const [stickerDragging, setStickerDragging] = useState(false);
   const [hostActionsOpen, setHostActionsOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"back" | "close" | null>(null);
   const [entryPasswordOpen, setEntryPasswordOpen] = useState(false);
@@ -84,8 +83,6 @@ export default function OnlineSoupRoomPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
-  const stickerTouchStartX = useRef<number | null>(null);
-  const stickerSwipeHandled = useRef(false);
   const refreshPending = useRef(false);
   const incrementalPending = useRef(false);
   const historyExpanded = useRef(false);
@@ -156,7 +153,8 @@ export default function OnlineSoupRoomPage() {
   useEffect(() => {
     void api<{ series: StickerSeries[] }>("/api/stickers", { cacheTtlMs: 30 * 60_000 })
       .then((data) => setStickerSeries(data.series))
-      .catch((error) => showToast(error instanceof Error ? error.message : "表情包加载失败"));
+      .catch((error) => showToast(error instanceof Error ? error.message : "表情包加载失败"))
+      .finally(() => setStickersLoading(false));
   }, [showToast]);
   const loadState = useCallback(async () => {
     try {
@@ -295,14 +293,9 @@ export default function OnlineSoupRoomPage() {
   const canQuestion = snapshot?.me.role === "player" && snapshot.room.status === "playing" && snapshot.room.hostOnline;
   const allStickers = useMemo(() => stickerSeries.flatMap((series) => series.stickers), [stickerSeries]);
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
-  const stickerPages = useMemo(() => Array.from({ length: Math.ceil(allStickers.length / 8) }, (_, index) => allStickers.slice(index * 8, index * 8 + 8)), [allStickers]);
-  const stickerPageCount = Math.max(1, stickerPages.length);
   useEffect(() => {
     if (!canQuestion && mode === "question") setMode("discussion");
   }, [canQuestion, mode]);
-  useEffect(() => {
-    if (stickerPage >= stickerPageCount) setStickerPage(stickerPageCount - 1);
-  }, [stickerPage, stickerPageCount]);
 
   async function sendMessage() {
     const text = content.trim();
@@ -556,63 +549,11 @@ export default function OnlineSoupRoomPage() {
                 <span className="text-xs font-black leading-5">{mode === "question" ? "提问" : "讨论"}</span>
                 <ArrowRightLeft size={14} className="shrink-0 transition-transform duration-200 group-hover:rotate-180" />
               </button>}
-              <textarea ref={messageInputRef} className="field room-message-input min-w-0 flex-1 resize-none" rows={1} maxLength={1000} value={content} onChange={(e) => setContent(e.target.value)} placeholder={isHost ? "主持人发言…" : mode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(); } }} />
-              <button className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition ${stickersOpen ? "border-amber-300 bg-amber-50 text-amber-700" : "border-line bg-white text-muted hover:bg-slate-50"}`} onClick={() => { setStickersOpen((open) => !open); setHostActionsOpen(false); }} aria-label="表情包" title="表情包"><Smile size={18} /></button>
+              <textarea ref={messageInputRef} className="field room-message-input min-w-0 flex-1 resize-none" rows={1} maxLength={1000} value={content} onChange={(e) => setContent(e.target.value)} onFocus={() => setStickersOpen(false)} placeholder={isHost ? "主持人发言…" : mode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(); } }} />
+              <button className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition ${stickersOpen ? "border-amber-300 bg-amber-50 text-amber-700" : "border-line bg-white text-muted hover:bg-slate-50"}`} onClick={() => { if (!stickersOpen) messageInputRef.current?.blur(); setStickersOpen((open) => !open); setHostActionsOpen(false); }} aria-label="表情包" title="表情包"><Smile size={18} /></button>
               <button className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary text-white shadow-sm transition hover:bg-blue-600 active:scale-95 disabled:opacity-50" disabled={sending || (mode === "question" && !canQuestion)} onClick={sendMessage} aria-label="发送" title="发送"><Send size={18} /></button>
             </div>
-            {stickersOpen && <div className="mt-3 border-t border-line pt-3">
-              <div className="mb-2 flex h-7 items-center justify-between">
-                <span className="text-sm font-black text-ink">表情包</span>
-                <button type="button" className="grid h-7 w-7 place-items-center rounded-full text-muted transition hover:bg-slate-100" onClick={() => setStickersOpen(false)} aria-label="收起表情包"><ChevronDown size={17} /></button>
-              </div>
-              {allStickers.length > 0 ? <div
-                className="touch-pan-y overflow-hidden"
-                onTouchStart={(event) => {
-                  stickerSwipeHandled.current = false;
-                  setStickerDragging(true);
-                  setStickerDragX(0);
-                  stickerTouchStartX.current = event.touches[0]?.clientX ?? null;
-                }}
-                onTouchMove={(event) => {
-                  const startX = stickerTouchStartX.current;
-                  const currentX = event.touches[0]?.clientX;
-                  if (startX == null || currentX == null) return;
-                  let distance = currentX - startX;
-                  if ((stickerPage === 0 && distance > 0) || (stickerPage === stickerPageCount - 1 && distance < 0)) distance *= 0.28;
-                  if (Math.abs(distance) > 8) stickerSwipeHandled.current = true;
-                  setStickerDragX(distance);
-                }}
-                onTouchEnd={(event) => {
-                  const startX = stickerTouchStartX.current;
-                  const endX = event.changedTouches[0]?.clientX;
-                  stickerTouchStartX.current = null;
-                  setStickerDragging(false);
-                  setStickerDragX(0);
-                  if (startX == null || endX == null) return;
-                  const distance = endX - startX;
-                  if (Math.abs(distance) < 40) return;
-                  stickerSwipeHandled.current = true;
-                  setStickerPage((page) => distance < 0 ? Math.min(stickerPageCount - 1, page + 1) : Math.max(0, page - 1));
-                }}
-                onTouchCancel={() => {
-                  stickerTouchStartX.current = null;
-                  setStickerDragging(false);
-                  setStickerDragX(0);
-                }}
-              >
-                <div
-                  className={`flex ${stickerDragging ? "" : "transition-transform duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)]"}`}
-                  style={{ transform: `translate3d(calc(${-stickerPage * 100}% + ${stickerDragX}px), 0, 0)` }}
-                >
-                  {stickerPages.map((page, pageIndex) => <div key={pageIndex} className="grid h-[152px] w-full shrink-0 grid-cols-4 grid-rows-2 gap-1.5 sm:h-[168px]">
-                    {page.map((sticker) => <button key={sticker.id} type="button" className="flex min-h-0 items-center justify-center rounded-xl border border-transparent p-1 transition hover:border-blue-100 hover:bg-blue-50 active:scale-95" disabled={sending} onClick={() => { if (stickerSwipeHandled.current) { stickerSwipeHandled.current = false; return; } void sendSticker(sticker); }} aria-label={sticker.text}><img className="h-16 w-16 object-contain sm:h-[72px] sm:w-[72px]" src={sticker.staticUrl} alt="" loading="lazy" decoding="async" /></button>)}
-                  </div>)}
-                </div>
-              </div> : <div className="grid h-56 place-items-center text-sm text-muted">暂无可用表情</div>}
-              {stickerPageCount > 1 && <div className="mt-2 flex h-7 items-center justify-center gap-1.5" role="status" aria-label={`表情包第 ${stickerPage + 1} 页，共 ${stickerPageCount} 页`}>
-                {Array.from({ length: stickerPageCount }, (_, index) => <span key={index} className={`block rounded-full transition-all duration-200 ${index === stickerPage ? "h-2 w-4 bg-primary" : "h-2 w-2 bg-slate-300"}`} aria-hidden="true" />)}
-              </div>}
-            </div>}
+            {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="mt-3 border-t border-line pt-3" />}
           </div>}
         </section>
       </main>

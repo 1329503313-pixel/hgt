@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Send, Smile, X } from "lucide-react";
+import { ChevronDown, Send, Smile } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -8,6 +8,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
+import { StickerKeyboard } from "../components/StickerKeyboard";
 
 type ChatResponse = {
   conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean } };
@@ -25,6 +26,7 @@ export default function ChatPage() {
   const [chat, setChat] = useState<ChatResponse | null>(null);
   const [sending, setSending] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
+  const [stickersLoading, setStickersLoading] = useState(true);
   const [showStickers, setShowStickers] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -61,7 +63,8 @@ export default function ChatPage() {
   useEffect(() => {
     void api<{ series: StickerSeries[] }>("/api/stickers", { cacheTtlMs: 30 * 60_000 })
       .then((data) => setStickerSeries(data.series))
-      .catch((error) => showToast((error as Error).message));
+      .catch((error) => showToast((error as Error).message))
+      .finally(() => setStickersLoading(false));
   }, []);
 
   useEffect(() => {
@@ -198,7 +201,7 @@ export default function ChatPage() {
       <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col">
         <div
           ref={messagesRef}
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4 pb-28"
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4"
           onScroll={(event) => {
             const element = event.currentTarget;
             const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
@@ -248,7 +251,7 @@ export default function ChatPage() {
           );})}
           {chat.messages.length === 0 && <p className="py-20 text-center text-sm text-muted">发送第一条消息吧</p>}
         </div>
-        {showScrollBottom && (
+        {showScrollBottom && !showStickers && (
           <button
             type="button"
             className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition active:scale-95 sm:right-6"
@@ -264,37 +267,13 @@ export default function ChatPage() {
             <ChevronDown size={22} strokeWidth={2.4} />
           </button>
         )}
-        {showStickers && (
-          <div className="fixed inset-x-0 bottom-[69px] z-30 border-t border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.08)]">
-            <div className="mx-auto max-w-3xl p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <p className="font-black text-ink">表情包</p>
-                <button type="button" className="grid h-9 w-9 place-items-center rounded-full text-muted hover:bg-slate-100" onClick={() => setShowStickers(false)} aria-label="关闭表情面板"><X size={19} /></button>
-              </div>
-              <div className="max-h-[42vh] space-y-4 overflow-y-auto">
-                {stickerSeries.map((series) => (
-                  <section key={series.id}>
-                    <p className="mb-2 text-xs font-bold text-muted">{series.name} · {series.characterName}</p>
-                    <div className="grid grid-cols-4 gap-3 sm:grid-cols-6">
-                      {series.stickers.map((sticker) => (
-                        <button key={sticker.id} type="button" className="rounded-2xl border border-transparent p-1.5 text-center transition hover:border-blue-100 hover:bg-blue-50 active:scale-95" disabled={sending} onClick={() => void sendSticker(sticker)}>
-                          <img className="aspect-square w-full object-contain" src={sticker.staticUrl} alt="" loading="lazy" decoding="async" />
-                          <span className="mt-1 block truncate text-[11px] font-bold text-ink">{sticker.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
         <ChatComposer
           sending={sending}
           showStickers={showStickers}
           onToggleStickers={() => setShowStickers((current) => !current)}
           onSend={send}
         />
+        {showStickers && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setShowStickers(false)} onSend={sendSticker} className="shrink-0 border-t border-line px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3" />}
       </div>
     </section>
   );
@@ -312,6 +291,7 @@ function ChatComposer({
   onSend: (value: string) => Promise<boolean>;
 }) {
   const [content, setContent] = useState("");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -323,14 +303,16 @@ function ChatComposer({
   }
 
   return (
-    <form className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 p-3 backdrop-blur" onSubmit={submit}>
+    <form className={`relative z-20 shrink-0 border-t border-line bg-white/95 px-3 pt-3 backdrop-blur ${showStickers ? "pb-3" : "pb-[max(12px,env(safe-area-inset-bottom))]"}`} onSubmit={submit}>
       <div className="mx-auto flex max-w-3xl items-end gap-2">
         <textarea
+          ref={inputRef}
           className="field h-11 max-h-28 min-h-11 flex-1 resize-none py-[10px] leading-[22px]"
           rows={1}
           maxLength={1000}
           value={content}
           onChange={(event) => setContent(event.target.value)}
+          onFocus={() => { if (showStickers) onToggleStickers(); }}
           placeholder="输入消息"
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -339,7 +321,7 @@ function ChatComposer({
             }
           }}
         />
-        <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${showStickers ? "btn-primary" : "btn-secondary"}`} onClick={onToggleStickers} aria-label="打开表情包"><Smile size={24} /></button>
+        <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${showStickers ? "btn-primary" : "btn-secondary"}`} onClick={() => { if (!showStickers) inputRef.current?.blur(); onToggleStickers(); }} aria-label="打开表情包"><Smile size={24} /></button>
         <button className="btn btn-primary h-11 w-11 shrink-0 p-0" disabled={!content.trim() || sending} aria-label="发送"><Send size={22} /></button>
       </div>
     </form>

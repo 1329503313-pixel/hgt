@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AtSign, ChevronDown, Send, Smile, Users, Wifi, WifiOff, X } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { AtSign, ChevronDown, Send, Smile, Users, Wifi, WifiOff } from "lucide-react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import type { CircleMember, CircleMessage, CircleSummary, StickerAsset, StickerSeries } from "../shared/types";
@@ -10,6 +10,7 @@ import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
+import { StickerKeyboard } from "../components/StickerKeyboard";
 
 type CircleState = {
   circle: Omit<CircleSummary, "isJoined" | "latestMessage">;
@@ -94,6 +95,7 @@ export default function CircleChatPage() {
   const { circleId = "" } = useParams();
   const { user, loadingUser, showToast } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
   const [state, setState] = useState<CircleState | null>(null);
   const [messages, setMessages] = useState<CircleMessage[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -105,6 +107,7 @@ export default function CircleChatPage() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
+  const [stickersLoading, setStickersLoading] = useState(true);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [unreadMentions, setUnreadMentions] = useState<UnreadMention[]>([]);
   const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(null);
@@ -112,6 +115,8 @@ export default function CircleChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const firstScrollRef = useRef(false);
   const followBottomRef = useRef(true);
+  const handledMentionNavigationRef = useRef("");
+  const requestedMentionId = (location.state as { circleMentionMessageId?: string } | null)?.circleMentionMessageId ?? "";
 
   async function loadInitial() {
     const [detail, page, mentionData] = await Promise.all([
@@ -162,7 +167,8 @@ export default function CircleChatPage() {
   useEffect(() => {
     void api<{ series: StickerSeries[] }>("/api/stickers", { cacheTtlMs: 30 * 60_000 })
       .then((data) => setStickerSeries(data.series))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setStickersLoading(false));
   }, []);
 
   useEffect(() => {
@@ -228,6 +234,14 @@ export default function CircleChatPage() {
     if (followBottomRef.current) container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }, [messages.length, loading]);
 
+  useEffect(() => {
+    if (loading || !state || !requestedMentionId || handledMentionNavigationRef.current === requestedMentionId) return;
+    handledMentionNavigationRef.current = requestedMentionId;
+    void openMention({ id: requestedMentionId, sequence: 0 }).finally(() => {
+      navigate(location.pathname, { replace: true, state: null });
+    });
+  }, [loading, state?.circle.id, requestedMentionId]);
+
   async function loadOlder() {
     if (!hasMore || !nextCursor || loadingOlder) return;
     setLoadingOlder(true);
@@ -248,9 +262,8 @@ export default function CircleChatPage() {
     }
   }
 
-  async function openNextMention() {
-    const target = unreadMentions[unreadMentions.length - 1];
-    if (!target || navigatingMention) return;
+  async function openMention(target: UnreadMention) {
+    if (navigatingMention) return;
     setNavigatingMention(true);
     try {
       let loadedMessages = messages;
@@ -279,6 +292,12 @@ export default function CircleChatPage() {
     } finally {
       setNavigatingMention(false);
     }
+  }
+
+  async function openNextMention() {
+    const target = unreadMentions[unreadMentions.length - 1];
+    if (!target) return;
+    await openMention(target);
   }
 
   async function sendText(value: string, mentionedUserIds: string[]) {
@@ -355,7 +374,7 @@ export default function CircleChatPage() {
       <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col">
         <div
           ref={messagesRef}
-          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 pb-28"
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4"
           onScroll={(event) => {
             const element = event.currentTarget;
             const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
@@ -389,10 +408,7 @@ export default function CircleChatPage() {
                 <div className={`flex max-w-[78%] flex-col ${mine ? "items-end" : "items-start"}`}>
                   <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] text-muted ${mine ? "flex-row-reverse" : ""}`}>
                     <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>
-                    {message.sender?.equippedBadge && <>
-                      <EquippedBadgeIcon badge={message.sender.equippedBadge} className="h-4 w-4" title={message.sender.equippedBadge.name} animated={false} showName={false} />
-                      <span className="max-w-24 truncate font-bold text-amber-700">{message.sender.equippedBadge.name}</span>
-                    </>}
+                    <EquippedBadgeIcon badge={message.sender?.equippedBadge} className="h-4 w-4" animated={false} />
                   </div>
                   {message.type === "room_invite" && message.roomInvite ? (
                     <OnlineSoupRoomInviteCard invite={message.roomInvite} />
@@ -413,7 +429,7 @@ export default function CircleChatPage() {
           {!messages.length && <p className="py-20 text-center text-sm text-muted">发送第一条消息吧</p>}
         </div>
 
-        {unreadMentions.length > 0 && (
+        {unreadMentions.length > 0 && !stickersOpen && (
           <button
             className={`fixed right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-blue-200 bg-primary text-white shadow-[0_8px_24px_rgba(15,23,42,0.2)] ${showScrollBottom ? "bottom-32" : "bottom-20"}`}
             disabled={navigatingMention}
@@ -426,18 +442,7 @@ export default function CircleChatPage() {
             </span>
           </button>
         )}
-        {showScrollBottom && <button className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)]" onClick={() => { followBottomRef.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowScrollBottom(false); }} aria-label="回到底部"><ChevronDown size={22} /></button>}
-
-        {stickersOpen && (
-          <div className="fixed inset-x-0 bottom-[69px] z-30 border-t border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.08)]">
-            <div className="mx-auto max-w-3xl p-4">
-              <div className="mb-3 flex items-center justify-between"><p className="font-black text-ink">表情包</p><button className="grid h-9 w-9 place-items-center rounded-full text-muted hover:bg-slate-100" onClick={() => setStickersOpen(false)}><X size={19} /></button></div>
-              <div className="max-h-[42vh] space-y-4 overflow-y-auto">
-                {stickerSeries.map((series) => <section key={series.id}><p className="mb-2 text-xs font-bold text-muted">{series.name} · {series.characterName}</p><div className="grid grid-cols-4 gap-3 sm:grid-cols-6">{series.stickers.map((sticker) => <button key={sticker.id} className="rounded-2xl p-1.5 text-center hover:bg-blue-50" disabled={sending} onClick={() => void sendSticker(sticker)}><img className="aspect-square w-full object-contain" src={sticker.staticUrl} alt="" loading="lazy" /><span className="mt-1 block truncate text-[11px] font-bold text-ink">{sticker.name}</span></button>)}</div></section>)}
-              </div>
-            </div>
-          </div>
-        )}
+        {showScrollBottom && !stickersOpen && <button className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)]" onClick={() => { followBottomRef.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowScrollBottom(false); }} aria-label="回到底部"><ChevronDown size={22} /></button>}
         <Composer
           members={state.members}
           currentUserId={user?.id ?? ""}
@@ -447,6 +452,7 @@ export default function CircleChatPage() {
           onToggleStickers={() => setStickersOpen((value) => !value)}
           onSend={sendText}
         />
+        {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="shrink-0 border-t border-line px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3" />}
       </div>
 
       {membersOpen && <Modal onClose={() => setMembersOpen(false)}>
@@ -462,7 +468,7 @@ export default function CircleChatPage() {
                 })}
               >
                 <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
-                <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span>{member.equippedBadge && <EquippedBadgeIcon badge={member.equippedBadge} className="h-5 w-5" title={member.equippedBadge.name} animated={false} showName={false} />}</span><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.equippedBadge?.name ?? "暂无佩戴徽章"} · {member.isOnline ? "在线" : "离线"}</span></span>
+                <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><EquippedBadgeIcon badge={member.equippedBadge} className="h-5 w-5" animated={false} /></span><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
               </button>
             ))}
           </div>
@@ -551,7 +557,7 @@ function Composer({ members, currentUserId, mentionRequest, sending, stickersOpe
     else setContent((current) => current || value);
   }
   return (
-    <form className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 p-3 backdrop-blur" onSubmit={submit}>
+    <form className={`relative z-20 shrink-0 border-t border-line bg-white/95 px-3 pt-3 backdrop-blur ${stickersOpen ? "pb-3" : "pb-[max(12px,env(safe-area-inset-bottom))]"}`} onSubmit={submit}>
       {mentionCandidates.length > 0 && (
         <div className="absolute inset-x-0 bottom-full z-40 border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]">
           <div className="mx-auto max-w-3xl divide-y divide-line px-3">
@@ -567,9 +573,8 @@ function Composer({ members, currentUserId, mentionRequest, sending, stickersOpe
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-bold text-ink">{member.nickname}</span>
-                    {member.equippedBadge && <EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" title={member.equippedBadge.name} animated={false} showName={false} />}
+                    <EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} />
                   </span>
-                  {member.equippedBadge?.name && <span className="mt-0.5 block truncate text-xs text-muted">{member.equippedBadge.name}</span>}
                 </span>
               </button>
             ))}
@@ -588,12 +593,13 @@ function Composer({ members, currentUserId, mentionRequest, sending, stickersOpe
             setCursorPosition(event.target.selectionStart ?? event.target.value.length);
             if (stickersOpen && activeMentionAt(event.target.value, event.target.selectionStart ?? event.target.value.length)) onToggleStickers();
           }}
+          onFocus={() => { if (stickersOpen) onToggleStickers(); }}
           onClick={(event) => setCursorPosition(event.currentTarget.selectionStart ?? content.length)}
           onKeyUp={(event) => setCursorPosition(event.currentTarget.selectionStart ?? content.length)}
           placeholder="输入消息"
           onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
         />
-        <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${stickersOpen ? "btn-primary" : "btn-secondary"}`} onClick={onToggleStickers} aria-label="表情包"><Smile size={23} /></button>
+        <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${stickersOpen ? "btn-primary" : "btn-secondary"}`} onClick={() => { if (!stickersOpen) inputRef.current?.blur(); onToggleStickers(); }} aria-label="表情包"><Smile size={23} /></button>
         <button className="btn btn-primary h-11 w-11 shrink-0 p-0" disabled={!content.trim() || sending} aria-label="发送"><Send size={21} /></button>
       </div>
     </form>
