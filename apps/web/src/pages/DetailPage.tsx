@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api, SoupResponse, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -14,6 +14,8 @@ import { DetailSkeleton } from "../components/Skeletons";
 import { refreshMineContentCache } from "../shared/mineContentCache";
 import { parentRoute } from "../shared/routeHierarchy";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
+import { SoupShareModal } from "../components/SoupShareModal";
+import { Modal } from "../components/Modal";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -35,7 +37,8 @@ export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean } | null;
+  const navigationOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; soupShareReturnTo?: string } | null;
+  const onlineSoupOrigin = navigationOrigin;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
   const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
@@ -43,10 +46,28 @@ export default function DetailPage() {
   const [soup, setSoup] = useState<SoupDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [showGame, setShowGame] = useState(false);
+  const [showShare, setShowShare] = useState(false);
+  const [showRoomCreate, setShowRoomCreate] = useState(false);
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "" });
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
 
   const radarRef = useRef<HTMLDivElement | null>(null);
-  const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname);
+  const backTarget = navigationOrigin?.soupShareReturnTo || (onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname));
+
+  async function createRoomForSoup() {
+    if (!soup || creatingRoom) return;
+    if (!user) { openAuth(); return; }
+    if (!roomForm.name.trim()) return showToast("请填写房间名称");
+    if (roomForm.type === "password" && roomForm.password.length !== 4) return showToast("房间密码必须为 4 位");
+    setCreatingRoom(true);
+    try {
+      const created = await api<{ roomId: string }>("/api/online-soup/rooms", { method: "POST", body: roomForm });
+      await api(`/api/online-soup/rooms/${created.roomId}/select-soup`, { method: "POST", body: { soupId: soup.id } });
+      navigate(`/online-soup/rooms/${created.roomId}`);
+    } catch (error) { showToast(error instanceof Error ? error.message : "创建房间失败"); }
+    finally { setCreatingRoom(false); }
+  }
 
   useEffect(() => {
     if (!id) return;
@@ -235,7 +256,7 @@ export default function DetailPage() {
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
           <button className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink" onClick={() => navigate(backTarget, { replace: true })}>
-            <ArrowLeft size={18} /> <span>{onlineSoupRoomId ? "返回房间" : "返回列表"}</span>
+            <ArrowLeft size={18} /> <span>{navigationOrigin?.soupShareReturnTo ? "返回聊天" : onlineSoupRoomId ? "返回房间" : "返回列表"}</span>
           </button>
           <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
             {user ? (
@@ -320,6 +341,7 @@ export default function DetailPage() {
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
+              <span className="pill bg-orange-50 text-orange-600">{soup.difficulty}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
             </div>
             <p className="mt-3 flex flex-wrap items-center gap-1.5 text-sm text-muted">
@@ -455,16 +477,14 @@ export default function DetailPage() {
 
       </div>
 
-      {/* AI 玩汤 悬浮按钮 */}
-      {user && soup.enableAiGame && isReviewApproved && (
-        <button
-          className="fixed bottom-24 right-4 z-30 flex h-14 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-5 text-sm font-black text-white shadow-lg active:scale-95 transition-transform hover:shadow-xl"
-          onClick={() => setShowGame(true)}
-          aria-label="AI 玩汤"
-        >
-          AI玩汤
-        </button>
-      )}
+      <div className="fixed inset-x-4 bottom-24 z-30 flex items-center justify-end gap-2 overflow-x-auto">
+        {user && soup.enableAiGame && isReviewApproved && <button className="flex h-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95 sm:px-5" onClick={() => setShowGame(true)} aria-label="AI 玩汤">AI玩汤</button>}
+        {soup.canViewFull && isReviewApproved && <button className="flex h-14 shrink-0 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95 sm:px-5" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }} aria-label="开房间"><DoorOpen size={17} />开房间</button>}
+        <button className="flex h-14 shrink-0 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95 sm:px-5" onClick={() => setShowShare(true)} aria-label="分享"><Share2 size={17} />分享</button>
+      </div>
+
+      {showShare && <SoupShareModal soup={soup} onClose={() => setShowShare(false)} />}
+      {showRoomCreate && <Modal onClose={() => !creatingRoom && setShowRoomCreate(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">开房间</h2><p className="mt-1 text-sm text-muted">创建后将自动选择《{soup.title}》</p></div><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间名称</span><input className="field" maxLength={50} value={roomForm.name} onChange={(e) => setRoomForm((old) => ({ ...old, name: e.target.value }))} /></label><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间类型</span><select className="field" value={roomForm.type} onChange={(e) => setRoomForm((old) => ({ ...old, type: e.target.value as "public" | "password", password: "" }))}><option value="public">公开房间</option><option value="password">密码房间</option></select></label>{roomForm.type === "password" && <label className="block space-y-2"><span className="text-xs font-bold text-muted">4 位密码</span><input className="field text-center tracking-[.3em]" inputMode="numeric" maxLength={4} value={roomForm.password} onChange={(e) => setRoomForm((old) => ({ ...old, password: e.target.value.replace(/\D/g, "") }))} /></label>}<button className="btn btn-primary w-full" disabled={creatingRoom} onClick={() => void createRoomForSoup()}>{creatingRoom ? "创建中…" : "创建并进入"}</button></div></Modal>}
 
       {/* Edit/Delete floating bar */}
       {soup.canEdit && (

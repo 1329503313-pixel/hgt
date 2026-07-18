@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { ArrowLeft, ImagePlus, Plus, Trash2, X } from "lucide-react";
 import type { SoupForm } from "../context/AppContext";
-import { soupTypes } from "../context/AppContext";
+import { soupDifficulties, soupTypes } from "../context/AppContext";
 import { Modal } from "./Modal";
 import { CheckRow } from "./FormWidgets";
 import { useApp } from "../context/AppContext";
@@ -223,6 +223,12 @@ export function SoupEditor() {
             <span className="text-xs font-bold text-muted"><span className="text-danger">*</span> 类型</span>
             <select className="field" value={value.type} onChange={(e) => patch({ type: e.target.value })}>
               {soupTypes.map((t) => <option key={t}>{t}</option>)}
+            </select>
+          </label>
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-xs font-bold text-muted"><span className="text-danger">*</span> 难度</span>
+            <select className="field" value={value.difficulty} onChange={(e) => patch({ difficulty: e.target.value as SoupForm["difficulty"] })} required>
+              {soupDifficulties.map((difficulty) => <option key={difficulty}>{difficulty}</option>)}
             </select>
           </label>
         </div>

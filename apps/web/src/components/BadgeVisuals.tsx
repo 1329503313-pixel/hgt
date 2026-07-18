@@ -2,6 +2,7 @@ export type BadgeType = "achievement" | "activity" | "limited";
 
 export type ActivityConditionKind =
   | "login"
+  | "user_joined"
   | "publish"
   | "like_given"
   | "comment_given"
@@ -14,7 +15,7 @@ export type ActivityBadgeCondition = {
   kind: ActivityConditionKind;
   startDate: string;
   endDate: string;
-  target: number;
+  target?: number;
 };
 
 export const BADGE_TYPE_LABELS: Record<BadgeType, string> = {
@@ -25,6 +26,7 @@ export const BADGE_TYPE_LABELS: Record<BadgeType, string> = {
 
 export const ACTIVITY_CONDITION_LABELS: Record<ActivityConditionKind, string> = {
   login: "登录平台",
+  user_joined: "用户加入时间",
   publish: "发布海龟汤",
   like_given: "点赞",
   comment_given: "发布评论",
@@ -35,8 +37,11 @@ export const ACTIVITY_CONDITION_LABELS: Record<ActivityConditionKind, string> = 
 };
 
 export function activityConditionText(condition: ActivityBadgeCondition) {
-  const count = condition.kind === "login" ? "" : `达到 ${condition.target} 次`;
-  return `${condition.startDate} 至 ${condition.endDate} ${ACTIVITY_CONDITION_LABELS[condition.kind]}${count}`;
+  const count = ["login", "user_joined"].includes(condition.kind) ? "" : `达到 ${condition.target ?? 1} 次`;
+  const range = condition.startDate === "long_term" || condition.endDate === "long_term"
+    ? "长期有效"
+    : `${condition.startDate} 至 ${condition.endDate}`;
+  return `${range} ${ACTIVITY_CONDITION_LABELS[condition.kind]}${count}`;
 }
 
 export type LegendaryBadge = {

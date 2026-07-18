@@ -7,6 +7,7 @@ export type BadgeUnlockEvent = { key: string; stats: StatsResponse; specialBadge
 
 // ---------- 常量 ----------
 export const soupTypes = ["本格清汤", "本格红汤", "本格黑汤", "变格清汤", "变格红汤", "变格黑汤", "纯机制汤", "其他"];
+export const soupDifficulties = ["简单", "普通", "困难", "地狱"] as const;
 export function formatViews(value: number) {
   if (value >= 10000) return `${Number((value / 10000).toFixed(value >= 100000 ? 0 : 1))}w`;
   return value.toLocaleString();
@@ -17,6 +18,7 @@ export type SoupForm = {
   title: string;
   author: string;
   type: string;
+  difficulty: "简单" | "普通" | "困难" | "地狱";
   summary: string;
   coverImage: string;
   isOriginal: boolean;
@@ -49,6 +51,7 @@ export const emptySoup: SoupForm = {
   title: "",
   author: "",
   type: "本格清汤",
+  difficulty: "普通",
   summary: "",
   coverImage: "",
   isOriginal: true,
@@ -263,6 +266,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         title: soup.title,
         author: soup.author,
         type: soup.type,
+        difficulty: soup.difficulty,
         summary: soup.summary,
         coverImage: soup.coverImage ?? "",
         isOriginal: soup.isOriginal,

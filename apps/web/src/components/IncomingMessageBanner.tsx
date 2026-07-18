@@ -5,7 +5,7 @@ import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { privateMessagePreview } from "../shared/messagePreview";
-import type { OnlineSoupRoomInvite } from "../shared/types";
+import type { OnlineSoupRoomInvite, SoupShare } from "../shared/types";
 
 type PrivateMessagePayload = {
   conversationId: string;
@@ -14,9 +14,10 @@ type PrivateMessagePayload = {
   senderNickname?: string;
   senderAvatar?: string | null;
   content: string;
-  type?: "text" | "sticker" | "room_invite";
+  type?: "text" | "sticker" | "room_invite" | "soup_share";
   stickerName?: string | null;
   roomInvite?: OnlineSoupRoomInvite | null;
+  soupShare?: SoupShare | null;
 };
 
 type ViewRequestPayload = {
@@ -102,7 +103,7 @@ export function IncomingMessageBanner() {
         sourceName: payload.senderNickname || "新消息",
         sourceAvatar: payload.senderAvatar,
         title: "私信消息",
-        detail: privateMessagePreview({ content: payload.content, type: payload.type ?? "text", stickerName: payload.stickerName, roomInvite: payload.roomInvite }),
+        detail: privateMessagePreview({ content: payload.content, type: payload.type ?? "text", stickerName: payload.stickerName, roomInvite: payload.roomInvite, soupShare: payload.soupShare }),
         href: `/messages/chat/${payload.conversationId}`
       });
     };

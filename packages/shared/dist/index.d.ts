@@ -2,6 +2,7 @@ export type UserRole = "admin" | "user";
 export type RequestStatus = "pending" | "approved" | "rejected";
 export type BottomPublicFilter = "all" | "surface" | "bottom";
 export type RatingFilter = "all" | "2" | "3" | "4";
+export type SoupDifficulty = "简单" | "普通" | "困难" | "地狱";
 export type PublicUser = {
     id: string;
     username: string;
@@ -23,6 +24,7 @@ export type SoupSummary = {
     title: string;
     author: string;
     type: string;
+    difficulty: SoupDifficulty;
     summary: string;
     coverImage: string | null;
     isOriginal: boolean;

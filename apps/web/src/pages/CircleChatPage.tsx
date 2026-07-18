@@ -10,6 +10,7 @@ import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
+import { SoupShareCard } from "../components/SoupShareCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 
 type CircleState = {
@@ -412,6 +413,8 @@ export default function CircleChatPage() {
                   </div>
                   {message.type === "room_invite" && message.roomInvite ? (
                     <OnlineSoupRoomInviteCard invite={message.roomInvite} />
+                  ) : message.type === "soup_share" && message.soupShare ? (
+                    <SoupShareCard soup={message.soupShare} />
                   ) : message.type === "sticker" ? (
                     sticker
                       ? <img className="h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />

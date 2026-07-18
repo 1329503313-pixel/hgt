@@ -59,6 +59,9 @@ export function SoupCard({
             <Sparkles size={14} />
             {soup.averageTotal ? `${soup.averageTotal}分` : "未评分"}
           </span>
+          <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-bold text-orange-600">
+            {soup.difficulty}
+          </span>
           <span className="inline-flex items-center gap-1">
             <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : ""} size={14} />
             {soup.likeCount}

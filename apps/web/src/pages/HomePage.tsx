@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, FileText } from "lucide-react";
 import type { PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
-import { useApp, soupTypes } from "../context/AppContext";
+import { useApp, soupDifficulties, soupTypes } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { MasonryList } from "../components/MasonryList";
 import { homeBannerUrl } from "../shared/staticAssets";
@@ -39,12 +39,13 @@ export default function HomePage() {
   const [filters, setFilters] = useState({
     keyword: "",
     type: "",
+    difficulty: "",
     minRating: "all",
     bottomPublic: "all"
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
-  const activeFilterCount = [filters.type, filters.minRating !== "all", filters.bottomPublic !== "all"].filter(Boolean).length;
+  const activeFilterCount = [filters.type, filters.difficulty, filters.minRating !== "all", filters.bottomPublic !== "all"].filter(Boolean).length;
   const isResultMode = Boolean(filters.keyword) || activeFilterCount > 0;
 
   const submitSearch = () => setFilters((old) => ({ ...old, keyword: searchKeyword.trim() }));
@@ -256,12 +257,19 @@ export default function HomePage() {
       </div>
 
       {filtersOpen && (
-        <div className="grid gap-2 rounded-2xl border border-line bg-white p-3 shadow-soft sm:grid-cols-3">
+        <div className="grid gap-2 rounded-2xl border border-line bg-white p-3 shadow-soft sm:grid-cols-4">
           <label className="filter-field">
             <span>类型</span>
             <select className="field" value={filters.type} onChange={(e) => setFilters((old) => ({ ...old, type: e.target.value }))}>
               <option value="">全部类型</option>
               {soupTypes.map((t) => <option key={t}>{t}</option>)}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>难度</span>
+            <select className="field" value={filters.difficulty} onChange={(e) => setFilters((old) => ({ ...old, difficulty: e.target.value }))}>
+              <option value="">全部难度</option>
+              {soupDifficulties.map((difficulty) => <option key={difficulty}>{difficulty}</option>)}
             </select>
           </label>
           <label className="filter-field">

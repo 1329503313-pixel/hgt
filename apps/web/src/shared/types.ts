@@ -3,6 +3,7 @@ export type RequestStatus = "pending" | "approved" | "rejected";
 export type BottomPublicFilter = "all" | "surface" | "bottom";
 export type RatingFilter = "all" | "2" | "3" | "4";
 export type SoupReviewStatus = "approved" | "pending" | "rejected";
+export type SoupDifficulty = "简单" | "普通" | "困难" | "地狱";
 
 export type EquippedBadge = {
   key: string;
@@ -34,6 +35,7 @@ export type SoupSummary = {
   title: string;
   author: string;
   type: string;
+  difficulty: SoupDifficulty;
   summary: string;
   coverImage: string | null;
   isOriginal: boolean;
@@ -155,10 +157,12 @@ export type OnlineSoupRoomInvite = {
   playerCapacity: number;
 };
 
+export type SoupShare = Pick<SoupSummary, "id" | "title" | "author" | "type" | "difficulty" | "summary" | "coverImage" | "heatValue" | "averageTotal" | "likeCount" | "favoriteCount">;
+
 export type ConversationItem = {
   id: string;
   otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean };
-  lastMessage: { content: string; type: "text" | "sticker" | "room_invite"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; isMine: boolean; createdAt: string } | null;
+  lastMessage: { content: string; type: "text" | "sticker" | "room_invite" | "soup_share"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; soupShare?: SoupShare | null; isMine: boolean; createdAt: string } | null;
   unreadCount: number;
   updatedAt: string;
 };
@@ -167,10 +171,11 @@ export type PrivateMessageItem = {
   id: string;
   senderId: string;
   content: string;
-  type: "text" | "sticker" | "room_invite";
+  type: "text" | "sticker" | "room_invite" | "soup_share";
   stickerId: string | null;
   stickerName?: string | null;
   roomInvite?: OnlineSoupRoomInvite | null;
+  soupShare?: SoupShare | null;
   isMine: boolean;
   isRead: boolean;
   createdAt: string;
@@ -209,7 +214,7 @@ export type CircleSummary = {
     id: string;
     senderName: string;
     content: string;
-    type: "text" | "sticker" | "room_invite";
+    type: "text" | "sticker" | "room_invite" | "soup_share";
     createdAt: string;
   } | null;
   createdAt: string;
@@ -227,10 +232,11 @@ export type CircleMessage = {
   circleId: string;
   sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean }) | null;
   content: string;
-  type: "text" | "sticker" | "room_invite";
+  type: "text" | "sticker" | "room_invite" | "soup_share";
   stickerId: string | null;
   stickerName?: string | null;
   roomInvite?: OnlineSoupRoomInvite | null;
+  soupShare?: SoupShare | null;
   mentions: Array<{
     userId: string;
     nickname: string;

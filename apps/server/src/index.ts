@@ -315,14 +315,27 @@ const optionalTextList = z
   .default([])
   .transform((items) => items.filter(Boolean));
 const score = z.coerce.number().min(1).max(5).multipleOf(0.5);
+const activityDateSchema = z.union([
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  z.literal("long_term")
+]);
 const activityConditionSchema = z.object({
-  kind: z.enum(["login", "publish", "like_given", "comment_given", "favorite_given", "like_received", "comment_received", "favorite_received"]),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  target: z.coerce.number().int().min(1).max(1_000_000)
-}).refine((condition) => condition.endDate >= condition.startDate, {
-  message: "结束日期不能早于开始日期",
-  path: ["endDate"]
+  kind: z.enum(["login", "user_joined", "publish", "like_given", "comment_given", "favorite_given", "like_received", "comment_received", "favorite_received"]),
+  startDate: activityDateSchema,
+  endDate: activityDateSchema,
+  target: z.coerce.number().int().min(1).max(1_000_000).optional()
+}).transform((condition) => {
+  const normalized = condition.startDate === "long_term" || condition.endDate === "long_term"
+    ? { ...condition, startDate: "long_term" as const, endDate: "long_term" as const }
+    : condition;
+  return normalized.kind === "user_joined" ? { ...normalized, target: undefined } : normalized;
+}).superRefine((condition, ctx) => {
+  if (condition.startDate !== "long_term" && condition.endDate !== "long_term" && condition.endDate < condition.startDate) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "结束日期不能早于开始日期", path: ["endDate"] });
+  }
+  if (!["login", "user_joined"].includes(condition.kind) && condition.target == null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "请填写次数", path: ["target"] });
+  }
 });
 const activityConditionsSchema = z.array(activityConditionSchema).max(8);
 type ActivityBadgeCondition = z.infer<typeof activityConditionSchema>;
@@ -384,6 +397,7 @@ const soupSchema = z.object({
   title: text,
   author: z.string().trim().max(100).optional().default(""),
   type: text.max(20),
+  difficulty: z.enum(["简单", "普通", "困难", "地狱"]),
   summary: z.string().trim().max(40, "摘要不超过 40 个字").optional().default(""),
   coverImage: z
     .string()
@@ -751,6 +765,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     title: row.title,
     author: row.author,
     type: row.type,
+    difficulty: String(row.difficulty ?? "普通"),
     summary: row.summary ?? "",
     coverImage: soupImageUrl(row.id, row.cover_thumbnail, "thumbnail"),
     isOriginal: bool(row.is_original ?? 1),
@@ -1097,18 +1112,24 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
 }
 
 async function activityConditionCount(userId: string, condition: ActivityBadgeCondition) {
-  const dateParams = [userId, condition.startDate, condition.endDate];
-  const queries: Record<ActivityConditionKind, string> = {
-    login: "SELECT COUNT(*) AS count FROM user_login_days WHERE user_id = ? AND login_date BETWEEN ? AND ?",
-    publish: "SELECT COUNT(*) AS count FROM soups WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
-    like_given: "SELECT COUNT(*) AS count FROM soup_like_history WHERE actor_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
-    comment_given: "SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE reviewer_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
-    favorite_given: "SELECT COUNT(*) AS count FROM soup_favorite_history WHERE actor_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
-    like_received: "SELECT COUNT(*) AS count FROM soup_like_history WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
-    comment_received: "SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?",
-    favorite_received: "SELECT COUNT(*) AS count FROM soup_favorite_history WHERE creator_id = ? AND DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) BETWEEN ? AND ?"
+  const sources: Record<ActivityConditionKind, { table: string; userColumn: string; dateExpression: string }> = {
+    login: { table: "user_login_days", userColumn: "user_id", dateExpression: "login_date" },
+    user_joined: { table: "users", userColumn: "id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
+    publish: { table: "soups", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
+    like_given: { table: "soup_like_history", userColumn: "actor_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
+    comment_given: { table: "evaluation_comment_history", userColumn: "reviewer_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
+    favorite_given: { table: "soup_favorite_history", userColumn: "actor_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
+    like_received: { table: "soup_like_history", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
+    comment_received: { table: "evaluation_comment_history", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
+    favorite_received: { table: "soup_favorite_history", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" }
   };
-  const [[row]] = await pool.query<mysql.RowDataPacket[]>(queries[condition.kind], dateParams);
+  const source = sources[condition.kind];
+  const longTerm = condition.startDate === "long_term" || condition.endDate === "long_term";
+  const sql = `SELECT COUNT(*) AS count FROM ${source.table} WHERE ${source.userColumn} = ?${
+    longTerm ? "" : ` AND ${source.dateExpression} BETWEEN ? AND ?`
+  }`;
+  const params = longTerm ? [userId] : [userId, condition.startDate, condition.endDate];
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(sql, params);
   return Number(row?.count ?? 0);
 }
 
@@ -1136,19 +1157,42 @@ async function syncActivityBadges(userId: string) {
     [userId]
   );
   const owned = new Set(unlockRows.map((row) => String(row.badge_key)));
+  const [grantHistoryRows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT badge_id FROM activity_badge_grant_history WHERE user_id = ?",
+    [userId]
+  );
+  const previouslyGranted = new Set(grantHistoryRows.map((row) => String(row.badge_id)));
   const earned: Array<{ key: string; name: string }> = [];
   for (const badge of badgeRows) {
     const key = `legendary:${badge.id}`;
-    if (owned.has(key)) continue;
+    if (owned.has(key) || previouslyGranted.has(String(badge.id))) continue;
     const conditions = badgeActivityConditions(badge.activity_conditions);
     if (conditions.length === 0) continue;
     const counts = await Promise.all(conditions.map((condition) => activityConditionCount(userId, condition)));
-    if (conditions.every((condition, index) => counts[index] >= (condition.kind === "login" ? 1 : condition.target))) {
-      const [result] = await pool.query<mysql.ResultSetHeader>(
-        "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
-        [userId, key]
-      );
-      if (result.affectedRows > 0) earned.push({ key, name: String(badge.name) });
+    if (conditions.every((condition, index) => counts[index] >= (["login", "user_joined"].includes(condition.kind) ? 1 : (condition.target ?? 1)))) {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [historyResult] = await connection.query<mysql.ResultSetHeader>(
+          "INSERT IGNORE INTO activity_badge_grant_history (user_id, badge_id) VALUES (?, ?)",
+          [userId, badge.id]
+        );
+        let granted = false;
+        if (historyResult.affectedRows > 0) {
+          const [unlockResult] = await connection.query<mysql.ResultSetHeader>(
+            "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
+            [userId, key]
+          );
+          granted = unlockResult.affectedRows > 0;
+        }
+        await connection.commit();
+        if (granted) earned.push({ key, name: String(badge.name) });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
     }
   }
   activityBadgeSyncCache.set(userId, { expiresAt: Date.now() + 60_000, earned });
@@ -1374,6 +1418,7 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     nickname
   ]);
   await recordLoginDay(id);
+  queueActivityBadgeSync([id]);
 
   const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString(), equippedBadge: null };
   const token = signToken({ id, tokenVersion: 0 });
@@ -1885,15 +1930,17 @@ const roomInviteInputSchema = z.object({
   roomId: z.string().trim().min(1).max(64),
   inviteToken: z.string().trim().min(1).max(100)
 });
+const soupShareInputSchema = z.object({ soupId: z.string().trim().min(1).max(64) });
 
 const circleMessageSchema = z.object({
   content: z.string().trim().min(1).max(1000, "单条消息不能超过1000字").optional(),
   stickerId: z.string().trim().min(1).max(64).optional(),
   roomInvite: roomInviteInputSchema.optional(),
+  soupShare: soupShareInputSchema.optional(),
   mentionedUserIds: z.array(z.string().trim().min(1).max(64)).max(10).optional()
 }).superRefine((value, ctx) => {
-  if (Number(Boolean(value.content)) + Number(Boolean(value.stickerId)) + Number(Boolean(value.roomInvite)) !== 1) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文字、表情和房间邀请必须且只能发送一种" });
+  if (Number(Boolean(value.content)) + Number(Boolean(value.stickerId)) + Number(Boolean(value.roomInvite)) + Number(Boolean(value.soupShare)) !== 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文字、表情、房间邀请和海龟汤分享必须且只能发送一种" });
   }
   if (value.mentionedUserIds?.length && !value.content) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "只有文字消息可以@圈子成员" });
@@ -1933,6 +1980,32 @@ function parseRoomInvite(value: unknown) {
   }
 }
 
+function parseSoupShare(value: unknown) {
+  if (!value) return null;
+  try { return JSON.parse(String(value)); } catch { return null; }
+}
+
+async function sharedSoupCard(soupId: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT s.*, FALSE AS is_liked, FALSE AS is_favorited,
+       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
+       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
+       COUNT(e.id) AS evaluation_count, AVG(e.total) AS average_total,
+       AVG(e.writing) AS avg_writing, AVG(e.logic) AS avg_logic, AVG(e.share) AS avg_share,
+       AVG(e.mechanism) AS avg_mechanism, AVG(e.twist) AS avg_twist, AVG(e.depth) AS avg_depth
+     FROM soups s LEFT JOIN evaluations e ON e.soup_id = s.id
+     WHERE s.id = ? AND s.review_status = 'approved' GROUP BY s.id LIMIT 1`,
+    [soupId]
+  );
+  if (!rows[0]) return null;
+  const soup = mapSoupSummary(rows[0]);
+  return {
+    id: soup.id, title: soup.title, author: soup.author, type: soup.type, difficulty: soup.difficulty,
+    summary: soup.summary, coverImage: soup.coverImage, heatValue: soup.heatValue,
+    averageTotal: soup.averageTotal, likeCount: soup.likeCount, favoriteCount: soup.favoriteCount
+  };
+}
+
 function parseCircleMentions(value: unknown): Array<{ userId: string; nickname: string }> {
   if (!value) return [];
   try {
@@ -1958,7 +2031,7 @@ async function circleForMember(circleId: string, userId: string) {
 }
 
 function circleMessagePayload(row: mysql.RowDataPacket) {
-  const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : "text";
+  const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : "text";
   return {
     id: String(row.id),
     sequence: Number(row.message_sequence),
@@ -1975,6 +2048,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
     stickerId: row.sticker_id ? String(row.sticker_id) : null,
     stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
     roomInvite: messageType === "room_invite" ? parseRoomInvite(row.content) : null,
+    soupShare: messageType === "soup_share" ? parseSoupShare(row.content) : null,
     mentions: parseCircleMentions(row.mentions_json),
     createdAt: new Date(row.created_at).toISOString()
   };
@@ -2066,8 +2140,10 @@ app.get("/api/circles", async (req, res) => {
           ? `[表情] ${getSticker(String(row.latest_sticker_id ?? ""))?.name ?? ""}`.trim()
           : row.latest_message_type === "room_invite"
             ? `[玩汤邀请] ${parseRoomInvite(row.latest_content)?.roomName ?? "加入房间"}`
+            : row.latest_message_type === "soup_share"
+              ? `[海龟汤] ${parseSoupShare(row.latest_content)?.title ?? "查看分享"}`
             : String(row.latest_content ?? ""),
-        type: row.latest_message_type === "sticker" ? "sticker" : row.latest_message_type === "room_invite" ? "room_invite" : "text",
+        type: row.latest_message_type === "sticker" ? "sticker" : row.latest_message_type === "room_invite" ? "room_invite" : row.latest_message_type === "soup_share" ? "soup_share" : "text",
         createdAt: new Date(row.latest_created_at).toISOString()
       } : null,
       createdAt: new Date(row.created_at).toISOString(),
@@ -2233,6 +2309,8 @@ app.post("/api/circles/:id/messages", async (req, res) => {
     ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
     : null;
   if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "玩汤房间邀请无效或房间已关闭");
+  const soupShare = parsed.data.soupShare ? await sharedSoupCard(parsed.data.soupShare.soupId) : null;
+  if (parsed.data.soupShare && !soupShare) return sendError(res, 400, "海龟汤不存在或暂不可分享");
   const mentionedUserIds = [...new Set(parsed.data.mentionedUserIds ?? [])].filter((id) => id !== user.id);
   let mentions: Array<{ userId: string; nickname: string }> = [];
   if (mentionedUserIds.length) {
@@ -2250,8 +2328,8 @@ app.post("/api/circles/:id/messages", async (req, res) => {
     }
   }
   const id = nanoid();
-  const content = roomInvite ? JSON.stringify(roomInvite) : parsed.data.content ?? "";
-  const messageType = roomInvite ? "room_invite" : sticker ? "sticker" : "text";
+  const content = roomInvite ? JSON.stringify(roomInvite) : soupShare ? JSON.stringify(soupShare) : parsed.data.content ?? "";
+  const messageType = roomInvite ? "room_invite" : soupShare ? "soup_share" : sticker ? "sticker" : "text";
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -2516,10 +2594,11 @@ app.get("/api/conversations", async (req, res) => {
     },
     lastMessage: row.last_content == null ? null : {
       content: String(row.last_content),
-      type: row.last_message_type === "sticker" ? "sticker" : row.last_message_type === "room_invite" ? "room_invite" : "text",
+      type: row.last_message_type === "sticker" ? "sticker" : row.last_message_type === "room_invite" ? "room_invite" : row.last_message_type === "soup_share" ? "soup_share" : "text",
       stickerId: row.last_sticker_id ? String(row.last_sticker_id) : null,
       stickerName: row.last_sticker_id ? getSticker(String(row.last_sticker_id))?.name ?? null : null,
       roomInvite: row.last_message_type === "room_invite" ? parseRoomInvite(row.last_content) : null,
+      soupShare: row.last_message_type === "soup_share" ? parseSoupShare(row.last_content) : null,
       isMine: String(row.last_sender_id) === user.id,
       createdAt: new Date(row.message_created_at).toISOString()
     },
@@ -2651,10 +2730,11 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
     },
     messages: rows.map((row) => ({
       id: String(row.id), senderId: String(row.sender_id), content: String(row.content),
-      type: row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : "text",
+      type: row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : "text",
       stickerId: row.sticker_id ? String(row.sticker_id) : null,
       stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
       roomInvite: row.message_type === "room_invite" ? parseRoomInvite(row.content) : null,
+      soupShare: row.message_type === "soup_share" ? parseSoupShare(row.content) : null,
       isMine: String(row.sender_id) === user.id,
       isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString()
     })),
@@ -2682,10 +2762,11 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   const parsed = z.object({
     content: text.max(1000, "单条消息不能超过1000字").optional(),
     stickerId: z.string().trim().min(1).max(64).optional(),
-    roomInvite: roomInviteInputSchema.optional()
+    roomInvite: roomInviteInputSchema.optional(),
+    soupShare: soupShareInputSchema.optional()
   }).superRefine((value, ctx) => {
-    if (Number(Boolean(value.content)) + Number(Boolean(value.stickerId)) + Number(Boolean(value.roomInvite)) !== 1) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文本、表情和房间邀请必须且只能发送一种" });
+    if (Number(Boolean(value.content)) + Number(Boolean(value.stickerId)) + Number(Boolean(value.roomInvite)) + Number(Boolean(value.soupShare)) !== 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文本、表情、房间邀请和海龟汤分享必须且只能发送一种" });
     }
   }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
@@ -2695,8 +2776,10 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
     : null;
   if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "玩汤房间邀请无效或房间已关闭");
-  const messageType = roomInvite ? "room_invite" : sticker ? "sticker" : "text";
-  const content = roomInvite ? JSON.stringify(roomInvite) : parsed.data.content ?? "";
+  const soupShare = parsed.data.soupShare ? await sharedSoupCard(parsed.data.soupShare.soupId) : null;
+  if (parsed.data.soupShare && !soupShare) return sendError(res, 400, "海龟汤不存在或暂不可分享");
+  const messageType = roomInvite ? "room_invite" : soupShare ? "soup_share" : sticker ? "sticker" : "text";
+  const content = roomInvite ? JSON.stringify(roomInvite) : soupShare ? JSON.stringify(soupShare) : parsed.data.content ?? "";
   const conversation = await conversationForUser(req.params.id, user.id);
   if (!conversation) return sendError(res, 404, "会话不存在");
   const id = nanoid();
@@ -2724,6 +2807,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     stickerId: sticker?.id ?? null,
     stickerName: sticker?.name ?? null,
     roomInvite,
+    soupShare,
     isMine: true,
     isRead: false,
     createdAt
@@ -2739,6 +2823,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     stickerId: sticker?.id ?? null,
     stickerName: sticker?.name ?? null,
     roomInvite,
+    soupShare,
     createdAt,
     message: { ...message, isMine: false }
   });
@@ -3043,6 +3128,10 @@ app.get("/api/soups", async (req, res) => {
     where.push("s.type = ?");
     params.push(String(req.query.type));
   }
+  if (["简单", "普通", "困难", "地狱"].includes(String(req.query.difficulty ?? ""))) {
+    where.push("s.difficulty = ?");
+    params.push(String(req.query.difficulty));
+  }
   if (req.query.bottomPublic === "surface") where.push("s.is_surface_public = TRUE");
   if (req.query.bottomPublic === "bottom") where.push("s.is_bottom_public = TRUE");
 
@@ -3061,7 +3150,7 @@ app.get("/api/soups", async (req, res) => {
   const orderClause = order === "RANDOM" ? "CRC32(CONCAT(s.id, ?))" : `s.created_at ${order}`;
 
   const summarySelect = `
-    SELECT s.id, s.title, s.author, s.type, s.summary, s.cover_thumbnail, s.is_original,
+    SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail, s.is_original,
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
       s.review_status, s.review_reason, s.review_version,
       u.avatar AS creator_avatar,
@@ -3184,9 +3273,9 @@ app.post("/api/soups", async (req, res) => {
     }
     await connection.query(
       `INSERT INTO soups
-        (id, title, author, type, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, ai_prompt, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, soup.title, author, soup.type, soup.summary, optimizedCover?.full ?? null, optimizedCover?.thumbnail ?? null, soup.isOriginal, soup.isSensitive,
+        (id, title, author, type, difficulty, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, ai_prompt, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, soup.title, author, soup.type, soup.difficulty, soup.summary, optimizedCover?.full ?? null, optimizedCover?.thumbnail ?? null, soup.isOriginal, soup.isSensitive,
         soup.surface, JSON.stringify(soup.supplementalSurfaces), soup.bottom, JSON.stringify(soup.supplementalBottoms), soup.manual || null,
         soup.isSurfacePublic, soup.isBottomPublic, soup.enableAiGame, review.decision, review.reason, 1, soup.aiPrompt || null,
         soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null, null, soup.keyFactsCustomized ? 1 : 0, user.id, user.nickname]
@@ -3458,7 +3547,7 @@ app.put("/api/soups/:id", async (req, res) => {
   const thumbnail = existingCoverSelected ? soup.cover_thumbnail : (optimizedCover?.thumbnail ?? null);
   await pool.query(
     `UPDATE soups
-     SET title = ?, author = ?, type = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
+     SET title = ?, author = ?, type = ?, difficulty = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
          is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + 1,
          reviewed_at = NULL, reviewed_by = NULL, ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
      WHERE id = ?`,
@@ -3466,6 +3555,7 @@ app.put("/api/soups/:id", async (req, res) => {
       next.title,
       author,
       next.type,
+      next.difficulty,
       next.summary,
       coverImage,
       thumbnail,
@@ -4545,6 +4635,13 @@ app.get("/api/admin/users", async (req, res) => {
   };
   const sortColumn = sortColumns[String(req.query.sortBy ?? "createdAt")] ?? sortColumns.createdAt;
   const sortOrder = req.query.sortOrder === "asc" ? "ASC" : "DESC";
+  const prioritizeOnline = sortColumn === sortColumns.lastLoginAt && sortOrder === "DESC";
+  const onlineUserIds = prioritizeOnline ? [...visiblyOnlineUsers] : [];
+  const onlineOrderClause = prioritizeOnline
+    ? onlineUserIds.length > 0
+      ? `CASE WHEN u.id IN (${onlineUserIds.map(() => "?").join(", ")}) THEN 0 ELSE 1 END ASC, `
+      : ""
+    : "";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at,
       EXISTS (
@@ -4558,15 +4655,16 @@ app.get("/api/admin/users", async (req, res) => {
       (SELECT COUNT(*) FROM soup_favorites WHERE user_id = u.id) AS favorite_count
      FROM users u
      ${where}
-     ORDER BY ${sortColumn} ${sortOrder}, u.created_at DESC
+     ORDER BY ${onlineOrderClause}${sortColumn} ${sortOrder}, u.created_at DESC
      LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+    [...params, ...onlineUserIds, limit, offset]
   );
   const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(`SELECT COUNT(*) AS total FROM users u ${where}`, params);
   res.json({
     total: Number(totalRow.total ?? 0),
     users: rows.map((row) => ({
       ...toUser(row),
+      isOnline: isUserOnline(row.id),
       lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
       loggedInToday: Boolean(row.logged_in_today),
       stats: {

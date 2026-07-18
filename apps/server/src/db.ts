@@ -34,6 +34,7 @@ export async function initDatabase() {
       title LONGTEXT NOT NULL,
       author VARCHAR(100) NOT NULL,
       type VARCHAR(20) NOT NULL,
+      difficulty ENUM('简单','普通','困难','地狱') NOT NULL DEFAULT '普通',
       summary VARCHAR(40) NOT NULL DEFAULT '',
       cover_image LONGTEXT NULL,
       is_original BOOLEAN NOT NULL DEFAULT TRUE,
@@ -203,6 +204,7 @@ export async function initDatabase() {
       CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("soups", "difficulty", "difficulty ENUM('简单','普通','困难','地狱') NOT NULL DEFAULT '普通' AFTER type");
 
   // 多人在线玩汤（与 AI 玩汤会话完全独立）
   await pool.query(`
@@ -497,6 +499,25 @@ export async function initDatabase() {
   await ensureColumn("legendary_badges", "activity_conditions", "activity_conditions JSON NULL AFTER tier");
   await seedLegendaryBadges();
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_badge_grant_history (
+      user_id VARCHAR(64) NOT NULL,
+      badge_id VARCHAR(64) NOT NULL,
+      first_granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, badge_id),
+      INDEX idx_activity_badge_history_badge (badge_id, first_granted_at),
+      CONSTRAINT fk_activity_badge_history_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_activity_badge_history_badge FOREIGN KEY (badge_id) REFERENCES legendary_badges(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO activity_badge_grant_history (user_id, badge_id, first_granted_at)
+    SELECT ubu.user_id, lb.id, ubu.unlocked_at
+    FROM user_badge_unlocks ubu
+    INNER JOIN legendary_badges lb
+      ON ubu.badge_key = CONCAT('legendary:', lb.id)
+     AND lb.badge_type = 'activity'
+  `);
+  await pool.query(`
     INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, unlocked_at, surfaced_at)
     SELECT user_id, 'excellentAuthor:epic', unlocked_at, surfaced_at
     FROM user_badge_unlocks
@@ -630,7 +651,7 @@ export async function initDatabase() {
       circle_id VARCHAR(64) NOT NULL,
       sender_id VARCHAR(64) NULL,
       content VARCHAR(1000) NOT NULL DEFAULT '',
-      message_type ENUM('text','sticker','room_invite') NOT NULL DEFAULT 'text',
+      message_type ENUM('text','sticker','room_invite','soup_share') NOT NULL DEFAULT 'text',
       sticker_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -644,9 +665,9 @@ export async function initDatabase() {
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'circle_messages' AND COLUMN_NAME = 'message_type'`
   );
-  if (!String(circleMessageType?.COLUMN_TYPE ?? "").includes("'room_invite'")) {
+  if (!String(circleMessageType?.COLUMN_TYPE ?? "").includes("'soup_share'")) {
     await pool.query(
-      "ALTER TABLE circle_messages MODIFY COLUMN message_type ENUM('text','sticker','room_invite') NOT NULL DEFAULT 'text'"
+      "ALTER TABLE circle_messages MODIFY COLUMN message_type ENUM('text','sticker','room_invite','soup_share') NOT NULL DEFAULT 'text'"
     );
   }
   await ensureColumn("circle_messages", "mentions_json", "mentions_json JSON NULL AFTER sticker_id");

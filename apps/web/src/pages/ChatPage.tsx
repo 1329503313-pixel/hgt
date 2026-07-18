@@ -8,6 +8,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
+import { SoupShareCard } from "../components/SoupShareCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 
 type ChatResponse = {
@@ -236,6 +237,8 @@ export default function ChatPage() {
               <div className={`flex max-w-[78%] flex-col ${message.isMine ? "items-end" : "items-start"}`}>
                 {message.type === "room_invite" && message.roomInvite ? (
                   <OnlineSoupRoomInviteCard invite={message.roomInvite} />
+                ) : message.type === "soup_share" && message.soupShare ? (
+                  <SoupShareCard soup={message.soupShare} />
                 ) : message.type === "sticker" ? (
                   sticker
                     ? <img className="h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpDown, KeyRound, Search, Trash2 } from "lucide-react";
 import type { PublicUser } from "../../shared/types";
 import { api } from "../../api";
@@ -6,10 +6,12 @@ import { Modal } from "../Modal";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
+import { subscribeServerEvent } from "../../shared/serverEvents";
 
 type AdminUser = PublicUser & {
   username: string;
   lastLoginAt: string | null;
+  isOnline: boolean;
   loggedInToday: boolean;
   stats: { soupCount: number; evaluationCount: number; likeCount: number; favoriteCount: number };
 };
@@ -50,6 +52,7 @@ export function UserManagement() {
   const [resetting, setResetting] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumn>>(() => new Set(userColumns.map((column) => column.key)));
   const [loading, setLoading] = useState(true);
+  const presenceRefreshTimer = useRef<number | null>(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -68,6 +71,26 @@ export function UserManagement() {
   }, [submittedKeyword, todayFilter, page, pageSize, sortBy, sortOrder]);
 
   useEffect(() => { loadUsers().catch(() => {}); }, [loadUsers]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeServerEvent("presence_changed", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { userId?: string; online?: boolean };
+        if (!payload.userId) return;
+        setUsers((current) => current.map((item) => item.id === payload.userId ? { ...item, isOnline: Boolean(payload.online) } : item));
+        if (sortBy === "lastLoginAt" && sortOrder === "desc") {
+          if (presenceRefreshTimer.current != null) window.clearTimeout(presenceRefreshTimer.current);
+          presenceRefreshTimer.current = window.setTimeout(() => void loadUsers().catch(() => {}), 250);
+        }
+      } catch {
+        // 忽略格式异常的在线状态事件。
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (presenceRefreshTimer.current != null) window.clearTimeout(presenceRefreshTimer.current);
+    };
+  }, [loadUsers, sortBy, sortOrder]);
 
   const template = useMemo(() => gridTemplate(userColumns, visibleColumns), [visibleColumns]);
 
@@ -185,7 +208,7 @@ export function UserManagement() {
                   </select>
                 )}
                 {visibleColumns.has("createdAt") && <span className="text-xs text-muted">{new Date(user.createdAt).toLocaleDateString()}</span>}
-                {visibleColumns.has("lastLoginAt") && <span className="text-xs text-muted">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "从未登录"}</span>}
+                {visibleColumns.has("lastLoginAt") && <span className={`text-xs font-bold ${user.isOnline ? "text-emerald-600" : "text-muted"}`}>{user.isOnline ? "在线" : user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "从未登录"}</span>}
                 {visibleColumns.has("loggedToday") && <span className={`rounded-full px-2 py-1 text-xs font-bold ${user.loggedInToday ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{user.loggedInToday ? "已登录" : "未登录"}</span>}
                 {visibleColumns.has("soups") && <span className="font-semibold text-ink">{user.stats.soupCount}</span>}
                 {visibleColumns.has("evaluations") && <span>{user.stats.evaluationCount}</span>}
