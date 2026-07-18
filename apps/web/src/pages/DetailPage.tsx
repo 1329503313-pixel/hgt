@@ -1,8 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, ChevronDown, ChevronUp } from "lucide-react";
-import { toPng } from "html-to-image";
-import QRCode from "qrcode";
 import type { SoupDetail } from "../shared/types";
 import { api, SoupResponse, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -57,7 +55,7 @@ export default function DetailPage() {
       .then((data) => { setSoup(data.soup); setLoading(false); })
       .catch(() => { setLoading(false); });
     window.scrollTo(0, 0);
-  }, [id]);
+  }, [id, user?.id]);
 
   const ownEvaluation = useMemo(() => {
     if (!soup || !user) return null;
@@ -102,12 +100,20 @@ export default function DetailPage() {
   async function handleEvalOpen() {
     if (!soup) return;
     if (!user) { openAuth(); return; }
+    if (!soup.canViewFull) {
+      showToast("获得汤底查看权限后才能评价");
+      return;
+    }
     openEvalEditor(soup.id, ownEvaluation);
   }
 
   async function handleExport(text: string, name: string, sectionTitle?: string) {
     if (!user) { openAuth(); return; }
     if (!soup || !text.trim()) return;
+    const [{ toPng }, { default: QRCode }] = await Promise.all([
+      import("html-to-image"),
+      import("qrcode")
+    ]);
 
     const sheet = document.createElement("div");
     sheet.className = "export-sheet";
@@ -397,11 +403,17 @@ export default function DetailPage() {
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="font-black text-ink">评价</h2>
             {hasEvaluations && (
-              <button className="btn btn-primary" onClick={handleEvalOpen}>
+              <button
+                className="btn btn-primary"
+                disabled={!soup.canViewFull}
+                title={!soup.canViewFull ? "获得汤底查看权限后才能评价" : undefined}
+                onClick={handleEvalOpen}
+              >
                 <Star size={18} /> {ownEvaluation ? "编辑我的评价" : "添加评价"}
               </button>
             )}
           </div>
+          {!soup.canViewFull && <p className="mb-3 text-xs text-warning">获得汤底查看权限后才能评价。</p>}
           <div className="space-y-3">
             {soup.evaluations.map((item) => (
               <div key={item.id} className="rounded-lg border border-line bg-slate-50 p-3">
@@ -427,7 +439,12 @@ export default function DetailPage() {
             {!hasEvaluations && (
               <div className="space-y-3">
                 <p className="text-sm text-muted">还没有评价。</p>
-                <button className="btn btn-primary w-full sm:w-auto" onClick={handleEvalOpen}>
+                <button
+                  className="btn btn-primary w-full sm:w-auto"
+                  disabled={!soup.canViewFull}
+                  title={!soup.canViewFull ? "获得汤底查看权限后才能评价" : undefined}
+                  onClick={handleEvalOpen}
+                >
                   <Star size={18} /> {ownEvaluation ? "编辑我的评价" : "添加评价"}
                 </button>
               </div>

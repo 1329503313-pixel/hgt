@@ -140,12 +140,25 @@ export type SocialProfile = PublicUser & {
 export type SocialUser = PublicUser & {
   isFollowing: boolean;
   isSelf: boolean;
+  isOnline: boolean;
+  isMutual: boolean;
+};
+
+export type OnlineSoupRoomInvite = {
+  roomId: string;
+  inviteToken: string;
+  roomName: string;
+  roomCode: string;
+  soupTitle: string | null;
+  status: OnlineSoupRoomStatus;
+  playerCount: number;
+  playerCapacity: number;
 };
 
 export type ConversationItem = {
   id: string;
-  otherUser: Pick<PublicUser, "id" | "nickname" | "avatar">;
-  lastMessage: { content: string; type: "text" | "sticker"; stickerId: string | null; stickerName?: string | null; isMine: boolean; createdAt: string } | null;
+  otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean };
+  lastMessage: { content: string; type: "text" | "sticker" | "room_invite"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; isMine: boolean; createdAt: string } | null;
   unreadCount: number;
   updatedAt: string;
 };
@@ -154,9 +167,10 @@ export type PrivateMessageItem = {
   id: string;
   senderId: string;
   content: string;
-  type: "text" | "sticker";
+  type: "text" | "sticker" | "room_invite";
   stickerId: string | null;
   stickerName?: string | null;
+  roomInvite?: OnlineSoupRoomInvite | null;
   isMine: boolean;
   isRead: boolean;
   createdAt: string;
@@ -178,6 +192,53 @@ export type StickerSeries = {
   characterName: string;
   stickers: StickerAsset[];
 };
+
+export type CircleSummary = {
+  id: string;
+  name: string;
+  avatar: string;
+  isJoined: boolean;
+  memberCount: number;
+  onlineCount: number;
+  unreadCount: number;
+  unreadMention: {
+    id: string;
+    content: string;
+  } | null;
+  latestMessage: {
+    id: string;
+    senderName: string;
+    content: string;
+    type: "text" | "sticker" | "room_invite";
+    createdAt: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CircleMember = PublicUser & {
+  joinedAt: string;
+  isOnline: boolean;
+};
+
+export type CircleMessage = {
+  id: string;
+  sequence: number;
+  circleId: string;
+  sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean }) | null;
+  content: string;
+  type: "text" | "sticker" | "room_invite";
+  stickerId: string | null;
+  stickerName?: string | null;
+  roomInvite?: OnlineSoupRoomInvite | null;
+  mentions: Array<{
+    userId: string;
+    nickname: string;
+  }>;
+  createdAt: string;
+};
+
+export type CircleDetail = Omit<CircleSummary, "isJoined" | "latestMessage" | "unreadMention">;
 
 export type OnlineSoupRoomStatus = "preparing" | "playing" | "ended" | "closed";
 export type OnlineSoupMemberRole = "host" | "player" | "spectator" | "admin";

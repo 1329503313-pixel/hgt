@@ -24,7 +24,8 @@ export function setOnlineSoupLobbyEventEmitter(emitter: LobbyEventEmitter) {
 const router = Router();
 const HOST_ONLINE_SECONDS = 75;
 const MESSAGE_PAGE_SIZE = 100;
-const PLAYER_CAPACITY = 8;
+export const ONLINE_SOUP_PLAYER_CAPACITY = 8;
+const PLAYER_CAPACITY = ONLINE_SOUP_PLAYER_CAPACITY;
 const SPECTATOR_CAPACITY = 20;
 const answerValues = ["yes", "no", "both", "unknown", "irrelevant"] as const;
 const badgeNames: Record<string, string[]> = {
@@ -50,14 +51,14 @@ function fail(res: any, status: number, error: string, code?: string) {
   return res.status(status).json({ error, ...(code ? { code } : {}) });
 }
 
-function roomInviteToken(roomId: string) {
+export function roomInviteToken(roomId: string) {
   return createHmac("sha256", config.sessionSecret)
     .update(`online-soup-invite:${roomId}`)
     .digest("base64url")
     .slice(0, 32);
 }
 
-function validRoomInviteToken(roomId: string, token: string) {
+export function validRoomInviteToken(roomId: string, token: string) {
   const expected = roomInviteToken(roomId);
   if (token.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(token), Buffer.from(expected));

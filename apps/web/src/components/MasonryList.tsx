@@ -32,6 +32,8 @@ export function MasonryList({
   const [colCount, setColCount] = useState(getColumnCount);
   const [heights, setHeights] = useState<Record<string, number>>({});
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const cardNodesRef = useRef(new Map<string, HTMLElement>());
   const handleHeight = useCallback((id: string, height: number) => {
     setHeights((old) => (
       Math.abs((old[id] ?? 0) - height) < 1
@@ -39,6 +41,31 @@ export function MasonryList({
         : { ...old, [id]: height }
     ));
   }, []);
+  const registerCardNode = useCallback((id: string, node: HTMLElement | null) => {
+    const previous = cardNodesRef.current.get(id);
+    if (previous && previous !== node) resizeObserverRef.current?.unobserve(previous);
+    if (!node) {
+      cardNodesRef.current.delete(id);
+      return;
+    }
+    cardNodesRef.current.set(id, node);
+    resizeObserverRef.current?.observe(node);
+  }, []);
+
+  useEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const id = (entry.target as HTMLElement).dataset.soupId;
+        if (id) handleHeight(id, entry.contentRect.height);
+      }
+    });
+    resizeObserverRef.current = observer;
+    for (const node of cardNodesRef.current.values()) observer.observe(node);
+    return () => {
+      observer.disconnect();
+      resizeObserverRef.current = null;
+    };
+  }, [handleHeight]);
 
   useEffect(() => {
     const update = () => setColCount(getColumnCount());
@@ -87,7 +114,7 @@ export function MasonryList({
                 key={soup.id}
                 soup={soup}
                 onOpen={onOpen}
-                onHeight={handleHeight}
+                registerNode={registerCardNode}
               />
             ))}
           </div>
@@ -101,23 +128,16 @@ export function MasonryList({
 function MeasuredSoupCard({
   soup,
   onOpen,
-  onHeight
+  registerNode
 }: {
   soup: SoupSummary;
   onOpen: (id: string) => void;
-  onHeight: (id: string, height: number) => void;
+  registerNode: (id: string, node: HTMLElement | null) => void;
 }) {
-  const ref = useRef<HTMLElement | null>(null);
+  const setNode = useCallback((node: HTMLElement | null) => {
+    if (node) node.dataset.soupId = soup.id;
+    registerNode(soup.id, node);
+  }, [registerNode, soup.id]);
 
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    const measure = () => onHeight(soup.id, node.getBoundingClientRect().height);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [onHeight, soup.id]);
-
-  return <SoupCard refTarget={ref} soup={soup} onOpen={onOpen} />;
+  return <SoupCard refTarget={setNode} soup={soup} onOpen={onOpen} />;
 }

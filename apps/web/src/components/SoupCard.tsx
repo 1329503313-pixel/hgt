@@ -12,7 +12,7 @@ export function SoupCard({
 }: {
   soup: SoupSummary;
   onOpen: (id: string) => void;
-  refTarget?: React.RefObject<HTMLElement | null>;
+  refTarget?: React.Ref<HTMLElement>;
 }) {
   const tags = [
     { label: soup.type, className: "bg-blue-50 text-primary ring-blue-100" },
@@ -85,6 +85,8 @@ export function CoverImage({ src, alt }: { src: string; alt: string }) {
           className="soup-card-cover h-full object-cover"
           src={src}
           alt={alt}
+          loading="lazy"
+          decoding="async"
           onLoad={(event) => setRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight)}
         />
       </div>
@@ -96,6 +98,8 @@ export function CoverImage({ src, alt }: { src: string; alt: string }) {
       className="soup-card-cover"
       src={src}
       alt={alt}
+      loading="lazy"
+      decoding="async"
       onLoad={(event) => setRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight)}
     />
   );

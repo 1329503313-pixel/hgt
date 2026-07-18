@@ -69,7 +69,8 @@ export function useMessageUnreadCounts(userId: string | undefined, enabled = tru
     listeners.add(listener);
     void loadUnreadCounts(userId).catch(() => {});
     const unsubscribe = subscribeServerEvent("unread_changed", refresh);
-    const fallbackTimer = window.setInterval(refresh, 30_000);
+    // SSE 负责实时更新；两分钟轮询仅用于代理断流但浏览器尚未触发重连的兜底场景。
+    const fallbackTimer = window.setInterval(refresh, 2 * 60_000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {

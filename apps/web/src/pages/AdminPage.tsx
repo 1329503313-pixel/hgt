@@ -11,6 +11,7 @@ import { BadgeManagement } from "../components/admin/BadgeManagement";
 import { NoticeManagement } from "../components/admin/NoticeManagement";
 import { CardSkeleton } from "../components/Skeletons";
 import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomManagement";
+import { CircleManagement } from "../components/admin/CircleManagement";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -37,6 +38,7 @@ export default function AdminPage() {
         {activeTab === "soups" && <SoupManagement />}
         {activeTab === "evaluations" && <EvaluationManagement />}
         {activeTab === "online-soup" && <OnlineSoupRoomManagement />}
+        {activeTab === "circles" && <CircleManagement />}
         {activeTab === "notices" && <NoticeManagement />}
       </div>
     </section>

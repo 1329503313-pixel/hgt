@@ -12,6 +12,7 @@ export function BottomNav() {
   const isHomeActive = path === "/" || path.startsWith("/soup/");
   const isMineActive = path.startsWith("/mine");
   const isOnlineSoupActive = path.startsWith("/online-soup");
+  const isCirclesActive = path.startsWith("/circles");
 
   function handleHome() {
     if (path === "/") {
@@ -64,9 +65,12 @@ export function BottomNav() {
           </span>
           <span>创作</span>
         </button>
-        <button className="flex min-h-[58px] cursor-default flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold text-slate-300" disabled aria-label="预留功能">
+        <button
+          className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isCirclesActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}
+          onClick={() => { if (!user) { openAuth(); return; } navigate("/circles"); }}
+        >
           <CircleEllipsis size={20} />
-          <span>敬请期待</span>
+          <span>圈子</span>
         </button>
         <button
           className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isMineActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}

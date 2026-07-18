@@ -29,6 +29,8 @@ const AccountSettingsPage = lazy(() => import("./pages/AccountSettingsPage"));
 const OnlineSoupLobbyPage = lazy(() => import("./pages/OnlineSoupLobbyPage"));
 const OnlineSoupRoomPage = lazy(() => import("./pages/OnlineSoupRoomPage"));
 const OnlineSoupSelectPage = lazy(() => import("./pages/OnlineSoupSelectPage"));
+const CirclesPage = lazy(() => import("./pages/CirclesPage"));
+const CircleChatPage = lazy(() => import("./pages/CircleChatPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
 const AchievementUnlockOverlay = lazy(() => import("./components/AchievementUnlockOverlay").then((module) => ({ default: module.AchievementUnlockOverlay })));
 const AuthModal = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.AuthModal })));
@@ -62,12 +64,14 @@ export default function App() {
           <Route path="mine/settings" element={<AccountSettingsPage />} />
           <Route path="mine/settings/password" element={<ResetPasswordPage />} />
           <Route path="online-soup" element={<OnlineSoupLobbyPage />} />
+          <Route path="circles" element={<CirclesPage />} />
         </Route>
 
         {/* Detail page — independent layout, no BottomNav */}
         <Route path="soup/:id" element={<DetailPage />} />
         <Route path="online-soup/rooms/:roomId" element={<OnlineSoupRoomPage />} />
         <Route path="online-soup/rooms/:roomId/select-soup" element={<OnlineSoupSelectPage />} />
+        <Route path="circles/:circleId" element={<CircleChatPage />} />
 
         {/* Messages / Notifications / Requests / Admin */}
         <Route path="messages" element={<MessagesPage />} />

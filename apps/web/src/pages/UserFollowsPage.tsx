@@ -6,6 +6,7 @@ import type { SocialUser } from "../shared/types";
 import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 const followsCacheKey = (viewerId: string, targetId: string, type: "following" | "followers") => `hgt:user-follows:${viewerId}:${targetId}:${type}`;
 
@@ -28,6 +29,19 @@ export default function UserFollowsPage({ type }: { type: "following" | "followe
       .finally(() => setLoading(false));
   }, [id, type, user?.id, loadingUser]);
 
+  useEffect(() => {
+    if (!user) return;
+    return subscribeServerEvent("presence_changed", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { userId?: string; online?: boolean };
+        if (!payload.userId) return;
+        setUsers((current) => current.map((item) => item.id === payload.userId ? { ...item, isOnline: Boolean(payload.online) } : item));
+      } catch {
+        // Ignore malformed presence events.
+      }
+    });
+  }, [user?.id]);
+
   async function toggleFollow(target: SocialUser) {
     try {
       const data = await api<{ isFollowing: boolean }>(`/api/users/${target.id}/follow`, { method: "POST" });
@@ -46,7 +60,10 @@ export default function UserFollowsPage({ type }: { type: "following" | "followe
         {(loadingUser || loading) ? <ListSkeleton rows={7} /> : <>
         {users.map((item) => (
           <div key={item.id} className="flex items-center gap-3 border-b border-line px-4 py-3">
-            <button className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-blue-100 font-black text-primary" onClick={() => navigate(`/users/${item.id}`)}>{item.avatar ? <img className="h-full w-full object-cover" src={item.avatar} alt="" /> : item.nickname.slice(0, 1)}</button>
+            <button className="relative h-11 w-11 shrink-0" onClick={() => navigate(`/users/${item.id}`)}>
+              <span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 font-black text-primary">{item.avatar ? <img className="h-full w-full object-cover" src={item.avatar} alt="" /> : item.nickname.slice(0, 1)}</span>
+              {item.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}
+            </button>
             <button className="min-w-0 flex-1 text-left" onClick={() => navigate(`/users/${item.id}`)}><p className="truncate text-sm font-black text-ink">{item.nickname}</p></button>
             {!item.isSelf && <button className={`rounded-lg px-3 py-2 text-xs font-bold ${item.isFollowing ? "bg-slate-100 text-ink" : "bg-primary text-white"}`} onClick={() => void toggleFollow(item)}>{item.isFollowing ? "已关注" : "关注"}</button>}
           </div>

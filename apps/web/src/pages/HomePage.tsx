@@ -61,6 +61,7 @@ export default function HomePage() {
       params.set("limit", "10");
       params.set("offset", String(append ? offsetRef.current : 0));
       params.set("seed", randomSeedRef.current);
+      params.set("includeTotal", "0");
       const cacheKey = `hgt:home:${user?.id ?? "guest"}:${params.toString()}`;
       const cached = append || bypassCache ? null : readSessionCache<HomeCacheData>(cacheKey, 45_000);
       if (cached) {

@@ -2,7 +2,7 @@ import { cloneElement, isValidElement, useState, useEffect, useRef } from "react
 import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
 import { MineBackButton } from "../components/MineBackButton";
-import { api, BadgeUnlocksResponse, StatsResponse } from "../api";
+import { api, StatsResponse } from "../api";
 import { BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 
 // ============================================================
@@ -605,9 +605,11 @@ export default function MyAchievementsPage() {
     + legendaryBadges.reduce((sum, badge) => sum + badge.achievementPoints, 0);
 
   useEffect(() => {
-    api<BadgeUnlocksResponse>("/api/me/badge-unlocks/sync", { method: "POST" })
-      .then(async ({ stats }) => {
-        const collection = await api<{ legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string>; ownershipRates: Record<string, number> }>("/api/me/badge-collection");
+    Promise.all([
+      api<StatsResponse>("/api/me/stats", { cacheTtlMs: 60_000 }),
+      api<{ legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string>; ownershipRates: Record<string, number> }>("/api/me/badge-collection")
+    ])
+      .then(([stats, collection]) => {
         setBadges(buildBadgesFromStats(stats, collection.unlockDates, collection.ownershipRates));
         setLegendaryBadges(collection.legendaryBadges.map((badge) => ({ ...badge, ownershipRate: collection.ownershipRates[badge.key] ?? 0 })));
       }).catch(() => {});

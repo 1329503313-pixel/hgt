@@ -45,6 +45,21 @@ export default function MessagesPage() {
     return subscribeServerEvent("unread_changed", onUnreadChanged);
   }, [user?.id, loadConversations]);
 
+  useEffect(() => {
+    if (!user) return;
+    return subscribeServerEvent("presence_changed", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { userId?: string; online?: boolean };
+        if (!payload.userId) return;
+        setConversations((current) => current.map((conversation) => conversation.otherUser.id === payload.userId
+          ? { ...conversation, otherUser: { ...conversation.otherUser, isOnline: Boolean(payload.online) } }
+          : conversation));
+      } catch {
+        // Ignore malformed presence events.
+      }
+    });
+  }, [user?.id]);
+
   const entries = [
     { label: "系统", path: "/messages/system", count: counts.system, icon: ShieldCheck, iconClass: "bg-blue-100 text-blue-600" },
     { label: "互动", path: "/messages/interactions", count: counts.interactions, icon: Heart, iconClass: "bg-rose-100 text-rose-500" },
@@ -91,6 +106,7 @@ export default function MessagesPage() {
                     {conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={conversation.otherUser.avatar} alt="" /> : conversation.otherUser.nickname.slice(0, 1)}
                   </span>
                   {conversation.unreadCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full border-2 border-white bg-red-500 px-1 text-[10px] leading-none text-white">{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</span>}
+                  {conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}
                 </span>
                 <span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-ink">{conversation.otherUser.nickname}</span><span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? `${conversation.lastMessage.isMine ? "我：" : ""}${privateMessagePreview(conversation.lastMessage)}` : "开始聊天吧"}</span></span>
                 <span className="shrink-0 text-xs text-muted">{new Date(conversation.lastMessage?.createdAt ?? conversation.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>

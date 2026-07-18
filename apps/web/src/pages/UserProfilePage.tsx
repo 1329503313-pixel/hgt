@@ -18,9 +18,10 @@ export default function UserProfilePage() {
   const { user, loadingUser, showToast } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
-  const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean } | null;
+  const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; circleId?: string } | null;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
-  const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : "/";
+  const circleId = onlineSoupOrigin?.circleId ?? "";
+  const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : circleId ? `/circles/${circleId}` : "/";
   useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
   const [profile, setProfile] = useState<SocialProfile | null>(null);
   const [soups, setSoups] = useState<SoupSummary[]>([]);

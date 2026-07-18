@@ -31,7 +31,7 @@ export async function initDatabase() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS soups (
       id VARCHAR(64) PRIMARY KEY,
-      title VARCHAR(200) NOT NULL,
+      title LONGTEXT NOT NULL,
       author VARCHAR(100) NOT NULL,
       type VARCHAR(20) NOT NULL,
       summary VARCHAR(40) NOT NULL DEFAULT '',
@@ -156,6 +156,7 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  await pool.query("ALTER TABLE soups MODIFY COLUMN title LONGTEXT NOT NULL");
   await ensureColumn("soups", "summary", "summary VARCHAR(40) NOT NULL DEFAULT '' AFTER type");
   await pool.query("ALTER TABLE soups MODIFY COLUMN summary VARCHAR(40) NOT NULL DEFAULT ''");
   await ensureColumn("soups", "cover_image", "cover_image LONGTEXT NULL AFTER summary");
@@ -180,6 +181,7 @@ export async function initDatabase() {
   await ensureIndex("soups", "idx_soups_created_at", "created_at");
   await ensureIndex("soups", "idx_soups_type_created", "type, created_at");
   await ensureIndex("evaluations", "idx_evaluations_created_at", "created_at");
+  await ensureIndex("evaluations", "idx_evaluations_reviewer", "reviewer_id");
   await migrateCoverThumbnails();
   await migrateSoupViewsColumn();
 
@@ -595,6 +597,76 @@ export async function initDatabase() {
   await ensureIndex("private_messages", "idx_private_messages_conversation_cursor", "conversation_id, created_at, id");
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS circles (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(50) NOT NULL,
+      avatar LONGTEXT NULL,
+      created_by VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_circles_updated (updated_at),
+      CONSTRAINT fk_circle_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS circle_members (
+      circle_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_read_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      PRIMARY KEY (circle_id, user_id),
+      INDEX idx_circle_members_user_time (user_id, joined_at),
+      CONSTRAINT fk_circle_member_circle FOREIGN KEY (circle_id) REFERENCES circles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_circle_member_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn("circle_members", "last_read_sequence", "last_read_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER joined_at");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS circle_messages (
+      id VARCHAR(64) PRIMARY KEY,
+      message_sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      circle_id VARCHAR(64) NOT NULL,
+      sender_id VARCHAR(64) NULL,
+      content VARCHAR(1000) NOT NULL DEFAULT '',
+      message_type ENUM('text','sticker','room_invite') NOT NULL DEFAULT 'text',
+      sticker_id VARCHAR(64) NULL,
+      mentions_json JSON NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_circle_message_sequence (message_sequence),
+      INDEX idx_circle_messages_circle_sequence (circle_id, message_sequence),
+      CONSTRAINT fk_circle_message_circle FOREIGN KEY (circle_id) REFERENCES circles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_circle_message_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  const [[circleMessageType]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'circle_messages' AND COLUMN_NAME = 'message_type'`
+  );
+  if (!String(circleMessageType?.COLUMN_TYPE ?? "").includes("'room_invite'")) {
+    await pool.query(
+      "ALTER TABLE circle_messages MODIFY COLUMN message_type ENUM('text','sticker','room_invite') NOT NULL DEFAULT 'text'"
+    );
+  }
+  await ensureColumn("circle_messages", "mentions_json", "mentions_json JSON NULL AFTER sticker_id");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS circle_message_mentions (
+      message_id VARCHAR(64) NOT NULL,
+      circle_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      read_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (message_id, user_id),
+      INDEX idx_circle_mentions_user_unread (user_id, circle_id, read_at),
+      CONSTRAINT fk_circle_mention_message FOREIGN KEY (message_id) REFERENCES circle_messages(id) ON DELETE CASCADE,
+      CONSTRAINT fk_circle_mention_circle FOREIGN KEY (circle_id) REFERENCES circles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_circle_mention_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS game_completions (
       session_id VARCHAR(64) NOT NULL,
       user_id VARCHAR(64) NOT NULL,
@@ -660,6 +732,7 @@ export async function initDatabase() {
   await ensureIndex("soups", "idx_soups_review_status_created", "review_status, created_at");
 
   await seedAdmin();
+  await seedDefaultCircles();
 }
 
 async function ensureColumn(table: string, column: string, ddl: string) {
@@ -780,6 +853,35 @@ async function seedAdmin() {
   await pool.query(
     "INSERT INTO users (id, username, password, nickname, role) VALUES (?, ?, ?, ?, ?)",
     ["admin", "admin", hash, "管理员", "admin"]
+  );
+}
+
+async function seedDefaultCircles() {
+  await pool.query(
+    `INSERT IGNORE INTO circles (id, name, avatar, created_by)
+     VALUES
+       ('default-turtle-soup-circle', '一起来玩海龟汤', '/circle-avatars/play-turtle-soup-v1.png', NULL),
+       ('classic-turtle-soup-circle', '本格海龟汤专区', '/circle-avatars/classic-mystery-v1.png', NULL),
+       ('variant-turtle-soup-circle', '变格海龟汤专区', '/circle-avatars/variant-mystery-v1.png', NULL),
+       ('mechanism-turtle-soup-circle', '机制海龟汤专区', '/circle-avatars/mechanism-mystery-v1.png', NULL),
+       ('casual-chat-circle', '闲聊灌水区', '/circle-avatars/casual-chat-v1.png', NULL)`
+  );
+
+  // 为已经存在、但仍使用旧默认头像或空头像的预设圈子补上新版 PNG。
+  // 管理员后续自行上传的头像不会被启动迁移覆盖。
+  await pool.query(
+    `UPDATE circles
+     SET avatar = CASE id
+       WHEN 'default-turtle-soup-circle' THEN '/circle-avatars/play-turtle-soup-v1.png'
+       WHEN 'classic-turtle-soup-circle' THEN '/circle-avatars/classic-mystery-v1.png'
+       WHEN 'variant-turtle-soup-circle' THEN '/circle-avatars/variant-mystery-v1.png'
+       WHEN 'mechanism-turtle-soup-circle' THEN '/circle-avatars/mechanism-mystery-v1.png'
+       WHEN 'casual-chat-circle' THEN '/circle-avatars/casual-chat-v1.png'
+       ELSE avatar
+     END,
+     updated_at = CURRENT_TIMESTAMP
+     WHERE (id = 'default-turtle-soup-circle' AND (avatar IS NULL OR avatar LIKE '/turtle-avatar.png%'))
+        OR (id IN ('classic-turtle-soup-circle', 'variant-turtle-soup-circle', 'mechanism-turtle-soup-circle', 'casual-chat-circle') AND avatar IS NULL)`
   );
 }
 

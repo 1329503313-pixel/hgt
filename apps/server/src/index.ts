@@ -19,7 +19,13 @@ import { PublicUser } from "./types.js";
 import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
 import { WebSocket, WebSocketServer } from "ws";
-import onlineSoupRouter, { cleanupOnlineSoupStaleSeats, setOnlineSoupEventEmitter, setOnlineSoupLobbyEventEmitter } from "./onlineSoup.js";
+import onlineSoupRouter, {
+  cleanupOnlineSoupStaleSeats,
+  ONLINE_SOUP_PLAYER_CAPACITY,
+  setOnlineSoupEventEmitter,
+  setOnlineSoupLobbyEventEmitter,
+  validRoomInviteToken
+} from "./onlineSoup.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const insecureJwtSecrets = new Set([
@@ -48,9 +54,20 @@ app.disable("x-powered-by");
 const userEventClients = new Map<string, Set<Response>>();
 const onlineSoupRoomSocketClients = new Map<string, Set<WebSocket>>();
 const onlineSoupLobbySocketClients = new Set<WebSocket>();
+const circleSocketClients = new Map<string, Set<WebSocket>>();
+const presenceConnectionCounts = new Map<string, number>();
+const visiblyOnlineUsers = new Set<string>();
+const presenceOfflineTimers = new Map<string, NodeJS.Timeout>();
 
 function emitOnlineSoupSocketEvent(roomId: string, event: string, payload: unknown) {
   const clients = onlineSoupRoomSocketClients.get(roomId);
+  if (!clients?.size) return;
+  const message = JSON.stringify({ event, payload });
+  for (const client of clients) if (client.readyState === WebSocket.OPEN) client.send(message);
+}
+
+function emitCircleSocketEvent(circleId: string, event: string, payload: unknown) {
+  const clients = circleSocketClients.get(circleId);
   if (!clients?.size) return;
   const message = JSON.stringify({ event, payload });
   for (const client of clients) if (client.readyState === WebSocket.OPEN) client.send(message);
@@ -72,6 +89,74 @@ function emitUserEvent(userId: string, event: string, payload: unknown) {
 
 function emitUnreadChanged(userId: string, source: string) {
   emitUserEvent(userId, "unread_changed", { source, at: new Date().toISOString() });
+}
+
+function isUserOnline(userId: unknown) {
+  return visiblyOnlineUsers.has(String(userId));
+}
+
+function broadcastPresenceChanged(userId: string, online: boolean) {
+  const payload = { userId, online, at: new Date().toISOString() };
+  const data = `event: presence_changed\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const clients of userEventClients.values()) {
+    for (const client of clients) client.write(data);
+  }
+  void emitCircleMemberPresence(userId, online);
+}
+
+function registerPresenceConnection(userId: string) {
+  const pending = presenceOfflineTimers.get(userId);
+  if (pending) {
+    clearTimeout(pending);
+    presenceOfflineTimers.delete(userId);
+  }
+  presenceConnectionCounts.set(userId, (presenceConnectionCounts.get(userId) ?? 0) + 1);
+  if (!visiblyOnlineUsers.has(userId)) {
+    visiblyOnlineUsers.add(userId);
+    broadcastPresenceChanged(userId, true);
+  }
+}
+
+function unregisterPresenceConnection(userId: string) {
+  const nextCount = Math.max(0, (presenceConnectionCounts.get(userId) ?? 1) - 1);
+  if (nextCount > 0) {
+    presenceConnectionCounts.set(userId, nextCount);
+    return;
+  }
+  presenceConnectionCounts.delete(userId);
+  if (presenceOfflineTimers.has(userId)) return;
+  const timer = setTimeout(() => {
+    presenceOfflineTimers.delete(userId);
+    if ((presenceConnectionCounts.get(userId) ?? 0) > 0 || !visiblyOnlineUsers.delete(userId)) return;
+    broadcastPresenceChanged(userId, false);
+  }, 8_000);
+  timer.unref();
+  presenceOfflineTimers.set(userId, timer);
+}
+
+async function emitCircleMemberPresence(userId: string, online: boolean) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT changed.circle_id, recipient.user_id AS recipient_id
+     FROM circle_members changed
+     INNER JOIN circle_members recipient ON recipient.circle_id = changed.circle_id
+     WHERE changed.user_id = ?`,
+    [userId]
+  );
+  const membersByCircle = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const circleId = String(row.circle_id);
+    const members = membersByCircle.get(circleId) ?? new Set<string>();
+    members.add(String(row.recipient_id));
+    membersByCircle.set(circleId, members);
+  }
+  for (const [circleId, memberIds] of membersByCircle) {
+    const onlineCount = [...memberIds].filter((memberId) => isUserOnline(memberId)).length;
+    const payload = { circleId, userId, online, onlineCount };
+    emitCircleSocketEvent(circleId, "circle_member_presence", payload);
+    for (const recipientId of memberIds) {
+      emitUserEvent(recipientId, "circle_presence_changed", payload);
+    }
+  }
 }
 
 async function broadcastUnreadChanged(source: string) {
@@ -197,6 +282,11 @@ if (config.nodeEnv === "production") {
     maxAge: "1y",
     immutable: true
   }));
+  app.use("/circle-avatars", express.static(path.resolve(frontendDist, "circle-avatars"), {
+    index: false,
+    maxAge: "1y",
+    immutable: true
+  }));
   app.use("/assets", express.static(path.resolve(frontendDist, "assets"), {
     index: false,
     maxAge: "1y",
@@ -288,10 +378,10 @@ function cachedBadgeOwnershipRates() {
 const optionalScore = z
   .union([z.coerce.number().min(0).max(5).multipleOf(0.5), z.null(), z.literal("")])
   .optional()
-  .transform((value) => (value === "" || value === 0 || value == null ? null : Number(value)));
+  .transform((value) => (value === "" || value == null ? null : Number(value)));
 
 const soupSchema = z.object({
-  title: text.max(200),
+  title: text,
   author: z.string().trim().max(100).optional().default(""),
   type: text.max(20),
   summary: z.string().trim().max(40, "摘要不超过 40 个字").optional().default(""),
@@ -389,6 +479,14 @@ function soupImageUrl(soupId: unknown, stored: unknown, variant: "thumbnail" | "
     : value;
 }
 
+function circleAvatarUrl(circleId: unknown, stored: unknown, updatedAt?: unknown) {
+  if (!stored) return "/turtle-avatar.png?v=5272-20260716";
+  const value = String(stored);
+  if (!value.startsWith("data:image/")) return value;
+  const version = createHash("sha1").update(value).digest("hex").slice(0, 16);
+  return `/api/media/circles/${encodeURIComponent(String(circleId))}/avatar?v=${encodeURIComponent(String(version))}`;
+}
+
 function decodeDataImage(value: string) {
   const match = /^data:(image\/(?:png|jpeg|jpg|webp));base64,([\s\S]+)$/i.exec(value);
   if (!match) return null;
@@ -397,7 +495,13 @@ function decodeDataImage(value: string) {
 
 const optimizedImageCache = new Map<string, Buffer>();
 
-async function sendStoredImage(req: express.Request, res: express.Response, value: unknown, maxWidth: number) {
+async function sendStoredImage(
+  req: express.Request,
+  res: express.Response,
+  value: unknown,
+  maxWidth: number,
+  cacheControl = "public, max-age=3600, stale-while-revalidate=86400"
+) {
   if (!value) return sendError(res, 404, "图片不存在");
   const stored = String(value);
   if (!stored.startsWith("data:image/")) return res.redirect(302, stored);
@@ -406,7 +510,7 @@ async function sendStoredImage(req: express.Request, res: express.Response, valu
 
   const etag = `\"${createHash("sha1").update(decoded.buffer).update(String(maxWidth)).digest("hex")}\"`;
   res.setHeader("ETag", etag);
-  res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+  res.setHeader("Cache-Control", cacheControl);
   if (reqHeaderMatches(req.headers["if-none-match"], etag)) return res.status(304).end();
   let output = optimizedImageCache.get(etag);
   if (!output) {
@@ -421,6 +525,21 @@ async function sendStoredImage(req: express.Request, res: express.Response, valu
   res.setHeader("Content-Type", "image/webp");
   res.setHeader("Content-Length", output.length);
   return res.send(output);
+}
+
+async function optimizeCircleAvatar(base64: string): Promise<string | null> {
+  const decoded = decodeDataImage(base64);
+  if (!decoded || decoded.buffer.length > 6 * 1024 * 1024) return null;
+  try {
+    const output = await sharp(decoded.buffer)
+      .rotate()
+      .resize({ width: 320, height: 320, fit: "cover", withoutEnlargement: true })
+      .webp({ quality: 80, effort: 4 })
+      .toBuffer();
+    return `data:image/webp;base64,${output.toString("base64")}`;
+  } catch {
+    return null;
+  }
 }
 
 function reqHeaderMatches(header: string | string[] | undefined, etag: string) {
@@ -514,7 +633,10 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
 }
 
 function withoutPrivateUsername(user: PublicUser) {
-  const { username: _username, ...publicUser } = user;
+  const { username: _username, tokenVersion: _tokenVersion, ...publicUser } = user as PublicUser & {
+    username?: string;
+    tokenVersion?: number;
+  };
   return publicUser;
 }
 
@@ -790,7 +912,7 @@ async function notify(
 ) {
   const [result] = await pool.query<mysql.ResultSetHeader>(
     "INSERT IGNORE INTO notifications (id, user_id, type, title, content, related_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [nanoid(), userId, type, title, content, relatedId, actorId]
+    [nanoid(), userId, type, title.slice(0, 120), content.slice(0, 500), relatedId, actorId]
   );
   if (result.affectedRows > 0) emitUnreadChanged(userId, type);
 }
@@ -801,7 +923,7 @@ async function adminIds() {
 }
 
 async function recordLoginDay(userId: string) {
-  await Promise.all([
+  const [[loginResult]] = await Promise.all([
     pool.query(
       `INSERT IGNORE INTO user_login_days (user_id, login_date)
        VALUES (?, DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR)))`,
@@ -809,7 +931,9 @@ async function recordLoginDay(userId: string) {
     ),
     pool.query("UPDATE users SET last_login_at = UTC_TIMESTAMP() WHERE id = ?", [userId])
   ]);
-  queueSystemBadgeSync([userId]);
+  if ((loginResult as mysql.ResultSetHeader).affectedRows > 0) {
+    queueSystemBadgeSync([userId]);
+  }
 }
 
 type AchievementStats = {
@@ -903,20 +1027,26 @@ function badgeNotificationLabel(key: string) {
 async function getMaxOriginalSoupHeat(userId: string) {
   const [[row]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COALESCE(MAX(
-       (COALESCE(e.comprehensive_score, 0) + 1) *
-       (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61
+       (COALESCE((SELECT AVG(e.total) FROM evaluations e WHERE e.soup_id = s.id), 0) + 1) *
+       (
+         s.view_count
+         + ((SELECT COUNT(*) FROM soup_likes l WHERE l.soup_id = s.id) + 1) * 15
+         + ((SELECT COUNT(*) FROM soup_favorites f WHERE f.soup_id = s.id) + 1) * 20
+         + ((SELECT COUNT(*) FROM evaluations ec WHERE ec.soup_id = s.id) + 1) * 25
+       ) - 61
      ), 0) AS max_heat
      FROM soups s
-     LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
-     LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
-     LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
      WHERE s.creator_id = ? AND s.is_original = TRUE`,
     [userId]
   );
   return Math.round(Number(row?.max_heat ?? 0));
 }
 
+const achievementStatsCache = new Map<string, { expiresAt: number; stats: AchievementStats }>();
+
 async function getAchievementStats(userId: string): Promise<AchievementStats> {
+  const cached = achievementStatsCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.stats;
   const [
     [soupRows],
     [favRows],
@@ -945,7 +1075,7 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     getMaxOriginalSoupHeat(userId)
   ]);
 
-  return {
+  const stats = {
     soupCount: Number(soupRows[0]?.count ?? 0),
     favoriteCount: Number(favRows[0]?.count ?? 0),
     evaluationCount: Number(evalRows[0]?.count ?? 0),
@@ -959,6 +1089,11 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     aiCompletionCount: Number(aiCompletionRows[0]?.count ?? 0),
     maxOriginalSoupHeat
   };
+  achievementStatsCache.set(userId, { expiresAt: Date.now() + 60_000, stats });
+  if (achievementStatsCache.size > 1000) {
+    achievementStatsCache.delete(achievementStatsCache.keys().next().value!);
+  }
+  return stats;
 }
 
 async function activityConditionCount(userId: string, condition: ActivityBadgeCondition) {
@@ -977,11 +1112,25 @@ async function activityConditionCount(userId: string, condition: ActivityBadgeCo
   return Number(row?.count ?? 0);
 }
 
+const activityBadgeSyncCache = new Map<string, {
+  expiresAt: number;
+  earned: Array<{ key: string; name: string }>;
+}>();
+
 async function syncActivityBadges(userId: string) {
+  const cached = activityBadgeSyncCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.earned;
   const [badgeRows] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id, name, activity_conditions FROM legendary_badges WHERE badge_type = 'activity' AND activity_conditions IS NOT NULL"
   );
-  if (badgeRows.length === 0) return [] as Array<{ key: string; name: string }>;
+  if (badgeRows.length === 0) {
+    const earned: Array<{ key: string; name: string }> = [];
+    activityBadgeSyncCache.set(userId, { expiresAt: Date.now() + 60_000, earned });
+    if (activityBadgeSyncCache.size > 1000) {
+      activityBadgeSyncCache.delete(activityBadgeSyncCache.keys().next().value!);
+    }
+    return earned;
+  }
   const [unlockRows] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT badge_key FROM user_badge_unlocks WHERE user_id = ?",
     [userId]
@@ -1001,6 +1150,10 @@ async function syncActivityBadges(userId: string) {
       );
       if (result.affectedRows > 0) earned.push({ key, name: String(badge.name) });
     }
+  }
+  activityBadgeSyncCache.set(userId, { expiresAt: Date.now() + 60_000, earned });
+  if (activityBadgeSyncCache.size > 1000) {
+    activityBadgeSyncCache.delete(activityBadgeSyncCache.keys().next().value!);
   }
   return earned;
 }
@@ -1107,7 +1260,11 @@ const pendingBadgeSyncUsers = new Set<string>();
 let badgeSyncTimer: NodeJS.Timeout | null = null;
 
 function queueSystemBadgeSync(userIds: string[]) {
-  userIds.filter(Boolean).forEach((userId) => pendingBadgeSyncUsers.add(userId));
+  userIds.filter(Boolean).forEach((userId) => {
+    achievementStatsCache.delete(userId);
+    activityBadgeSyncCache.delete(userId);
+    pendingBadgeSyncUsers.add(userId);
+  });
   if (badgeSyncTimer) return;
   badgeSyncTimer = setTimeout(async () => {
     badgeSyncTimer = null;
@@ -1144,7 +1301,10 @@ const pendingActivityBadgeSyncUsers = new Set<string>();
 let activityBadgeSyncTimer: NodeJS.Timeout | null = null;
 
 function queueActivityBadgeSync(userIds: string[]) {
-  userIds.filter(Boolean).forEach((userId) => pendingActivityBadgeSyncUsers.add(userId));
+  userIds.filter(Boolean).forEach((userId) => {
+    activityBadgeSyncCache.delete(userId);
+    pendingActivityBadgeSyncUsers.add(userId);
+  });
   if (activityBadgeSyncTimer) return;
   activityBadgeSyncTimer = setTimeout(async () => {
     activityBadgeSyncTimer = null;
@@ -1284,6 +1444,12 @@ app.get("/api/media/users/:id/avatar", async (req, res) => {
   return sendStoredImage(req, res, row.avatar, 160);
 });
 
+app.get("/api/media/circles/:id/avatar", async (req, res) => {
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT avatar FROM circles WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!row) return sendError(res, 404, "圈子不存在");
+  return sendStoredImage(req, res, row.avatar, 320, "public, max-age=31536000, immutable");
+});
+
 app.get("/api/media/soups/:id/thumbnail", async (req, res) => {
   const [[row]] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT cover_thumbnail, review_status, creator_id FROM soups WHERE id = ? LIMIT 1",
@@ -1332,12 +1498,14 @@ app.get("/api/events", async (req, res) => {
   const clients = userEventClients.get(user.id) ?? new Set<Response>();
   clients.add(res);
   userEventClients.set(user.id, clients);
+  registerPresenceConnection(user.id);
   res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
   const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 25_000);
   req.on("close", () => {
     clearInterval(heartbeat);
     clients.delete(res);
     if (clients.size === 0) userEventClients.delete(user.id);
+    unregisterPresenceConnection(user.id);
   });
 });
 
@@ -1689,16 +1857,510 @@ app.get("/api/users/:id/follows", async (req, res) => {
   const whereColumn = type === "followers" ? "f.following_id" : "f.follower_id";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT u.*,
-       EXISTS (SELECT 1 FROM user_follows mine WHERE mine.follower_id = ? AND mine.following_id = u.id) AS is_following
+       EXISTS (SELECT 1 FROM user_follows mine WHERE mine.follower_id = ? AND mine.following_id = u.id) AS is_following,
+       EXISTS (SELECT 1 FROM user_follows reverse_follow WHERE reverse_follow.follower_id = u.id AND reverse_follow.following_id = ?) AS is_mutual
      FROM user_follows f
      INNER JOIN users u ON ${joinCondition}
      WHERE ${whereColumn} = ?
      ORDER BY f.created_at DESC`,
-    [viewer.id, req.params.id]
+    [viewer.id, viewer.id, req.params.id]
   );
   res.json({
-    users: rows.map((row) => ({ ...withoutPrivateUsername(toUser(row)), isFollowing: bool(row.is_following), isSelf: row.id === viewer.id }))
+    users: rows.map((row) => ({
+      ...withoutPrivateUsername(toUser(row)),
+      isFollowing: bool(row.is_following),
+      isSelf: row.id === viewer.id,
+      isOnline: isUserOnline(row.id),
+      isMutual: bool(row.is_mutual)
+    }))
   });
+});
+
+const circleAdminSchema = z.object({
+  name: z.string().trim().min(1, "圈名不能为空").max(50, "圈名不能超过50个字"),
+  avatar: z.string().max(5_500_000, "头像文件过大").nullable().optional()
+});
+
+const roomInviteInputSchema = z.object({
+  roomId: z.string().trim().min(1).max(64),
+  inviteToken: z.string().trim().min(1).max(100)
+});
+
+const circleMessageSchema = z.object({
+  content: z.string().trim().min(1).max(1000, "单条消息不能超过1000字").optional(),
+  stickerId: z.string().trim().min(1).max(64).optional(),
+  roomInvite: roomInviteInputSchema.optional(),
+  mentionedUserIds: z.array(z.string().trim().min(1).max(64)).max(10).optional()
+}).superRefine((value, ctx) => {
+  if (Number(Boolean(value.content)) + Number(Boolean(value.stickerId)) + Number(Boolean(value.roomInvite)) !== 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文字、表情和房间邀请必须且只能发送一种" });
+  }
+  if (value.mentionedUserIds?.length && !value.content) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "只有文字消息可以@圈子成员" });
+  }
+});
+
+async function onlineSoupRoomInvite(roomId: string, inviteToken: string) {
+  if (!validRoomInviteToken(roomId, inviteToken)) return null;
+  const [[room]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT r.id, r.room_code, r.name, r.status, s.title AS soup_title,
+       (SELECT COUNT(*) FROM online_soup_members m
+        WHERE m.room_id = r.id AND m.member_role = 'player' AND m.is_active = 1) AS player_count
+     FROM online_soup_rooms r
+     LEFT JOIN soups s ON s.id = r.current_soup_id
+     WHERE r.id = ? LIMIT 1`,
+    [roomId]
+  );
+  if (!room || String(room.status) === "closed") return null;
+  return {
+    roomId: String(room.id),
+    inviteToken,
+    roomName: String(room.name),
+    roomCode: String(room.room_code),
+    soupTitle: room.soup_title ? String(room.soup_title) : null,
+    status: String(room.status),
+    playerCount: Number(room.player_count ?? 0),
+    playerCapacity: ONLINE_SOUP_PLAYER_CAPACITY
+  };
+}
+
+function parseRoomInvite(value: unknown) {
+  if (!value) return null;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return null;
+  }
+}
+
+function parseCircleMentions(value: unknown): Array<{ userId: string; nickname: string }> {
+  if (!value) return [];
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.userId === "string" && typeof item.nickname === "string")
+      .map((item) => ({ userId: String(item.userId), nickname: String(item.nickname) }));
+  } catch {
+    return [];
+  }
+}
+
+async function circleForMember(circleId: string, userId: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT c.*
+     FROM circles c
+     INNER JOIN circle_members m ON m.circle_id = c.id AND m.user_id = ?
+     WHERE c.id = ? LIMIT 1`,
+    [userId, circleId]
+  );
+  return rows[0] ?? null;
+}
+
+function circleMessagePayload(row: mysql.RowDataPacket) {
+  const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : "text";
+  return {
+    id: String(row.id),
+    sequence: Number(row.message_sequence),
+    circleId: String(row.circle_id),
+    sender: row.sender_id ? {
+      id: String(row.sender_id),
+      nickname: String(row.sender_nickname),
+      avatar: avatarUrl(row.sender_id, row.sender_avatar),
+      equippedBadge: equippedBadge(row.sender_badge_key, row.sender_badge_icon_url),
+      isOnline: isUserOnline(row.sender_id)
+    } : null,
+    content: String(row.content ?? ""),
+    type: messageType,
+    stickerId: row.sticker_id ? String(row.sticker_id) : null,
+    stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
+    roomInvite: messageType === "room_invite" ? parseRoomInvite(row.content) : null,
+    mentions: parseCircleMentions(row.mentions_json),
+    createdAt: new Date(row.created_at).toISOString()
+  };
+}
+
+async function circleMembers(circleId: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT u.id, u.nickname, u.avatar, u.created_at, u.role,
+       u.equipped_badge_key, u.equipped_badge_icon_url, m.joined_at
+     FROM circle_members m
+     INNER JOIN users u ON u.id = m.user_id
+     WHERE m.circle_id = ?
+     ORDER BY m.joined_at ASC`,
+    [circleId]
+  );
+  return rows.map((row) => ({
+    ...withoutPrivateUsername(toUser(row)),
+    joinedAt: new Date(row.joined_at).toISOString(),
+    isOnline: isUserOnline(row.id)
+  }));
+}
+
+app.get("/api/circles", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT c.*,
+       (mine.user_id IS NOT NULL) AS is_joined,
+       (SELECT COUNT(*) FROM circle_members members WHERE members.circle_id = c.id) AS member_count,
+       CASE WHEN mine.user_id IS NULL THEN 0 ELSE
+         (SELECT COUNT(*) FROM circle_messages unread
+          WHERE unread.circle_id = c.id AND unread.message_sequence > mine.last_read_sequence)
+       END AS unread_count,
+       latest.id AS latest_message_id, latest.content AS latest_content,
+       latest.message_type AS latest_message_type, latest.sticker_id AS latest_sticker_id,
+       latest.created_at AS latest_created_at, sender.nickname AS latest_sender_name,
+       mention.id AS unread_mention_id, mention.content AS unread_mention_content
+     FROM circles c
+     LEFT JOIN circle_members mine ON mine.circle_id = c.id AND mine.user_id = ?
+     LEFT JOIN circle_messages latest ON latest.id = (
+       SELECT cm.id FROM circle_messages cm
+       WHERE cm.circle_id = c.id ORDER BY cm.message_sequence DESC LIMIT 1
+     )
+     LEFT JOIN circle_messages mention ON mention.id = (
+       SELECT mentioned_message.id
+       FROM circle_message_mentions pending_mention
+       INNER JOIN circle_messages mentioned_message ON mentioned_message.id = pending_mention.message_id
+       WHERE pending_mention.circle_id = c.id
+         AND pending_mention.user_id = ?
+         AND pending_mention.read_at IS NULL
+       ORDER BY mentioned_message.message_sequence DESC
+       LIMIT 1
+     )
+     LEFT JOIN users sender ON sender.id = latest.sender_id
+     ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.created_at ASC`,
+    [user.id, user.id]
+  );
+  const onlineCounts = new Map<string, number>();
+  const onlineUserIds = [...visiblyOnlineUsers];
+  if (onlineUserIds.length > 0) {
+    const [onlineRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT circle_id, COUNT(*) AS online_count
+       FROM circle_members
+       WHERE user_id IN (?)
+       GROUP BY circle_id`,
+      [onlineUserIds]
+    );
+    for (const row of onlineRows) {
+      onlineCounts.set(String(row.circle_id), Number(row.online_count ?? 0));
+    }
+  }
+  res.json({
+    circles: rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      avatar: circleAvatarUrl(row.id, row.avatar, row.updated_at),
+      isJoined: bool(row.is_joined),
+      memberCount: Number(row.member_count ?? 0),
+      onlineCount: onlineCounts.get(String(row.id)) ?? 0,
+      unreadCount: Number(row.unread_count ?? 0),
+      unreadMention: row.unread_mention_id ? {
+        id: String(row.unread_mention_id),
+        content: String(row.unread_mention_content ?? "")
+      } : null,
+      latestMessage: row.latest_message_id ? {
+        id: String(row.latest_message_id),
+        senderName: row.latest_sender_name ? String(row.latest_sender_name) : "已注销用户",
+        content: row.latest_message_type === "sticker"
+          ? `[表情] ${getSticker(String(row.latest_sticker_id ?? ""))?.name ?? ""}`.trim()
+          : row.latest_message_type === "room_invite"
+            ? `[玩汤邀请] ${parseRoomInvite(row.latest_content)?.roomName ?? "加入房间"}`
+            : String(row.latest_content ?? ""),
+        type: row.latest_message_type === "sticker" ? "sticker" : row.latest_message_type === "room_invite" ? "room_invite" : "text",
+        createdAt: new Date(row.latest_created_at).toISOString()
+      } : null,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString()
+    }))
+  });
+});
+
+app.post("/api/circles/:id/join", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [[circle]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM circles WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!circle) return sendError(res, 404, "圈子不存在");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "INSERT IGNORE INTO circle_members (circle_id, user_id) VALUES (?, ?)",
+    [req.params.id, user.id]
+  );
+  if (result.affectedRows > 0) {
+    emitCircleSocketEvent(req.params.id, "circle_member_joined", {
+      circleId: req.params.id,
+      member: { ...withoutPrivateUsername(user), isOnline: isUserOnline(user.id), joinedAt: new Date().toISOString() }
+    });
+  }
+  res.status(result.affectedRows > 0 ? 201 : 200).json({ joined: true });
+});
+
+app.patch("/api/circles/:id/read", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  await pool.query(
+    `UPDATE circle_members
+     SET last_read_sequence = COALESCE((SELECT MAX(message_sequence) FROM circle_messages WHERE circle_id = ?), 0)
+     WHERE circle_id = ? AND user_id = ?`,
+    [req.params.id, req.params.id, user.id]
+  );
+  res.json({ ok: true });
+});
+
+app.get("/api/circles/:id/mentions", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT m.id, m.message_sequence
+     FROM circle_message_mentions mention
+     INNER JOIN circle_messages m ON m.id = mention.message_id
+     WHERE mention.circle_id = ? AND mention.user_id = ? AND mention.read_at IS NULL
+     ORDER BY m.message_sequence ASC`,
+    [req.params.id, user.id]
+  );
+  res.json({
+    mentions: rows.map((row) => ({
+      id: String(row.id),
+      sequence: Number(row.message_sequence)
+    }))
+  });
+});
+
+app.patch("/api/circles/:id/mentions/:messageId/read", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  await pool.query(
+    `UPDATE circle_message_mentions
+     SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+     WHERE circle_id = ? AND message_id = ? AND user_id = ?`,
+    [req.params.id, req.params.messageId, user.id]
+  );
+  res.json({ ok: true });
+});
+
+app.patch("/api/circles/:id/mentions/read-all", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  await pool.query(
+    `UPDATE circle_message_mentions
+     SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+     WHERE circle_id = ? AND user_id = ? AND read_at IS NULL`,
+    [req.params.id, user.id]
+  );
+  res.json({ ok: true });
+});
+
+app.get("/api/circles/:id", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  const members = await circleMembers(req.params.id);
+  res.json({
+    circle: {
+      id: String(circle.id),
+      name: String(circle.name),
+      avatar: circleAvatarUrl(circle.id, circle.avatar, circle.updated_at),
+      memberCount: members.length,
+      onlineCount: members.filter((member) => member.isOnline).length,
+      createdAt: new Date(circle.created_at).toISOString(),
+      updatedAt: new Date(circle.updated_at).toISOString()
+    },
+    members
+  });
+});
+
+app.get("/api/circles/:id/messages", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  const requestedLimit = Number(req.query.limit ?? 100);
+  const limit = Math.min(100, Math.max(10, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 100));
+  const before = String(req.query.before ?? "").trim();
+  const params: unknown[] = [req.params.id];
+  let beforeClause = "";
+  if (before) {
+    const [[cursor]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT message_sequence FROM circle_messages WHERE id = ? AND circle_id = ? LIMIT 1",
+      [before, req.params.id]
+    );
+    if (!cursor) return sendError(res, 400, "消息游标无效");
+    beforeClause = "AND m.message_sequence < ?";
+    params.push(cursor.message_sequence);
+  }
+  params.push(limit + 1);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT m.*, u.nickname AS sender_nickname, u.avatar AS sender_avatar,
+       u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
+     FROM circle_messages m
+     LEFT JOIN users u ON u.id = m.sender_id
+     WHERE m.circle_id = ? ${beforeClause}
+     ORDER BY m.message_sequence DESC
+     LIMIT ?`,
+    params
+  );
+  const hasMore = rows.length > limit;
+  if (hasMore) rows.pop();
+  rows.reverse();
+  res.json({
+    messages: rows.map(circleMessagePayload),
+    hasMore,
+    nextCursor: hasMore && rows[0] ? String(rows[0].id) : null
+  });
+});
+
+app.post("/api/circles/:id/messages", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  const parsed = circleMessageSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
+  const sticker = parsed.data.stickerId ? getSticker(parsed.data.stickerId) : null;
+  if (parsed.data.stickerId && !sticker) return sendError(res, 400, "表情不存在或已下架");
+  const roomInvite = parsed.data.roomInvite
+    ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
+    : null;
+  if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "玩汤房间邀请无效或房间已关闭");
+  const mentionedUserIds = [...new Set(parsed.data.mentionedUserIds ?? [])].filter((id) => id !== user.id);
+  let mentions: Array<{ userId: string; nickname: string }> = [];
+  if (mentionedUserIds.length) {
+    const [mentionedMembers] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.nickname
+       FROM circle_members member
+       INNER JOIN users u ON u.id = member.user_id
+       WHERE member.circle_id = ? AND member.user_id IN (?)`,
+      [req.params.id, mentionedUserIds]
+    );
+    if (mentionedMembers.length !== mentionedUserIds.length) return sendError(res, 400, "被@的用户不在当前圈子");
+    mentions = mentionedMembers.map((member) => ({ userId: String(member.id), nickname: String(member.nickname) }));
+    if (mentions.some((mention) => !parsed.data.content?.includes(`@${mention.nickname}`))) {
+      return sendError(res, 400, "@用户昵称与消息内容不匹配");
+    }
+  }
+  const id = nanoid();
+  const content = roomInvite ? JSON.stringify(roomInvite) : parsed.data.content ?? "";
+  const messageType = roomInvite ? "room_invite" : sticker ? "sticker" : "text";
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      `INSERT INTO circle_messages (id, circle_id, sender_id, content, message_type, sticker_id, mentions_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, req.params.id, user.id, content, messageType, sticker?.id ?? null, mentions.length ? JSON.stringify(mentions) : null]
+    );
+    for (const mention of mentions) {
+      await connection.query(
+        "INSERT INTO circle_message_mentions (message_id, circle_id, user_id) VALUES (?, ?, ?)",
+        [id, req.params.id, mention.userId]
+      );
+    }
+    await connection.query("UPDATE circles SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [req.params.id]);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT m.*, u.nickname AS sender_nickname, u.avatar AS sender_avatar,
+       u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
+     FROM circle_messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.id = ? LIMIT 1`,
+    [id]
+  );
+  const message = circleMessagePayload(stored);
+  emitCircleSocketEvent(req.params.id, "circle_message_created", { circleId: req.params.id, message });
+  const [circleRecipients] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT user_id FROM circle_members WHERE circle_id = ? AND user_id <> ?",
+    [req.params.id, user.id]
+  );
+  for (const recipient of circleRecipients) {
+    emitUserEvent(String(recipient.user_id), "circle_unread_changed", { circleId: req.params.id });
+  }
+  res.status(201).json({ message });
+});
+
+app.get("/api/admin/circles", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT c.*,
+       (SELECT COUNT(*) FROM circle_members m WHERE m.circle_id = c.id) AS member_count,
+       (SELECT COUNT(*) FROM circle_messages cm WHERE cm.circle_id = c.id) AS message_count
+     FROM circles c ORDER BY c.created_at DESC`
+  );
+  res.json({
+    circles: rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      avatar: circleAvatarUrl(row.id, row.avatar, row.updated_at),
+      memberCount: Number(row.member_count ?? 0),
+      messageCount: Number(row.message_count ?? 0),
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString()
+    }))
+  });
+});
+
+app.post("/api/admin/circles", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = circleAdminSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "圈子信息不正确");
+  const avatar = parsed.data.avatar ? await optimizeCircleAvatar(parsed.data.avatar) : null;
+  if (parsed.data.avatar && !avatar) return sendError(res, 400, "头像无法处理，请使用 JPG、PNG 或 WebP");
+  const id = nanoid();
+  await pool.query(
+    "INSERT INTO circles (id, name, avatar, created_by) VALUES (?, ?, ?, ?)",
+    [id, parsed.data.name, avatar, admin.id]
+  );
+  res.status(201).json({ id });
+});
+
+app.put("/api/admin/circles/:id", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [[existing]] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM circles WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!existing) return sendError(res, 404, "圈子不存在");
+  const parsed = circleAdminSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "圈子信息不正确");
+  let avatar = existing.avatar;
+  const existingAvatarUrl = circleAvatarUrl(existing.id, existing.avatar, existing.updated_at);
+  if (parsed.data.avatar === null || parsed.data.avatar === "") {
+    avatar = null;
+  } else if (parsed.data.avatar && parsed.data.avatar !== existingAvatarUrl) {
+    avatar = await optimizeCircleAvatar(parsed.data.avatar);
+    if (!avatar) return sendError(res, 400, "头像无法处理，请使用 JPG、PNG 或 WebP");
+  }
+  await pool.query(
+    "UPDATE circles SET name = ?, avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    [parsed.data.name, avatar, req.params.id]
+  );
+  const [[updated]] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM circles WHERE id = ? LIMIT 1", [req.params.id]);
+  const circle = {
+    id: String(updated.id),
+    name: String(updated.name),
+    avatar: circleAvatarUrl(updated.id, updated.avatar, updated.updated_at),
+    updatedAt: new Date(updated.updated_at).toISOString()
+  };
+  emitCircleSocketEvent(req.params.id, "circle_updated", { circle });
+  res.json({ circle });
+});
+
+app.delete("/api/admin/circles/:id", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [[circle]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM circles WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!circle) return sendError(res, 404, "圈子不存在");
+  emitCircleSocketEvent(req.params.id, "circle_deleted", { circleId: req.params.id });
+  await pool.query("DELETE FROM circles WHERE id = ?", [req.params.id]);
+  res.json({ ok: true });
 });
 
 app.get("/api/me/received-interactions", async (req, res) => {
@@ -1808,8 +2470,9 @@ app.get("/api/conversations", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT c.id, c.last_message_at,
+     `SELECT c.id, c.last_message_at,
        u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar,
+       u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url,
        pm.content AS last_content, pm.message_type AS last_message_type, pm.sticker_id AS last_sticker_id,
        pm.sender_id AS last_sender_id, pm.created_at AS message_created_at,
        (SELECT COUNT(*) FROM private_messages unread
@@ -1830,13 +2493,16 @@ app.get("/api/conversations", async (req, res) => {
     otherUser: {
       id: String(row.other_id),
       nickname: String(row.other_nickname),
-      avatar: avatarUrl(row.other_id, row.other_avatar)
+      avatar: avatarUrl(row.other_id, row.other_avatar),
+      equippedBadge: equippedBadge(row.other_badge_key, row.other_badge_icon_url),
+      isOnline: isUserOnline(row.other_id)
     },
     lastMessage: row.last_content == null ? null : {
       content: String(row.last_content),
-      type: row.last_message_type === "sticker" ? "sticker" : "text",
+      type: row.last_message_type === "sticker" ? "sticker" : row.last_message_type === "room_invite" ? "room_invite" : "text",
       stickerId: row.last_sticker_id ? String(row.last_sticker_id) : null,
       stickerName: row.last_sticker_id ? getSticker(String(row.last_sticker_id))?.name ?? null : null,
+      roomInvite: row.last_message_type === "room_invite" ? parseRoomInvite(row.last_content) : null,
       isMine: String(row.last_sender_id) === user.id,
       createdAt: new Date(row.message_created_at).toISOString()
     },
@@ -1894,7 +2560,8 @@ app.get("/api/messages/unread-counts", async (req, res) => {
 
 async function conversationForUser(conversationId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar
+    `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar,
+       u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url
      FROM conversations c
      INNER JOIN users u ON u.id = IF(c.user_a_id = ?, c.user_b_id, c.user_a_id)
      WHERE c.id = ? AND (c.user_a_id = ? OR c.user_b_id = ?) LIMIT 1`,
@@ -1943,14 +2610,18 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
       id: String(conversation.id),
       otherUser: {
         id: String(conversation.other_id),
-        nickname: String(conversation.other_nickname), avatar: avatarUrl(conversation.other_id, conversation.other_avatar)
+        nickname: String(conversation.other_nickname),
+        avatar: avatarUrl(conversation.other_id, conversation.other_avatar),
+        equippedBadge: equippedBadge(conversation.other_badge_key, conversation.other_badge_icon_url),
+        isOnline: isUserOnline(conversation.other_id)
       }
     },
     messages: rows.map((row) => ({
       id: String(row.id), senderId: String(row.sender_id), content: String(row.content),
-      type: row.message_type === "sticker" ? "sticker" : "text",
+      type: row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : "text",
       stickerId: row.sticker_id ? String(row.sticker_id) : null,
       stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
+      roomInvite: row.message_type === "room_invite" ? parseRoomInvite(row.content) : null,
       isMine: String(row.sender_id) === user.id,
       isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString()
     })),
@@ -1977,17 +2648,22 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   if (!user) return;
   const parsed = z.object({
     content: text.max(1000, "单条消息不能超过1000字").optional(),
-    stickerId: z.string().trim().min(1).max(64).optional()
+    stickerId: z.string().trim().min(1).max(64).optional(),
+    roomInvite: roomInviteInputSchema.optional()
   }).superRefine((value, ctx) => {
-    if (Boolean(value.content) === Boolean(value.stickerId)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文本和表情必须且只能发送一种" });
+    if (Number(Boolean(value.content)) + Number(Boolean(value.stickerId)) + Number(Boolean(value.roomInvite)) !== 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文本、表情和房间邀请必须且只能发送一种" });
     }
   }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
   const sticker = parsed.data.stickerId ? getSticker(parsed.data.stickerId) : null;
   if (parsed.data.stickerId && !sticker) return sendError(res, 400, "表情不存在或已下架");
-  const messageType = sticker ? "sticker" : "text";
-  const content = parsed.data.content ?? "";
+  const roomInvite = parsed.data.roomInvite
+    ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
+    : null;
+  if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "玩汤房间邀请无效或房间已关闭");
+  const messageType = roomInvite ? "room_invite" : sticker ? "sticker" : "text";
+  const content = roomInvite ? JSON.stringify(roomInvite) : parsed.data.content ?? "";
   const conversation = await conversationForUser(req.params.id, user.id);
   if (!conversation) return sendError(res, 404, "会话不存在");
   const id = nanoid();
@@ -2014,6 +2690,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     type: messageType,
     stickerId: sticker?.id ?? null,
     stickerName: sticker?.name ?? null,
+    roomInvite,
     isMine: true,
     isRead: false,
     createdAt
@@ -2028,6 +2705,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     type: messageType,
     stickerId: sticker?.id ?? null,
     stickerName: sticker?.name ?? null,
+    roomInvite,
     createdAt,
     message: { ...message, isMine: false }
   });
@@ -2341,14 +3019,15 @@ app.get("/api/soups", async (req, res) => {
     params.push(Number(req.query.minRating));
   }
 
-  const limit = Math.min(Number(req.query.limit ?? 10), 50);
-  const offset = Number(req.query.offset ?? 0);
+  const requestedLimit = Number(req.query.limit ?? 10);
+  const requestedOffset = Number(req.query.offset ?? 0);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(Math.floor(requestedLimit), 50)) : 10;
+  const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0;
   const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RANDOM";
   const randomSeed = String(req.query.seed ?? new Date().toISOString().slice(0, 10)).slice(0, 32);
   const orderClause = order === "RANDOM" ? "CRC32(CONCAT(s.id, ?))" : `s.created_at ${order}`;
 
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `
+  const summarySelect = `
     SELECT s.id, s.title, s.author, s.type, s.summary, s.cover_thumbnail, s.is_original,
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
       s.review_status, s.review_reason, s.review_version,
@@ -2365,33 +3044,64 @@ app.get("/api/soups", async (req, res) => {
       AVG(e.share) AS avg_share,
       AVG(e.mechanism) AS avg_mechanism,
       AVG(e.twist) AS avg_twist,
-      AVG(e.depth) AS avg_depth
-    FROM soups s
-    LEFT JOIN evaluations e ON e.soup_id = s.id
-    LEFT JOIN users u ON u.id = s.creator_id
-    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-    GROUP BY s.id
-    ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
-    ORDER BY ${orderClause}
-    LIMIT ${limit + 1} OFFSET ${offset}
-    `,
-    [...(user ? [user.id, user.id] : []), ...params, ...(order === "RANDOM" ? [randomSeed] : [])]
-  );
+      AVG(e.depth) AS avg_depth`;
+  let rows: mysql.RowDataPacket[];
+  if (having.length === 0) {
+    // 常规首页先完成过滤和分页，再只聚合当前页的评价与互动，避免每次滚动扫描全量评价表。
+    const [pageRows] = await pool.query<mysql.RowDataPacket[]>(
+      `${summarySelect}
+       FROM (
+         SELECT s.*
+         FROM soups s
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY ${orderClause}
+         LIMIT ${limit + 1} OFFSET ${offset}
+       ) s
+       LEFT JOIN evaluations e ON e.soup_id = s.id
+       LEFT JOIN users u ON u.id = s.creator_id
+       GROUP BY s.id
+       ORDER BY ${orderClause}`,
+      [
+        ...(user ? [user.id, user.id] : []),
+        ...params,
+        ...(order === "RANDOM" ? [randomSeed, randomSeed] : [])
+      ]
+    );
+    rows = pageRows;
+  } else {
+    const [filteredRows] = await pool.query<mysql.RowDataPacket[]>(
+      `${summarySelect}
+       FROM soups s
+       LEFT JOIN evaluations e ON e.soup_id = s.id
+       LEFT JOIN users u ON u.id = s.creator_id
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       GROUP BY s.id
+       HAVING ${having.join(" AND ")}
+       ORDER BY ${orderClause}
+       LIMIT ${limit + 1} OFFSET ${offset}`,
+      [...(user ? [user.id, user.id] : []), ...params, ...(order === "RANDOM" ? [randomSeed] : [])]
+    );
+    rows = filteredRows;
+  }
 
   const hasMore = rows.length > limit;
   if (hasMore) rows.pop();
-  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM (
-      SELECT s.id
-      FROM soups s
-      LEFT JOIN evaluations e ON e.soup_id = s.id
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      GROUP BY s.id
-      ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
-    ) counted_soups`,
-    params
-  );
-  res.json({ soups: rows.map(mapSoupSummary), total: Number(totalRow.total ?? 0), hasMore });
+  let total: number | null = null;
+  if (req.query.includeTotal !== "0") {
+    const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM (
+        SELECT s.id
+        FROM soups s
+        LEFT JOIN evaluations e ON e.soup_id = s.id
+        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+        GROUP BY s.id
+        ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
+      ) counted_soups`,
+      params
+    );
+    total = Number(totalRow.total ?? 0);
+  }
+  res.json({ soups: rows.map(mapSoupSummary), total, hasMore });
 });
 
 app.post("/api/soups", async (req, res) => {
@@ -2815,6 +3525,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (String(soup.review_status ?? "approved") !== "approved") return sendError(res, 409, "审核中的海龟汤暂不可评价");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "不能评价未公开内容");
+  if (!(await canViewFull(soup, user))) return sendError(res, 403, "获得汤底查看权限后才能评价");
 
   const parsed = evaluationSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "评分必须在 1-5 之间，步长 0.5");
@@ -3960,6 +4671,26 @@ function cookieValue(header: string | undefined, name: string) {
 server.on("upgrade", async (request, socket, head) => {
   try {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    if (url.pathname === "/ws/circles") {
+      const circleId = url.searchParams.get("circleId");
+      const token = cookieValue(request.headers.cookie, "hgt_token");
+      const claims = token ? verifyToken(token) : null;
+      if (!circleId || !claims) return socket.destroy();
+      const [[user], [members]] = await Promise.all([
+        pool.query<mysql.RowDataPacket[]>("SELECT id, token_version FROM users WHERE id = ? LIMIT 1", [claims.id]),
+        pool.query<mysql.RowDataPacket[]>(
+          "SELECT user_id FROM circle_members WHERE circle_id = ? AND user_id = ? LIMIT 1",
+          [circleId, claims.id]
+        )
+      ]);
+      if (!user[0] || Number(user[0].token_version ?? 0) !== claims.tokenVersion || !members[0]) return socket.destroy();
+      onlineSoupWebSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+        (webSocket as any).circleUserId = claims.id;
+        (webSocket as any).circleId = circleId;
+        onlineSoupWebSocketServer.emit("connection", webSocket, request);
+      });
+      return;
+    }
     if (url.pathname === "/ws/online-soup-lobby") {
       onlineSoupWebSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
         (webSocket as any).onlineSoupLobby = true;
@@ -3994,6 +4725,29 @@ server.on("upgrade", async (request, socket, head) => {
 });
 
 onlineSoupWebSocketServer.on("connection", (socket) => {
+  if ((socket as any).circleId) {
+    const userId = String((socket as any).circleUserId);
+    const circleId = String((socket as any).circleId);
+    const clients = circleSocketClients.get(circleId) ?? new Set<WebSocket>();
+    clients.add(socket);
+    circleSocketClients.set(circleId, clients);
+    registerPresenceConnection(userId);
+    socket.send(JSON.stringify({ event: "connected", payload: { circleId } }));
+    socket.on("message", (raw) => {
+      try {
+        const message = JSON.parse(raw.toString());
+        if (message?.type === "ping") {
+          socket.send(JSON.stringify({ event: "pong", payload: { at: new Date().toISOString() } }));
+        }
+      } catch { /* Ignore malformed client frames. */ }
+    });
+    socket.on("close", () => {
+      clients.delete(socket);
+      if (clients.size === 0) circleSocketClients.delete(circleId);
+      unregisterPresenceConnection(userId);
+    });
+    return;
+  }
   if ((socket as any).onlineSoupLobby) {
     onlineSoupLobbySocketClients.add(socket);
     socket.send(JSON.stringify({ event: "connected", payload: { scope: "lobby" } }));
@@ -4015,6 +4769,7 @@ onlineSoupWebSocketServer.on("connection", (socket) => {
   const clients = onlineSoupRoomSocketClients.get(roomId) ?? new Set<WebSocket>();
   clients.add(socket);
   onlineSoupRoomSocketClients.set(roomId, clients);
+  registerPresenceConnection(userId);
   socket.send(JSON.stringify({ event: "connected", payload: { roomId } }));
   void pool.query("UPDATE online_soup_members SET last_seen_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
   if (isHost) void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
@@ -4033,6 +4788,7 @@ onlineSoupWebSocketServer.on("connection", (socket) => {
   socket.on("close", () => {
     clients.delete(socket);
     if (clients.size === 0) onlineSoupRoomSocketClients.delete(roomId);
+    unregisterPresenceConnection(userId);
   });
 });
 server.on("error", (error: NodeJS.ErrnoException) => {

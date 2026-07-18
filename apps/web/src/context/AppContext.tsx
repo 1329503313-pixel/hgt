@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { AccountUser, SoupDetail, KeyFact } from "../shared/types";
 import { api, BadgeUnlocksResponse, MeResponse, SpecialBadgeUnlock, StatsResponse } from "../api";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 export type BadgeUnlockEvent = { key: string; stats: StatsResponse; specialBadge?: SpecialBadgeUnlock };
 
@@ -66,7 +67,7 @@ export const emptySoup: SoupForm = {
 };
 
 export const emptyEval: EvalForm = {
-  total: "4",
+  total: "",
   writing: "",
   logic: "",
   share: "",
@@ -165,6 +166,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const submittingSoupRef = useRef(false);
   const submittingEvalRef = useRef(false);
+  const badgeCheckInFlightRef = useRef(false);
+  const badgeLastCheckedAtRef = useRef(0);
 
   // toast 自动消失
   useEffect(() => {
@@ -175,7 +178,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback((msg: string) => setToastRaw(msg), []);
   const triggerRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
-  const checkBadgeUnlocks = useCallback(async () => {
+  const checkBadgeUnlocks = useCallback(async (force = false) => {
+    if (badgeCheckInFlightRef.current) return;
+    if (!force && Date.now() - badgeLastCheckedAtRef.current < 60_000) return;
+    badgeCheckInFlightRef.current = true;
     try {
       const data = await api<BadgeUnlocksResponse>("/api/me/badge-unlocks/sync", { method: "POST" });
       if (data.unlocks.length > 0) {
@@ -187,6 +193,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {
       // 未登录或服务暂时不可用时不影响当前操作
+    } finally {
+      badgeLastCheckedAtRef.current = Date.now();
+      badgeCheckInFlightRef.current = false;
     }
   }, []);
   const dismissBadgeUnlock = useCallback(() => {
@@ -210,16 +219,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     if (badgeSyncedUserRef.current === user.id) return;
     badgeSyncedUserRef.current = user.id;
-    void checkBadgeUnlocks();
+    void checkBadgeUnlocks(true);
   }, [user, checkBadgeUnlocks]);
 
-  // 作者收到他人的点赞、收藏或评论时，也能在任意页面及时收到徽章
+  // 徽章由业务事件实时计算；收到解锁事件时立即领取弹窗，低频轮询只作断线兜底。
   useEffect(() => {
     if (!user) return;
-    const timer = window.setInterval(() => void checkBadgeUnlocks(), 30_000);
+    const unsubscribe = subscribeServerEvent("unread_changed", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { source?: string };
+        if (payload.source === "badge_unlock") void checkBadgeUnlocks(true);
+      } catch {
+        // 忽略格式异常的事件，兜底轮询仍会恢复状态。
+      }
+    });
+    const timer = window.setInterval(() => void checkBadgeUnlocks(), 5 * 60_000);
     const handleFocus = () => void checkBadgeUnlocks();
     window.addEventListener("focus", handleFocus);
     return () => {
+      unsubscribe();
       window.clearInterval(timer);
       window.removeEventListener("focus", handleFocus);
     };

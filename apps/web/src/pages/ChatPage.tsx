@@ -7,9 +7,10 @@ import type { PrivateMessageItem, PublicUser, StickerAsset, StickerSeries } from
 import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
+import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 
 type ChatResponse = {
-  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar"> };
+  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean } };
   messages: PrivateMessageItem[];
   hasMore?: boolean;
   nextCursor?: string | null;
@@ -103,6 +104,20 @@ export default function ChatPage() {
     return subscribeServerEvent("private_message", onMessage);
   }, [id, user?.id]);
 
+  useEffect(() => {
+    if (!user || !id) return;
+    return subscribeServerEvent("presence_changed", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { userId?: string; online?: boolean };
+        setChat((current) => current && current.conversation.otherUser.id === payload.userId
+          ? { ...current, conversation: { ...current.conversation, otherUser: { ...current.conversation.otherUser, isOnline: Boolean(payload.online) } } }
+          : current);
+      } catch {
+        // Ignore malformed presence events.
+      }
+    });
+  }, [id, user?.id]);
+
   async function send(value: string) {
     const trimmed = value.trim();
     if (!trimmed || sending || !user) return false;
@@ -166,10 +181,13 @@ export default function ChatPage() {
         title={chat.conversation.otherUser.nickname}
         titleContent={(
           <span className="flex min-w-0 items-center gap-2.5">
-            <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary">
-              {chat.conversation.otherUser.avatar
-                ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt={`${chat.conversation.otherUser.nickname}头像`} />
-                : chat.conversation.otherUser.nickname.slice(0, 1)}
+            <span className="relative grid h-9 w-9 shrink-0 place-items-center">
+              <span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary">
+                {chat.conversation.otherUser.avatar
+                  ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt={`${chat.conversation.otherUser.nickname}头像`} />
+                  : chat.conversation.otherUser.nickname.slice(0, 1)}
+              </span>
+              {chat.conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
             </span>
             <span className="max-w-36 truncate text-base font-black text-ink sm:max-w-56 sm:text-lg">{chat.conversation.otherUser.nickname}</span>
           </span>
@@ -213,7 +231,9 @@ export default function ChatPage() {
                   : (sender?.nickname || "用").slice(0, 1)}
               </button>
               <div className={`flex max-w-[78%] flex-col ${message.isMine ? "items-end" : "items-start"}`}>
-                {message.type === "sticker" ? (
+                {message.type === "room_invite" && message.roomInvite ? (
+                  <OnlineSoupRoomInviteCard invite={message.roomInvite} />
+                ) : message.type === "sticker" ? (
                   sticker
                     ? <img className="h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
                     : <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-muted">表情已下架</span>

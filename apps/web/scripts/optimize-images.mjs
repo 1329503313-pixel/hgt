@@ -6,6 +6,7 @@ import sharp from "sharp";
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(webRoot, "public");
 const badgeRoot = path.join(publicRoot, "badges");
+const circleAvatarRoot = path.join(publicRoot, "circle-avatars");
 const sourceAssetRoot = path.join(webRoot, "src", "assets");
 const checkOnly = process.argv.includes("--check");
 const rasterPattern = /\.(?:png|jpe?g|webp|gif)$/i;
@@ -74,6 +75,18 @@ async function validateImages() {
     const pngMetadata = await sharp(pngPath).metadata();
     if ((pngMetadata.width ?? 0) > 512 || (pngMetadata.height ?? 0) > 512 || pngStat.size > 350_000) {
       errors.push(`${path.relative(webRoot, pngPath)} 超过兼容回退限制（512px / 350KB）`);
+    }
+  }
+
+  for (const avatarPath of (await filesBelow(circleAvatarRoot)).filter((file) => file.toLowerCase().endsWith(".png"))) {
+    const relative = path.relative(webRoot, avatarPath).replaceAll("\\", "/");
+    const stat = await fs.stat(avatarPath);
+    const metadata = await sharp(avatarPath).metadata();
+    if (metadata.width !== 320 || metadata.height !== 320) {
+      errors.push(`${relative} 必须为 320x320 PNG`);
+    }
+    if (stat.size > 80_000) {
+      errors.push(`${relative} 体积 ${(stat.size / 1024).toFixed(1)}KB，超过圈子头像限制 80KB`);
     }
   }
 
