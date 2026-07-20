@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, KeyRound, Search, Trash2 } from "lucide-react";
+import { ArrowUpDown, KeyRound, Search, Shell, Trash2 } from "lucide-react";
 import type { PublicUser } from "../../shared/types";
+import type { ShellTransaction } from "../../shared/types";
 import { api } from "../../api";
 import { Modal } from "../Modal";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
@@ -13,6 +14,7 @@ type AdminUser = PublicUser & {
   lastLoginAt: string | null;
   isOnline: boolean;
   loggedInToday: boolean;
+  shellBalance: number;
   stats: { soupCount: number; evaluationCount: number; likeCount: number; favoriteCount: number };
 };
 
@@ -20,7 +22,7 @@ type UsersResponseExt = { users: AdminUser[]; total: number };
 type TodayFilter = "all" | "yes" | "no";
 type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount";
 type SortOrder = "asc" | "desc";
-type UserColumn = "user" | "role" | "createdAt" | "lastLoginAt" | "loggedToday" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
+type UserColumn = "user" | "role" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "user", label: "用户", width: "minmax(190px, 1fr)" },
@@ -28,6 +30,7 @@ const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "createdAt", label: "加入时间", width: "110px" },
   { key: "lastLoginAt", label: "最后登录时间", width: "160px" },
   { key: "loggedToday", label: "今日登录", width: "90px" },
+  { key: "shells", label: "贝壳", width: "90px" },
   { key: "soups", label: "汤品", width: "70px" },
   { key: "evaluations", label: "评价", width: "70px" },
   { key: "likes", label: "点赞", width: "70px" },
@@ -52,6 +55,13 @@ export function UserManagement() {
   const [resetting, setResetting] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumn>>(() => new Set(userColumns.map((column) => column.key)));
   const [loading, setLoading] = useState(true);
+  const [shellUser, setShellUser] = useState<AdminUser | null>(null);
+  const [shellTransactions, setShellTransactions] = useState<ShellTransaction[]>([]);
+  const [shellLoading, setShellLoading] = useState(false);
+  const [shellOperation, setShellOperation] = useState<"add" | "deduct" | null>(null);
+  const [shellAmount, setShellAmount] = useState("");
+  const [shellError, setShellError] = useState("");
+  const [shellAdjusting, setShellAdjusting] = useState(false);
   const presenceRefreshTimer = useRef<number | null>(null);
 
   const loadUsers = useCallback(async () => {
@@ -116,6 +126,42 @@ export function UserManagement() {
     setResetUser(null);
     setNewPassword("");
     setResetError("");
+  }
+
+  async function loadShellDetail(item: AdminUser) {
+    setShellUser(item);
+    setShellLoading(true);
+    setShellError("");
+    try {
+      const data = await api<{ balance: number; transactions: ShellTransaction[] }>(`/api/admin/users/${item.id}/shell-transactions?limit=50`);
+      setShellUser((current) => current ? { ...current, shellBalance: data.balance } : current);
+      setShellTransactions(data.transactions);
+    } catch (error) {
+      setShellError(error instanceof Error ? error.message : "贝壳明细加载失败");
+    } finally {
+      setShellLoading(false);
+    }
+  }
+
+  async function adjustShells() {
+    if (!shellUser || !shellOperation) return;
+    const amount = Number(shellAmount);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setShellError("请输入正整数");
+      return;
+    }
+    setShellAdjusting(true);
+    setShellError("");
+    try {
+      await api(`/api/admin/users/${shellUser.id}/shell-adjustments`, { method: "POST", body: { operation: shellOperation, amount } });
+      setShellAmount("");
+      setShellOperation(null);
+      await Promise.all([loadShellDetail(shellUser), loadUsers()]);
+    } catch (error) {
+      setShellError(error instanceof Error ? error.message : "贝壳调整失败");
+    } finally {
+      setShellAdjusting(false);
+    }
   }
 
   async function resetPassword() {
@@ -183,7 +229,7 @@ export function UserManagement() {
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1180px]">
+        <div className="min-w-[1270px]">
           <div className="mb-2 grid items-center justify-items-center gap-2 px-3 text-center text-xs font-bold text-muted" style={{ gridTemplateColumns: template }}>
             {userColumns.filter((column) => visibleColumns.has(column.key)).map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
@@ -210,6 +256,7 @@ export function UserManagement() {
                 {visibleColumns.has("createdAt") && <span className="text-xs text-muted">{new Date(user.createdAt).toLocaleDateString()}</span>}
                 {visibleColumns.has("lastLoginAt") && <span className={`text-xs font-bold ${user.isOnline ? "text-emerald-600" : "text-muted"}`}>{user.isOnline ? "在线" : user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "从未登录"}</span>}
                 {visibleColumns.has("loggedToday") && <span className={`rounded-full px-2 py-1 text-xs font-bold ${user.loggedInToday ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{user.loggedInToday ? "已登录" : "未登录"}</span>}
+                {visibleColumns.has("shells") && <button className="inline-flex items-center gap-1 font-black text-primary hover:underline" onClick={() => void loadShellDetail(user)}><Shell size={14} />{user.shellBalance}</button>}
                 {visibleColumns.has("soups") && <span className="font-semibold text-ink">{user.stats.soupCount}</span>}
                 {visibleColumns.has("evaluations") && <span>{user.stats.evaluationCount}</span>}
                 {visibleColumns.has("likes") && <span>{user.stats.likeCount}</span>}
@@ -252,6 +299,31 @@ export function UserManagement() {
               <button className="btn btn-primary" type="submit" disabled={resetting}>{resetting ? "重置中……" : "确认重置"}</button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {shellUser && (
+        <Modal onClose={() => { if (!shellAdjusting) { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellError(""); } }}>
+          <div className="space-y-4">
+            <div><h2 className="text-lg font-black text-ink">{shellUser.nickname}的贝壳明细</h2><p className="mt-1 flex items-center gap-1 text-sm font-bold text-primary"><Shell size={16} />当前余额：{shellUser.shellBalance.toLocaleString()}</p></div>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="btn btn-primary" onClick={() => { setShellOperation("add"); setShellError(""); }}>增加</button>
+              <button className="btn btn-secondary text-red-600" onClick={() => { setShellOperation("deduct"); setShellError(""); }}>扣减</button>
+            </div>
+            {shellOperation && <form className="rounded-xl border border-line bg-slate-50 p-3" onSubmit={(event) => { event.preventDefault(); void adjustShells(); }}>
+              <label className="text-sm font-bold text-ink">{shellOperation === "add" ? "增加数量" : "扣减数量"}</label>
+              <div className="mt-2 flex gap-2"><input className="field min-w-0 flex-1" type="number" min="1" step="1" autoFocus value={shellAmount} onChange={(event) => setShellAmount(event.target.value)} /><button className="btn btn-primary shrink-0" disabled={shellAdjusting}>{shellAdjusting ? "处理中…" : "确认"}</button></div>
+            </form>}
+            {shellError && <p className="text-sm font-bold text-red-600">{shellError}</p>}
+            <div className="max-h-[45dvh] divide-y divide-line overflow-y-auto rounded-xl border border-line">
+              {shellLoading ? <ListSkeleton rows={5} /> : shellTransactions.length ? shellTransactions.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-3 p-3 text-sm">
+                  <div className="min-w-0"><p className="truncate font-bold text-ink">{item.remark || item.typeLabel}</p><p className="mt-1 text-xs text-muted">{new Date(item.createdAt).toLocaleString()}</p></div>
+                  <div className="shrink-0 text-right"><p className={`font-black ${item.amount > 0 ? "text-emerald-600" : "text-red-500"}`}>{item.amount > 0 ? "+" : ""}{item.amount}</p><p className="text-[11px] text-muted">余额 {item.balanceAfter}</p></div>
+                </div>
+              )) : <p className="p-8 text-center text-sm text-muted">暂无贝壳明细</p>}
+            </div>
+          </div>
         </Modal>
       )}
     </div>

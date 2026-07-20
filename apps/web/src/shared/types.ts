@@ -146,6 +146,56 @@ export type SocialUser = PublicUser & {
   isMutual: boolean;
 };
 
+export type ShellTaskType =
+  | "daily_login"
+  | "publish_soup"
+  | "like_soup"
+  | "favorite_soup"
+  | "publish_evaluation"
+  | "speak_circle"
+  | "join_online_soup"
+  | "host_online_soup";
+
+export type ShellTask = {
+  type: ShellTaskType;
+  name: string;
+  description: string;
+  reward: number;
+  dailyLimit: number;
+  progress: number;
+  completed: boolean;
+  actualReward: number;
+  dailyMaximum: number;
+};
+
+export type ShellTaskCenter = {
+  balance: number;
+  taskDate: string;
+  earnedToday: number;
+  dailyLimit: number;
+  theoreticalMaximum: number;
+  tasks: ShellTask[];
+};
+
+export type ShellTransaction = {
+  id: string;
+  type: string;
+  typeLabel: string;
+  amount: number;
+  balanceAfter: number;
+  relatedType: string | null;
+  relatedId: string | null;
+  remark: string | null;
+  operatorId: string | null;
+  createdAt: string;
+};
+
+export type ShellTransactionsResponse = {
+  transactions: ShellTransaction[];
+  total: number;
+  hasMore: boolean;
+};
+
 export type OnlineSoupRoomInvite = {
   roomId: string;
   inviteToken: string;

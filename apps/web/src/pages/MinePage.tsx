@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Award, Check, ChevronLeft, ChevronRight, Medal, Plus, Trophy } from "lucide-react";
+import { ArrowLeft, Award, Check, ChevronLeft, ChevronRight, ListChecks, Medal, Plus, Shell, Trophy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
-import type { EquippedBadge, SocialProfile, SoupSummary } from "../shared/types";
+import type { EquippedBadge, ShellTaskCenter, SocialProfile, SoupSummary } from "../shared/types";
 import { PageTopBar } from "../components/PageTopBar";
 import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon, LegendaryBadge, LegendaryBadgeIcon } from "../components/BadgeVisuals";
@@ -43,6 +43,7 @@ export default function MinePage() {
   const [badgePickerOpen, setBadgePickerOpen] = useState(false);
   const [badgeCollection, setBadgeCollection] = useState<BadgeCollectionResponse | null>(null);
   const [badgeSaving, setBadgeSaving] = useState(false);
+  const [shellSummary, setShellSummary] = useState<ShellTaskCenter | null>(null);
 
   async function loadProfile(userId: string) {
     const data = await api<{ profile: SocialProfile }>(`/api/users/${userId}/profile?includeSoups=false`);
@@ -110,6 +111,16 @@ export default function MinePage() {
   }, [user?.id]);
 
   useEffect(() => {
+    if (!user) {
+      setShellSummary(null);
+      return;
+    }
+    api<ShellTaskCenter>("/api/me/shells", { bypassCache: true })
+      .then(setShellSummary)
+      .catch(() => setShellSummary(null));
+  }, [user?.id]);
+
+  useEffect(() => {
     if (activeTab === "published" || !user || tabs[activeTab].loaded || tabs[activeTab].loading) return;
     const cached = readSessionCache<TabData>(mineListCacheKey(user.id, activeTab), MINE_CONTENT_CACHE_MAX_AGE);
     if (cached) setTabs((state) => ({ ...state, [activeTab]: { ...cached, loading: false } }));
@@ -170,19 +181,25 @@ export default function MinePage() {
   const features = [
     { label: "优秀作者", icon: Award, color: "bg-amber-100 text-amber-600", path: "/mine/excellent-author" },
     { label: "我的成就", icon: Trophy, color: "bg-violet-100 text-violet-600", path: "/mine/achievements" },
-    { label: "排行榜", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" }
+    { label: "排行榜", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" },
+    { label: "任务中心", icon: ListChecks, color: "bg-sky-100 text-sky-600", path: "/mine/tasks" }
   ];
 
   return (
     <section className="space-y-3">
       <PageTopBar title="我的" />
-      <ProfileHero profile={profile} showBadge={false} onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} actions={
+      <ProfileHero profile={profile} showBadge={false} onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} meta={
+        <div className="flex items-center gap-2 text-sm font-bold text-white/90">
+          <span className="inline-flex items-center gap-1"><Shell size={14} />贝壳：{shellSummary ? shellSummary.balance.toLocaleString() : "—"}</span>
+          <button className="rounded-full bg-white/15 px-2 py-0.5 text-xs text-white transition hover:bg-white/25" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
+        </div>
+      } actions={
         <button className="grid h-12 w-12 place-items-center overflow-hidden rounded-xl border border-white/60 bg-white/20" onClick={openBadges} title="装配徽章">
           {profile.equippedBadge ? <EquippedBadgeIcon badge={profile.equippedBadge} className="h-full w-full rounded-xl" title={profile.equippedBadge.name} animated showName={false} /> : <Plus size={22} />}
         </button>
       } />
 
-      <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white px-2 py-4 shadow-soft">
+      <div className="grid grid-cols-4 gap-2 rounded-2xl bg-white px-2 py-4 shadow-soft">
         {features.map((feature) => { const Icon = feature.icon; return (
           <button key={feature.path} className="flex flex-col items-center gap-2" onClick={() => navigate(feature.path)}>
             <span className={`grid h-12 w-12 place-items-center rounded-2xl ${feature.color}`}><Icon size={23} /></span>

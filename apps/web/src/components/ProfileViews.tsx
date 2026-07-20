@@ -9,6 +9,7 @@ export function ProfileHero({
   onFollowing,
   onFollowers,
   actions,
+  meta,
   onAvatar,
   showBadge = true
 }: {
@@ -16,6 +17,7 @@ export function ProfileHero({
   onFollowing: () => void;
   onFollowers: () => void;
   actions?: React.ReactNode;
+  meta?: React.ReactNode;
   onAvatar?: () => void;
   showBadge?: boolean;
 }) {
@@ -31,6 +33,7 @@ export function ProfileHero({
               <h1 className="truncate text-xl font-black">{profile.nickname}</h1>
               {showBadge && profile.equippedBadge && <EquippedBadgeIcon badge={profile.equippedBadge} className="h-8 w-8 rounded-lg" title={profile.equippedBadge.name} animated={false} showName={false} />}
             </div>
+            {meta && <div className="mt-1">{meta}</div>}
           </div>
           {actions && <div className="shrink-0">{actions}</div>}
         </div>

@@ -173,6 +173,7 @@ export async function initDatabase() {
   await ensureColumn("users", "equipped_badge_key", "equipped_badge_key VARCHAR(128) NULL AFTER badges_initialized");
   await ensureColumn("users", "equipped_badge_icon_url", "equipped_badge_icon_url VARCHAR(255) NULL AFTER equipped_badge_key");
   await ensureColumn("users", "last_login_at", "last_login_at DATETIME NULL AFTER badges_initialized");
+  await ensureColumn("users", "shell_balance", "shell_balance INT UNSIGNED NOT NULL DEFAULT 0 AFTER last_login_at");
   await ensureColumn("users", "token_version", "token_version INT NOT NULL DEFAULT 0 AFTER role");
   await ensureColumn("notifications", "actor_id", "actor_id VARCHAR(64) NULL AFTER related_id");
   await ensureIndex("notifications", "uq_notification_actor_event", "user_id, type, related_id, actor_id", true);
@@ -183,6 +184,66 @@ export async function initDatabase() {
   await ensureIndex("soups", "idx_soups_type_created", "type, created_at");
   await ensureIndex("evaluations", "idx_evaluations_created_at", "created_at");
   await ensureIndex("evaluations", "idx_evaluations_reviewer", "reviewer_id");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shell_transactions (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      transaction_type VARCHAR(40) NOT NULL,
+      amount INT NOT NULL,
+      balance_after INT UNSIGNED NOT NULL,
+      related_type VARCHAR(40) NULL,
+      related_id VARCHAR(64) NULL,
+      remark VARCHAR(200) NULL,
+      operator_id VARCHAR(64) NULL,
+      idempotency_key VARCHAR(191) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_shell_transactions_idempotency (idempotency_key),
+      INDEX idx_shell_transactions_user_time (user_id, created_at, id),
+      CONSTRAINT fk_shell_transaction_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_shell_transaction_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shell_task_events (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      task_date DATE NOT NULL,
+      task_type VARCHAR(40) NOT NULL,
+      event_key VARCHAR(191) NOT NULL,
+      related_type VARCHAR(40) NULL,
+      related_id VARCHAR(64) NULL,
+      nominal_reward INT UNSIGNED NOT NULL,
+      actual_reward INT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_shell_task_event_key (event_key),
+      INDEX idx_shell_task_events_user_date (user_id, task_date, task_type, created_at),
+      CONSTRAINT fk_shell_task_event_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shell_like_reward_history (
+      soup_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (soup_id, user_id),
+      INDEX idx_shell_like_reward_user (user_id, created_at),
+      CONSTRAINT fk_shell_like_reward_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO shell_like_reward_history (soup_id, user_id, created_at)
+    SELECT soup_id, user_id, created_at
+    FROM soup_likes
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO shell_like_reward_history (soup_id, user_id, created_at)
+    SELECT related_id, user_id, MIN(created_at)
+    FROM shell_task_events
+    WHERE task_type = 'like_soup'
+      AND related_type = 'soup'
+      AND related_id IS NOT NULL
+    GROUP BY related_id, user_id
+  `);
   await migrateCoverThumbnails();
   await migrateSoupViewsColumn();
 

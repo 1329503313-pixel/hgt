@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/nickname.test.ts src/soupSimilarity.test.ts src/stickers.test.ts",
+    "test": "tsx --test src/nickname.test.ts src/soupSimilarity.test.ts src/stickers.test.ts src/shellCurrency.test.ts",
     "migrate": "tsx src/migrate.ts",
     "migrate:prod": "node dist/migrate.js",
     "start": "npm run build && node dist/index.js",

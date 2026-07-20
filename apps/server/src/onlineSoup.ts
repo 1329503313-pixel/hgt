@@ -7,6 +7,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { pool } from "./db.js";
 import { getSticker } from "./stickers.js";
+import { settleOnlineSoupRound } from "./shellCurrency.js";
 
 type OnlineUser = { id: string; nickname: string; role: "admin" | "user" };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -957,6 +958,7 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
         );
         await systemMessage(context.room.id, context.room.current_round_id, "主持人手册已自动发布", connection);
       }
+      await settleOnlineSoupRound(connection, String(context.room.current_round_id));
     } else {
       const bottomLabel = parsed.data.bottomIndex === 0 ? "汤底" : `补充汤底 ${parsed.data.bottomIndex}`;
       await systemMessage(context.room.id, context.room.current_round_id, `主持人发布了${bottomLabel}`, connection);

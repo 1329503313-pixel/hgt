@@ -410,7 +410,7 @@ export default function CircleChatPage() {
                 >
                   <Avatar avatar={message.sender?.avatar ?? null} nickname={senderName} online={Boolean(message.sender?.isOnline)} />
                 </MentionableAvatarButton>
-                <div className={`flex max-w-[78%] flex-col ${mine ? "items-end" : "items-start"}`}>
+                <div className={`flex max-w-[78%] flex-col ${message.type === "soup_share" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
                   <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] text-muted ${mine ? "flex-row-reverse" : ""}`}>
                     <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>
                     <EquippedBadgeIcon badge={message.sender?.equippedBadge} className="h-4 w-4" animated={false} />

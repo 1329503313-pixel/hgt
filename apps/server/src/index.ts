@@ -18,6 +18,13 @@ import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarit
 import { PublicUser } from "./types.js";
 import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
+import {
+  adjustShellBalance,
+  awardShellTask,
+  beijingTaskDate,
+  shellTaskCenter,
+  shellTransactions
+} from "./shellCurrency.js";
 import { WebSocket, WebSocketServer } from "ws";
 import onlineSoupRouter, {
   cleanupOnlineSoupInactiveHostRooms,
@@ -942,6 +949,7 @@ async function adminIds() {
 }
 
 async function recordLoginDay(userId: string) {
+  const taskDate = beijingTaskDate();
   const [[loginResult]] = await Promise.all([
     pool.query(
       `INSERT IGNORE INTO user_login_days (user_id, login_date)
@@ -953,6 +961,10 @@ async function recordLoginDay(userId: string) {
   if ((loginResult as mysql.ResultSetHeader).affectedRows > 0) {
     queueSystemBadgeSync([userId]);
   }
+  await awardShellTask(userId, "daily_login", `login:${userId}:${taskDate}`, {
+    relatedType: "daily_login",
+    relatedId: taskDate
+  });
 }
 
 type AchievementStats = {
@@ -1533,6 +1545,20 @@ app.get("/api/auth/me", async (req, res) => {
   if (!user) return res.json({ user: null });
   const { tokenVersion: _tokenVersion, ...publicUser } = user;
   res.json({ user: publicUser });
+});
+
+app.get("/api/me/shells", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  res.json(await shellTaskCenter(user.id));
+});
+
+app.get("/api/me/shell-transactions", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const limit = Math.min(50, Math.max(1, Math.floor(Number(req.query.limit ?? 20) || 20)));
+  const offset = Math.max(0, Math.floor(Number(req.query.offset ?? 0) || 0));
+  res.json(await shellTransactions(user.id, limit, offset));
 });
 
 app.get("/api/events", async (req, res) => {
@@ -2349,6 +2375,13 @@ app.post("/api/circles/:id/messages", async (req, res) => {
       );
     }
     await connection.query("UPDATE circles SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [req.params.id]);
+    if (messageType === "text") {
+      await awardShellTask(user.id, "speak_circle", `circle-message:${user.id}:${id}`, {
+        relatedType: "circle_message",
+        relatedId: id,
+        connection
+      });
+    }
     await connection.commit();
   } catch (error) {
     await connection.rollback().catch(() => {});
@@ -3292,6 +3325,13 @@ app.post("/api/soups", async (req, res) => {
         soup.isSurfacePublic, soup.isBottomPublic, soup.enableAiGame, review.decision, review.reason, 1, soup.aiPrompt || null,
         soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null, null, soup.keyFactsCustomized ? 1 : 0, user.id, user.nickname]
     );
+    if (review.decision === "approved" && soup.isSurfacePublic) {
+      await awardShellTask(user.id, "publish_soup", `publish:${user.id}:${id}`, {
+        relatedType: "soup",
+        relatedId: id,
+        connection
+      });
+    }
     await connection.commit();
   } catch (error) {
     await connection.rollback();
@@ -3418,24 +3458,49 @@ app.post("/api/soups/:id/like", async (req, res) => {
   if (String(soup.review_status ?? "approved") !== "approved") return sendError(res, 409, "审核中的海龟汤暂不可点赞");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
 
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id FROM soup_likes WHERE soup_id = ? AND user_id = ? LIMIT 1",
-    [req.params.id, user.id]
-  );
-  if (rows.length > 0) {
-    await pool.query("DELETE FROM soup_likes WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
-    const [[c]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
-    res.json({ isLiked: false, likeCount: Number(c.cnt) });
-    return;
-  }
-
-  await pool.query("INSERT INTO soup_likes (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
-  if (Boolean(soup.is_original)) {
-    await pool.query(
-      "INSERT IGNORE INTO soup_like_history (soup_id, actor_id, creator_id) VALUES (?, ?, ?)",
-      [req.params.id, user.id, soup.creator_id]
+  const connection = await pool.getConnection();
+  let isLiked = false;
+  let likeCount = 0;
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM soup_likes WHERE soup_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
+      [req.params.id, user.id]
     );
+    if (rows.length > 0) {
+      await connection.query("DELETE FROM soup_likes WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
+    } else {
+      isLiked = true;
+      await connection.query("INSERT INTO soup_likes (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+      if (Boolean(soup.is_original)) {
+        await connection.query(
+          "INSERT IGNORE INTO soup_like_history (soup_id, actor_id, creator_id) VALUES (?, ?, ?)",
+          [req.params.id, user.id, soup.creator_id]
+        );
+      }
+      const [rewardHistoryResult] = await connection.query<mysql.ResultSetHeader>(
+        "INSERT IGNORE INTO shell_like_reward_history (soup_id, user_id) VALUES (?, ?)",
+        [req.params.id, user.id]
+      );
+      if (rewardHistoryResult.affectedRows === 1) {
+        const taskDate = beijingTaskDate();
+        await awardShellTask(user.id, "like_soup", `like:${user.id}:${taskDate}:${req.params.id}`, {
+          relatedType: "soup",
+          relatedId: req.params.id,
+          connection
+        });
+      }
+    }
+    const [[countRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
+    likeCount = Number(countRow.cnt);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
+  if (!isLiked) return res.json({ isLiked: false, likeCount });
   if (String(soup.creator_id) !== user.id) {
     await notify(
       String(soup.creator_id),
@@ -3447,8 +3512,7 @@ app.post("/api/soups/:id/like", async (req, res) => {
     );
   }
   queueSystemBadgeSync([user.id, String(soup.creator_id)]);
-  const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
-  res.status(201).json({ isLiked: true, likeCount: Number(c2.cnt) });
+  res.status(201).json({ isLiked: true, likeCount });
 });
 
 app.get("/api/me/likes", async (req, res) => {
@@ -3499,24 +3563,43 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
   if (String(soup.review_status ?? "approved") !== "approved") return sendError(res, 409, "审核中的海龟汤暂不可收藏");
   if (!canSeeSoupSurface(soup, user)) return sendError(res, 403, "没有查看权限");
 
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id FROM soup_favorites WHERE soup_id = ? AND user_id = ? LIMIT 1",
-    [req.params.id, user.id]
-  );
-  if (rows.length > 0) {
-    await pool.query("DELETE FROM soup_favorites WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
-    const [[c]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
-    res.json({ isFavorited: false, favoriteCount: Number(c.cnt) });
-    return;
-  }
-
-  await pool.query("INSERT INTO soup_favorites (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
-  if (Boolean(soup.is_original)) {
-    await pool.query(
-      "INSERT IGNORE INTO soup_favorite_history (soup_id, actor_id, creator_id) VALUES (?, ?, ?)",
-      [req.params.id, user.id, soup.creator_id]
+  const connection = await pool.getConnection();
+  let isFavorited = false;
+  let favoriteCount = 0;
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM soup_favorites WHERE soup_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
+      [req.params.id, user.id]
     );
+    if (rows.length > 0) {
+      await connection.query("DELETE FROM soup_favorites WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
+    } else {
+      isFavorited = true;
+      await connection.query("INSERT INTO soup_favorites (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
+      if (Boolean(soup.is_original)) {
+        await connection.query(
+          "INSERT IGNORE INTO soup_favorite_history (soup_id, actor_id, creator_id) VALUES (?, ?, ?)",
+          [req.params.id, user.id, soup.creator_id]
+        );
+      }
+      const taskDate = beijingTaskDate();
+      await awardShellTask(user.id, "favorite_soup", `favorite:${user.id}:${taskDate}:${req.params.id}`, {
+        relatedType: "soup",
+        relatedId: req.params.id,
+        connection
+      });
+    }
+    const [[countRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
+    favoriteCount = Number(countRow.cnt);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
+  if (!isFavorited) return res.json({ isFavorited: false, favoriteCount });
   if (String(soup.creator_id) !== user.id) {
     await notify(
       String(soup.creator_id),
@@ -3528,8 +3611,7 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
     );
   }
   queueSystemBadgeSync([user.id, String(soup.creator_id)]);
-  const [[c2]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
-  res.status(201).json({ isFavorited: true, favoriteCount: Number(c2.cnt) });
+  res.status(201).json({ isFavorited: true, favoriteCount });
 });
 
 app.put("/api/soups/:id", async (req, res) => {
@@ -3563,39 +3645,57 @@ app.put("/api/soups/:id", async (req, res) => {
   if (next.coverImage && !existingCoverSelected && !optimizedCover) return sendError(res, 400, "封面图片无法处理");
   const coverImage = existingCoverSelected ? soup.cover_image : (optimizedCover?.full ?? null);
   const thumbnail = existingCoverSelected ? soup.cover_thumbnail : (optimizedCover?.thumbnail ?? null);
-  await pool.query(
-    `UPDATE soups
-     SET title = ?, author = ?, type = ?, difficulty = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
-         is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + 1,
-         reviewed_at = NULL, reviewed_by = NULL, ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
-     WHERE id = ?`,
-    [
-      next.title,
-      author,
-      next.type,
-      next.difficulty,
-      next.summary,
-      coverImage,
-      thumbnail,
-      next.isOriginal,
-      next.isSensitive,
-      next.surface,
-      JSON.stringify(next.supplementalSurfaces),
-      next.bottom,
-      JSON.stringify(next.supplementalBottoms),
-      next.manual || null,
-      next.isSurfacePublic,
-      next.isBottomPublic,
-      next.enableAiGame,
-      review.decision,
-      review.reason,
-      next.aiPrompt || null,
-      next.keyFacts.length > 0 ? JSON.stringify(next.keyFacts) : null,
-      null,
-      next.keyFactsCustomized ? 1 : 0,
-      req.params.id
-    ]
-  );
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      `UPDATE soups
+       SET title = ?, author = ?, type = ?, difficulty = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
+           is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + 1,
+           reviewed_at = NULL, reviewed_by = NULL, ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
+       WHERE id = ?`,
+      [
+        next.title,
+        author,
+        next.type,
+        next.difficulty,
+        next.summary,
+        coverImage,
+        thumbnail,
+        next.isOriginal,
+        next.isSensitive,
+        next.surface,
+        JSON.stringify(next.supplementalSurfaces),
+        next.bottom,
+        JSON.stringify(next.supplementalBottoms),
+        next.manual || null,
+        next.isSurfacePublic,
+        next.isBottomPublic,
+        next.enableAiGame,
+        review.decision,
+        review.reason,
+        next.aiPrompt || null,
+        next.keyFacts.length > 0 ? JSON.stringify(next.keyFacts) : null,
+        null,
+        next.keyFactsCustomized ? 1 : 0,
+        req.params.id
+      ]
+    );
+    if (review.decision === "approved" && next.isSurfacePublic) {
+      const creatorId = String(soup.creator_id);
+      await awardShellTask(creatorId, "publish_soup", `publish:${creatorId}:${req.params.id}`, {
+        relatedType: "soup",
+        relatedId: req.params.id,
+        connection
+      });
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
   res.json({ ok: true, reviewStatus: review.decision });
 
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
@@ -3638,16 +3738,46 @@ app.post("/api/admin/soups/:id/review", async (req, res) => {
     reason: z.string().trim().max(500).optional().default(""),
   }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "审核参数不正确");
-  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id, title, creator_id, review_status, review_version FROM soups WHERE id = ? LIMIT 1", [req.params.id]);
-  const soup = rows[0];
-  if (!soup) return sendError(res, 404, "海龟汤不存在");
-  if (String(soup.review_status) !== "pending") return sendError(res, 409, "该审核已取消或处理完成");
-  const [result] = await pool.query<mysql.ResultSetHeader>(
-    `UPDATE soups SET review_status = ?, review_reason = ?, reviewed_at = NOW(), reviewed_by = ?
-     WHERE id = ? AND review_status = 'pending' AND review_version = ?`,
-    [parsed.data.decision, parsed.data.reason || (parsed.data.decision === "approved" ? null : "内容未通过人工审核"), admin.id, req.params.id, parsed.data.reviewVersion],
-  );
-  if (result.affectedRows !== 1) return sendError(res, 409, "内容已被作者修改，本次审核已自动取消");
+  const connection = await pool.getConnection();
+  let soup: mysql.RowDataPacket;
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id, title, creator_id, is_surface_public, review_status, review_version FROM soups WHERE id = ? LIMIT 1 FOR UPDATE",
+      [req.params.id]
+    );
+    soup = rows[0];
+    if (!soup) {
+      await connection.rollback();
+      return sendError(res, 404, "海龟汤不存在");
+    }
+    if (String(soup.review_status) !== "pending") {
+      await connection.rollback();
+      return sendError(res, 409, "该审核已取消或处理完成");
+    }
+    const [result] = await connection.query<mysql.ResultSetHeader>(
+      `UPDATE soups SET review_status = ?, review_reason = ?, reviewed_at = NOW(), reviewed_by = ?
+       WHERE id = ? AND review_status = 'pending' AND review_version = ?`,
+      [parsed.data.decision, parsed.data.reason || (parsed.data.decision === "approved" ? null : "内容未通过人工审核"), admin.id, req.params.id, parsed.data.reviewVersion],
+    );
+    if (result.affectedRows !== 1) {
+      await connection.rollback();
+      return sendError(res, 409, "内容已被作者修改，本次审核已自动取消");
+    }
+    if (parsed.data.decision === "approved" && Boolean(soup.is_surface_public)) {
+      await awardShellTask(String(soup.creator_id), "publish_soup", `publish:${soup.creator_id}:${req.params.id}`, {
+        relatedType: "soup",
+        relatedId: req.params.id,
+        connection
+      });
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
   await notify(
     String(soup.creator_id),
     "soup_review",
@@ -3707,30 +3837,45 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   }
 
   const id = nanoid();
-  await pool.query(
-    `INSERT INTO evaluations
-      (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth, content)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      req.params.id,
-      data.total,
-      user.nickname,
-      user.id,
-      data.writing,
-      data.logic,
-      data.share,
-      data.mechanism,
-      data.twist,
-      data.depth,
-      data.content || null
-    ]
-  );
-  if (data.content?.trim()) {
-    await pool.query(
-      "INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original) VALUES (?, ?, ?, ?)",
-      [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      `INSERT INTO evaluations
+        (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth, content)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        req.params.id,
+        data.total,
+        user.nickname,
+        user.id,
+        data.writing,
+        data.logic,
+        data.share,
+        data.mechanism,
+        data.twist,
+        data.depth,
+        data.content || null
+      ]
     );
+    if (data.content?.trim()) {
+      await connection.query(
+        "INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original) VALUES (?, ?, ?, ?)",
+        [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
+      );
+    }
+    await awardShellTask(user.id, "publish_evaluation", `evaluation:${user.id}:${req.params.id}`, {
+      relatedType: "soup",
+      relatedId: req.params.id,
+      connection
+    });
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
   if (String(soup.creator_id) !== user.id) {
     await notify(
@@ -4661,7 +4806,7 @@ app.get("/api/admin/users", async (req, res) => {
       : ""
     : "";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at,
+    `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at, u.shell_balance,
       EXISTS (
         SELECT 1 FROM user_login_days uld
         WHERE uld.user_id = u.id
@@ -4684,6 +4829,7 @@ app.get("/api/admin/users", async (req, res) => {
       ...toUser(row),
       isOnline: isUserOnline(row.id),
       lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
+      shellBalance: Number(row.shell_balance ?? 0),
       loggedInToday: Boolean(row.logged_in_today),
       stats: {
         soupCount: Number(row.soup_count ?? 0),
@@ -4731,6 +4877,38 @@ app.post("/api/admin/users/:id/reset-password", async (req, res) => {
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
   await pool.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [hash, req.params.id]);
   res.json({ ok: true });
+});
+
+app.get("/api/admin/users/:id/shell-transactions", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [[userRow]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, shell_balance FROM users WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  if (!userRow) return sendError(res, 404, "用户不存在");
+  const limit = Math.min(50, Math.max(1, Math.floor(Number(req.query.limit ?? 20) || 20)));
+  const offset = Math.max(0, Math.floor(Number(req.query.offset ?? 0) || 0));
+  res.json({
+    balance: Number(userRow.shell_balance ?? 0),
+    ...(await shellTransactions(req.params.id, limit, offset))
+  });
+});
+
+app.post("/api/admin/users/:id/shell-adjustments", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = z.object({
+    operation: z.enum(["add", "deduct"]),
+    amount: z.number().int().positive().max(10_000_000)
+  }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "请输入有效的贝壳整数数量");
+  try {
+    res.json(await adjustShellBalance(req.params.id, admin.id, parsed.data.operation, parsed.data.amount));
+  } catch (error) {
+    if (error instanceof Error && error.message === "SHELL_USER_NOT_FOUND") return sendError(res, 404, "用户不存在");
+    if (error instanceof Error && error.message === "SHELL_INSUFFICIENT_BALANCE") return sendError(res, 409, "扣减数量不能超过当前贝壳余额");
+    throw error;
+  }
 });
 
 app.get("/api/admin/evaluations", async (req, res) => {

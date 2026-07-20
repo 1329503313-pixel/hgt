@@ -30,9 +30,9 @@ export function SoupCard({
         <CoverImage src={defaultCoverUrl} alt={`${soup.title} 封面`} />
       )}
       <div className="p-3">
-        <h2 className="line-clamp-2 text-[16px] font-black leading-snug text-ink">
-          {soup.title}
-          <span className="ml-1 inline-flex items-center gap-0.5 whitespace-nowrap align-middle text-[12px] font-black text-red-500" title={`热力值 ${soup.heatValue}`}>
+        <h2 className="flex min-w-0 items-end text-[16px] font-black leading-snug text-ink" title={soup.title}>
+          <span className="min-w-0 flex-1 line-clamp-2">{soup.title}</span>
+          <span className="ml-1 inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap pb-0.5 text-[12px] font-black leading-none text-red-500" title={`热力值 ${soup.heatValue}`}>
             <Flame size={14} className="fill-red-500" />
             {soup.heatValue.toLocaleString()}
           </span>

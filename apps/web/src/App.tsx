@@ -21,6 +21,8 @@ const MyEvaluationsPage = lazy(() => import("./pages/MyEvaluationsPage"));
 const MyLikesPage = lazy(() => import("./pages/MyLikesPage"));
 const MyAchievementsPage = lazy(() => import("./pages/MyAchievementsPage"));
 const RankingsPage = lazy(() => import("./pages/RankingsPage"));
+const ShellTaskCenterPage = lazy(() => import("./pages/ShellTaskCenterPage"));
+const ShellTransactionsPage = lazy(() => import("./pages/ShellTransactionsPage"));
 const ExcellentAuthorPage = lazy(() => import("./pages/ExcellentAuthorPage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const UserProfilePage = lazy(() => import("./pages/UserProfilePage"));
@@ -61,6 +63,8 @@ export default function App() {
           <Route path="mine/achievements" element={<MyAchievementsPage />} />
           <Route path="mine/excellent-author" element={<ExcellentAuthorPage />} />
           <Route path="mine/rankings" element={<RankingsPage />} />
+          <Route path="mine/tasks" element={<ShellTaskCenterPage />} />
+          <Route path="mine/shells/transactions" element={<ShellTransactionsPage />} />
           <Route path="mine/settings" element={<AccountSettingsPage />} />
           <Route path="mine/settings/password" element={<ResetPasswordPage />} />
           <Route path="online-soup" element={<OnlineSoupLobbyPage />} />

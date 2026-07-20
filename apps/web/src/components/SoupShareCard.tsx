@@ -13,8 +13,8 @@ export function SoupShareCard({ soup }: { soup: SoupShare }) {
       onClick={() => navigate(`/soup/${encodeURIComponent(soup.id)}`, { state: { soupShareReturnTo: `${location.pathname}${location.search}` } })}
       aria-label={`查看海龟汤《${soup.title}》`}
     >
-      <span className="w-[38%] shrink-0 bg-slate-100">
-        <img className="aspect-[3/2] w-full object-cover" src={soup.coverImage || defaultCoverUrl} alt={`${soup.title}封面`} loading="lazy" decoding="async" />
+      <span className="relative w-[38%] shrink-0 overflow-hidden bg-slate-100">
+        <img className="absolute inset-0 h-full w-full object-cover object-center" src={soup.coverImage || defaultCoverUrl} alt={`${soup.title}封面`} loading="lazy" decoding="async" />
       </span>
       <span className="min-w-0 flex-1 space-y-1.5 p-3">
         <span className="flex min-w-0 items-center gap-1.5">

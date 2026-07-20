@@ -7,6 +7,7 @@ export function parentRoute(pathname: string) {
   if (path === "/messages") return "/";
 
   if (path === "/mine/settings/password") return "/mine/settings";
+  if (path === "/mine/shells/transactions") return "/mine";
   if (/^\/mine\/[^/]+$/.test(path)) return "/mine";
   if (path === "/mine") return "/";
 
