@@ -1034,6 +1034,16 @@ const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "excellentAuthor:epic": 150
 };
 
+const SYSTEM_BADGE_ACHIEVEMENT_POINTS_SQL = Object.entries(SYSTEM_BADGE_ACHIEVEMENT_POINTS)
+  .map(([key, points]) => `WHEN '${key}' THEN ${points}`)
+  .join(" ");
+const USER_ACHIEVEMENT_POINTS_SQL = `COALESCE(SUM(
+  CASE
+    WHEN ubu.badge_key LIKE 'legendary:%' THEN COALESCE(lb.achievement_points, 0)
+    ELSE CASE ubu.badge_key ${SYSTEM_BADGE_ACHIEVEMENT_POINTS_SQL} ELSE 0 END
+  END
+), 0)`;
+
 const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
   publish: ["熬汤新秀", "熬汤达人", "熬汤大师"],
   insight: ["灵光乍现", "洞察之眼", "全知全能"],
@@ -4519,7 +4529,8 @@ app.get("/api/admin/badges/users", async (req, res) => {
       COALESCE(SUM(ubu.badge_key LIKE '%:normal'), 0) AS normal_count,
       COALESCE(SUM(ubu.badge_key LIKE '%:rare'), 0) AS rare_count,
       COALESCE(SUM(ubu.badge_key LIKE '%:epic' OR lb.tier = 'epic'), 0) AS epic_count,
-      COALESCE(SUM(ubu.badge_key LIKE '%:legend' OR lb.tier = 'legend'), 0) AS legend_count
+      COALESCE(SUM(ubu.badge_key LIKE '%:legend' OR lb.tier = 'legend'), 0) AS legend_count,
+      ${USER_ACHIEVEMENT_POINTS_SQL} AS achievement_points
      FROM users u
      LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
      LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
@@ -4537,7 +4548,8 @@ app.get("/api/admin/badges/users", async (req, res) => {
       avatar: avatarUrl(row.id, row.avatar),
       badgeCount: Number(row.badge_count ?? 0),
       normalCount: Number(row.normal_count ?? 0), rareCount: Number(row.rare_count ?? 0),
-      epicCount: Number(row.epic_count ?? 0), legendCount: Number(row.legend_count ?? 0)
+      epicCount: Number(row.epic_count ?? 0), legendCount: Number(row.legend_count ?? 0),
+      achievementPoints: Number(row.achievement_points ?? 0)
     }))
   });
 });
@@ -4794,7 +4806,9 @@ app.get("/api/admin/users", async (req, res) => {
     soupCount: "soup_count",
     evaluationCount: "evaluation_count",
     likeCount: "like_count",
-    favoriteCount: "favorite_count"
+    favoriteCount: "favorite_count",
+    shellBalance: "u.shell_balance",
+    achievementPoints: "achievement_points"
   };
   const sortColumn = sortColumns[String(req.query.sortBy ?? "createdAt")] ?? sortColumns.createdAt;
   const sortOrder = req.query.sortOrder === "asc" ? "ASC" : "DESC";
@@ -4815,7 +4829,11 @@ app.get("/api/admin/users", async (req, res) => {
       (SELECT COUNT(*) FROM soups WHERE creator_id = u.id) AS soup_count,
       (SELECT COUNT(*) FROM evaluations WHERE reviewer_id = u.id) AS evaluation_count,
       (SELECT COUNT(*) FROM soup_likes WHERE user_id = u.id) AS like_count,
-      (SELECT COUNT(*) FROM soup_favorites WHERE user_id = u.id) AS favorite_count
+      (SELECT COUNT(*) FROM soup_favorites WHERE user_id = u.id) AS favorite_count,
+      (SELECT ${USER_ACHIEVEMENT_POINTS_SQL}
+       FROM user_badge_unlocks ubu
+       LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
+       WHERE ubu.user_id = u.id) AS achievement_points
      FROM users u
      ${where}
      ORDER BY ${onlineOrderClause}${sortColumn} ${sortOrder}, u.created_at DESC
@@ -4830,6 +4848,7 @@ app.get("/api/admin/users", async (req, res) => {
       isOnline: isUserOnline(row.id),
       lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
       shellBalance: Number(row.shell_balance ?? 0),
+      achievementPoints: Number(row.achievement_points ?? 0),
       loggedInToday: Boolean(row.logged_in_today),
       stats: {
         soupCount: Number(row.soup_count ?? 0),

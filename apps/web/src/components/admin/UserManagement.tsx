@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, KeyRound, Search, Shell, Trash2 } from "lucide-react";
+import { ArrowUpDown, KeyRound, Search, Shell, Trash2, X } from "lucide-react";
 import type { PublicUser } from "../../shared/types";
 import type { ShellTransaction } from "../../shared/types";
 import { api } from "../../api";
@@ -15,14 +15,15 @@ type AdminUser = PublicUser & {
   isOnline: boolean;
   loggedInToday: boolean;
   shellBalance: number;
+  achievementPoints: number;
   stats: { soupCount: number; evaluationCount: number; likeCount: number; favoriteCount: number };
 };
 
 type UsersResponseExt = { users: AdminUser[]; total: number };
 type TodayFilter = "all" | "yes" | "no";
-type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount";
+type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "achievementPoints";
 type SortOrder = "asc" | "desc";
-type UserColumn = "user" | "role" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
+type UserColumn = "user" | "role" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "user", label: "用户", width: "minmax(190px, 1fr)" },
@@ -31,6 +32,7 @@ const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "lastLoginAt", label: "最后登录时间", width: "160px" },
   { key: "loggedToday", label: "今日登录", width: "90px" },
   { key: "shells", label: "贝壳", width: "90px" },
+  { key: "achievementPoints", label: "成就点", width: "90px" },
   { key: "soups", label: "汤品", width: "70px" },
   { key: "evaluations", label: "评价", width: "70px" },
   { key: "likes", label: "点赞", width: "70px" },
@@ -217,6 +219,8 @@ export function UserManagement() {
           <option value="evaluationCount">按发布评价</option>
           <option value="likeCount">按点赞</option>
           <option value="favoriteCount">按收藏</option>
+          <option value="shellBalance">按贝壳</option>
+          <option value="achievementPoints">按成就点</option>
         </select>
         <button
           className="btn btn-secondary h-10 px-3 text-xs whitespace-nowrap"
@@ -229,7 +233,7 @@ export function UserManagement() {
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1270px]">
+        <div className="min-w-[1370px]">
           <div className="mb-2 grid items-center justify-items-center gap-2 px-3 text-center text-xs font-bold text-muted" style={{ gridTemplateColumns: template }}>
             {userColumns.filter((column) => visibleColumns.has(column.key)).map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
@@ -257,6 +261,7 @@ export function UserManagement() {
                 {visibleColumns.has("lastLoginAt") && <span className={`text-xs font-bold ${user.isOnline ? "text-emerald-600" : "text-muted"}`}>{user.isOnline ? "在线" : user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "从未登录"}</span>}
                 {visibleColumns.has("loggedToday") && <span className={`rounded-full px-2 py-1 text-xs font-bold ${user.loggedInToday ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{user.loggedInToday ? "已登录" : "未登录"}</span>}
                 {visibleColumns.has("shells") && <button className="inline-flex items-center gap-1 font-black text-primary hover:underline" onClick={() => void loadShellDetail(user)}><Shell size={14} />{user.shellBalance}</button>}
+                {visibleColumns.has("achievementPoints") && <span className="font-black text-amber-600">{user.achievementPoints.toLocaleString()}</span>}
                 {visibleColumns.has("soups") && <span className="font-semibold text-ink">{user.stats.soupCount}</span>}
                 {visibleColumns.has("evaluations") && <span>{user.stats.evaluationCount}</span>}
                 {visibleColumns.has("likes") && <span>{user.stats.likeCount}</span>}
@@ -305,7 +310,10 @@ export function UserManagement() {
       {shellUser && (
         <Modal onClose={() => { if (!shellAdjusting) { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellError(""); } }}>
           <div className="space-y-4">
-            <div><h2 className="text-lg font-black text-ink">{shellUser.nickname}的贝壳明细</h2><p className="mt-1 flex items-center gap-1 text-sm font-bold text-primary"><Shell size={16} />当前余额：{shellUser.shellBalance.toLocaleString()}</p></div>
+            <div className="flex items-start justify-between gap-3">
+              <div><h2 className="text-lg font-black text-ink">{shellUser.nickname}的贝壳明细</h2><p className="mt-1 flex items-center gap-1 text-sm font-bold text-primary"><Shell size={16} />当前余额：{shellUser.shellBalance.toLocaleString()}</p></div>
+              <button className="btn btn-secondary shrink-0 px-3" type="button" disabled={shellAdjusting} onClick={() => { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellError(""); }}><X size={16} />关闭</button>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <button className="btn btn-primary" onClick={() => { setShellOperation("add"); setShellError(""); }}>增加</button>
               <button className="btn btn-secondary text-red-600" onClick={() => { setShellOperation("deduct"); setShellError(""); }}>扣减</button>

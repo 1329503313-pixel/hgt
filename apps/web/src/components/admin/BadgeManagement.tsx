@@ -18,6 +18,7 @@ type BadgeAdminUser = {
   rareCount: number;
   epicCount: number;
   legendCount: number;
+  achievementPoints: number;
 };
 
 type BasicUser = Pick<BadgeAdminUser, "id" | "username" | "nickname" | "avatar">;
@@ -221,13 +222,13 @@ export function BadgeManagement() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <div className="min-w-[1040px]">
-              <div className="grid grid-cols-[minmax(190px,1fr)_90px_90px_90px_90px_90px_300px] gap-2 px-3 py-2 text-center text-xs font-bold text-muted"><span>用户</span><span>全部</span><span>普通</span><span>稀有</span><span>史诗</span><span>传说</span><span>操作</span></div>
+            <div className="min-w-[1130px]">
+              <div className="grid grid-cols-[minmax(190px,1fr)_90px_90px_90px_90px_90px_90px_300px] gap-2 px-3 py-2 text-center text-xs font-bold text-muted"><span>用户</span><span>成就点</span><span>全部</span><span>普通</span><span>稀有</span><span>史诗</span><span>传说</span><span>操作</span></div>
               <div className="space-y-1">
                 {users.map((user) => (
-                  <div key={user.id} className="grid grid-cols-[minmax(190px,1fr)_90px_90px_90px_90px_90px_300px] items-center gap-2 rounded-lg border border-line px-3 py-2 text-center text-sm">
+                  <div key={user.id} className="grid grid-cols-[minmax(190px,1fr)_90px_90px_90px_90px_90px_90px_300px] items-center gap-2 rounded-lg border border-line px-3 py-2 text-center text-sm">
                     <UserIdentity user={user} />
-                    <strong>{user.badgeCount}</strong><span>{user.normalCount}</span><span>{user.rareCount}</span><span>{user.epicCount}</span><span className="badge-legend-text font-black">{user.legendCount}</span>
+                    <strong className="text-amber-600">{user.achievementPoints.toLocaleString()}</strong><strong>{user.badgeCount}</strong><span>{user.normalCount}</span><span>{user.rareCount}</span><span>{user.epicCount}</span><span className="badge-legend-text font-black">{user.legendCount}</span>
                     <div className="flex justify-center gap-2">
                       <button className="btn btn-secondary h-8 px-2 text-xs" onClick={() => openUserAction(user, "view")}><Eye size={13} />查看徽章</button>
                       <button className="btn btn-secondary h-8 px-2 text-xs" onClick={() => openUserAction(user, "grant")}><ShieldPlus size={13} />发放徽章</button>
