@@ -572,6 +572,36 @@ textarea {
   column-gap: 0.25rem;
 }
 
+.mention-avatar-trigger {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.mention-avatar-trigger img {
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+.room-assistant-panel,
+.room-assistant-cards {
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+.room-assistant-cards > article {
+  backface-visibility: hidden;
+}
+
+.room-assistant-panel {
+  isolation: isolate;
+}
+
+.room-assistant-cards {
+  contain: layout paint;
+}
+
 @media (min-width: 640px) {
   .avatar-name-gap {
     column-gap: 0.5rem;

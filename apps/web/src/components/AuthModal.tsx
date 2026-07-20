@@ -16,7 +16,9 @@ export function AuthModal() {
       const payload = Object.fromEntries(form.entries());
       const path = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
       const data = await api<MeResponse>(path, { method: "POST", body: payload });
-      setUser(data.user);
+      const verified = await api<MeResponse>("/api/auth/me", { bypassCache: true, dedupe: false });
+      if (!verified.user) throw new Error("登录状态未能保存，请刷新页面后重试");
+      setUser(verified.user ?? data.user);
       setAuthError("");
       closeAuth();
       triggerRefresh();

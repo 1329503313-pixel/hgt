@@ -76,6 +76,7 @@ export default function OnlineSoupRoomPage() {
   const [stickersLoading, setStickersLoading] = useState(true);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [hostActionsOpen, setHostActionsOpen] = useState(false);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"back" | "close" | null>(null);
   const [entryPasswordOpen, setEntryPasswordOpen] = useState(false);
   const [entryPassword, setEntryPassword] = useState("");
@@ -85,8 +86,10 @@ export default function OnlineSoupRoomPage() {
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const refreshPending = useRef(false);
   const incrementalPending = useRef(false);
+  const incrementalQueued = useRef(false);
   const historyExpanded = useRef(false);
   const newestMessageId = useRef<string | null>(null);
+  const isNearMessagesBottom = useRef(true);
   const snapshotRef = useRef<OnlineSoupSnapshot | null>(null);
   const entryStarted = useRef(false);
   const progressLoadedRoundId = useRef<string | null>(null);
@@ -94,6 +97,18 @@ export default function OnlineSoupRoomPage() {
   const returnFromInvite = useCallback(() => {
     navigate(inviteReturnTo, { replace: true });
   }, [inviteReturnTo, navigate]);
+  const updateMessagesScrollPosition = useCallback(() => {
+    const container = messagesRef.current;
+    if (!container) return;
+    const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 48;
+    isNearMessagesBottom.current = nearBottom;
+    setShowScrollToLatest(!nearBottom);
+  }, []);
+  const scrollToLatestMessage = useCallback((behavior: ScrollBehavior = "smooth") => {
+    isNearMessagesBottom.current = true;
+    setShowScrollToLatest(false);
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
 
   const load = useCallback(async (quiet = false) => {
     if (refreshPending.current) return;
@@ -169,7 +184,10 @@ export default function OnlineSoupRoomPage() {
   }, [load, navigate, roomId]);
 
   const loadNewMessages = useCallback(async () => {
-    if (incrementalPending.current) return;
+    if (incrementalPending.current) {
+      incrementalQueued.current = true;
+      return;
+    }
     const current = snapshotRef.current;
     const lastSequence = current?.messages[current.messages.length - 1]?.sequence;
     if (!current || !lastSequence) {
@@ -179,28 +197,33 @@ export default function OnlineSoupRoomPage() {
     incrementalPending.current = true;
     try {
       let after = lastSequence;
-      let hasMore = true;
-      const incoming: OnlineSoupMessage[] = [];
-      for (let pageNumber = 0; pageNumber < 10 && hasMore; pageNumber += 1) {
-        const page = await api<MessagePage>(`/api/online-soup/rooms/${roomId}/messages?after=${encodeURIComponent(after)}&limit=100`, { bypassCache: true, dedupe: false });
-        incoming.push(...page.messages);
-        hasMore = page.hasMore;
-        if (!page.nextCursor) break;
-        after = page.nextCursor;
-      }
-      if (!incoming.length) return;
-      setSnapshot((latest) => {
-        if (!latest) return latest;
-        const merged = mergeMessages(latest.messages, incoming);
-        if (historyExpanded.current || merged.length <= 100) return { ...latest, messages: merged };
-        const visible = merged.slice(-100);
-        return {
-          ...latest,
-          messages: visible,
-          messagesHasMore: true,
-          messagesNextCursor: visible[0]?.sequence ?? latest.messagesNextCursor
-        };
-      });
+      do {
+        incrementalQueued.current = false;
+        let hasMore = true;
+        const incoming: OnlineSoupMessage[] = [];
+        for (let pageNumber = 0; pageNumber < 10 && hasMore; pageNumber += 1) {
+          const page = await api<MessagePage>(`/api/online-soup/rooms/${roomId}/messages?after=${encodeURIComponent(after)}&limit=100`, { bypassCache: true, dedupe: false });
+          incoming.push(...page.messages);
+          hasMore = page.hasMore;
+          if (!page.nextCursor) break;
+          after = page.nextCursor;
+        }
+        if (incoming.length > 0) {
+          after = incoming[incoming.length - 1].sequence;
+          setSnapshot((latest) => {
+            if (!latest) return latest;
+            const merged = mergeMessages(latest.messages, incoming);
+            if (historyExpanded.current || merged.length <= 100) return { ...latest, messages: merged };
+            const visible = merged.slice(-100);
+            return {
+              ...latest,
+              messages: visible,
+              messagesHasMore: true,
+              messagesNextCursor: visible[0]?.sequence ?? latest.messagesNextCursor
+            };
+          });
+        }
+      } while (incrementalQueued.current);
     } catch {
       await load(true);
     } finally {
@@ -261,19 +284,37 @@ export default function OnlineSoupRoomPage() {
       return;
     }
     void load(true);
-  }, setSocketConnected), [roomId, load, loadNewMessages, loadState, navigate, showToast]);
+  }, (connected) => {
+    setSocketConnected(connected);
+    if (connected) void loadNewMessages();
+  }), [roomId, load, loadNewMessages, loadState, navigate, showToast]);
   useEffect(() => {
-    if (socketConnected) return;
-    const timer = window.setInterval(() => void load(true), 30_000);
-    return () => window.clearInterval(timer);
-  }, [load, socketConnected]);
+    const reconcile = () => {
+      if (document.visibilityState !== "visible") return;
+      if (socketConnected) void loadNewMessages();
+      else void load(true);
+    };
+    const timer = window.setInterval(reconcile, 15_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") reconcile();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [load, loadNewMessages, socketConnected]);
   const latestMessageId = snapshot?.messages[snapshot.messages.length - 1]?.id ?? null;
   useEffect(() => {
     if (!latestMessageId || latestMessageId === newestMessageId.current) return;
-    const behavior = newestMessageId.current == null ? "auto" : "smooth";
+    const isInitialLoad = newestMessageId.current == null;
     newestMessageId.current = latestMessageId;
-    bottomRef.current?.scrollIntoView({ behavior });
-  }, [latestMessageId]);
+    if (isInitialLoad || isNearMessagesBottom.current) {
+      scrollToLatestMessage(isInitialLoad ? "auto" : "smooth");
+    } else {
+      setShowScrollToLatest(true);
+    }
+  }, [latestMessageId, scrollToLatestMessage]);
   useEffect(() => {
     if (clueListOpen && cluePanelTab === "progress") void loadProgress();
   }, [clueListOpen, cluePanelTab, latestMessageId, loadProgress, snapshot?.room.currentRoundId]);
@@ -290,7 +331,7 @@ export default function OnlineSoupRoomPage() {
   const isHost = snapshot?.me.isHost ?? false;
   const disarmExitGuard = useOnlineSoupExitGuard(roomId, true, "room");
   const canDiscuss = snapshot && snapshot.me.role !== "spectator" && snapshot.room.status !== "closed";
-  const canQuestion = snapshot?.me.role === "player" && snapshot.room.status === "playing" && snapshot.room.hostOnline;
+  const canQuestion = snapshot?.me.role === "player" && snapshot.room.status === "playing";
   const allStickers = useMemo(() => stickerSeries.flatMap((series) => series.stickers), [stickerSeries]);
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
   useEffect(() => {
@@ -303,7 +344,10 @@ export default function OnlineSoupRoomPage() {
     setSending(true);
     try {
       await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: mode, content: text } });
-      setContent(""); await loadNewMessages();
+      setContent("");
+      isNearMessagesBottom.current = true;
+      setShowScrollToLatest(false);
+      await loadNewMessages();
     } catch (error) { showToast(error instanceof Error ? error.message : "发送失败"); }
     finally { setSending(false); }
   }
@@ -338,6 +382,8 @@ export default function OnlineSoupRoomPage() {
     try {
       setStickersOpen(false);
       await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: "sticker", stickerId: sticker.id } });
+      isNearMessagesBottom.current = true;
+      setShowScrollToLatest(false);
       await loadNewMessages();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "表情发送失败");
@@ -437,6 +483,8 @@ export default function OnlineSoupRoomPage() {
     .map((content, index) => ({ content, index }))
     .filter(({ index }) => !snapshot?.room.soup?.publishedSurfaceIndices?.includes(index));
   const clueMessages = snapshot?.messages.filter((message) => message.type === "clue" && message.roundId === snapshot.room.currentRoundId) ?? [];
+  const newestFirstClueMessages = [...clueMessages].reverse();
+  const newestFirstProgressQuestions = [...progressQuestions].reverse();
 
   if (loading || !snapshot) return <div className="min-h-screen bg-page p-4 pt-24">
     {!entryPasswordOpen && !entryError && <div className="mx-auto h-48 max-w-5xl animate-pulse rounded-2xl bg-slate-200" />}
@@ -470,7 +518,7 @@ export default function OnlineSoupRoomPage() {
 
       <main className="mx-auto grid h-full max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-[76px] lg:grid-cols-[320px_44px_minmax(0,1fr)] lg:grid-rows-1 lg:gap-3">
         <aside className="flex max-h-[30dvh] min-h-0 flex-col gap-3 overflow-hidden lg:max-h-none">
-          {!snapshot.room.hostOnline && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-700">主持人暂时离线，正式提问已暂停，等待主持人重新连接。</div>}
+          {!snapshot.room.hostOnline && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-700">主持人暂时离线，玩家仍可继续讨论和正式提问，等待主持人重新连接后回复。</div>}
           <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded && snapshot.room.soup ? "flex-1" : "shrink-0"}`}>
             <div className="shrink-0 px-3 py-2.5">
               <div className="flex items-center gap-2">
@@ -527,7 +575,7 @@ export default function OnlineSoupRoomPage() {
 
         <section className="card flex min-h-0 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">讨论、正式提问、主持人回复和线索会实时同步</p></div>
-          <div ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4">
+          <div ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4" onScroll={updateMessagesScrollPosition}>
             {snapshot.messagesHasMore && <button className="mx-auto block rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-blue-50 disabled:opacity-50" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
             {snapshot.messages.map((message) => <MessageItem key={message.id} message={message} isHost={isHost} onAnswer={answer} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />)}
             <div ref={bottomRef} />
@@ -558,6 +606,15 @@ export default function OnlineSoupRoomPage() {
         </section>
       </main>
 
+      {showScrollToLatest && <button
+        className={`fixed right-[4.25rem] bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 grid h-12 w-12 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`}
+        onClick={() => scrollToLatestMessage()}
+        aria-label="滚动到最新消息"
+        title="滚动到最新消息"
+      >
+        <ChevronDown size={24} strokeWidth={2.5} />
+      </button>}
+
       {isHost ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition duration-200 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`}>
         {hostActionsOpen && <div className="absolute bottom-full right-1/2 mb-2 flex translate-x-1/2 flex-col items-center gap-2">
           {snapshot.room.status === "preparing" && !snapshot.room.soup && <FloatingAction tone="primary" label="选择海龟汤" onClick={() => { setHostActionsOpen(false); openSoupSelector(); }} />}
@@ -571,14 +628,14 @@ export default function OnlineSoupRoomPage() {
 
       {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/8</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => isHost ? setConfirmAction("back") : void leaveRoom()}><LogOut size={16} /> {isHost ? "退出并解散房间" : "退出并释放席位"}</button></div></Modal>}
       {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
-      {clueListOpen && <Modal onClose={() => setClueListOpen(false)}><div className="space-y-4">
+      {clueListOpen && <Modal onClose={() => setClueListOpen(false)}><div className="room-assistant-panel space-y-4">
         <div className="pr-10"><h2 className="text-xl font-black text-ink">推理辅助</h2><p className="mt-1 text-sm text-muted">{snapshot.room.soup?.title ?? "当前海龟汤"}</p></div>
         <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1">
           <button className={`rounded-lg px-3 py-2 text-sm font-black transition ${cluePanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted"}`} onClick={() => setCluePanelTab("clues")}><span className="inline-flex items-center gap-1.5"><Lightbulb size={15} />线索<span className="rounded-full bg-amber-100 px-1.5 text-[10px]">{clueMessages.length}</span></span></button>
           <button className={`rounded-lg px-3 py-2 text-sm font-black transition ${cluePanelTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => setCluePanelTab("progress")}><span className="inline-flex items-center gap-1.5"><ListChecks size={15} />进度{progressLoadedRoundId.current === snapshot.room.currentRoundId && <span className="rounded-full bg-blue-100 px-1.5 text-[10px]">{progressQuestions.length}</span>}</span></button>
         </div>
-        {cluePanelTab === "clues" && (clueMessages.length > 0 ? <div className="max-h-[60dvh] space-y-2 overflow-y-auto overscroll-contain">{clueMessages.map((message, index) => <article key={message.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {index + 1}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>)}
-        {cluePanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : progressQuestions.length > 0 ? <div className="max-h-[60dvh] space-y-2 overflow-y-auto overscroll-contain">{progressQuestions.map((question) => <article key={question.id} className="rounded-xl border border-blue-100 bg-blue-50/60 p-3"><div className="flex items-center gap-2"><button className="shrink-0 rounded-full" disabled={!question.sender.id} onClick={() => question.sender.id && openMemberProfile(question.sender.id)}>{question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="shrink-0 text-xs font-black text-primary">#{question.number}</span><span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span><time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p></div></div><div className="mt-2 pl-10">{question.answer ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{answerLabels[question.answer]}</span> : <span className="inline-flex rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted">等待主持人回复</span>}</div></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
+        {cluePanelTab === "clues" && (newestFirstClueMessages.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstClueMessages.map((message, index) => <article key={message.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {clueMessages.length - index}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>)}
+        {cluePanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <article key={question.id} className="rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="flex items-center gap-2"><button className="shrink-0 rounded-full" disabled={!question.sender.id} onClick={() => question.sender.id && openMemberProfile(question.sender.id)}>{question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="shrink-0 text-xs font-black text-primary">#{question.number}</span><span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span><time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p></div></div><div className="mt-2 pl-10">{question.answer ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{answerLabels[question.answer]}</span> : <span className="inline-flex rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted">等待主持人回复</span>}</div></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
         <button className="btn btn-secondary w-full" onClick={() => setClueListOpen(false)}>关闭</button>
       </div></Modal>}
       {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "close" ? "确认解散房间？" : "确认返回并解散房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">主持人离开后房间将立即解散，所有玩家都会退出，此操作无法撤销。</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>确认解散</button></div></div></Modal>}

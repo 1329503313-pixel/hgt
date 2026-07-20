@@ -26,7 +26,7 @@ function Avatar({ avatar, nickname, online, size = "h-10 w-10" }: { avatar: stri
   return (
     <span className={`relative grid shrink-0 place-items-center ${size}`}>
       <span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary">
-        {avatar ? <img className="h-full w-full object-cover" src={avatar} alt="" /> : nickname.slice(0, 1)}
+        {avatar ? <img className="h-full w-full object-cover" src={avatar} alt="" draggable={false} /> : nickname.slice(0, 1)}
       </span>
       {online && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
     </span>
@@ -48,6 +48,7 @@ function MentionableAvatarButton({ canMention, onMention, onOpen, children }: {
   return (
     <button
       type="button"
+      className={canMention ? "mention-avatar-trigger" : undefined}
       onPointerDown={() => {
         longPressedRef.current = false;
         if (!canMention) return;
@@ -61,6 +62,9 @@ function MentionableAvatarButton({ canMention, onMention, onOpen, children }: {
       onPointerCancel={cancelTimer}
       onPointerLeave={cancelTimer}
       onContextMenu={(event) => {
+        if (canMention) event.preventDefault();
+      }}
+      onDragStart={(event) => {
         if (canMention) event.preventDefault();
       }}
       onClick={(event) => {

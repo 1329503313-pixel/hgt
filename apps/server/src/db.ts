@@ -947,4 +947,12 @@ async function seedLegendaryBadges() {
        achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend'`,
     ["permission-turtle-soup", "权限龟汤汤", "权限龟汤汤本龟！", null, "/badges/permission-turtle-soup-legend.webp", 300]
   );
+  await pool.query(
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier, activity_conditions)
+     VALUES (?, ?, ?, ?, ?, ?, 'limited', 'legend', NULL)
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
+       achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend', activity_conditions = NULL`,
+    ["ingenious-strategist", "神机妙算", "小O小O，快用你无敌的鬼脑想想办法啊！", null, "/badges/ingenious-strategist-legend.webp", 300]
+  );
 }

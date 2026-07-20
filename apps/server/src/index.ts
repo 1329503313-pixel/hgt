@@ -20,6 +20,7 @@ import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
 import { WebSocket, WebSocketServer } from "ws";
 import onlineSoupRouter, {
+  cleanupOnlineSoupInactiveHostRooms,
   cleanupOnlineSoupStaleSeats,
   ONLINE_SOUP_PLAYER_CAPACITY,
   setOnlineSoupEventEmitter,
@@ -611,6 +612,9 @@ function beijingDateString() {
     day: "2-digit",
   }).format(new Date());
 }
+
+const SOUP_DAILY_PUBLISH_LIMIT = 10;
+const SOUP_DAILY_AUTO_REJECT_LIMIT = 10;
 
 async function getSoupPublishUsage(userId: string) {
   const date = beijingDateString();
@@ -1615,14 +1619,14 @@ app.get("/api/me/soup-publish-quota", async (req, res) => {
   if (!user) return;
   if (user.role === "admin") return res.json({ allowed: true, publishedCount: 0, autoRejectCount: 0, remaining: null });
   const usage = await getSoupPublishUsage(user.id);
-  const blockedByReview = usage.autoRejectCount >= 3;
-  const blockedByLimit = usage.publishedCount >= 5;
+  const blockedByReview = usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT;
+  const blockedByLimit = usage.publishedCount >= SOUP_DAILY_PUBLISH_LIMIT;
   res.json({
     allowed: !blockedByReview && !blockedByLimit,
     publishedCount: usage.publishedCount,
     autoRejectCount: usage.autoRejectCount,
-    remaining: Math.max(0, 5 - usage.publishedCount),
-    reason: blockedByReview ? "今日自动审核未通过次数已达3次，请明天再试" : blockedByLimit ? "您今日已发布5篇海龟汤，明天再继续分享吧" : null,
+    remaining: Math.max(0, SOUP_DAILY_PUBLISH_LIMIT - usage.publishedCount),
+    reason: blockedByReview ? `今日自动审核未通过次数已达${SOUP_DAILY_AUTO_REJECT_LIMIT}次，请明天再试` : blockedByLimit ? `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧` : null,
   });
 });
 
@@ -3238,18 +3242,26 @@ app.post("/api/soups", async (req, res) => {
   const duplicate = await findDuplicateSoup(soup);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
   const usage = user.role === "admin" ? null : await getSoupPublishUsage(user.id);
-  if (usage && usage.autoRejectCount >= 3) return sendError(res, 429, "今日自动审核未通过次数已达3次，请明天再试");
-  if (usage && usage.publishedCount >= 5) return sendError(res, 429, "您今日已发布5篇海龟汤，明天再继续分享吧");
+  if (usage && usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT) {
+    return sendError(res, 429, `今日自动审核未通过次数已达${SOUP_DAILY_AUTO_REJECT_LIMIT}次，请明天再试`);
+  }
+  if (usage && usage.publishedCount >= SOUP_DAILY_PUBLISH_LIMIT) {
+    return sendError(res, 429, `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧`);
+  }
 
   let review;
-  try {
-    review = await reviewSoupContent({ title: soup.title, surface: soup.surface, bottom: soup.bottom });
-  } catch (error) {
-    if (error instanceof SoupReviewUnavailableError) return sendError(res, 503, error.message);
-    throw error;
+  if (user.role === "admin") {
+    review = { decision: "approved" as const, reason: null };
+  } else {
+    try {
+      review = await reviewSoupContent({ title: soup.title, surface: soup.surface, bottom: soup.bottom });
+    } catch (error) {
+      if (error instanceof SoupReviewUnavailableError) return sendError(res, 503, error.message);
+      throw error;
+    }
   }
   if (review.decision === "rejected") {
-    if (user.role !== "admin") await recordSoupAutoReject(user.id, usage!.date);
+    await recordSoupAutoReject(user.id, usage!.date);
     return sendError(res, 422, review.reason ?? "内容未通过自动审核");
   }
 
@@ -3266,8 +3278,8 @@ app.post("/api/soups", async (req, res) => {
       );
       const [quotaResult] = await connection.query<mysql.ResultSetHeader>(
         `UPDATE soup_publish_daily_usage SET published_count = published_count + 1
-         WHERE user_id = ? AND usage_date = ? AND published_count < 5 AND auto_reject_count < 3`,
-        [user.id, usage!.date],
+         WHERE user_id = ? AND usage_date = ? AND published_count < ? AND auto_reject_count < ?`,
+        [user.id, usage!.date, SOUP_DAILY_PUBLISH_LIMIT, SOUP_DAILY_AUTO_REJECT_LIMIT],
       );
       if (quotaResult.affectedRows !== 1) throw new Error("SOUP_DAILY_QUOTA");
     }
@@ -3283,7 +3295,9 @@ app.post("/api/soups", async (req, res) => {
     await connection.commit();
   } catch (error) {
     await connection.rollback();
-    if (error instanceof Error && error.message === "SOUP_DAILY_QUOTA") return sendError(res, 429, "您今日已发布5篇海龟汤，明天再继续分享吧");
+    if (error instanceof Error && error.message === "SOUP_DAILY_QUOTA") {
+      return sendError(res, 429, `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧`);
+    }
     throw error;
   } finally {
     connection.release();
@@ -3532,11 +3546,15 @@ app.put("/api/soups/:id", async (req, res) => {
   const duplicate = await findDuplicateSoup(next, req.params.id);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
   let review;
-  try {
-    review = await reviewSoupContent({ title: next.title, surface: next.surface, bottom: next.bottom });
-  } catch (error) {
-    if (error instanceof SoupReviewUnavailableError) return sendError(res, 503, error.message);
-    throw error;
+  if (user.role === "admin") {
+    review = { decision: "approved" as const, reason: null };
+  } else {
+    try {
+      review = await reviewSoupContent({ title: next.title, surface: next.surface, bottom: next.bottom });
+    } catch (error) {
+      if (error instanceof SoupReviewUnavailableError) return sendError(res, 503, error.message);
+      throw error;
+    }
   }
   if (review.decision === "rejected") return sendError(res, 422, review.reason ?? "内容未通过自动审核");
   const author = next.isOriginal ? next.author : "佚名";
@@ -4774,8 +4792,12 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 if (config.runDatabaseMigrations) await initDatabase();
 else await pool.query("SELECT 1");
 await cleanupOnlineSoupStaleSeats();
+await cleanupOnlineSoupInactiveHostRooms();
 const onlineSoupSeatCleanupTimer = setInterval(() => {
-  cleanupOnlineSoupStaleSeats().catch((error) => console.error("Online soup stale seat cleanup failed:", error));
+  Promise.all([
+    cleanupOnlineSoupStaleSeats(),
+    cleanupOnlineSoupInactiveHostRooms()
+  ]).catch((error) => console.error("Online soup cleanup failed:", error));
 }, 60_000);
 onlineSoupSeatCleanupTimer.unref();
 await refreshEquippedSpecialBadgeMetadata();

@@ -23,6 +23,7 @@ export function setOnlineSoupLobbyEventEmitter(emitter: LobbyEventEmitter) {
 
 const router = Router();
 const HOST_ONLINE_SECONDS = 75;
+const HOST_OFFLINE_ROOM_EXPIRY_MINUTES = 30;
 const MESSAGE_PAGE_SIZE = 100;
 export const ONLINE_SOUP_PLAYER_CAPACITY = 8;
 const PLAYER_CAPACITY = ONLINE_SOUP_PLAYER_CAPACITY;
@@ -159,6 +160,45 @@ export async function cleanupOnlineSoupStaleSeats() {
   );
   await releaseStaleSeats();
   for (const row of staleRooms) notifyRoom(String(row.room_id), "member_left");
+}
+
+export async function cleanupOnlineSoupInactiveHostRooms() {
+  const [staleRooms] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, current_round_id
+     FROM online_soup_rooms
+     WHERE status <> 'closed'
+       AND host_last_seen_at < NOW() - INTERVAL ${HOST_OFFLINE_ROOM_EXPIRY_MINUTES} MINUTE`
+  );
+  for (const room of staleRooms) {
+    const connection = await pool.getConnection();
+    let closed = false;
+    try {
+      await connection.beginTransaction();
+      const [result] = await connection.query<mysql.ResultSetHeader>(
+        `UPDATE online_soup_rooms
+         SET status = 'closed', closed_at = NOW()
+         WHERE id = ? AND status <> 'closed'
+           AND host_last_seen_at < NOW() - INTERVAL ${HOST_OFFLINE_ROOM_EXPIRY_MINUTES} MINUTE`,
+        [room.id]
+      );
+      if (result.affectedRows === 1) {
+        await systemMessage(
+          String(room.id),
+          room.current_round_id ? String(room.current_round_id) : null,
+          `主持人离线超过${HOST_OFFLINE_ROOM_EXPIRY_MINUTES}分钟，房间已自动解散`,
+          connection
+        );
+        closed = true;
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+    if (closed) notifyRoom(String(room.id), "room_closed", { cause: "host_offline_timeout" });
+  }
 }
 
 async function touch(roomId: string, user: OnlineUser, isHost: boolean) {
@@ -768,8 +808,6 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   if (parsed.data.type === "question") {
     if (context.member?.member_role !== "player") return fail(res, 403, "只有玩家可以发送正式提问");
     if (context.room.status !== "playing") return fail(res, 409, "当前不在推理阶段");
-    const hostOnline = Date.now() - new Date(context.room.host_last_seen_at).getTime() <= HOST_ONLINE_SECONDS * 1000;
-    if (!hostOnline) return fail(res, 409, "主持人暂时离线，正式提问已暂停");
   }
   if (parsed.data.type !== "question" && context.member?.member_role === "spectator") {
     return fail(res, 403, "旁观者只能查看房间内容");
