@@ -8,9 +8,9 @@ import {
   SHELL_TASKS
 } from "./shellCurrency.js";
 
-test("每日任务理论奖励为48，实际日上限为30", () => {
+test("每日任务理论奖励为58，实际日上限为30", () => {
   const theoreticalMaximum = SHELL_TASKS.reduce((sum, task) => sum + task.reward * task.dailyLimit, 0);
-  assert.equal(theoreticalMaximum, 48);
+  assert.equal(theoreticalMaximum, 58);
   assert.equal(SHELL_DAILY_LIMIT, 30);
 });
 
@@ -38,7 +38,7 @@ test("每日任务奖励和次数符合产品规划", () => {
     SHELL_TASKS.map(({ type, reward, dailyLimit }) => ({ type, reward, dailyLimit })),
     [
       { type: "daily_login", reward: 5, dailyLimit: 1 },
-      { type: "publish_soup", reward: 3, dailyLimit: 2 },
+      { type: "publish_soup", reward: 8, dailyLimit: 2 },
       { type: "like_soup", reward: 2, dailyLimit: 2 },
       { type: "favorite_soup", reward: 2, dailyLimit: 2 },
       { type: "publish_evaluation", reward: 3, dailyLimit: 1 },

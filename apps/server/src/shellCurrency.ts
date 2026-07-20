@@ -25,7 +25,7 @@ export type ShellTaskDefinition = {
 
 export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
   { type: "daily_login", name: "每日登录", description: "当天首次进入应用", reward: 5, dailyLimit: 1 },
-  { type: "publish_soup", name: "发布海龟汤", description: "审核通过并公开展示", reward: 3, dailyLimit: 2, consumeBeyondDailyLimit: true },
+  { type: "publish_soup", name: "发布海龟汤", description: "审核通过并公开展示", reward: 8, dailyLimit: 2, consumeBeyondDailyLimit: true },
   { type: "like_soup", name: "点赞海龟汤", description: "点赞不同的海龟汤", reward: 2, dailyLimit: 2 },
   { type: "favorite_soup", name: "收藏海龟汤", description: "收藏不同的海龟汤", reward: 2, dailyLimit: 2 },
   { type: "publish_evaluation", name: "发表评论", description: "首次发布评分或评论", reward: 3, dailyLimit: 1, consumeBeyondDailyLimit: true },
