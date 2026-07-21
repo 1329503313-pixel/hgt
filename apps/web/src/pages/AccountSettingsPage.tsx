@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { ChevronRight, ImagePlus, KeyRound } from "lucide-react";
+import { ChevronRight, KeyRound } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, AvatarResponse, NicknameResponse } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
@@ -7,6 +7,7 @@ import { MineBackButton } from "../components/MineBackButton";
 import { useApp } from "../context/AppContext";
 import { removeSessionCache } from "../shared/sessionCache";
 import { CardSkeleton } from "../components/Skeletons";
+import { ProfileBackgroundEditor } from "../components/ProfileBackgroundEditor";
 
 export default function AccountSettingsPage() {
   const { user, loadingUser, openAuth, setUser, showToast } = useApp();
@@ -74,7 +75,6 @@ export default function AccountSettingsPage() {
           <div className="flex items-center gap-4">
             <button className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full bg-blue-100" onClick={() => avatarInputRef.current?.click()} disabled={avatarSaving} aria-label="更换头像">
               {user.avatar ? <img className="h-full w-full object-cover" src={user.avatar} alt="当前头像" /> : <span className="grid h-full w-full place-items-center text-2xl font-black text-primary">{user.nickname.slice(0, 1)}</span>}
-              <span className="absolute inset-0 grid place-items-center bg-black/25 text-white"><ImagePlus size={21} /></span>
             </button>
             <div><button className="btn btn-secondary" onClick={() => avatarInputRef.current?.click()} disabled={avatarSaving}>{avatarSaving ? "上传中……" : "更换头像"}</button><p className="mt-2 text-xs text-muted">支持 JPG、PNG，最大 1MB</p></div>
             <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png" className="hidden" onChange={(event) => void uploadAvatar(event.target.files?.[0])} />
@@ -86,6 +86,8 @@ export default function AccountSettingsPage() {
           <div className="flex gap-2"><input id="account-nickname" className="field h-11" maxLength={8} value={nickname} onChange={(event) => setNickname(event.target.value)} /><button className="btn btn-primary h-11 shrink-0 px-4" disabled={nicknameSaving}>{nicknameSaving ? "保存中" : "保存"}</button></div>
           <p className="mt-2 text-xs text-muted">1 至 8 个字符</p>
         </form>
+
+        <ProfileBackgroundEditor userId={user.id} />
 
         <button className="card flex w-full items-center gap-3 p-4 text-left" onClick={() => navigate("/mine/settings/password")}>
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-primary"><KeyRound size={20} /></span>

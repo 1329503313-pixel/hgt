@@ -137,6 +137,7 @@ export type SocialProfile = PublicUser & {
   followerCount: number;
   isFollowing: boolean;
   isSelf: boolean;
+  profileBackgroundUrl: string | null;
 };
 
 export type SocialUser = PublicUser & {

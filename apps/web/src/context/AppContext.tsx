@@ -207,7 +207,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // 页面加载时读取登录状态
   useEffect(() => {
-    api<MeResponse>("/api/auth/me")
+    api<MeResponse>("/api/auth/me", { cacheTtlMs: 30_000 })
       .then((data) => setUser(data.user))
       .catch(() => undefined)
       .finally(() => setLoadingUser(false));
@@ -222,7 +222,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     if (badgeSyncedUserRef.current === user.id) return;
     badgeSyncedUserRef.current = user.id;
-    void checkBadgeUnlocks(true);
+    const run = () => void checkBadgeUnlocks(true);
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(run, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timer = setTimeout(run, 1_000);
+    return () => clearTimeout(timer);
   }, [user, checkBadgeUnlocks]);
 
   // 徽章由业务事件实时计算；收到解锁事件时立即领取弹窗，低频轮询只作断线兜底。

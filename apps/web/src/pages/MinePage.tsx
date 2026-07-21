@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Award, Check, ChevronLeft, ChevronRight, ListChecks, Medal, Plus, Shell, Trophy } from "lucide-react";
+import { ArrowLeft, Award, Check, ChevronLeft, ChevronRight, GalleryVerticalEnd, ListChecks, Medal, Plus, Shell, ShoppingBag, Trophy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api, SoupsResponse } from "../api";
+import { api, prefetchApi, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
 import type { EquippedBadge, ShellTaskCenter, SocialProfile, SoupSummary } from "../shared/types";
 import { PageTopBar } from "../components/PageTopBar";
@@ -121,6 +121,16 @@ export default function MinePage() {
   }, [user?.id]);
 
   useEffect(() => {
+    if (!user) return;
+    // The store is a primary action on this page. Warm both its route chunk and
+    // lightweight overview data so tapping the entry does not wait on either.
+    void import("./AssetStorePage");
+    void prefetchApi("/api/asset-store/packs", 30_000);
+    void import("./CardCabinetPage");
+    void prefetchApi("/api/me/card-cabinet", 30_000);
+  }, [user?.id]);
+
+  useEffect(() => {
     if (activeTab === "published" || !user || tabs[activeTab].loaded || tabs[activeTab].loading) return;
     const cached = readSessionCache<TabData>(mineListCacheKey(user.id, activeTab), MINE_CONTENT_CACHE_MAX_AGE);
     if (cached) setTabs((state) => ({ ...state, [activeTab]: { ...cached, loading: false } }));
@@ -179,6 +189,8 @@ export default function MinePage() {
   }
 
   const features = [
+    { label: "商城", icon: ShoppingBag, color: "bg-rose-100 text-rose-600", path: "/mine/store" },
+    { label: "收藏柜", icon: GalleryVerticalEnd, color: "bg-indigo-100 text-indigo-700", path: "/mine/cards" },
     { label: "优秀作者", icon: Award, color: "bg-amber-100 text-amber-600", path: "/mine/excellent-author" },
     { label: "我的成就", icon: Trophy, color: "bg-violet-100 text-violet-600", path: "/mine/achievements" },
     { label: "排行榜", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" },
@@ -199,7 +211,7 @@ export default function MinePage() {
         </button>
       } />
 
-      <div className="grid grid-cols-4 gap-2 rounded-2xl bg-white px-2 py-4 shadow-soft">
+      <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white px-2 py-4 shadow-soft sm:grid-cols-6">
         {features.map((feature) => { const Icon = feature.icon; return (
           <button key={feature.path} className="flex flex-col items-center gap-2" onClick={() => navigate(feature.path)}>
             <span className={`grid h-12 w-12 place-items-center rounded-2xl ${feature.color}`}><Icon size={23} /></span>

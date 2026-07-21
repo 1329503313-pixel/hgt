@@ -1,0 +1,143 @@
+import { useEffect, useMemo, useState } from "react";
+import { ArrowDown01, GalleryVerticalEnd, Gem, Layers3, Star, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { api } from "../api";
+import type { CardCabinet, OwnedAssetCard } from "../shared/digitalAssets";
+import { ASSET_RARITY_LABELS, warmAssetImage } from "../shared/digitalAssets";
+import { AssetCardVisual } from "./AssetCardVisual";
+import { ListSkeleton } from "./Skeletons";
+import { Modal } from "./Modal";
+
+const raritySortRank = { normal: 0, rare: 1, epic: 2, legend: 3 } as const;
+
+export function CardCabinetSection({
+  userId,
+  compact = false,
+  editable = false,
+  onError
+}: {
+  userId: string;
+  compact?: boolean;
+  editable?: boolean;
+  onError?: (message: string) => void;
+}) {
+  const navigate = useNavigate();
+  const [cabinet, setCabinet] = useState<CardCabinet | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [detail, setDetail] = useState<OwnedAssetCard | null>(null);
+  const [activePackId, setActivePackId] = useState("all");
+  const [showcaseCollapsed, setShowcaseCollapsed] = useState(true);
+  const [cardSort, setCardSort] = useState<"number" | "rarity">("number");
+
+  useEffect(() => {
+    const endpoint = `${editable ? "/api/me/card-cabinet" : `/api/users/${userId}/card-cabinet`}${compact ? "?compact=true" : ""}`;
+    api<{ cabinet: CardCabinet }>(endpoint, { cacheTtlMs: 30_000 })
+      .then(({ cabinet: next }) => { setCabinet(next); setSelected(next.showcase.map((card) => card.id)); })
+      .catch((error) => onError?.((error as Error).message));
+  }, [userId, editable]);
+
+  const sortedCards = useMemo(() => [...(cabinet?.cards ?? [])].sort((a, b) => {
+    if (cardSort === "rarity") {
+      const rarityDifference = raritySortRank[b.rarity] - raritySortRank[a.rarity];
+      if (rarityDifference !== 0) return rarityDifference;
+    }
+    return a.cardNo.localeCompare(b.cardNo, "zh-CN", { numeric: true, sensitivity: "base" });
+  }), [cabinet, cardSort]);
+
+  const packTabs = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; cards: OwnedAssetCard[] }>();
+    for (const card of sortedCards) {
+      for (const pack of card.packs) {
+        const group = map.get(pack.id) ?? { id: pack.id, name: pack.name, cards: [] };
+        if (!group.cards.some((candidate) => candidate.id === card.id)) group.cards.push(card);
+        map.set(pack.id, group);
+      }
+    }
+    return [...map.values()].filter((pack) => pack.cards.length > 0);
+  }, [cabinet]);
+
+  useEffect(() => {
+    if (activePackId !== "all" && !packTabs.some((pack) => pack.id === activePackId)) setActivePackId("all");
+  }, [activePackId, packTabs]);
+
+  const visibleCards = activePackId === "all" ? sortedCards : (packTabs.find((pack) => pack.id === activePackId)?.cards ?? []);
+
+  function toggle(card: OwnedAssetCard) {
+    if (!editing) { void openDetail(card); return; }
+    setSelected((current) => {
+      if (current.includes(card.id)) return current.filter((id) => id !== card.id);
+      if (current.length >= 6) { onError?.("最多陈列 6 张卡片"); return current; }
+      return [...current, card.id];
+    });
+  }
+
+  function openDetail(card: OwnedAssetCard) {
+    warmAssetImage(card.imageUrl);
+    setDetail(card);
+  }
+
+  async function saveShowcase() {
+    setSaving(true);
+    try {
+      const result = await api<{ cabinet: CardCabinet }>("/api/me/card-showcase", { method: "PATCH", body: { cardIds: selected } });
+      setCabinet(result.cabinet); setEditing(false);
+    } catch (error) { onError?.((error as Error).message); }
+    finally { setSaving(false); }
+  }
+
+  if (!cabinet) return <div className="card"><ListSkeleton rows={compact ? 2 : 5} /></div>;
+  const visibleShowcase = editing ? selected.map((id) => cabinet.cards.find((card) => card.id === id)).filter(Boolean) as OwnedAssetCard[] : cabinet.showcase;
+
+  return (
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 p-4 text-white shadow-soft">
+        <div className="flex items-start justify-between gap-3">
+          <div><p className="text-xs font-bold text-cyan-200">{editable ? "我的收藏柜" : `${cabinet.user.nickname}的收藏柜`}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-black"><span>{cabinet.user.totalCollectionValue.toLocaleString()} 收藏值</span><span>{cabinet.user.unlockedCardCount} 张卡</span><span>{cabinet.user.legendaryCardCount} 张传说</span></div></div>
+          <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-cyan-200 transition hover:bg-white/10 active:scale-95" onClick={() => setShowcaseCollapsed((collapsed) => !collapsed)} aria-expanded={!showcaseCollapsed} aria-label={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"} title={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"}><GalleryVerticalEnd size={30} /></button>
+        </div>
+        {!showcaseCollapsed && <><div className="mt-4 grid grid-cols-3 gap-2">
+          {visibleShowcase.map((card) => <AssetCardVisual key={card.id} card={card} animated={card.rarity === "legend"} className="asset-card-cabinet" onClick={() => void openDetail(card)} />)}
+          {Array.from({ length: Math.max(0, 6 - visibleShowcase.length) }, (_, index) => <div key={`empty-${index}`} className="aspect-[5/7] rounded-xl border border-dashed border-white/20 bg-white/5" />)}
+        </div>
+        {editable && !compact && <div className="mt-4 flex justify-end gap-2">{editing ? <><button className="rounded-full border border-white/25 px-4 py-2 text-xs font-bold" onClick={() => { setEditing(false); setSelected(cabinet.showcase.map((card) => card.id)); }}>取消</button><button className="rounded-full bg-white px-4 py-2 text-xs font-black text-slate-950" disabled={saving} onClick={() => void saveShowcase()}>{saving ? "保存中…" : `保存陈列 (${selected.length}/6)`}</button></> : <button className="rounded-full bg-white px-4 py-2 text-xs font-black text-slate-950" onClick={() => setEditing(true)}>调整陈列卡</button>}</div>}
+        {compact && editable && <button className="mt-4 w-full rounded-xl bg-white/10 py-2.5 text-xs font-bold" onClick={() => navigate("/mine/cards")}>查看全部收藏并调整陈列</button>}
+        </>}
+      </div>
+
+      {!compact && (cabinet.cards.length === 0 ? <div className="card p-8 text-center text-sm text-muted">还没有获得卡片，前往商城开启第一包吧。</div> : (
+        <div className="card p-4">
+          <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-4">
+            <button type="button" className={`min-w-24 shrink-0 snap-start rounded-xl border px-4 py-2.5 text-center transition ${activePackId === "all" ? "border-primary bg-blue-50 text-primary" : "border-line bg-white text-ink"}`} onClick={() => setActivePackId("all")}><span className="block text-sm font-black">全部</span><span className="mt-1 block text-[11px] font-bold opacity-70">{sortedCards.length} 张</span></button>
+            {packTabs.map((pack) => <button key={pack.id} type="button" className={`min-w-28 shrink-0 snap-start rounded-xl border px-4 py-2.5 text-center transition ${activePackId === pack.id ? "border-primary bg-blue-50 text-primary" : "border-line bg-white text-ink"}`} onClick={() => setActivePackId(pack.id)}><span className="block max-w-32 truncate text-sm font-black">{pack.name}</span><span className="mt-1 block text-[11px] font-bold opacity-70">收藏 {pack.cards.length} 张</span></button>)}
+          </div>
+          <div className="mb-4 flex items-center justify-between gap-3"><h3 className="font-black text-ink">{activePackId === "all" ? "全部卡牌" : packTabs.find((pack) => pack.id === activePackId)?.name}</h3><div className="flex items-center gap-2">{editing && <span className="hidden text-xs font-bold text-primary sm:inline">按选择顺序陈列</span>}<button type="button" className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-black transition active:scale-95 ${cardSort === "rarity" ? "border-violet-200 bg-violet-50 text-violet-700" : "border-blue-200 bg-blue-50 text-blue-700"}`} onClick={() => setCardSort((sort) => sort === "number" ? "rarity" : "number")} aria-label={`当前${cardSort === "number" ? "按序号排序" : "按品质排序"}，点击切换`}><span className="relative grid h-4 w-4 place-items-center">{cardSort === "number" ? <ArrowDown01 size={16} /> : <Gem size={16} />}</span>{cardSort === "number" ? "按序号排序" : "按品质排序"}</button></div></div>
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 md:grid-cols-6">
+            {visibleCards.map((card) => <div key={card.id} className="min-w-0"><AssetCardVisual card={card} className="asset-card-cabinet" selected={editing && selected.includes(card.id)} onClick={() => toggle(card)} /><div className="mt-2 flex items-center justify-between gap-1 text-[10px] font-bold"><span className="truncate text-muted">{ASSET_RARITY_LABELS[card.rarity]}</span><span className="text-ink">收藏值 {card.collectionValue}</span></div></div>)}
+          </div>
+        </div>
+      ))}
+
+      {detail && <Modal full bare onClose={() => setDetail(null)}>
+        <div className="flex min-h-full items-center justify-center py-4">
+          <div className="w-full max-w-md">
+            <div className="flex items-center justify-between gap-4 text-white"><div><p className="flex items-baseline gap-1.5 font-bold text-cyan-200"><span className="text-sm">NO.{detail.cardNo}</span><span className="text-sm opacity-70">·</span><span className="text-base">{ASSET_RARITY_LABELS[detail.rarity]}</span></p><h2 className="mt-1.5 text-2xl font-black leading-tight">{detail.name}</h2></div><button className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-white backdrop-blur" onClick={() => setDetail(null)} aria-label="关闭卡片详情"><X size={21} /></button></div>
+            <div className="relative mx-auto mt-4"><AssetCardVisual card={detail} animated={detail.rarity === "legend"} highDetail className="asset-card-cabinet" /></div>
+            <div className="mt-4 overflow-hidden rounded-2xl bg-white text-ink shadow-soft">
+              <div className="grid grid-cols-3 divide-x divide-line px-2 py-5 text-center text-sm">
+                <div className="px-2"><Star className="mx-auto text-amber-500" size={24} /><p className="mt-2 font-black">{detail.starLevel} 星</p></div>
+                <div className="px-2"><Gem className="mx-auto text-violet-500" size={24} /><p className="mt-2 font-black">{detail.collectionValue} 收藏值</p></div>
+                <div className="px-2"><Layers3 className="mx-auto text-cyan-600" size={24} /><p className="mt-2 font-black">累计 {detail.totalObtained} 张</p></div>
+              </div>
+              <div className="border-t border-line px-5 py-4">
+                {detail.starLevel < 3 ? <p className="text-base text-muted"><span className="font-black text-ink">升星进度</span><span className="float-right font-bold text-primary">{detail.duplicateProgress}/{detail.nextStarRequirement}</span></p> : <p className="text-base font-bold text-amber-600">已满星，后续重复卡将自动转化为贝壳。</p>}
+              </div>
+              {detail.story && <div className="border-t border-line px-5 py-5"><h3 className="text-base font-black">卡片故事</h3><p className="mt-2 whitespace-pre-wrap text-base leading-8 text-muted">{detail.story}</p></div>}
+            </div>
+          </div>
+        </div>
+      </Modal>}
+    </div>
+  );
+}

@@ -22,8 +22,9 @@ export function ProfileHero({
   showBadge?: boolean;
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
-      <div className="profile-gradient relative h-[118px] px-4 pt-4 text-white">
+    <div className="relative isolate overflow-hidden rounded-2xl bg-white shadow-soft">
+      {profile.profileBackgroundUrl && <img className="absolute inset-x-0 top-0 z-0 h-[118px] w-full object-cover" src={profile.profileBackgroundUrl} alt="" />}
+      <div className={`relative z-[1] h-[118px] px-4 pt-4 text-white ${profile.profileBackgroundUrl ? "bg-slate-950/30" : "profile-gradient"}`}>
         <div className="flex items-center gap-3">
           <button className="h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-white/90 bg-white/20 text-2xl font-black shadow-md" onClick={onAvatar} disabled={!onAvatar}>
             {profile.avatar ? <img className="h-full w-full object-cover" src={profile.avatar} alt="" /> : profile.nickname.slice(0, 1)}
@@ -38,7 +39,7 @@ export function ProfileHero({
           {actions && <div className="shrink-0">{actions}</div>}
         </div>
       </div>
-      <div className="grid grid-cols-3 divide-x divide-line px-2 py-3">
+      <div className={`relative z-[1] grid grid-cols-3 divide-x divide-line px-2 py-3 ${profile.profileBackgroundUrl ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>
         <div className="text-center"><p className="text-lg font-black text-ink">{profile.receivedLikeCount}</p><p className="text-xs text-muted">获赞</p></div>
         <button className="text-center" onClick={onFollowing}><p className="text-lg font-black text-ink">{profile.followingCount}</p><p className="text-xs text-muted">关注</p></button>
         <button className="text-center" onClick={onFollowers}><p className="text-lg font-black text-ink">{profile.followerCount}</p><p className="text-xs text-muted">粉丝</p></button>

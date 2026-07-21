@@ -23,6 +23,10 @@ const MyAchievementsPage = lazy(() => import("./pages/MyAchievementsPage"));
 const RankingsPage = lazy(() => import("./pages/RankingsPage"));
 const ShellTaskCenterPage = lazy(() => import("./pages/ShellTaskCenterPage"));
 const ShellTransactionsPage = lazy(() => import("./pages/ShellTransactionsPage"));
+const AssetStorePage = lazy(() => import("./pages/AssetStorePage"));
+const AssetPackPage = lazy(() => import("./pages/AssetPackPage"));
+const CardCabinetPage = lazy(() => import("./pages/CardCabinetPage"));
+const AssetDrawHistoryPage = lazy(() => import("./pages/AssetDrawHistoryPage"));
 const ExcellentAuthorPage = lazy(() => import("./pages/ExcellentAuthorPage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const UserProfilePage = lazy(() => import("./pages/UserProfilePage"));
@@ -34,6 +38,7 @@ const OnlineSoupSelectPage = lazy(() => import("./pages/OnlineSoupSelectPage"));
 const CirclesPage = lazy(() => import("./pages/CirclesPage"));
 const CircleChatPage = lazy(() => import("./pages/CircleChatPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
+const ProfileBackgroundsPage = lazy(() => import("./pages/ProfileBackgroundsPage"));
 const AchievementUnlockOverlay = lazy(() => import("./components/AchievementUnlockOverlay").then((module) => ({ default: module.AchievementUnlockOverlay })));
 const AuthModal = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.AuthModal })));
 const ExportPreview = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.ExportPreview })));
@@ -65,8 +70,12 @@ export default function App() {
           <Route path="mine/rankings" element={<RankingsPage />} />
           <Route path="mine/tasks" element={<ShellTaskCenterPage />} />
           <Route path="mine/shells/transactions" element={<ShellTransactionsPage />} />
+          <Route path="mine/store" element={<AssetStorePage />} />
+          <Route path="mine/cards" element={<CardCabinetPage />} />
+          <Route path="mine/asset-draw-history" element={<AssetDrawHistoryPage />} />
           <Route path="mine/settings" element={<AccountSettingsPage />} />
           <Route path="mine/settings/password" element={<ResetPasswordPage />} />
+          <Route path="mine/settings/backgrounds" element={<ProfileBackgroundsPage />} />
           <Route path="online-soup" element={<OnlineSoupLobbyPage />} />
           <Route path="circles" element={<CirclesPage />} />
         </Route>
@@ -76,6 +85,7 @@ export default function App() {
         <Route path="online-soup/rooms/:roomId" element={<OnlineSoupRoomPage />} />
         <Route path="online-soup/rooms/:roomId/select-soup" element={<OnlineSoupSelectPage />} />
         <Route path="circles/:circleId" element={<CircleChatPage />} />
+        <Route path="mine/store/:packId" element={<AssetPackPage />} />
 
         {/* Messages / Notifications / Requests / Admin */}
         <Route path="messages" element={<MessagesPage />} />

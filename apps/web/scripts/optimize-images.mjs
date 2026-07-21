@@ -56,6 +56,29 @@ async function optimizeBadges() {
   return { badgeCount: badgePngs.length, changed };
 }
 
+async function optimizeOversizedStaticImages() {
+  if (checkOnly) return 0;
+  let changed = 0;
+  for (const root of [publicRoot, sourceAssetRoot]) {
+    for (const file of (await filesBelow(root)).filter((item) => rasterPattern.test(item))) {
+      const relative = path.relative(webRoot, file).replaceAll("\\", "/");
+      if (relative.startsWith("public/badges/") || relative.includes("/stickers/")) continue;
+      const stat = await fs.stat(file);
+      const targetBudget = relative === "public/card-back.webp" ? 180_000 : 500_000;
+      if (stat.size <= targetBudget) continue;
+      const extension = path.extname(file).toLowerCase();
+      const pipeline = sharp(await fs.readFile(file), { animated: false }).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true });
+      const output = extension === ".png"
+        ? await pipeline.png({ palette: true, quality: 82, compressionLevel: 9, effort: 10, colours: 128, dither: 0.6 }).toBuffer()
+        : extension === ".webp"
+          ? await pipeline.webp({ quality: relative === "public/card-back.webp" ? 72 : 80, alphaQuality: 88, effort: 5 }).toBuffer()
+          : await pipeline.jpeg({ quality: 82, progressive: true, mozjpeg: true }).toBuffer();
+      if (output.length < stat.size && await writeIfChanged(file, output)) changed += 1;
+    }
+  }
+  return changed;
+}
+
 async function validateImages() {
   const errors = [];
   const badgeFiles = await filesBelow(badgeRoot);
@@ -96,7 +119,7 @@ async function validateImages() {
       const stat = await fs.stat(file);
       const metadata = await sharp(file, { animated: true }).metadata();
       const isAnimatedSticker = relative.includes("/stickers/") && (metadata.pages ?? 1) > 1;
-      const limit = isAnimatedSticker ? 300_000 : relative.startsWith("public/badges/") ? 350_000 : 500_000;
+      const limit = isAnimatedSticker ? 300_000 : relative.startsWith("public/badges/") ? 350_000 : relative === "public/card-back.webp" ? 180_000 : 500_000;
       if (stat.size > limit) errors.push(`${relative} 体积 ${(stat.size / 1024).toFixed(1)}KB，超过 ${(limit / 1024).toFixed(0)}KB`);
     }
   }
@@ -109,5 +132,6 @@ async function validateImages() {
 }
 
 const result = await optimizeBadges();
+const staticChanged = await optimizeOversizedStaticImages();
 const errors = await validateImages();
-if (!errors) console.log(`Image assets valid: ${result.badgeCount} badges checked, ${result.changed} files optimized.`);
+if (!errors) console.log(`Image assets valid: ${result.badgeCount} badges checked, ${result.changed + staticChanged} files optimized.`);

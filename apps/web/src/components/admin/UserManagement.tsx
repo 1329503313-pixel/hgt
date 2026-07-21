@@ -8,6 +8,9 @@ import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
 import { subscribeServerEvent } from "../../shared/serverEvents";
+import { useApp } from "../../context/AppContext";
+import type { ActivityBadgeCondition } from "../BadgeVisuals";
+import { ActivityConditionsEditor, newActivityCondition } from "./ActivityConditionsEditor";
 
 type AdminUser = PublicUser & {
   username: string;
@@ -24,6 +27,7 @@ type TodayFilter = "all" | "yes" | "no";
 type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "achievementPoints";
 type SortOrder = "asc" | "desc";
 type UserColumn = "user" | "role" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
+type BulkShellPreview = { matchedCount: number; eligibleCount: number; skippedCount: number };
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "user", label: "用户", width: "minmax(190px, 1fr)" },
@@ -42,6 +46,7 @@ const userColumns: readonly AdminColumn<UserColumn>[] = [
 ];
 
 export function UserManagement() {
+  const { showToast } = useApp();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -64,6 +69,13 @@ export function UserManagement() {
   const [shellAmount, setShellAmount] = useState("");
   const [shellError, setShellError] = useState("");
   const [shellAdjusting, setShellAdjusting] = useState(false);
+  const [bulkShellOpen, setBulkShellOpen] = useState(false);
+  const [bulkShellOperation, setBulkShellOperation] = useState<"add" | "deduct">("add");
+  const [bulkShellAmount, setBulkShellAmount] = useState("");
+  const [bulkShellConditions, setBulkShellConditions] = useState<ActivityBadgeCondition[]>(() => [newActivityCondition()]);
+  const [bulkShellPreview, setBulkShellPreview] = useState<BulkShellPreview | null>(null);
+  const [bulkShellBusy, setBulkShellBusy] = useState(false);
+  const [bulkShellError, setBulkShellError] = useState("");
   const presenceRefreshTimer = useRef<number | null>(null);
 
   const loadUsers = useCallback(async () => {
@@ -166,6 +178,41 @@ export function UserManagement() {
     }
   }
 
+  function bulkShellBody() {
+    return { operation: bulkShellOperation, amount: Number(bulkShellAmount), conditions: bulkShellConditions };
+  }
+
+  function closeBulkShell() {
+    if (bulkShellBusy) return;
+    setBulkShellOpen(false);
+    setBulkShellPreview(null);
+    setBulkShellError("");
+  }
+
+  async function previewBulkShells() {
+    const amount = Number(bulkShellAmount);
+    if (!Number.isInteger(amount) || amount <= 0) { setBulkShellError("请输入正整数贝壳数量"); return; }
+    if (bulkShellConditions.length === 0) { setBulkShellError("请至少设置一个用户条件"); return; }
+    setBulkShellBusy(true); setBulkShellError("");
+    try {
+      setBulkShellPreview(await api<BulkShellPreview>("/api/admin/users/bulk-shell-adjustments/preview", { method: "POST", body: bulkShellBody() }));
+    } catch (error) { setBulkShellError(error instanceof Error ? error.message : "符合用户计算失败"); }
+    finally { setBulkShellBusy(false); }
+  }
+
+  async function executeBulkShells() {
+    if (!bulkShellPreview || bulkShellPreview.eligibleCount === 0) return;
+    if (!confirm(`确定向 ${bulkShellPreview.eligibleCount} 位用户${bulkShellOperation === "add" ? "发放" : "扣除"} ${bulkShellAmount} 贝壳吗？`)) return;
+    setBulkShellBusy(true); setBulkShellError("");
+    try {
+      const result = await api<{ matchedCount: number; adjustedCount: number; skippedCount: number }>("/api/admin/users/bulk-shell-adjustments", { method: "POST", body: bulkShellBody() });
+      showToast(`已为 ${result.adjustedCount} 位用户${bulkShellOperation === "add" ? "发放" : "扣除"}贝壳${result.skippedCount ? `，跳过 ${result.skippedCount} 位余额不足用户` : ""}`);
+      setBulkShellOpen(false); setBulkShellPreview(null); setBulkShellAmount("");
+      await loadUsers();
+    } catch (error) { setBulkShellError(error instanceof Error ? error.message : "批量贝壳操作失败"); }
+    finally { setBulkShellBusy(false); }
+  }
+
   async function resetPassword() {
     if (!resetUser) return;
     if (newPassword.length < 6) {
@@ -190,7 +237,7 @@ export function UserManagement() {
           <h2 className="font-black text-ink">用户管理</h2>
           <div className="mt-1 text-sm text-muted">{total} 位用户</div>
         </div>
-        <ColumnSelector columns={userColumns} visible={visibleColumns} onChange={setVisibleColumns} />
+        <div className="flex items-center gap-2"><button type="button" className="btn btn-primary h-10 px-3 text-xs whitespace-nowrap" onClick={() => { setBulkShellOpen(true); setBulkShellPreview(null); setBulkShellError(""); }}><Shell size={16} />发放/扣除贝壳</button><ColumnSelector columns={userColumns} visible={visibleColumns} onChange={setVisibleColumns} /></div>
       </div>
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
@@ -283,6 +330,21 @@ export function UserManagement() {
         onPageSizeChange={(size) => { setPage(1); setPageSize(size); }}
       />
 
+      {bulkShellOpen && <Modal full onClose={closeBulkShell}>
+        <div className="flex items-start justify-between gap-3 border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">批量发放/扣除贝壳</h2><p className="mt-1 text-sm text-muted">多个条件需同时满足，仅面向普通用户</p></div><button className="btn btn-secondary shrink-0 px-3" disabled={bulkShellBusy} onClick={closeBulkShell}><X size={17} />关闭</button></div>
+        <div className="space-y-5 py-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div><span className="text-sm font-bold text-ink">操作类型</span><div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={`btn ${bulkShellOperation === "add" ? "btn-primary" : "btn-secondary"}`} disabled={bulkShellBusy} onClick={() => { setBulkShellOperation("add"); setBulkShellPreview(null); }}>发放贝壳</button><button type="button" className={`btn ${bulkShellOperation === "deduct" ? "btn-danger" : "btn-secondary"}`} disabled={bulkShellBusy} onClick={() => { setBulkShellOperation("deduct"); setBulkShellPreview(null); }}>扣除贝壳</button></div></div>
+            <label><span className="text-sm font-bold text-ink">每位用户调整数量</span><input className="field mt-2" type="number" min="1" step="1" value={bulkShellAmount} disabled={bulkShellBusy} onChange={(event) => { setBulkShellAmount(event.target.value); setBulkShellPreview(null); }} placeholder="请输入正整数" /></label>
+          </div>
+          <div><div className="mb-3"><h3 className="text-sm font-black text-ink">用户条件</h3><p className="mt-1 text-xs text-muted">规则与活动徽章发放条件一致</p></div><ActivityConditionsEditor value={bulkShellConditions} disabled={bulkShellBusy} onChange={(conditions) => { setBulkShellConditions(conditions); setBulkShellPreview(null); }} emptyText="请至少添加一个用户条件" /></div>
+          {bulkShellOperation === "deduct" && <p className="rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-700">余额不足本次扣减数量的用户将被跳过，不会扣成负数。</p>}
+          {bulkShellError && <p className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-600">{bulkShellError}</p>}
+          {bulkShellPreview && <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-4 text-center"><div><p className="text-xl font-black text-ink">{bulkShellPreview.matchedCount}</p><p className="mt-1 text-xs text-muted">符合条件</p></div><div><p className="text-xl font-black text-emerald-600">{bulkShellPreview.eligibleCount}</p><p className="mt-1 text-xs text-muted">实际操作</p></div><div><p className="text-xl font-black text-amber-600">{bulkShellPreview.skippedCount}</p><p className="mt-1 text-xs text-muted">余额不足跳过</p></div></div>}
+        </div>
+        <div className="sticky bottom-0 flex justify-end gap-2 border-t border-line bg-white pt-3"><button className="btn btn-secondary" disabled={bulkShellBusy} onClick={() => void previewBulkShells()}>{bulkShellBusy ? "计算中…" : "计算符合用户"}</button><button className={bulkShellOperation === "add" ? "btn btn-primary" : "btn btn-danger"} disabled={bulkShellBusy || !bulkShellPreview || bulkShellPreview.eligibleCount === 0} onClick={() => void executeBulkShells()}>{bulkShellBusy ? "处理中…" : `确认${bulkShellOperation === "add" ? "发放" : "扣除"}`}</button></div>
+      </Modal>}
+
       {resetUser && (
         <Modal onClose={closeResetPassword}>
           <form onSubmit={(event) => { event.preventDefault(); resetPassword(); }}>
@@ -310,10 +372,7 @@ export function UserManagement() {
       {shellUser && (
         <Modal onClose={() => { if (!shellAdjusting) { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellError(""); } }}>
           <div className="space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div><h2 className="text-lg font-black text-ink">{shellUser.nickname}的贝壳明细</h2><p className="mt-1 flex items-center gap-1 text-sm font-bold text-primary"><Shell size={16} />当前余额：{shellUser.shellBalance.toLocaleString()}</p></div>
-              <button className="btn btn-secondary shrink-0 px-3" type="button" disabled={shellAdjusting} onClick={() => { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellError(""); }}><X size={16} />关闭</button>
-            </div>
+            <div><h2 className="text-lg font-black text-ink">{shellUser.nickname}的贝壳明细</h2><p className="mt-1 flex items-center gap-1 text-sm font-bold text-primary"><Shell size={16} />当前余额：{shellUser.shellBalance.toLocaleString()}</p></div>
             <div className="grid grid-cols-2 gap-2">
               <button className="btn btn-primary" onClick={() => { setShellOperation("add"); setShellError(""); }}>增加</button>
               <button className="btn btn-secondary text-red-600" onClick={() => { setShellOperation("deduct"); setShellError(""); }}>扣减</button>

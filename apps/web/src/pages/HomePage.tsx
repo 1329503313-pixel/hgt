@@ -6,7 +6,7 @@ import { api, SoupsResponse } from "../api";
 import { useApp, soupDifficulties, soupTypes } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { MasonryList } from "../components/MasonryList";
-import { homeBannerUrl } from "../shared/staticAssets";
+import { HomeBannerCarousel } from "../components/HomeBannerCarousel";
 import { CoverGridSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
@@ -63,7 +63,7 @@ export default function HomePage() {
       params.set("offset", String(append ? offsetRef.current : 0));
       params.set("seed", randomSeedRef.current);
       params.set("includeTotal", "0");
-      const cacheKey = `hgt:home:${user?.id ?? "guest"}:${params.toString()}`;
+      const cacheKey = `hgt:home:v2:${user?.id ?? "guest"}:${params.toString()}`;
       const cached = append || bypassCache ? null : readSessionCache<HomeCacheData>(cacheKey, 45_000);
       if (cached) {
         setSoups(cached.soups);
@@ -293,9 +293,7 @@ export default function HomePage() {
       )}
 
       {!isResultMode && (
-        <div className="home-hero-banner">
-          <img src={homeBannerUrl} alt="故事背后藏着的真的是真相吗？" />
-        </div>
+        <HomeBannerCarousel />
       )}
 
       {filters.keyword && (usersLoading || matchedUsers.length > 0) && (

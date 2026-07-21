@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { config } from "./config.js";
+import { BANNER_MAX_BYTES, optimizeBannerImage, storedBannerImageBytes } from "./bannerImages.js";
 
 export const pool = mysql.createPool({
   ...config.db,
@@ -174,6 +175,12 @@ export async function initDatabase() {
   await ensureColumn("users", "equipped_badge_icon_url", "equipped_badge_icon_url VARCHAR(255) NULL AFTER equipped_badge_key");
   await ensureColumn("users", "last_login_at", "last_login_at DATETIME NULL AFTER badges_initialized");
   await ensureColumn("users", "shell_balance", "shell_balance INT UNSIGNED NOT NULL DEFAULT 0 AFTER last_login_at");
+  await ensureColumn("users", "profile_background", "profile_background LONGTEXT NULL AFTER avatar");
+  await ensureColumn("users", "profile_background_card_id", "profile_background_card_id VARCHAR(64) NULL AFTER profile_background");
+  await ensureColumn("users", "profile_background_crop_x", "profile_background_crop_x DECIMAL(6,3) NOT NULL DEFAULT 50 AFTER profile_background_card_id");
+  await ensureColumn("users", "profile_background_crop_y", "profile_background_crop_y DECIMAL(6,3) NOT NULL DEFAULT 50 AFTER profile_background_crop_x");
+  await ensureColumn("users", "profile_background_zoom", "profile_background_zoom DECIMAL(6,3) NOT NULL DEFAULT 1 AFTER profile_background_crop_y");
+  await ensureColumn("users", "profile_background_updated_at", "profile_background_updated_at DATETIME NULL AFTER profile_background_zoom");
   await ensureColumn("users", "token_version", "token_version INT NOT NULL DEFAULT 0 AFTER role");
   await ensureColumn("notifications", "actor_id", "actor_id VARCHAR(64) NULL AFTER related_id");
   await ensureIndex("notifications", "uq_notification_actor_event", "user_id, type, related_id, actor_id", true);
@@ -182,6 +189,8 @@ export async function initDatabase() {
   await ensureIndex("users", "idx_users_nickname", "nickname");
   await ensureIndex("soups", "idx_soups_created_at", "created_at");
   await ensureIndex("soups", "idx_soups_type_created", "type, created_at");
+  await ensureIndex("soups", "idx_soups_home_visibility", "review_status, is_surface_public, created_at");
+  await ensureIndex("soups", "idx_soups_creator_review", "creator_id, review_status, created_at");
   await ensureIndex("evaluations", "idx_evaluations_created_at", "created_at");
   await ensureIndex("evaluations", "idx_evaluations_reviewer", "reviewer_id");
   await pool.query(`
@@ -813,6 +822,195 @@ export async function initDatabase() {
   await ensureColumn("soups", "reviewed_by", "reviewed_by VARCHAR(64) NULL AFTER reviewed_at");
   await ensureIndex("soups", "idx_soups_review_status_created", "review_status, created_at");
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS home_banners (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      image_url LONGTEXT NULL,
+      link_url VARCHAR(2000) NULL,
+      weight INT NOT NULL DEFAULT 0,
+      enabled TINYINT(1) NOT NULL DEFAULT 1,
+      is_default TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_home_banners_display (enabled, weight, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(
+    `INSERT IGNORE INTO home_banners (id, name, image_url, link_url, weight, enabled, is_default)
+     VALUES ('default-home-banner', '默认 Banner', NULL, NULL, 0, 1, 1)`
+  );
+  await migrateBannerImages();
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_cards (
+      id VARCHAR(64) PRIMARY KEY,
+      card_no VARCHAR(64) NOT NULL UNIQUE,
+      name VARCHAR(100) NOT NULL,
+      rarity ENUM('normal','rare','epic','legend') NOT NULL,
+      image_url LONGTEXT NOT NULL,
+      thumbnail_url LONGTEXT NULL,
+      story TEXT NULL,
+      release_at DATETIME NULL,
+      status ENUM('active','inactive') NOT NULL DEFAULT 'inactive',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_asset_cards_status_no (status, card_no)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_packs (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      cover_url LONGTEXT NOT NULL,
+      cover_thumbnail LONGTEXT NULL,
+      description VARCHAR(1000) NOT NULL DEFAULT '',
+      pack_story TEXT NULL,
+      pack_type ENUM('permanent','limited','collaboration') NOT NULL DEFAULT 'permanent',
+      single_price INT UNSIGNED NOT NULL DEFAULT 0,
+      ten_price INT UNSIGNED NOT NULL DEFAULT 0,
+      daily_free_draws INT UNSIGNED NOT NULL DEFAULT 0,
+      sale_start_at DATETIME NULL,
+      sale_end_at DATETIME NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      sort_order INT NOT NULL DEFAULT 0,
+      probability_notice TEXT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_asset_packs_sale (enabled, sale_start_at, sale_end_at, sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn("asset_packs", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_url");
+  await ensureColumn("asset_packs", "pack_story", "pack_story TEXT NULL AFTER description");
+  await migrateAssetThumbnails();
+  await pool.query("UPDATE asset_packs SET sale_start_at = NULL, sale_end_at = NULL WHERE pack_type = 'permanent' AND (sale_start_at IS NOT NULL OR sale_end_at IS NOT NULL)");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_pack_cards (
+      pack_id VARCHAR(64) NOT NULL,
+      card_id VARCHAR(64) NOT NULL,
+      probability DECIMAL(12,8) NOT NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 1,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (pack_id, card_id),
+      INDEX idx_asset_pack_cards_enabled (pack_id, enabled),
+      CONSTRAINT fk_asset_pack_card_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE CASCADE,
+      CONSTRAINT fk_asset_pack_card_card FOREIGN KEY (card_id) REFERENCES asset_cards(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_pack_rarity_probabilities (
+      pack_id VARCHAR(64) NOT NULL,
+      rarity ENUM('normal','rare','epic','legend') NOT NULL,
+      probability DECIMAL(12,8) NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (pack_id, rarity),
+      CONSTRAINT fk_asset_pack_rarity_probability_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_asset_cards (
+      user_id VARCHAR(64) NOT NULL,
+      card_id VARCHAR(64) NOT NULL,
+      star_level TINYINT UNSIGNED NOT NULL DEFAULT 0,
+      duplicate_progress INT UNSIGNED NOT NULL DEFAULT 0,
+      total_obtained INT UNSIGNED NOT NULL DEFAULT 1,
+      collection_value INT UNSIGNED NOT NULL DEFAULT 0,
+      first_obtained_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_obtained_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      display_order TINYINT UNSIGNED NULL,
+      PRIMARY KEY (user_id, card_id),
+      INDEX idx_user_asset_cards_display (user_id, display_order),
+      INDEX idx_user_asset_cards_card_star (card_id, star_level),
+      CONSTRAINT fk_user_asset_card_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_asset_card_card FOREIGN KEY (card_id) REFERENCES asset_cards(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_asset_summaries (
+      user_id VARCHAR(64) PRIMARY KEY,
+      total_collection_value INT UNSIGNED NOT NULL DEFAULT 0,
+      unlocked_card_count INT UNSIGNED NOT NULL DEFAULT 0,
+      legendary_card_count INT UNSIGNED NOT NULL DEFAULT 0,
+      score_reached_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_user_asset_summary_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_pity_progress (
+      user_id VARCHAR(64) NOT NULL,
+      pack_type ENUM('permanent','limited','collaboration') NOT NULL,
+      rare_count INT UNSIGNED NOT NULL DEFAULT 0,
+      epic_count INT UNSIGNED NOT NULL DEFAULT 0,
+      legend_count INT UNSIGNED NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, pack_type),
+      CONSTRAINT fk_asset_pity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_daily_free_usage (
+      user_id VARCHAR(64) NOT NULL,
+      pack_id VARCHAR(64) NOT NULL,
+      usage_date DATE NOT NULL,
+      used_count INT UNSIGNED NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, pack_id, usage_date),
+      CONSTRAINT fk_asset_free_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_asset_free_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_draw_orders (
+      id VARCHAR(64) PRIMARY KEY,
+      request_id VARCHAR(100) NOT NULL UNIQUE,
+      user_id VARCHAR(64) NOT NULL,
+      pack_id VARCHAR(64) NOT NULL,
+      draw_mode ENUM('single','ten') NOT NULL,
+      draw_count TINYINT UNSIGNED NOT NULL,
+      shell_cost INT UNSIGNED NOT NULL DEFAULT 0,
+      used_free_draw TINYINT(1) NOT NULL DEFAULT 0,
+      status ENUM('processing','completed','failed') NOT NULL DEFAULT 'processing',
+      pack_snapshot JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME NULL,
+      INDEX idx_asset_draw_orders_user_time (user_id, created_at, id),
+      INDEX idx_asset_draw_orders_pack_time (pack_id, created_at),
+      CONSTRAINT fk_asset_draw_order_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_asset_draw_order_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_draw_results (
+      id VARCHAR(64) PRIMARY KEY,
+      order_id VARCHAR(64) NOT NULL,
+      draw_index TINYINT UNSIGNED NOT NULL,
+      card_id VARCHAR(64) NOT NULL,
+      rarity ENUM('normal','rare','epic','legend') NOT NULL,
+      pity_type ENUM('rare','epic','legend') NULL,
+      star_before TINYINT NULL,
+      star_after TINYINT NOT NULL,
+      first_obtained TINYINT(1) NOT NULL DEFAULT 0,
+      star_upgraded TINYINT(1) NOT NULL DEFAULT 0,
+      full_star_duplicate TINYINT(1) NOT NULL DEFAULT 0,
+      shell_refund INT UNSIGNED NOT NULL DEFAULT 0,
+      probability_snapshot JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_asset_draw_result_order_index (order_id, draw_index),
+      INDEX idx_asset_draw_results_card_time (card_id, created_at),
+      CONSTRAINT fk_asset_draw_result_order FOREIGN KEY (order_id) REFERENCES asset_draw_orders(id) ON DELETE CASCADE,
+      CONSTRAINT fk_asset_draw_result_card FOREIGN KEY (card_id) REFERENCES asset_cards(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   await seedAdmin();
   await seedDefaultCircles();
 }
@@ -936,6 +1134,72 @@ async function seedAdmin() {
     "INSERT INTO users (id, username, password, nickname, role) VALUES (?, ?, ?, ?, ?)",
     ["admin", "admin", hash, "管理员", "admin"]
   );
+}
+
+async function migrateAssetThumbnails() {
+  const sharp = (await import("sharp")).default;
+  const [cards, packs] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, image_url, thumbnail_url FROM asset_cards
+       WHERE image_url LIKE 'data:image/%;base64,%'
+         AND (image_url NOT LIKE 'data:image/webp;base64,%' OR OCTET_LENGTH(image_url) > 700000
+           OR thumbnail_url IS NULL OR thumbnail_url = '' OR OCTET_LENGTH(thumbnail_url) >= OCTET_LENGTH(image_url))`
+    ).then(([rows]) => rows),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, cover_url, cover_thumbnail FROM asset_packs
+       WHERE cover_url LIKE 'data:image/%;base64,%'
+         AND (cover_url NOT LIKE 'data:image/webp;base64,%' OR OCTET_LENGTH(cover_url) > 700000
+           OR cover_thumbnail IS NULL OR cover_thumbnail = '')`
+    ).then(([rows]) => rows)
+  ]);
+  for (const row of cards) {
+    try {
+      const source = Buffer.from(String(row.image_url).replace(/^data:image\/[^;]+;base64,/, ""), "base64");
+      const [full, thumbnail] = await Promise.all([
+        sharp(source).rotate().resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true }).webp({ quality: 84, effort: 4 }).toBuffer(),
+        sharp(source).rotate().resize({ width: 360, withoutEnlargement: true }).webp({ quality: 78, effort: 4 }).toBuffer()
+      ]);
+      await pool.query("UPDATE asset_cards SET image_url = ?, thumbnail_url = ? WHERE id = ?", [
+        `data:image/webp;base64,${full.toString("base64")}`,
+        `data:image/webp;base64,${thumbnail.toString("base64")}`,
+        row.id
+      ]);
+    } catch (error) {
+      console.error(`migrateAssetThumbnails: card ${row.id} failed`, (error as Error).message);
+    }
+  }
+  for (const row of packs) {
+    try {
+      const source = Buffer.from(String(row.cover_url).replace(/^data:image\/[^;]+;base64,/, ""), "base64");
+      const [full, thumbnail] = await Promise.all([
+        sharp(source).rotate().resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true }).webp({ quality: 84, effort: 4 }).toBuffer(),
+        sharp(source).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 78, effort: 4 }).toBuffer()
+      ]);
+      await pool.query("UPDATE asset_packs SET cover_url = ?, cover_thumbnail = ? WHERE id = ?", [
+        `data:image/webp;base64,${full.toString("base64")}`,
+        `data:image/webp;base64,${thumbnail.toString("base64")}`,
+        row.id
+      ]);
+    } catch (error) {
+      console.error(`migrateAssetThumbnails: pack ${row.id} failed`, (error as Error).message);
+    }
+  }
+}
+
+async function migrateBannerImages() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, image_url FROM home_banners WHERE image_url IS NOT NULL AND image_url LIKE 'data:image/%;base64,%'"
+  );
+  for (const row of rows) {
+    const stored = String(row.image_url);
+    if (stored.startsWith("data:image/webp;base64,") && storedBannerImageBytes(stored) <= BANNER_MAX_BYTES) continue;
+    const optimized = await optimizeBannerImage(stored);
+    if (!optimized) {
+      console.error(`migrateBannerImages: banner ${row.id} could not be compressed below 300KB`);
+      continue;
+    }
+    await pool.query("UPDATE home_banners SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [optimized, row.id]);
+  }
 }
 
 async function seedDefaultCircles() {

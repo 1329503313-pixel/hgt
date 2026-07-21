@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Award, CalendarClock, Eye, Plus, RotateCcw, Search, ShieldPlus, Trash2, Users, X } from "lucide-react";
+import { Award, CalendarClock, Eye, RotateCcw, Search, ShieldPlus, Users, X } from "lucide-react";
 import { api } from "../../api";
 import { useApp } from "../../context/AppContext";
 import { BADGES, getBadgeKey, TIER_COLORS_EARNED, TIER_LABEL, type BadgeDef } from "../../pages/MyAchievementsPage";
-import { ACTIVITY_CONDITION_LABELS, ActivityBadgeCondition, ActivityConditionKind, LegendaryBadge, LegendaryBadgeIcon, LegendaryBadgeTile, activityConditionText } from "../BadgeVisuals";
+import { ActivityBadgeCondition, LegendaryBadge, LegendaryBadgeIcon, LegendaryBadgeTile, activityConditionText } from "../BadgeVisuals";
 import { Modal } from "../Modal";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { CardSkeleton, ListSkeleton } from "../Skeletons";
+import { ActivityConditionsEditor } from "./ActivityConditionsEditor";
 
 type BadgeAdminUser = {
   id: string;
@@ -168,25 +169,6 @@ export function BadgeManagement() {
     setConditionDraft(badge.activityConditions.map((condition) => ({ ...condition })));
   }
 
-  function addActivityCondition() {
-    const today = new Date().toISOString().slice(0, 10);
-    setConditionDraft((current) => [...current, { kind: "login", startDate: today, endDate: today, target: 1 }]);
-  }
-
-  function updateActivityCondition(index: number, patch: Partial<ActivityBadgeCondition>) {
-    setConditionDraft((current) => current.map((condition, conditionIndex) => conditionIndex === index ? { ...condition, ...patch } : condition));
-  }
-
-  function updateActivityTimeMode(index: number, mode: "date" | "long_term") {
-    const today = new Date().toISOString().slice(0, 10);
-    setConditionDraft((current) => current.map((condition, conditionIndex) => {
-      if (conditionIndex !== index) return condition;
-      return mode === "long_term"
-        ? { ...condition, startDate: "long_term", endDate: "long_term" }
-        : { ...condition, startDate: today, endDate: today };
-    }));
-  }
-
   async function saveActivityConditions() {
     if (!conditionBadge) return;
     setModalLoading(true);
@@ -316,19 +298,7 @@ export function BadgeManagement() {
             <div><h2 className="text-lg font-black text-ink">设置活动发放条件</h2><p className="mt-1 text-sm text-muted">{conditionBadge.name} · 多个条件需同时满足；已获得用户不会被收回或重复发放</p></div>
             <button className="btn btn-secondary px-3" disabled={modalLoading} onClick={() => setConditionBadge(null)}><X size={17} /></button>
           </div>
-          <div className="space-y-3 py-4">
-            {conditionDraft.map((condition, index) => (
-              <div key={index} className="grid gap-3 rounded-xl border border-line p-3 md:grid-cols-[1.2fr_1fr_1fr_110px_auto] md:items-end">
-                <label className="text-xs font-bold text-muted">条件类型<select className="field mt-1" value={condition.kind} onChange={(event) => { const kind = event.target.value as ActivityConditionKind; updateActivityCondition(index, { kind, target: kind === "user_joined" ? undefined : kind === "login" ? 1 : (condition.target ?? 1) }); }}>{Object.entries(ACTIVITY_CONDITION_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                <label className="text-xs font-bold text-muted">开始日期<select className="field mt-1" value={condition.startDate === "long_term" ? "long_term" : "date"} onChange={(event) => updateActivityTimeMode(index, event.target.value as "date" | "long_term")}><option value="date">指定日期</option><option value="long_term">长期有效</option></select>{condition.startDate !== "long_term" && <input className="field mt-1" type="date" value={condition.startDate} onChange={(event) => updateActivityCondition(index, { startDate: event.target.value })} />}</label>
-                <label className="text-xs font-bold text-muted">结束日期<select className="field mt-1" value={condition.endDate === "long_term" ? "long_term" : "date"} onChange={(event) => updateActivityTimeMode(index, event.target.value as "date" | "long_term")}><option value="date">指定日期</option><option value="long_term">长期有效</option></select>{condition.endDate !== "long_term" && <input className="field mt-1" type="date" value={condition.endDate} onChange={(event) => updateActivityCondition(index, { endDate: event.target.value })} />}</label>
-                {["login", "user_joined"].includes(condition.kind) ? <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs font-bold text-muted">无需设置次数</div> : <label className="text-xs font-bold text-muted">数量<input className="field mt-1" type="number" min={1} max={1000000} value={condition.target ?? 1} onChange={(event) => updateActivityCondition(index, { target: Math.max(1, Number(event.target.value) || 1) })} /></label>}
-                <button className="btn btn-danger h-11 px-3" type="button" disabled={modalLoading} onClick={() => setConditionDraft((current) => current.filter((_, conditionIndex) => conditionIndex !== index))}><Trash2 size={15} /></button>
-              </div>
-            ))}
-            {conditionDraft.length === 0 && <p className="rounded-xl border border-dashed border-line py-8 text-center text-sm text-muted">未设置活动规则时不会自动发放</p>}
-            <button className="btn btn-secondary" type="button" disabled={conditionDraft.length >= 8 || modalLoading} onClick={addActivityCondition}><Plus size={15} />添加条件</button>
-          </div>
+          <div className="py-4"><ActivityConditionsEditor value={conditionDraft} onChange={setConditionDraft} disabled={modalLoading} emptyText="未设置活动规则时不会自动发放" /></div>
           <div className="flex justify-end gap-2 border-t border-line pt-3"><button className="btn btn-secondary" disabled={modalLoading} onClick={() => setConditionBadge(null)}>取消</button><button className="btn btn-primary" disabled={modalLoading} onClick={saveActivityConditions}>{modalLoading ? "保存中…" : "保存条件"}</button></div>
         </Modal>
       )}

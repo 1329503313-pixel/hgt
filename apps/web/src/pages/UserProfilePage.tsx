@@ -9,6 +9,7 @@ import { ProfileHero, SoupCoverGrid } from "../components/ProfileViews";
 import { ProfileSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
+import { CardCabinetSection } from "../components/CardCabinetSection";
 
 type ProfileResponse = { profile: SocialProfile; soups: SoupSummary[] };
 const profileCacheKey = (viewerId: string, targetId: string) => `hgt:user-profile:${viewerId}:${targetId}`;
@@ -72,6 +73,7 @@ export default function UserProfilePage() {
             <button className="grid h-10 w-10 place-items-center rounded-full border border-white/70 bg-white/20 text-white disabled:opacity-45" onClick={() => void messageUser()} disabled={!profile.isFollowing} title={profile.isFollowing ? "私信" : "关注后可私信"}><MessageCircle size={19} /></button>
           </div>
         ) : undefined} />
+        <CardCabinetSection userId={profile.id} compact onError={showToast} />
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
           <div className="border-b border-line px-4 py-3 text-sm font-black text-ink">发布 {soups.length}</div>
           <SoupCoverGrid soups={soups} emptyHint="还没有公开作品" />

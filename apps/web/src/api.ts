@@ -53,6 +53,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     if (fetchOptions.body && !(fetchOptions.body instanceof FormData)) headers.set("Content-Type", "application/json");
     const response = await fetch(`${API_URL}${path}`, {
       ...fetchOptions,
+      cache: bypassCache ? "no-store" : fetchOptions.cache,
       credentials: "include",
       headers,
       body:
@@ -105,6 +106,15 @@ export type StatsResponse = {
   writtenCommentCount: number;
   aiCompletionCount: number;
   maxOriginalSoupHeat: number;
+  totalCollectionValue: number;
+  unlockedCardCount: number;
+  legendaryCardDrawCount: number;
+  epicThreeStarCount: number;
+  legendThreeStarCount: number;
+  completePackCount: number;
+  completeThreeStarPackCount: number;
+  totalShellEarned: number;
+  shellBalance: number;
 };
 export type SpecialBadgeUnlock = {
   id: string;

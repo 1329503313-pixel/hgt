@@ -7,7 +7,10 @@ export function parentRoute(pathname: string) {
   if (path === "/messages") return "/";
 
   if (path === "/mine/settings/password") return "/mine/settings";
+  if (path === "/mine/settings/backgrounds") return "/mine/settings";
   if (path === "/mine/shells/transactions") return "/mine";
+  if (path === "/mine/store" || path === "/mine/cards") return "/mine";
+  if (path === "/mine/asset-draw-history") return "/mine/store";
   if (/^\/mine\/[^/]+$/.test(path)) return "/mine";
   if (path === "/mine") return "/";
 

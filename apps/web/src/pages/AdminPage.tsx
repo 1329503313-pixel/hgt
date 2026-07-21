@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
-import { AdminTopBar, AdminTab } from "../components/admin/AdminTopBar";
+import { AdminSidebar, AdminTopBar, AdminTab } from "../components/admin/AdminTopBar";
 import { UserManagement } from "../components/admin/UserManagement";
 import { SoupManagement } from "../components/admin/SoupManagement";
 import { EvaluationManagement } from "../components/admin/EvaluationManagement";
@@ -12,6 +12,8 @@ import { NoticeManagement } from "../components/admin/NoticeManagement";
 import { CardSkeleton } from "../components/Skeletons";
 import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomManagement";
 import { CircleManagement } from "../components/admin/CircleManagement";
+import { DigitalAssetManagement } from "../components/admin/DigitalAssetManagement";
+import { BannerManagement } from "../components/admin/BannerManagement";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -29,17 +31,22 @@ export default function AdminPage() {
 
   return (
     <section className="min-h-screen bg-page">
-      <AdminTopBar activeTab={activeTab} onTabChange={setActiveTab} />
-      <div className="mx-auto max-w-7xl px-4 pt-[72px] pb-8 space-y-4">
-        {activeTab === "data" && <AdminDashboard />}
-        {activeTab === "users" && <UserManagement />}
-        {activeTab === "badges" && <BadgeManagement />}
-        {activeTab === "approvals" && <ApprovalManagement />}
-        {activeTab === "soups" && <SoupManagement />}
-        {activeTab === "evaluations" && <EvaluationManagement />}
-        {activeTab === "online-soup" && <OnlineSoupRoomManagement />}
-        {activeTab === "circles" && <CircleManagement />}
-        {activeTab === "notices" && <NoticeManagement />}
+      <AdminTopBar />
+      <AdminSidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <div className="ml-20 px-3 pb-8 pt-[81px] sm:ml-44 sm:px-4">
+        <div className="mx-auto max-w-7xl space-y-4">
+          {activeTab === "data" && <AdminDashboard />}
+          {activeTab === "banners" && <BannerManagement />}
+          {activeTab === "users" && <UserManagement />}
+          {activeTab === "soups" && <SoupManagement />}
+          {activeTab === "evaluations" && <EvaluationManagement />}
+          {activeTab === "badges" && <BadgeManagement />}
+          {activeTab === "approvals" && <ApprovalManagement />}
+          {activeTab === "online-soup" && <OnlineSoupRoomManagement />}
+          {activeTab === "circles" && <CircleManagement />}
+          {activeTab === "assets" && <DigitalAssetManagement />}
+          {activeTab === "notices" && <NoticeManagement />}
+        </div>
       </div>
     </section>
   );

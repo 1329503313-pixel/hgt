@@ -18,10 +18,14 @@ import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarit
 import { PublicUser } from "./types.js";
 import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
+import { registerDigitalAssetRoutes } from "./digitalAssets.js";
+import { registerBannerRoutes } from "./banners.js";
 import {
   adjustShellBalance,
+  bulkAdjustShellBalances,
   awardShellTask,
   beijingTaskDate,
+  setShellBadgeProgressListener,
   shellTaskCenter,
   shellTransactions
 } from "./shellCurrency.js";
@@ -60,6 +64,7 @@ app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 const userEventClients = new Map<string, Set<Response>>();
+const unreadCountsCache = new Map<string, { expiresAt: number; payload: unknown }>();
 const onlineSoupRoomSocketClients = new Map<string, Set<WebSocket>>();
 const onlineSoupLobbySocketClients = new Set<WebSocket>();
 const circleSocketClients = new Map<string, Set<WebSocket>>();
@@ -96,6 +101,7 @@ function emitUserEvent(userId: string, event: string, payload: unknown) {
 }
 
 function emitUnreadChanged(userId: string, source: string) {
+  unreadCountsCache.delete(userId);
   emitUserEvent(userId, "unread_changed", { source, at: new Date().toISOString() });
 }
 
@@ -295,18 +301,27 @@ if (config.nodeEnv === "production") {
     maxAge: "1y",
     immutable: true
   }));
+  app.use("/stickers", express.static(path.resolve(frontendDist, "stickers"), {
+    index: false,
+    maxAge: "1y",
+    immutable: true
+  }));
+  app.use("/share", express.static(path.resolve(frontendDist, "share"), {
+    index: false,
+    maxAge: "30d"
+  }));
   app.use("/assets", express.static(path.resolve(frontendDist, "assets"), {
     index: false,
     maxAge: "1y",
     immutable: true
   }));
   app.use((req, res, next) => {
-    if (req.path === "/turtle-avatar.png" || req.path === "/turtle-watermark.png") {
+    if (req.path === "/turtle-avatar.png" || req.path === "/turtle-watermark.png" || req.path === "/card-back.webp") {
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     }
     next();
   });
-  app.use(express.static(frontendDist, { index: false }));
+  app.use(express.static(frontendDist, { index: false, maxAge: "1h" }));
   app.get("*", (_req, res, next) => {
     if (_req.path.startsWith("/api/")) return next();
     res.setHeader("Cache-Control", "no-cache");
@@ -346,8 +361,25 @@ const activityConditionSchema = z.object({
   }
 });
 const activityConditionsSchema = z.array(activityConditionSchema).max(8);
+const bulkShellAdjustmentSchema = z.object({
+  operation: z.enum(["add", "deduct"]),
+  amount: z.number().int().positive().max(10_000_000),
+  conditions: activityConditionsSchema
+}).refine((value) => value.conditions.length > 0, { message: "请至少设置一个用户条件", path: ["conditions"] });
 type ActivityBadgeCondition = z.infer<typeof activityConditionSchema>;
 type ActivityConditionKind = ActivityBadgeCondition["kind"];
+
+const ACTIVITY_CONDITION_SOURCES: Record<ActivityConditionKind, { table: string; userColumn: string; dateExpression: (alias: string) => string }> = {
+  login: { table: "user_login_days", userColumn: "user_id", dateExpression: (alias) => `${alias}.login_date` },
+  user_joined: { table: "users", userColumn: "id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` },
+  publish: { table: "soups", userColumn: "creator_id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` },
+  like_given: { table: "soup_like_history", userColumn: "actor_id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` },
+  comment_given: { table: "evaluation_comment_history", userColumn: "reviewer_id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` },
+  favorite_given: { table: "soup_favorite_history", userColumn: "actor_id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` },
+  like_received: { table: "soup_like_history", userColumn: "creator_id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` },
+  comment_received: { table: "evaluation_comment_history", userColumn: "creator_id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` },
+  favorite_received: { table: "soup_favorite_history", userColumn: "creator_id", dateExpression: (alias) => `DATE(DATE_ADD(${alias}.created_at, INTERVAL 8 HOUR))` }
+};
 
 function badgeActivityConditions(value: unknown): ActivityBadgeCondition[] {
   try {
@@ -493,19 +525,25 @@ function avatarUrl(userId: unknown, stored: unknown, hasAvatar = false) {
   return value && !value.startsWith("data:image/") ? value : `/api/media/users/${encodeURIComponent(String(userId))}/avatar`;
 }
 
-function soupImageUrl(soupId: unknown, stored: unknown, variant: "thumbnail" | "cover") {
-  if (!stored) return null;
-  const value = String(stored);
-  return value.startsWith("data:image/")
+function profileBackgroundUrl(userId: unknown, hasBackground: unknown, updatedAt: unknown) {
+  if (!bool(hasBackground)) return null;
+  const version = updatedAt ? new Date(updatedAt as string | number | Date).getTime() : 0;
+  return `/api/media/users/${encodeURIComponent(String(userId))}/profile-background?v=${version}`;
+}
+
+function soupImageUrl(soupId: unknown, stored: unknown, variant: "thumbnail" | "cover", hasStored = false) {
+  if (!stored && !hasStored) return null;
+  const value = stored ? String(stored) : "";
+  return !value || value.startsWith("data:image/")
     ? `/api/media/soups/${encodeURIComponent(String(soupId))}/${variant}`
     : value;
 }
 
-function circleAvatarUrl(circleId: unknown, stored: unknown, updatedAt?: unknown) {
-  if (!stored) return "/turtle-avatar.png?v=5272-20260716";
-  const value = String(stored);
-  if (!value.startsWith("data:image/")) return value;
-  const version = createHash("sha1").update(value).digest("hex").slice(0, 16);
+function circleAvatarUrl(circleId: unknown, stored: unknown, updatedAt?: unknown, hasStored = false) {
+  if (!stored && !hasStored) return "/turtle-avatar.png?v=5272-20260716";
+  const value = stored ? String(stored) : "";
+  if (value && !value.startsWith("data:image/")) return value;
+  const version = value ? createHash("sha1").update(value).digest("hex").slice(0, 16) : new Date(updatedAt as string | number | Date).getTime();
   return `/api/media/circles/${encodeURIComponent(String(circleId))}/avatar?v=${encodeURIComponent(String(version))}`;
 }
 
@@ -536,11 +574,14 @@ async function sendStoredImage(
   if (reqHeaderMatches(req.headers["if-none-match"], etag)) return res.status(304).end();
   let output = optimizedImageCache.get(etag);
   if (!output) {
-    output = await sharp(decoded.buffer)
-      .rotate()
-      .resize({ width: maxWidth, height: maxWidth, fit: "inside", withoutEnlargement: true })
-      .webp({ quality: 78, effort: 4 })
-      .toBuffer();
+    const metadata = decoded.contentType === "image/webp" ? await sharp(decoded.buffer).metadata() : null;
+    output = metadata && (metadata.width ?? 0) <= maxWidth && (metadata.height ?? 0) <= maxWidth
+      ? decoded.buffer
+      : await sharp(decoded.buffer)
+        .rotate()
+        .resize({ width: maxWidth, height: maxWidth, fit: "inside", withoutEnlargement: true })
+        .webp({ quality: 78, effort: 4 })
+        .toBuffer();
     optimizedImageCache.set(etag, output);
     if (optimizedImageCache.size > 200) optimizedImageCache.delete(optimizedImageCache.keys().next().value!);
   }
@@ -572,18 +613,38 @@ function escapeLikePattern(value: string) {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
+const currentUserCache = new Map<string, { expiresAt: number; user: AuthenticatedUser | null }>();
+const currentUserInFlight = new Map<string, Promise<AuthenticatedUser | null>>();
+
 async function currentUser(req: express.Request): Promise<AuthenticatedUser | null> {
   const claims = extractAuthClaims(req);
   if (!claims) return null;
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, nickname, role, token_version, created_at,
-       equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
-     FROM users WHERE id = ? LIMIT 1`,
-    [claims.id]
-  );
-  const row = rows[0];
-  if (!row || Number(row.token_version ?? 0) !== claims.tokenVersion) return null;
-  return { ...toUser(row), tokenVersion: Number(row.token_version ?? 0) };
+  const cacheKey = `${claims.id}:${claims.tokenVersion}`;
+  const cached = currentUserCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.user;
+  const pending = currentUserInFlight.get(cacheKey);
+  if (pending) return pending;
+  const request = (async () => {
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, username, nickname, role, token_version, created_at,
+         equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
+       FROM users WHERE id = ? LIMIT 1`,
+      [claims.id]
+    );
+    const row = rows[0];
+    const user = !row || Number(row.token_version ?? 0) !== claims.tokenVersion
+      ? null
+      : { ...toUser(row), tokenVersion: Number(row.token_version ?? 0) };
+    currentUserCache.set(cacheKey, { expiresAt: Date.now() + 2_000, user });
+    if (currentUserCache.size > 1000) currentUserCache.delete(currentUserCache.keys().next().value!);
+    return user;
+  })();
+  currentUserInFlight.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    currentUserInFlight.delete(cacheKey);
+  }
 }
 
 function viewIdentifier(req: express.Request, user: PublicUser | null) {
@@ -704,6 +765,15 @@ const SYSTEM_BADGE_ICON_BASE: Record<string, string> = {
   commenter: "commenter",
   aiClear: "ai-clear",
   heat: "heat",
+  collectionValue: "collection-value",
+  cardCollector: "card-collector",
+  legendCard: "legend-card",
+  threeStarEpic: "three-star-epic",
+  threeStarLegend: "three-star-legend",
+  packCompletion: "pack-complete",
+  packAllThreeStar: "pack-all-three-star",
+  shellWealth: "shell-wealth",
+  shellBalance: "shell-balance",
   excellentAuthor: "excellent-author"
 };
 
@@ -752,7 +822,7 @@ function mapEvaluation(row: mysql.RowDataPacket) {
     total: Number(row.total),
     reviewer: row.reviewer,
     reviewerId: row.reviewer_id,
-    reviewerAvatar: avatarUrl(row.reviewer_id, row.reviewer_avatar),
+    reviewerAvatar: avatarUrl(row.reviewer_id, row.reviewer_avatar, bool(row.reviewer_has_avatar)),
     reviewerEquippedBadge: equippedBadge(row.reviewer_badge_key, row.reviewer_badge_icon_url),
     writing: num(row.writing),
     logic: num(row.logic),
@@ -778,11 +848,11 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     type: row.type,
     difficulty: String(row.difficulty ?? "普通"),
     summary: row.summary ?? "",
-    coverImage: soupImageUrl(row.id, row.cover_thumbnail, "thumbnail"),
+    coverImage: soupImageUrl(row.id, row.cover_thumbnail, "thumbnail", bool(row.has_cover_thumbnail)),
     isOriginal: bool(row.is_original ?? 1),
     creatorId: row.creator_id,
     creatorName: row.creator_name,
-    creatorAvatar: avatarUrl(row.creator_id, row.creator_avatar),
+    creatorAvatar: avatarUrl(row.creator_id, row.creator_avatar, bool(row.creator_has_avatar)),
     creatorEquippedBadge: equippedBadge(row.creator_badge_key, row.creator_badge_icon_url),
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
@@ -809,6 +879,15 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
   };
 }
 
+function soupSummaryColumns(alias = "s") {
+  return `${alias}.id, ${alias}.title, ${alias}.author, ${alias}.type, ${alias}.difficulty, ${alias}.summary,
+    CASE WHEN ${alias}.cover_thumbnail LIKE 'data:image/%' THEN NULL ELSE ${alias}.cover_thumbnail END AS cover_thumbnail,
+    ${alias}.cover_thumbnail IS NOT NULL AS has_cover_thumbnail,
+    ${alias}.is_original, ${alias}.creator_id, ${alias}.creator_name,
+    ${alias}.is_surface_public, ${alias}.is_bottom_public, ${alias}.enable_ai_game,
+    ${alias}.view_count, ${alias}.created_at, ${alias}.review_status, ${alias}.review_reason, ${alias}.review_version`;
+}
+
 function mapSoupDetail(row: mysql.RowDataPacket) {
   return {
     ...mapSoupSummary(row),
@@ -825,7 +904,7 @@ type CertificationSoupSummary = ReturnType<typeof mapSoupSummary> & { enableAiGa
 
 async function getSoupSummariesWhere(whereSql: string, params: unknown[]): Promise<CertificationSoupSummary[]> {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT s.*, u.avatar AS creator_avatar,
+    `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
       u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -967,6 +1046,18 @@ async function recordLoginDay(userId: string) {
   });
 }
 
+const queuedLoginDayRecords = new Map<string, number>();
+function queueLoginDayRecord(userId: string) {
+  const key = `${userId}:${beijingTaskDate()}`;
+  if ((queuedLoginDayRecords.get(key) ?? 0) > Date.now()) return;
+  queuedLoginDayRecords.set(key, Date.now() + 10 * 60_000);
+  void recordLoginDay(userId).catch((error) => {
+    queuedLoginDayRecords.delete(key);
+    console.error("login day record failed", { userId, error });
+  });
+  if (queuedLoginDayRecords.size > 1000) queuedLoginDayRecords.delete(queuedLoginDayRecords.keys().next().value!);
+}
+
 type AchievementStats = {
   soupCount: number;
   favoriteCount: number;
@@ -980,6 +1071,15 @@ type AchievementStats = {
   writtenCommentCount: number;
   aiCompletionCount: number;
   maxOriginalSoupHeat: number;
+  totalCollectionValue: number;
+  unlockedCardCount: number;
+  legendaryCardDrawCount: number;
+  epicThreeStarCount: number;
+  legendThreeStarCount: number;
+  completePackCount: number;
+  completeThreeStarPackCount: number;
+  totalShellEarned: number;
+  shellBalance: number;
 };
 
 const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; target: number }> = [
@@ -1016,7 +1116,30 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "heat:normal", stat: "maxOriginalSoupHeat", target: 10_000 },
   { key: "heat:rare", stat: "maxOriginalSoupHeat", target: 100_000 },
   { key: "heat:epic", stat: "maxOriginalSoupHeat", target: 300_000 },
-  { key: "heat:legend", stat: "maxOriginalSoupHeat", target: 1_000_000 }
+  { key: "heat:legend", stat: "maxOriginalSoupHeat", target: 1_000_000 },
+  { key: "collectionValue:normal", stat: "totalCollectionValue", target: 100 },
+  { key: "collectionValue:rare", stat: "totalCollectionValue", target: 500 },
+  { key: "collectionValue:epic", stat: "totalCollectionValue", target: 1_500 },
+  { key: "collectionValue:legend", stat: "totalCollectionValue", target: 5_000 },
+  { key: "cardCollector:normal", stat: "unlockedCardCount", target: 20 },
+  { key: "cardCollector:rare", stat: "unlockedCardCount", target: 100 },
+  { key: "cardCollector:epic", stat: "unlockedCardCount", target: 300 },
+  { key: "cardCollector:legend", stat: "unlockedCardCount", target: 1_000 },
+  { key: "legendCard:normal", stat: "legendaryCardDrawCount", target: 1 },
+  { key: "legendCard:rare", stat: "legendaryCardDrawCount", target: 10 },
+  { key: "legendCard:epic", stat: "legendaryCardDrawCount", target: 50 },
+  { key: "threeStarEpic:epic", stat: "epicThreeStarCount", target: 1 },
+  { key: "threeStarLegend:legend", stat: "legendThreeStarCount", target: 1 },
+  { key: "packCompletion:normal", stat: "completePackCount", target: 1 },
+  { key: "packCompletion:rare", stat: "completePackCount", target: 5 },
+  { key: "packCompletion:epic", stat: "completePackCount", target: 15 },
+  { key: "packCompletion:legend", stat: "completePackCount", target: 50 },
+  { key: "packAllThreeStar:legend", stat: "completeThreeStarPackCount", target: 1 },
+  { key: "shellWealth:normal", stat: "totalShellEarned", target: 500 },
+  { key: "shellWealth:rare", stat: "totalShellEarned", target: 5_000 },
+  { key: "shellWealth:epic", stat: "totalShellEarned", target: 50_000 },
+  { key: "shellWealth:legend", stat: "totalShellEarned", target: 1_000_000 },
+  { key: "shellBalance:epic", stat: "shellBalance", target: 10_000 }
 ];
 
 const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
@@ -1031,6 +1154,14 @@ const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
   "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120,
   "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450,
+  "collectionValue:normal": 15, "collectionValue:rare": 35, "collectionValue:epic": 150, "collectionValue:legend": 500,
+  "cardCollector:normal": 15, "cardCollector:rare": 35, "cardCollector:epic": 150, "cardCollector:legend": 500,
+  "legendCard:normal": 10, "legendCard:rare": 50, "legendCard:epic": 180,
+  "threeStarEpic:epic": 180, "threeStarLegend:legend": 500,
+  "packCompletion:normal": 15, "packCompletion:rare": 35, "packCompletion:epic": 150, "packCompletion:legend": 500,
+  "packAllThreeStar:legend": 800,
+  "shellWealth:normal": 15, "shellWealth:rare": 40, "shellWealth:epic": 150, "shellWealth:legend": 1000,
+  "shellBalance:epic": 150,
   "excellentAuthor:epic": 150
 };
 
@@ -1056,6 +1187,15 @@ const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
   commenter: ["初次开麦", "评论达人", "妙语连珠"],
   aiClear: ["初识汤灵", "汤灵搭档", "AI破局王"],
   heat: ["热力小子", "炽热瞩目", "狂热巅峰", "登峰造极"],
+  collectionValue: ["收藏家", "大收藏家", "收藏之王", "收藏之神"],
+  cardCollector: ["卡牌爱好者", "卡牌收集者", "卡牌大师", "袖里乾坤"],
+  legendCard: ["传说降临I", "传说降临II", "传说降临III"],
+  threeStarEpic: ["金色传说！", "金色传说！", "金色传说！"],
+  threeStarLegend: ["炫彩传说！", "炫彩传说！", "炫彩传说！", "炫彩传说！"],
+  packCompletion: ["整套收集I", "整套收集II", "整套收集III", "整套收集IV"],
+  packAllThreeStar: ["土豪真爱粉", "土豪真爱粉", "土豪真爱粉", "土豪真爱粉"],
+  shellWealth: ["小土豪", "大富翁", "百万富翁", "亿万富豪"],
+  shellBalance: ["贝壳为王", "贝壳为王", "贝壳为王"],
   excellentAuthor: ["优秀作者", "优秀作者", "优秀作者"]
 };
 
@@ -1100,7 +1240,12 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     [receivedCommentRows],
     [writtenCommentRows],
     [aiCompletionRows],
-    maxOriginalSoupHeat
+    maxOriginalSoupHeat,
+    [assetSummaryRows],
+    [legendaryCardDrawRows],
+    [threeStarRows],
+    [completePackRows],
+    [shellRows]
   ] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [userId]),
@@ -1113,7 +1258,52 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE creator_id = ? AND is_original = TRUE", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE reviewer_id = ?", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM game_completions WHERE user_id = ?", [userId]),
-    getMaxOriginalSoupHeat(userId)
+    getMaxOriginalSoupHeat(userId),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COALESCE(total_collection_value, 0) AS total_collection_value,
+        COALESCE(unlocked_card_count, 0) AS unlocked_card_count
+       FROM user_asset_summaries WHERE user_id = ? LIMIT 1`,
+      [userId]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS count
+       FROM asset_draw_results result
+       INNER JOIN asset_draw_orders draw_order ON draw_order.id = result.order_id
+       WHERE draw_order.user_id = ? AND draw_order.status = 'completed' AND result.rarity = 'legend'`,
+      [userId]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+        COALESCE(SUM(card.rarity = 'epic' AND owned.star_level >= 3), 0) AS epic_three_star_count,
+        COALESCE(SUM(card.rarity = 'legend' AND owned.star_level >= 3), 0) AS legend_three_star_count
+       FROM user_asset_cards owned
+       INNER JOIN asset_cards card ON card.id = owned.card_id
+       WHERE owned.user_id = ?`,
+      [userId]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+        COALESCE(SUM(pack_progress.owned_count = pack_progress.card_count), 0) AS complete_pack_count,
+        COALESCE(SUM(pack_progress.three_star_count = pack_progress.card_count), 0) AS complete_three_star_pack_count
+       FROM (
+         SELECT pack.id, COUNT(pack_card.card_id) AS card_count,
+           SUM(owned.card_id IS NOT NULL) AS owned_count,
+           SUM(owned.star_level >= 3) AS three_star_count
+         FROM asset_packs pack
+         INNER JOIN asset_pack_cards pack_card ON pack_card.pack_id = pack.id AND pack_card.enabled = TRUE
+         INNER JOIN asset_cards card ON card.id = pack_card.card_id AND card.status = 'active'
+         LEFT JOIN user_asset_cards owned ON owned.user_id = ? AND owned.card_id = pack_card.card_id
+         GROUP BY pack.id
+       ) pack_progress`,
+      [userId]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.shell_balance,
+        COALESCE((SELECT SUM(shell_tx.amount) FROM shell_transactions shell_tx
+          WHERE shell_tx.user_id = u.id AND shell_tx.amount > 0), 0) AS total_shell_earned
+       FROM users u WHERE u.id = ? LIMIT 1`,
+      [userId]
+    )
   ]);
 
   const stats = {
@@ -1128,7 +1318,16 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     receivedCommentCount: Number(receivedCommentRows[0]?.count ?? 0),
     writtenCommentCount: Number(writtenCommentRows[0]?.count ?? 0),
     aiCompletionCount: Number(aiCompletionRows[0]?.count ?? 0),
-    maxOriginalSoupHeat
+    maxOriginalSoupHeat,
+    totalCollectionValue: Number(assetSummaryRows[0]?.total_collection_value ?? 0),
+    unlockedCardCount: Number(assetSummaryRows[0]?.unlocked_card_count ?? 0),
+    legendaryCardDrawCount: Number(legendaryCardDrawRows[0]?.count ?? 0),
+    epicThreeStarCount: Number(threeStarRows[0]?.epic_three_star_count ?? 0),
+    legendThreeStarCount: Number(threeStarRows[0]?.legend_three_star_count ?? 0),
+    completePackCount: Number(completePackRows[0]?.complete_pack_count ?? 0),
+    completeThreeStarPackCount: Number(completePackRows[0]?.complete_three_star_pack_count ?? 0),
+    totalShellEarned: Number(shellRows[0]?.total_shell_earned ?? 0),
+    shellBalance: Number(shellRows[0]?.shell_balance ?? 0)
   };
   achievementStatsCache.set(userId, { expiresAt: Date.now() + 60_000, stats });
   if (achievementStatsCache.size > 1000) {
@@ -1138,25 +1337,34 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
 }
 
 async function activityConditionCount(userId: string, condition: ActivityBadgeCondition) {
-  const sources: Record<ActivityConditionKind, { table: string; userColumn: string; dateExpression: string }> = {
-    login: { table: "user_login_days", userColumn: "user_id", dateExpression: "login_date" },
-    user_joined: { table: "users", userColumn: "id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
-    publish: { table: "soups", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
-    like_given: { table: "soup_like_history", userColumn: "actor_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
-    comment_given: { table: "evaluation_comment_history", userColumn: "reviewer_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
-    favorite_given: { table: "soup_favorite_history", userColumn: "actor_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
-    like_received: { table: "soup_like_history", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
-    comment_received: { table: "evaluation_comment_history", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" },
-    favorite_received: { table: "soup_favorite_history", userColumn: "creator_id", dateExpression: "DATE(DATE_ADD(created_at, INTERVAL 8 HOUR))" }
-  };
-  const source = sources[condition.kind];
+  const source = ACTIVITY_CONDITION_SOURCES[condition.kind];
   const longTerm = condition.startDate === "long_term" || condition.endDate === "long_term";
-  const sql = `SELECT COUNT(*) AS count FROM ${source.table} WHERE ${source.userColumn} = ?${
-    longTerm ? "" : ` AND ${source.dateExpression} BETWEEN ? AND ?`
+  const sql = `SELECT COUNT(*) AS count FROM ${source.table} activity_source WHERE activity_source.${source.userColumn} = ?${
+    longTerm ? "" : ` AND ${source.dateExpression("activity_source")} BETWEEN ? AND ?`
   }`;
   const params = longTerm ? [userId] : [userId, condition.startDate, condition.endDate];
   const [[row]] = await pool.query<mysql.RowDataPacket[]>(sql, params);
   return Number(row?.count ?? 0);
+}
+
+async function usersMatchingActivityConditions(conditions: ActivityBadgeCondition[]) {
+  if (conditions.length === 0) return [] as string[];
+  const params: Array<string | number> = [];
+  const clauses = conditions.map((condition, index) => {
+    const source = ACTIVITY_CONDITION_SOURCES[condition.kind];
+    const alias = `condition_source_${index}`;
+    const longTerm = condition.startDate === "long_term" || condition.endDate === "long_term";
+    if (!longTerm) params.push(condition.startDate, condition.endDate);
+    params.push(["login", "user_joined"].includes(condition.kind) ? 1 : (condition.target ?? 1));
+    return `(SELECT COUNT(*) FROM ${source.table} ${alias} WHERE ${alias}.${source.userColumn} = u.id${
+      longTerm ? "" : ` AND ${source.dateExpression(alias)} BETWEEN ? AND ?`
+    }) >= ?`;
+  });
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT u.id FROM users u WHERE u.role = 'user' AND ${clauses.join(" AND ")} ORDER BY u.created_at ASC, u.id ASC`,
+    params
+  );
+  return rows.map((row) => String(row.id));
 }
 
 const activityBadgeSyncCache = new Map<string, {
@@ -1393,6 +1601,7 @@ function queueActivityBadgeSync(userIds: string[]) {
 }
 
 setBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
+setShellBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 
 async function optimizeCoverImage(base64: string): Promise<{ full: string; thumbnail: string } | null> {
   try {
@@ -1457,7 +1666,9 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   if (!parsed.success) return sendError(res, 400, "请输入账号和密码");
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT * FROM users WHERE username = ? LIMIT 1",
+    `SELECT id, username, password, nickname, role, token_version, created_at,
+       equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
+     FROM users WHERE username = ? LIMIT 1`,
     [parsed.data.username]
   );
   const row = rows[0];
@@ -1509,10 +1720,21 @@ app.post("/api/telemetry/performance", performanceRateLimiter, (req, res) => {
   res.status(204).end();
 });
 
+const storedAvatarCache = new Map<string, { expiresAt: number; value: unknown }>();
 app.get("/api/media/users/:id/avatar", async (req, res) => {
+  const cached = storedAvatarCache.get(req.params.id);
+  if (cached && cached.expiresAt > Date.now()) return sendStoredImage(req, res, cached.value, 160);
   const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT avatar FROM users WHERE id = ? LIMIT 1", [req.params.id]);
   if (!row) return sendError(res, 404, "用户不存在");
+  storedAvatarCache.set(req.params.id, { expiresAt: Date.now() + 5 * 60_000, value: row.avatar });
+  if (storedAvatarCache.size > 200) storedAvatarCache.delete(storedAvatarCache.keys().next().value!);
   return sendStoredImage(req, res, row.avatar, 160);
+});
+
+app.get("/api/media/users/:id/profile-background", async (req, res) => {
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT profile_background FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!row) return sendError(res, 404, "用户不存在");
+  return sendStoredImage(req, res, row.profile_background, 1200, "public, max-age=31536000, immutable");
 });
 
 app.get("/api/media/circles/:id/avatar", async (req, res) => {
@@ -1549,9 +1771,7 @@ app.get("/api/media/soups/:id/cover", async (req, res) => {
 
 app.get("/api/auth/me", async (req, res) => {
   const user = await currentUser(req);
-  if (user) {
-    await recordLoginDay(user.id);
-  }
+  if (user) queueLoginDayRecord(user.id);
   if (!user) return res.json({ user: null });
   const { tokenVersion: _tokenVersion, ...publicUser } = user;
   res.json({ user: publicUser });
@@ -1644,6 +1864,7 @@ app.patch("/api/me/avatar", async (req, res) => {
     avatar = `data:image/webp;base64,${optimized.toString("base64")}`;
   }
   await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
+  storedAvatarCache.set(user.id, { expiresAt: Date.now() + 5 * 60_000, value: avatar });
 
   const token = signToken({ id: user.id, tokenVersion: user.tokenVersion });
   setAuthCookie(res, token);
@@ -1692,7 +1913,7 @@ app.get("/api/me/soups", async (req, res) => {
   const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM soups WHERE creator_id = ?", [user.id]);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*, u.avatar AS creator_avatar,
+    SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
       u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -1810,7 +2031,6 @@ app.post("/api/me/excellent-author-application", async (req, res) => {
 app.get("/api/me/stats", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  await recordLoginDay(user.id);
   res.json(await getAchievementStats(user.id));
 });
 
@@ -1854,7 +2074,8 @@ app.get("/api/users/:id/profile", async (req, res) => {
   if (!viewer) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT id, username, nickname, role, created_at, equipped_badge_key, equipped_badge_icon_url,
-       avatar IS NOT NULL AS has_avatar
+       avatar IS NOT NULL AS has_avatar, profile_background IS NOT NULL AS has_profile_background,
+       profile_background_updated_at
      FROM users WHERE id = ? LIMIT 1`,
     [req.params.id]
   );
@@ -1862,7 +2083,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   if (!target) return sendError(res, 404, "用户不存在");
   const includeSoups = req.query.includeSoups !== "false";
   const soupPromise = includeSoups ? pool.query<mysql.RowDataPacket[]>(
-      `SELECT s.*, u.avatar AS creator_avatar,
+      `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
         u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
         (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
         (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -1909,7 +2130,8 @@ app.get("/api/users/:id/profile", async (req, res) => {
       followingCount: Number(follow.following_count ?? 0),
       followerCount: Number(follow.follower_count ?? 0),
       isFollowing: bool(follow.is_following),
-      isSelf: viewer.id === req.params.id
+      isSelf: viewer.id === req.params.id,
+      profileBackgroundUrl: profileBackgroundUrl(target.id, target.has_profile_background, target.profile_background_updated_at)
     },
     soups: soupRows.map(mapSoupSummary)
   });
@@ -2027,7 +2249,7 @@ function parseSoupShare(value: unknown) {
 
 async function sharedSoupCard(soupId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT s.*, FALSE AS is_liked, FALSE AS is_favorited,
+    `SELECT ${soupSummaryColumns("s")}, FALSE AS is_liked, FALSE AS is_favorited,
        (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
        (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
        COUNT(e.id) AS evaluation_count, AVG(e.total) AS average_total,
@@ -2061,7 +2283,9 @@ function parseCircleMentions(value: unknown): Array<{ userId: string; nickname: 
 
 async function circleForMember(circleId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT c.*
+    `SELECT c.id, c.name,
+       CASE WHEN c.avatar LIKE 'data:image/%' THEN NULL ELSE c.avatar END AS avatar,
+       c.avatar IS NOT NULL AS has_avatar, c.created_by, c.created_at, c.updated_at
      FROM circles c
      INNER JOIN circle_members m ON m.circle_id = c.id AND m.user_id = ?
      WHERE c.id = ? LIMIT 1`,
@@ -2079,7 +2303,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
     sender: row.sender_id ? {
       id: String(row.sender_id),
       nickname: String(row.sender_nickname),
-      avatar: avatarUrl(row.sender_id, row.sender_avatar),
+      avatar: avatarUrl(row.sender_id, row.sender_avatar, bool(row.sender_has_avatar)),
       equippedBadge: equippedBadge(row.sender_badge_key, row.sender_badge_icon_url),
       isOnline: isUserOnline(row.sender_id)
     } : null,
@@ -2286,7 +2510,7 @@ app.get("/api/circles/:id", async (req, res) => {
     circle: {
       id: String(circle.id),
       name: String(circle.name),
-      avatar: circleAvatarUrl(circle.id, circle.avatar, circle.updated_at),
+      avatar: circleAvatarUrl(circle.id, circle.avatar, circle.updated_at, bool(circle.has_avatar)),
       memberCount: members.length,
       onlineCount: members.filter((member) => member.isOnline).length,
       createdAt: new Date(circle.created_at).toISOString(),
@@ -2317,7 +2541,7 @@ app.get("/api/circles/:id/messages", async (req, res) => {
   }
   params.push(limit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_nickname, u.avatar AS sender_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
      FROM circle_messages m
      LEFT JOIN users u ON u.id = m.sender_id
@@ -2400,7 +2624,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
     connection.release();
   }
   const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_nickname, u.avatar AS sender_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
      FROM circle_messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.id = ? LIMIT 1`,
     [id]
@@ -2411,7 +2635,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
     emitUserEvent(mention.userId, "circle_mention", {
       circleId: req.params.id,
       circleName: String(circle.name),
-      circleAvatar: circleAvatarUrl(circle.id, circle.avatar, circle.updated_at),
+      circleAvatar: circleAvatarUrl(circle.id, circle.avatar, circle.updated_at, bool(circle.has_avatar)),
       messageId: id,
       senderId: user.id,
       senderNickname: user.nickname,
@@ -2540,21 +2764,21 @@ app.get("/api/me/soups/:id/interactions", async (req, res) => {
   let rows: mysql.RowDataPacket[] = [];
   if (type === "likes") {
     [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.avatar, sl.created_at
+      `SELECT u.id, u.nickname, NULL AS avatar, u.avatar IS NOT NULL AS has_avatar, sl.created_at
        FROM soup_likes sl INNER JOIN users u ON u.id = sl.user_id
        WHERE sl.soup_id = ? ORDER BY sl.created_at DESC`,
       [req.params.id]
     );
   } else if (type === "favorites") {
     [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.avatar, sf.created_at
+      `SELECT u.id, u.nickname, NULL AS avatar, u.avatar IS NOT NULL AS has_avatar, sf.created_at
        FROM soup_favorites sf INNER JOIN users u ON u.id = sf.user_id
        WHERE sf.soup_id = ? ORDER BY sf.created_at DESC`,
       [req.params.id]
     );
   } else if (type === "evaluations") {
     [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.avatar, e.total, e.content, e.created_at
+      `SELECT u.id, u.nickname, NULL AS avatar, u.avatar IS NOT NULL AS has_avatar, e.total, e.content, e.created_at
        FROM evaluations e INNER JOIN users u ON u.id = e.reviewer_id
        WHERE e.soup_id = ? ORDER BY e.created_at DESC`,
       [req.params.id]
@@ -2568,7 +2792,7 @@ app.get("/api/me/soups/:id/interactions", async (req, res) => {
     interactions: rows.map((row) => ({
       userId: String(row.id),
       nickname: String(row.nickname),
-      avatar: avatarUrl(row.id, row.avatar),
+      avatar: avatarUrl(row.id, row.avatar, bool(row.has_avatar)),
       total: row.total == null ? null : Number(row.total),
       content: row.content ? String(row.content) : null,
       createdAt: new Date(row.created_at).toISOString()
@@ -2613,7 +2837,7 @@ app.get("/api/conversations", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
      `SELECT c.id, c.last_message_at,
-       u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar,
+       u.id AS other_id, u.nickname AS other_nickname, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
        u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url,
        pm.content AS last_content, pm.message_type AS last_message_type, pm.sticker_id AS last_sticker_id,
        pm.sender_id AS last_sender_id, pm.created_at AS message_created_at,
@@ -2635,7 +2859,7 @@ app.get("/api/conversations", async (req, res) => {
     otherUser: {
       id: String(row.other_id),
       nickname: String(row.other_nickname),
-      avatar: avatarUrl(row.other_id, row.other_avatar),
+      avatar: avatarUrl(row.other_id, row.other_avatar, bool(row.other_has_avatar)),
       equippedBadge: equippedBadge(row.other_badge_key, row.other_badge_icon_url),
       isOnline: isUserOnline(row.other_id)
     },
@@ -2657,6 +2881,8 @@ app.get("/api/conversations", async (req, res) => {
 app.get("/api/messages/unread-counts", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  const cachedCounts = unreadCountsCache.get(user.id);
+  if (cachedCounts && cachedCounts.expiresAt > Date.now()) return res.json(cachedCounts.payload);
   const interactionTypes = ["soup_like", "soup_favorite", "soup_evaluation", "user_follow"];
   const placeholders = interactionTypes.map(() => "?").join(",");
   const requestWhere = user.role === "admin" ? "" : "AND owner_id = ?";
@@ -2714,12 +2940,15 @@ app.get("/api/messages/unread-counts", async (req, res) => {
     circleMessages: Number(circleMessageCounts[0]?.circle_message_count ?? 0),
     circleMentions: Number(circleMentionCounts[0]?.circle_mention_count ?? 0)
   };
-  res.json({ counts: { ...counts, total: counts.system + counts.interactions + counts.requests + counts.notices + counts.privateMessages } });
+  const payload = { counts: { ...counts, total: counts.system + counts.interactions + counts.requests + counts.notices + counts.privateMessages } };
+  unreadCountsCache.set(user.id, { expiresAt: Date.now() + 5_000, payload });
+  if (unreadCountsCache.size > 1000) unreadCountsCache.delete(unreadCountsCache.keys().next().value!);
+  res.json(payload);
 });
 
 async function conversationForUser(conversationId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, u.avatar AS other_avatar,
+    `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
        u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url
      FROM conversations c
      INNER JOIN users u ON u.id = IF(c.user_a_id = ?, c.user_b_id, c.user_a_id)
@@ -2770,7 +2999,7 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
       otherUser: {
         id: String(conversation.other_id),
         nickname: String(conversation.other_nickname),
-        avatar: avatarUrl(conversation.other_id, conversation.other_avatar),
+        avatar: avatarUrl(conversation.other_id, conversation.other_avatar, bool(conversation.other_has_avatar)),
         equippedBadge: equippedBadge(conversation.other_badge_key, conversation.other_badge_icon_url),
         isOnline: isUserOnline(conversation.other_id)
       }
@@ -2881,7 +3110,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
 app.post("/api/me/badge-unlocks/sync", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  await recordLoginDay(user.id);
+  queueLoginDayRecord(user.id);
 
   const [userRows] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT badges_initialized FROM users WHERE id = ? LIMIT 1",
@@ -2998,74 +3227,104 @@ app.patch("/api/me/equipped-badge", async (req, res) => {
   res.json({ equippedBadge: equippedBadge(parsed.data.badgeKey, iconUrl) });
 });
 
-let rankingsCache: { expiresAt: number; payload: unknown } | null = null;
+type HotSoupRankingItem = {
+  rank: number;
+  id: string;
+  title: string;
+  author: string;
+  heatValue: number;
+  creatorId: string;
+};
+
+type AchievementRankingItem = {
+  rank: number;
+  id: string;
+  nickname: string;
+  achievementPoints: number;
+};
+
+let rankingsCache: {
+  expiresAt: number;
+  hotSoups: HotSoupRankingItem[];
+  achievementUsers: AchievementRankingItem[];
+} | null = null;
 
 app.get("/api/rankings", async (req, res) => {
-  if (!(await requireAuth(req, res))) return;
-  if (rankingsCache && rankingsCache.expiresAt > Date.now()) return res.json(rankingsCache.payload);
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
-  const [hotSoupRows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT s.id, s.title, s.author, s.view_count,
-       COALESCE(e.evaluation_count, 0) AS evaluation_count,
-       COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
-       COALESCE(l.like_count, 0) AS like_count,
-       COALESCE(f.favorite_count, 0) AS favorite_count,
-       (COALESCE(e.comprehensive_score, 0) + 1) *
-         (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
-     FROM soups s
-     LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
-     LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
-     LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
-      WHERE s.is_surface_public = TRUE AND s.review_status = 'approved'
-     ORDER BY heat_value DESC, s.view_count DESC, evaluation_count DESC, s.created_at ASC
-     LIMIT 10`
-  );
+  if (!rankingsCache || rankingsCache.expiresAt <= Date.now()) {
+    const [hotSoupRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT s.id, s.title, s.author, s.creator_id, s.view_count,
+         COALESCE(e.evaluation_count, 0) AS evaluation_count,
+         COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
+         COALESCE(l.like_count, 0) AS like_count,
+         COALESCE(f.favorite_count, 0) AS favorite_count,
+         (COALESCE(e.comprehensive_score, 0) + 1) *
+           (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
+       FROM soups s
+       LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
+       LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
+       LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
+       WHERE s.is_surface_public = TRUE AND s.review_status = 'approved'
+       ORDER BY heat_value DESC, s.view_count DESC, evaluation_count DESC, s.created_at ASC`
+    );
 
-  const [achievementRows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.nickname, u.created_at, ubu.badge_key, ubu.unlocked_at,
-       lb.achievement_points AS legendary_points
-     FROM users u
-     LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
-     LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
-     WHERE u.role = 'user'
-     ORDER BY u.created_at ASC, ubu.unlocked_at ASC`
-  );
+    const [achievementRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.nickname, u.created_at, ubu.badge_key, ubu.unlocked_at,
+         lb.achievement_points AS legendary_points
+       FROM users u
+       LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
+       LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
+       WHERE u.role = 'user'
+       ORDER BY u.created_at ASC, ubu.unlocked_at ASC`
+    );
 
-  const users = new Map<string, { id: string; nickname: string; achievementPoints: number; reachedAt: number; createdAt: number }>();
-  for (const row of achievementRows) {
-    const id = String(row.id);
-    const createdAt = new Date(row.created_at).getTime();
-    const current = users.get(id) ?? { id, nickname: String(row.nickname), achievementPoints: 0, reachedAt: createdAt, createdAt };
-    if (row.badge_key) {
-      const key = String(row.badge_key);
-      const points = key.startsWith("legendary:")
-        ? Number(row.legendary_points ?? 0)
-        : Number(SYSTEM_BADGE_ACHIEVEMENT_POINTS[key] ?? 0);
-      if (points > 0) {
-        current.achievementPoints += points;
-        current.reachedAt = Math.max(current.reachedAt, new Date(row.unlocked_at).getTime());
+    const users = new Map<string, { id: string; nickname: string; achievementPoints: number; reachedAt: number; createdAt: number }>();
+    for (const row of achievementRows) {
+      const id = String(row.id);
+      const createdAt = new Date(row.created_at).getTime();
+      const current = users.get(id) ?? { id, nickname: String(row.nickname), achievementPoints: 0, reachedAt: createdAt, createdAt };
+      if (row.badge_key) {
+        const key = String(row.badge_key);
+        const points = key.startsWith("legendary:")
+          ? Number(row.legendary_points ?? 0)
+          : Number(SYSTEM_BADGE_ACHIEVEMENT_POINTS[key] ?? 0);
+        if (points > 0) {
+          current.achievementPoints += points;
+          current.reachedAt = Math.max(current.reachedAt, new Date(row.unlocked_at).getTime());
+        }
       }
+      users.set(id, current);
     }
-    users.set(id, current);
-  }
 
-  const achievementUsers = [...users.values()]
-    .sort((a, b) => b.achievementPoints - a.achievementPoints || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-    .slice(0, 10)
-    .map((item, index) => ({ rank: index + 1, id: item.id, nickname: item.nickname, achievementPoints: item.achievementPoints }));
-
-  const payload = {
-    hotSoups: hotSoupRows.map((row, index) => ({
+    const hotSoups = hotSoupRows.map((row, index) => ({
       rank: index + 1,
       id: String(row.id),
       title: String(row.title),
       author: String(row.author),
-      heatValue: Math.round(Number(row.heat_value ?? 0))
-    })),
-    achievementUsers
-  };
-  rankingsCache = { expiresAt: Date.now() + 60_000, payload };
-  res.json(payload);
+      heatValue: Math.round(Number(row.heat_value ?? 0)),
+      creatorId: String(row.creator_id)
+    }));
+    const achievementUsers = [...users.values()]
+      .sort((a, b) => b.achievementPoints - a.achievementPoints || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map((item, index) => ({ rank: index + 1, id: item.id, nickname: item.nickname, achievementPoints: item.achievementPoints }));
+
+    rankingsCache = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers };
+  }
+
+  const topHotSoups = rankingsCache.hotSoups.slice(0, 10);
+  const topAchievementUsers = rankingsCache.achievementUsers.slice(0, 10);
+  const ownHotSoup = rankingsCache.hotSoups.find((item) => item.creatorId === user.id) ?? null;
+  const ownAchievementUser = rankingsCache.achievementUsers.find((item) => item.id === user.id) ?? null;
+  const toPublicHotSoup = ({ creatorId: _creatorId, ...item }: HotSoupRankingItem) => item;
+
+  res.json({
+    hotSoups: topHotSoups.map(toPublicHotSoup),
+    hotSoupOwn: ownHotSoup && !topHotSoups.some((item) => item.id === ownHotSoup.id) ? toPublicHotSoup(ownHotSoup) : null,
+    achievementUsers: topAchievementUsers,
+    achievementOwn: ownAchievementUser && !topAchievementUsers.some((item) => item.id === ownAchievementUser.id) ? ownAchievementUser : null
+  });
 });
 
 app.get("/api/me/favorites", async (req, res) => {
@@ -3080,7 +3339,7 @@ app.get("/api/me/favorites", async (req, res) => {
   );
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*, u.avatar AS creator_avatar,
+    SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
       u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -3112,7 +3371,7 @@ app.get("/api/me/evaluations", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*, u.avatar AS creator_avatar,
+    SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
       u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -3138,6 +3397,9 @@ app.get("/api/me/evaluations", async (req, res) => {
 });
 
 app.get("/api/soups", async (req, res) => {
+  // 首页数据会因当前用户的点赞/收藏状态而不同，只允许浏览器私有短缓存。
+  // 前端另有 30 秒内存缓存；这里主要覆盖刷新、返回导航和重复 GET。
+  res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
   const user = await currentUser(req);
   const where: string[] = [];
   const params: unknown[] = [];
@@ -3196,11 +3458,12 @@ app.get("/api/soups", async (req, res) => {
   const randomSeed = String(req.query.seed ?? new Date().toISOString().slice(0, 10)).slice(0, 32);
   const orderClause = order === "RANDOM" ? "CRC32(CONCAT(s.id, ?))" : `s.created_at ${order}`;
 
-  const summarySelect = `
-    SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail, s.is_original,
+  const summarySelect = (lightImages = false) => `
+    SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail,
+      ${lightImages ? "s.has_cover_thumbnail" : "s.cover_thumbnail IS NOT NULL AS has_cover_thumbnail"}, s.is_original,
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
       s.review_status, s.review_reason, s.review_version,
-      u.avatar AS creator_avatar,
+      NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
       u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -3216,11 +3479,17 @@ app.get("/api/soups", async (req, res) => {
       AVG(e.depth) AS avg_depth`;
   let rows: mysql.RowDataPacket[];
   if (having.length === 0) {
-    // 常规首页先完成过滤和分页，再只聚合当前页的评价与互动，避免每次滚动扫描全量评价表。
+    // 常规首页先完成过滤和分页，再只聚合当前页的评价与互动。
+    // 必须显式列出轻量字段：SELECT s.* 会让 MySQL 在随机排序时读取并物化汤底、手册、
+    // 原图和补充内容等 LONGTEXT/JSON 大字段，即使外层最终完全不返回它们。
     const [pageRows] = await pool.query<mysql.RowDataPacket[]>(
-      `${summarySelect}
+      `${summarySelect(true)}
        FROM (
-         SELECT s.*
+         SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary,
+           CASE WHEN s.cover_thumbnail LIKE 'data:image/%' THEN NULL ELSE s.cover_thumbnail END AS cover_thumbnail,
+           s.cover_thumbnail IS NOT NULL AS has_cover_thumbnail,
+           s.is_original, s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public,
+           s.view_count, s.created_at, s.review_status, s.review_reason, s.review_version
          FROM soups s
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
          ORDER BY ${orderClause}
@@ -3239,7 +3508,7 @@ app.get("/api/soups", async (req, res) => {
     rows = pageRows;
   } else {
     const [filteredRows] = await pool.query<mysql.RowDataPacket[]>(
-      `${summarySelect}
+      `${summarySelect()}
        FROM soups s
        LEFT JOIN evaluations e ON e.soup_id = s.id
        LEFT JOIN users u ON u.id = s.creator_id
@@ -3381,9 +3650,9 @@ app.get("/api/soups/:id", async (req, res) => {
     await pool.query("UPDATE soups SET view_count = view_count + 1 WHERE id = ?", [req.params.id]);
   }
 
-  const [statsRows] = await pool.query<mysql.RowDataPacket[]>(
-    `
-    SELECT s.*, u.avatar AS creator_avatar,
+  const [[statsRows], [evalRows], full] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(`
+    SELECT s.id, s.view_count, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
       u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -3402,44 +3671,37 @@ app.get("/api/soups/:id", async (req, res) => {
     GROUP BY s.id
     LIMIT 1
     `,
-    [req.params.id]
-  );
-  const [evalRows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT e.*, reviewer.avatar AS reviewer_avatar,
+    [req.params.id]),
+    pool.query<mysql.RowDataPacket[]>(`SELECT e.*, NULL AS reviewer_avatar, reviewer.avatar IS NOT NULL AS reviewer_has_avatar,
        reviewer.equipped_badge_key AS reviewer_badge_key,
        reviewer.equipped_badge_icon_url AS reviewer_badge_icon_url
      FROM evaluations e
      LEFT JOIN users reviewer ON reviewer.id = e.reviewer_id
      WHERE e.soup_id = ? ORDER BY e.created_at DESC`,
-    [req.params.id]
-  );
-  const full = await canViewFull(soup, user);
-  const [requestRows] =
-    user && !full
-      ? await pool.query<mysql.RowDataPacket[]>(
+    [req.params.id]),
+    canViewFull(soup, user)
+  ]);
+  const [requestRows, favoriteRows, likeRows] = user
+    ? await Promise.all([
+        !full ? pool.query<mysql.RowDataPacket[]>(
           "SELECT id FROM view_requests WHERE soup_id = ? AND requester_id = ? AND status = 'pending' LIMIT 1",
           [req.params.id, user.id]
-        )
-      : [[] as mysql.RowDataPacket[]];
-  const [favoriteRows] =
-    user
-      ? await pool.query<mysql.RowDataPacket[]>(
+        ).then(([rows]) => rows) : Promise.resolve([] as mysql.RowDataPacket[]),
+        pool.query<mysql.RowDataPacket[]>(
           "SELECT id FROM soup_favorites WHERE soup_id = ? AND user_id = ? LIMIT 1",
           [req.params.id, user.id]
-        )
-      : [[] as mysql.RowDataPacket[]];
-  const [likeRows] =
-    user
-      ? await pool.query<mysql.RowDataPacket[]>(
+        ).then(([rows]) => rows),
+        pool.query<mysql.RowDataPacket[]>(
           "SELECT id FROM soup_likes WHERE soup_id = ? AND user_id = ? LIMIT 1",
           [req.params.id, user.id]
-        )
-      : [[] as mysql.RowDataPacket[]];
+        ).then(([rows]) => rows)
+      ])
+    : [[], [], []];
   const canEdit = Boolean(user && (user.role === "admin" || user.id === soup.creator_id));
 
   res.json({
     soup: {
-      ...mapSoupDetail(statsRows[0]),
+      ...mapSoupDetail({ ...soup, ...statsRows[0] }),
       surface: soup.surface,
       supplementalSurfaces: full ? jsonList(soup.supplemental_surfaces) : [],
       bottom: full ? soup.bottom : null,
@@ -3537,7 +3799,7 @@ app.get("/api/me/likes", async (req, res) => {
   );
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
-    SELECT s.*, u2.avatar AS creator_avatar,
+    SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u2.avatar IS NOT NULL AS creator_has_avatar,
       u2.equipped_badge_key AS creator_badge_key, u2.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -4142,7 +4404,7 @@ app.get("/api/notifications", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT n.*,
       CASE
-           WHEN n.type = 'badge_unlock' THEN NULL
+           WHEN n.type IN ('badge_unlock', 'shell_adjustment') THEN NULL
            WHEN n.type = 'view_request' OR n.type = 'view_request_result' THEN vr.soup_id
            ELSE n.related_id
        END AS soup_id
@@ -4162,6 +4424,8 @@ app.get("/api/notifications", async (req, res) => {
       relatedId: row.soup_id,
       link: row.type === "badge_unlock"
         ? "/mine/achievements"
+        : row.type === "shell_adjustment"
+          ? "/mine/shells/transactions"
         : row.type === "user_follow" && row.actor_id
           ? `/users/${row.actor_id}`
         : row.type === "excellent_author_result"
@@ -4913,6 +5177,34 @@ app.get("/api/admin/users/:id/shell-transactions", async (req, res) => {
   });
 });
 
+app.post("/api/admin/users/bulk-shell-adjustments/preview", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = bulkShellAdjustmentSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "批量贝壳条件无效");
+  const userIds = await usersMatchingActivityConditions(parsed.data.conditions);
+  let eligibleCount = userIds.length;
+  if (parsed.data.operation === "deduct" && userIds.length > 0) {
+    const placeholders = userIds.map(() => "?").join(",");
+    const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS count FROM users WHERE id IN (${placeholders}) AND shell_balance >= ?`,
+      [...userIds, parsed.data.amount]
+    );
+    eligibleCount = Number(row?.count ?? 0);
+  }
+  res.json({ matchedCount: userIds.length, eligibleCount, skippedCount: userIds.length - eligibleCount });
+});
+
+app.post("/api/admin/users/bulk-shell-adjustments", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = bulkShellAdjustmentSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "批量贝壳条件无效");
+  const userIds = await usersMatchingActivityConditions(parsed.data.conditions);
+  const result = await bulkAdjustShellBalances(userIds, admin.id, parsed.data.operation, parsed.data.amount);
+  for (const userId of result.adjustedUserIds) emitUnreadChanged(userId, "shell_adjustment");
+  res.json({ matchedCount: result.matchedCount, adjustedCount: result.adjustedCount, skippedCount: result.skippedCount });
+});
+
 app.post("/api/admin/users/:id/shell-adjustments", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
@@ -4922,7 +5214,9 @@ app.post("/api/admin/users/:id/shell-adjustments", async (req, res) => {
   }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "请输入有效的贝壳整数数量");
   try {
-    res.json(await adjustShellBalance(req.params.id, admin.id, parsed.data.operation, parsed.data.amount));
+    const result = await adjustShellBalance(req.params.id, admin.id, parsed.data.operation, parsed.data.amount);
+    emitUnreadChanged(req.params.id, "shell_adjustment");
+    res.json(result);
   } catch (error) {
     if (error instanceof Error && error.message === "SHELL_USER_NOT_FOUND") return sendError(res, 404, "用户不存在");
     if (error instanceof Error && error.message === "SHELL_INSUFFICIENT_BALANCE") return sendError(res, 409, "扣减数量不能超过当前贝壳余额");
@@ -4978,9 +5272,15 @@ app.use("/api/online-soup", async (req, _res, next) => {
   next();
 }, onlineSoupRouter);
 
+registerDigitalAssetRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, onBadgeProgress: (userId) => queueSystemBadgeSync([userId]) });
+registerBannerRoutes(app, { requireAdmin, sendError });
+
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if ((err as { type?: string }).type === "entity.parse.failed") {
     return res.status(400).json({ error: "请求内容不是有效的 JSON" });
+  }
+  if ((err as { type?: string }).type === "entity.too.large") {
+    return res.status(413).json({ error: "上传图片过大，请压缩后重试" });
   }
   console.error(err);
   res.status(500).json({ error: "服务暂时不可用" });

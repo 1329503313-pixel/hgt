@@ -2,6 +2,17 @@ import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
 
+let badgeProgressListener: ((userId: string) => void) | null = null;
+
+export function setShellBadgeProgressListener(listener: (userId: string) => void) {
+  badgeProgressListener = listener;
+}
+
+function reportBadgeProgress(userIds: string | string[]) {
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  ids.forEach((userId) => badgeProgressListener?.(userId));
+}
+
 export const SHELL_DAILY_LIMIT = 30;
 
 export type ShellTaskType =
@@ -151,7 +162,7 @@ export async function awardShellTask(
   } = {}
 ) {
   if (options.connection) {
-    return awardTaskEventWithConnection(
+    const result = await awardTaskEventWithConnection(
       options.connection,
       userId,
       taskType,
@@ -160,6 +171,8 @@ export async function awardShellTask(
       options.relatedId ?? null,
       options.now
     );
+    if (result.recorded && result.actualReward > 0) reportBadgeProgress(userId);
+    return result;
   }
   const connection = await pool.getConnection();
   try {
@@ -174,6 +187,7 @@ export async function awardShellTask(
       options.now
     );
     await connection.commit();
+    if (result.recorded && result.actualReward > 0) reportBadgeProgress(userId);
     return result;
   } catch (error) {
     await connection.rollback();
@@ -271,13 +285,14 @@ export async function adjustShellBalance(userId: string, operatorId: string, ope
     if (operation === "deduct" && amount > balance) throw new Error("SHELL_INSUFFICIENT_BALANCE");
     const signedAmount = operation === "add" ? amount : -amount;
     const balanceAfter = balance + signedAmount;
+    const transactionId = nanoid();
     await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balanceAfter, userId]);
     await connection.query(
       `INSERT INTO shell_transactions
         (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, operator_id)
        VALUES (?, ?, ?, ?, ?, 'admin_user', ?, ?, ?)`,
       [
-        nanoid(),
+        transactionId,
         userId,
         operation === "add" ? "admin_add" : "admin_deduct",
         signedAmount,
@@ -287,8 +302,92 @@ export async function adjustShellBalance(userId: string, operatorId: string, ope
         operatorId
       ]
     );
+    await connection.query(
+      `INSERT INTO notifications (id, user_id, type, title, content, related_id, actor_id)
+       VALUES (?, ?, 'shell_adjustment', ?, ?, ?, ?)`,
+      [
+        nanoid(),
+        userId,
+        operation === "add" ? "贝壳到账通知" : "贝壳扣除通知",
+        operation === "add"
+          ? `管理员向你发放了 ${amount} 贝壳，当前余额 ${balanceAfter} 贝壳。`
+          : `管理员扣除了你 ${amount} 贝壳，当前余额 ${balanceAfter} 贝壳。`,
+        transactionId,
+        operatorId
+      ]
+    );
     await connection.commit();
+    reportBadgeProgress(userId);
     return { balance: balanceAfter };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function bulkAdjustShellBalances(userIds: string[], operatorId: string, operation: "add" | "deduct", amount: number) {
+  if (userIds.length === 0) return { matchedCount: 0, adjustedCount: 0, skippedCount: 0, adjustedUserIds: [] as string[] };
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const placeholders = userIds.map(() => "?").join(",");
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, shell_balance FROM users WHERE role = 'user' AND id IN (${placeholders}) FOR UPDATE`,
+      userIds
+    );
+    const eligible = rows.filter((row) => operation === "add" || Number(row.shell_balance ?? 0) >= amount);
+    if (eligible.length > 0) {
+      const eligibleIds = eligible.map((row) => String(row.id));
+      const eligiblePlaceholders = eligibleIds.map(() => "?").join(",");
+      await connection.query(
+        `UPDATE users SET shell_balance = shell_balance ${operation === "add" ? "+" : "-"} ? WHERE id IN (${eligiblePlaceholders})`,
+        [amount, ...eligibleIds]
+      );
+      const transactionRows = eligible.map((row) => {
+        const transactionId = nanoid();
+        const balanceAfter = Number(row.shell_balance ?? 0) + (operation === "add" ? amount : -amount);
+        return { transactionId, userId: String(row.id), balanceAfter };
+      });
+      await connection.query(
+        `INSERT INTO shell_transactions
+          (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, operator_id)
+         VALUES ${transactionRows.map(() => "(?, ?, ?, ?, ?, 'admin_bulk', ?, ?, ?)").join(",")}`,
+        transactionRows.flatMap((item) => [
+          item.transactionId,
+          item.userId,
+          operation === "add" ? "admin_add" : "admin_deduct",
+          operation === "add" ? amount : -amount,
+          item.balanceAfter,
+          item.userId,
+          operation === "add" ? "管理员批量增加" : "管理员批量扣减",
+          operatorId
+        ])
+      );
+      await connection.query(
+        `INSERT INTO notifications (id, user_id, type, title, content, related_id, actor_id)
+         VALUES ${transactionRows.map(() => "(?, ?, 'shell_adjustment', ?, ?, ?, ?)").join(",")}`,
+        transactionRows.flatMap((item) => [
+          nanoid(),
+          item.userId,
+          operation === "add" ? "贝壳到账通知" : "贝壳扣除通知",
+          operation === "add"
+            ? `管理员向你发放了 ${amount} 贝壳，当前余额 ${item.balanceAfter} 贝壳。`
+            : `管理员扣除了你 ${amount} 贝壳，当前余额 ${item.balanceAfter} 贝壳。`,
+          item.transactionId,
+          operatorId
+        ])
+      );
+    }
+    await connection.commit();
+    reportBadgeProgress(eligible.map((row) => String(row.id)));
+    return {
+      matchedCount: rows.length,
+      adjustedCount: eligible.length,
+      skippedCount: rows.length - eligible.length,
+      adjustedUserIds: eligible.map((row) => String(row.id))
+    };
   } catch (error) {
     await connection.rollback();
     throw error;

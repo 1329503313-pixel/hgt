@@ -42,6 +42,15 @@ const badgeNames: Record<string, string[]> = {
   commenter: ["初次开麦", "评论达人", "妙语连珠"],
   aiClear: ["初识汤灵", "汤灵搭档", "AI破局王"],
   heat: ["热力小子", "炽热瞩目", "狂热巅峰", "登峰造极"],
+  collectionValue: ["收藏家", "大收藏家", "收藏之王", "收藏之神"],
+  cardCollector: ["卡牌爱好者", "卡牌收集者", "卡牌大师", "袖里乾坤"],
+  legendCard: ["传说降临I", "传说降临II", "传说降临III"],
+  threeStarEpic: ["金色传说！", "金色传说！", "金色传说！"],
+  threeStarLegend: ["炫彩传说！", "炫彩传说！", "炫彩传说！", "炫彩传说！"],
+  packCompletion: ["整套收集I", "整套收集II", "整套收集III", "整套收集IV"],
+  packAllThreeStar: ["土豪真爱粉", "土豪真爱粉", "土豪真爱粉", "土豪真爱粉"],
+  shellWealth: ["小土豪", "大富翁", "百万富翁", "亿万富豪"],
+  shellBalance: ["贝壳为王", "贝壳为王", "贝壳为王"],
   excellentAuthor: ["优秀作者", "优秀作者", "优秀作者"]
 };
 
