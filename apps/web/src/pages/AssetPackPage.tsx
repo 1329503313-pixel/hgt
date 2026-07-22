@@ -67,7 +67,7 @@ export default function AssetPackPage() {
         <div className="card p-4">
           <h2 className="font-black text-ink">卡包内容</h2>
           <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">
-            {(pack.cards ?? []).map((card) => <AssetCardVisual key={card.id} card={card} />)}
+            {(pack.cards ?? []).map((card) => <AssetCardVisual key={card.id} card={card} compactBadges />)}
           </div>
           <div className="mt-5 border-t border-line pt-5">
             <div className="flex items-center justify-between"><div><h3 className="font-black text-ink">卡包概率</h3><p className="mt-1 text-xs text-muted">按卡牌品质展示抽取概率</p></div><ShieldCheck className="text-primary" size={24} /></div>

@@ -109,6 +109,10 @@ const rarityProbabilitiesSchema = z.object({
   if (Math.abs(total - 100) > 0.000001) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "四种品质概率合计必须为100%", path: ["probabilities"] });
 });
 
+const packCardsSchema = z.object({
+  cardIds: z.array(z.string().trim().min(1).max(64)).max(500).transform((ids) => [...new Set(ids)])
+});
+
 function bool(value: unknown) {
   return Boolean(Number(value));
 }
@@ -272,14 +276,14 @@ function chooseWeighted(cards: mysql.RowDataPacket[], probabilities: Record<Rari
 async function packConfiguration(
   packId: string,
   connection: mysql.Pool | mysql.PoolConnection = pool,
-  _lightweight = false
+  includeStory = false
 ) {
   const queryable = connection as mysql.PoolConnection;
-  // Configuration, probability and draw paths only need metadata. Never pull the
-  // LONGTEXT originals here: images are served by dedicated cached media routes.
+  // Configuration and draw paths only need metadata. The public pack detail can
+  // opt into card stories; images are always served by dedicated media routes.
   const cardColumns = `c.id, c.card_no, c.name, c.rarity,
     '' AS image_url, '' AS thumbnail_url,
-    NULL AS story, c.release_at, c.status, c.updated_at`;
+    ${includeStory ? "c.story" : "NULL AS story"}, c.release_at, c.status, c.updated_at`;
   const [cards, probabilityRows] = await Promise.all([
     queryable.query<mysql.RowDataPacket[]>(
     `SELECT ${cardColumns}, pc.probability, pc.enabled AS pack_card_enabled
@@ -331,6 +335,18 @@ async function syncCardPacks(cardId: string, packIds: string[], connection: mysq
   const selected = [...new Set(packIds)];
   const [currentRows] = await connection.query<mysql.RowDataPacket[]>("SELECT pack_id FROM asset_pack_cards WHERE card_id = ?", [cardId]);
   const currentIds = currentRows.map((row) => String(row.pack_id));
+  const selectedSet = new Set(selected);
+  const currentSet = new Set(currentIds);
+  const changedPackIds = [...new Set([...currentIds, ...selected])].filter((packId) => selectedSet.has(packId) !== currentSet.has(packId));
+
+  if (changedPackIds.length) {
+    const placeholders = changedPackIds.map(() => "?").join(", ");
+    const [enabledPacks] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id FROM asset_packs WHERE enabled = 1 AND id IN (${placeholders})`,
+      changedPackIds
+    );
+    if (enabledPacks.length) throw new Error("已上架卡包不能新增或移除卡牌，请先下架");
+  }
 
   if (selected.length) {
     const placeholders = selected.map(() => "?").join(", ");
@@ -741,8 +757,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const usageByPack = new Map(usageRows.map((row) => [String(row.pack_id), Number(row.used_count)]));
     const onSale = packs.filter((pack) => packStatus(pack) === "on_sale");
     const previews = await Promise.all(onSale.map(async (pack) => {
-      const configuration = await packConfiguration(String(pack.id), pool, true);
-      const previewCards = configuration.enabled.slice(0, 5).map((card) => cardPayload(card, true));
+      const configuration = await packConfiguration(String(pack.id));
+      const previewCards = configuration.enabled.slice(0, 3).map((card) => cardPayload(card, true));
       const type = packType(pack.pack_type);
       const pity = (pityByType.get(type) ?? {}) as mysql.RowDataPacket;
       return {
@@ -765,7 +781,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
     const [[pack], configuration] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(`SELECT ${PUBLIC_PACK_COLUMNS} FROM asset_packs WHERE id = ? LIMIT 1`, [req.params.id]).then(([rows]) => rows),
-      packConfiguration(req.params.id)
+      packConfiguration(req.params.id, pool, true)
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
     const type = packType(pack.pack_type);
@@ -1098,7 +1114,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       pool.query<mysql.RowDataPacket[]>(
         `SELECT c.id, c.card_no, c.name, c.rarity,
           '' AS image_url, '' AS thumbnail_url,
-          NULL AS story, c.release_at, c.status, c.updated_at,
+          NULL AS story, c.release_at, c.status, c.created_at, c.updated_at,
           COUNT(DISTINCT uc.user_id) AS owner_count, COALESCE(SUM(uc.total_obtained), 0) AS total_drawn,
           COALESCE(SUM(uc.star_level = 0), 0) AS star_0_count, COALESCE(SUM(uc.star_level = 1), 0) AS star_1_count,
           COALESCE(SUM(uc.star_level = 2), 0) AS star_2_count, COALESCE(SUM(uc.star_level = 3), 0) AS star_3_count
@@ -1112,12 +1128,12 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       const cardId = String(row.card_id);
       packIdsByCard.set(cardId, [...(packIdsByCard.get(cardId) ?? []), String(row.pack_id)]);
     }
-    res.json({ cards: rows.map((row) => ({ ...cardPayload(row, true), packIds: packIdsByCard.get(String(row.id)) ?? [], ownerCount: Number(row.owner_count), totalDrawn: Number(row.total_drawn), starCounts: [0, 1, 2, 3].map((star) => Number(row[`star_${star}_count`])) })) });
+    res.json({ cards: rows.map((row) => ({ ...cardPayload(row, true), createdAt: iso(row.created_at), packIds: packIdsByCard.get(String(row.id)) ?? [], ownerCount: Number(row.owner_count), totalDrawn: Number(row.total_drawn), starCounts: [0, 1, 2, 3].map((star) => Number(row[`star_${star}_count`])) })) });
   });
 
   app.get("/api/admin/asset-cards/:id", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
-    const [[row], [packRows]] = await Promise.all([
+    const [[row], packRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_cards WHERE id = ? LIMIT 1", [req.params.id]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT pack_id FROM asset_pack_cards WHERE card_id = ?", [req.params.id]).then(([rows]) => rows)
     ]);
@@ -1205,7 +1221,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
        FROM asset_packs ORDER BY sort_order DESC, created_at DESC`
     );
     const packs = await Promise.all(rows.map(async (row) => {
-      const config = await packConfiguration(String(row.id), pool, true);
+      const config = await packConfiguration(String(row.id));
       return { ...packPayload(row, "thumbnail"), probabilityNotice: probabilityDisclosure(config), rarityProbabilities: config.rarityProbabilities, probabilityTotal: config.probabilityTotal, configurationReady: config.ready, cards: config.cards.map((card) => ({ ...cardPayload(card, true), actualProbability: card.status === "active" ? actualCardProbability(config, card) : 0 })) };
     }));
     res.json({ packs });
@@ -1282,6 +1298,62 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       await connection.query("DELETE FROM asset_packs WHERE id = ?", [req.params.id]);
       await connection.commit();
       res.json({ ok: true });
+    } catch (error) {
+      await connection.rollback();
+      const message = errorMessage(error);
+      sendError(res, message === "卡包不存在" ? 404 : 409, message);
+    } finally {
+      connection.release();
+    }
+  });
+
+  app.put("/api/admin/asset-packs/:id/cards", async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const parsed = packCardsSchema.safeParse(req.body);
+    if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "卡牌配置无效");
+    const cardIds = parsed.data.cardIds;
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[pack], currentRows] = await Promise.all([
+        connection.query<mysql.RowDataPacket[]>("SELECT enabled FROM asset_packs WHERE id = ? FOR UPDATE", [req.params.id]).then(([rows]) => rows),
+        connection.query<mysql.RowDataPacket[]>("SELECT card_id FROM asset_pack_cards WHERE pack_id = ? FOR UPDATE", [req.params.id]).then(([rows]) => rows)
+      ]);
+      if (!pack) throw new Error("卡包不存在");
+      if (bool(pack.enabled)) throw new Error("已上架卡包不能新增或移除卡牌，请先下架");
+
+      if (cardIds.length) {
+        const placeholders = cardIds.map(() => "?").join(", ");
+        const [cardRows] = await connection.query<mysql.RowDataPacket[]>(`SELECT id FROM asset_cards WHERE id IN (${placeholders})`, cardIds);
+        if (cardRows.length !== cardIds.length) throw new Error("选择的卡牌不存在");
+      }
+
+      const selected = new Set(cardIds);
+      const removedIds = currentRows.map((row) => String(row.card_id)).filter((cardId) => !selected.has(cardId));
+      if (removedIds.length) {
+        const placeholders = removedIds.map(() => "?").join(", ");
+        const [bindingRows] = await connection.query<mysql.RowDataPacket[]>(
+          `SELECT card_id, COUNT(*) AS binding_count FROM asset_pack_cards WHERE card_id IN (${placeholders}) GROUP BY card_id`,
+          removedIds
+        );
+        const lastBinding = bindingRows.find((row) => Number(row.binding_count) <= 1);
+        if (lastBinding) throw new Error("卡牌必须至少绑定一个卡包，请先将待移除卡牌加入其他卡包");
+      }
+
+      if (cardIds.length) {
+        const placeholders = cardIds.map(() => "?").join(", ");
+        await connection.query(`DELETE FROM asset_pack_cards WHERE pack_id = ? AND card_id NOT IN (${placeholders})`, [req.params.id, ...cardIds]);
+        for (const cardId of cardIds) {
+          await connection.query(
+            "INSERT IGNORE INTO asset_pack_cards (pack_id, card_id, probability, enabled) VALUES (?, ?, 0, 1)",
+            [req.params.id, cardId]
+          );
+        }
+      } else {
+        await connection.query("DELETE FROM asset_pack_cards WHERE pack_id = ?", [req.params.id]);
+      }
+      await connection.commit();
+      res.json({ cardIds });
     } catch (error) {
       await connection.rollback();
       const message = errorMessage(error);

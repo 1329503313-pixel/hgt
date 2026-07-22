@@ -26,6 +26,7 @@ export function AssetCardVisual({
   animated = false,
   highDetail = false,
   historyCompact = false,
+  compactBadges = false,
   selected = false,
   onClick,
   className = ""
@@ -35,6 +36,7 @@ export function AssetCardVisual({
   animated?: boolean;
   highDetail?: boolean;
   historyCompact?: boolean;
+  compactBadges?: boolean;
   selected?: boolean;
   onClick?: () => void;
   className?: string;
@@ -69,7 +71,7 @@ export function AssetCardVisual({
     <button
       ref={ref}
       type="button"
-      className={`asset-card asset-card-${card.rarity} ${animated ? "asset-card-animated" : ""} ${highDetail ? "asset-card-high-detail" : ""} ${historyCompact ? "asset-card-history-compact" : ""} ${selected ? "asset-card-selected" : ""} ${owned === false ? "asset-card-locked" : ""} ${className}`}
+      className={`asset-card asset-card-${card.rarity} ${animated ? "asset-card-animated" : ""} ${highDetail ? "asset-card-high-detail" : ""} ${historyCompact ? "asset-card-history-compact" : ""} ${compactBadges ? "asset-card-compact-badges" : ""} ${selected ? "asset-card-selected" : ""} ${owned === false ? "asset-card-locked" : ""} ${className}`}
       onPointerMove={move}
       onPointerEnter={warmHighDetail}
       onFocus={warmHighDetail}
@@ -85,14 +87,12 @@ export function AssetCardVisual({
         <span className="asset-card-rarity" aria-hidden="true"><span className="asset-card-rarity-text">{ASSET_RARITY_LABELS[card.rarity]}</span></span>
         <span className="asset-card-caption">
           <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center justify-between gap-1">
-              <span className={`min-w-0 text-[11px] font-black sm:text-xs ${historyCompact ? "block line-clamp-2 leading-tight" : "truncate"}`}>{card.name}</span>
-              {"starLevel" in card && (
-                <span className="asset-card-stars" aria-label={`${starLevel}星`}>
-                  {[1, 2, 3].map((star) => <Star key={star} size={11} fill={star <= starLevel ? "currentColor" : "none"} className={star <= starLevel ? "text-amber-300" : "text-white/55"} />)}
-                </span>
-              )}
-            </span>
+            {"starLevel" in card && (
+              <span className="asset-card-stars" aria-label={`${starLevel}星`}>
+                {[1, 2, 3].map((star) => <Star key={star} size={11} fill={star <= starLevel ? "currentColor" : "none"} className={star <= starLevel ? "text-amber-300" : "text-white/55"} />)}
+              </span>
+            )}
+            <span className={`mt-0.5 block min-w-0 text-[11px] font-black sm:text-xs ${historyCompact ? "line-clamp-2 leading-tight" : "truncate"}`}>{card.name}</span>
             {!historyCompact && card.story && <span className="mt-0.5 block line-clamp-2 text-[8px] font-medium leading-tight opacity-80 sm:text-[9px]">{card.story}</span>}
           </span>
         </span>

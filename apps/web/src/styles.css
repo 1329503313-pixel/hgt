@@ -975,6 +975,19 @@ textarea {
   right: 8px;
 }
 
+/* 卡包详情与收藏柜的密集卡片网格使用更克制的序号、品质标签。 */
+.asset-card-compact-badges:not(.asset-card-high-detail) .asset-card-number,
+.asset-card-compact-badges:not(.asset-card-high-detail) .asset-card-rarity {
+  top: 6px;
+  height: 15px;
+  padding-inline: 4.5px;
+  font-size: 7.5px;
+  line-height: 15px;
+}
+
+.asset-card-compact-badges:not(.asset-card-high-detail) .asset-card-number { left: 6px; }
+.asset-card-compact-badges:not(.asset-card-high-detail) .asset-card-rarity { right: 6px; }
+
 .asset-card-normal .asset-card-rarity { border-color: rgb(56 189 248 / 0.72); color: #7dd3fc; }
 .asset-card-rare .asset-card-rarity { border-color: rgb(192 132 252 / 0.72); color: #d8b4fe; }
 .asset-card-epic .asset-card-rarity { border-color: rgb(251 191 36 / 0.78); color: #fde68a; }

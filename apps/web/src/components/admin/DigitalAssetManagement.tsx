@@ -7,7 +7,7 @@ import type { AssetCard, AssetPackType, AssetRarity } from "../../shared/digital
 import { ASSET_PACK_TYPE_LABELS, ASSET_RARITY_LABELS } from "../../shared/digitalAssets";
 import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
 
-type AdminCard = AssetCard & { packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[] };
+type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[] };
 type AdminPack = {
   id: string; name: string; coverUrl: string; description: string; packStory: string; packType: AssetPackType; packTypeLabel: string;
   singlePrice: number; tenPrice: number; dailyFreeDraws: number; saleStartAt: string | null; saleEndAt: string | null;
@@ -16,10 +16,12 @@ type AdminPack = {
 };
 type AssetStats = { cardCount: number; packCount: number; enabledPackCount: number; totalOrders: number; totalDraws: number; shellSpent: number; shellRefunded: number; rarityCounts: Record<string, number> };
 type DrawRecord = { id: string; orderId: string; drawIndex: number; drawMode: string; shellCost: number; usedFreeDraw: boolean; nickname: string; packName: string; cardNo: string; cardName: string; rarity: AssetRarity; pityType: string | null; starBefore: number | null; starAfter: number; firstObtained: boolean; starUpgraded: boolean; fullStarDuplicate: boolean; shellRefund: number; createdAt: string };
+type CardSort = "number-asc" | "number-desc" | "rarity-asc" | "rarity-desc";
 
-const blankCard = { cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "inactive", packIds: [] as string[] };
+const blankCard = { cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "active", packIds: [] as string[] };
 const blankPack = { name: "", coverUrl: "", description: "", packStory: "", packType: "permanent" as AssetPackType, singlePrice: 10, tenPrice: 90, dailyFreeDraws: 0, saleStartAt: "", saleEndAt: "", sortOrder: 0 };
 const rarityKeys: AssetRarity[] = ["normal", "rare", "epic", "legend"];
+const rarityRank: Record<AssetRarity, number> = { normal: 0, rare: 1, epic: 2, legend: 3 };
 const blankProbabilities: Record<AssetRarity, string> = { normal: "", rare: "", epic: "", legend: "" };
 
 function blobData(blob: Blob) {
@@ -79,6 +81,11 @@ function localDate(value: string | null) {
   return local.toISOString().slice(0, 16);
 }
 
+function nextCardNo(cardNo: string) {
+  if (!/^\d+$/.test(cardNo)) return "";
+  return (BigInt(cardNo) + 1n).toString().padStart(3, "0");
+}
+
 export function DigitalAssetManagement() {
   const [tab, setTab] = useState<"cards" | "packs" | "records">("cards");
   const [cards, setCards] = useState<AdminCard[]>([]);
@@ -99,6 +106,9 @@ export function DigitalAssetManagement() {
   const [recordKeyword, setRecordKeyword] = useState("");
   const [packKeyword, setPackKeyword] = useState("");
   const [packTypeFilter, setPackTypeFilter] = useState<"all" | AssetPackType>("all");
+  const [cardSort, setCardSort] = useState<CardSort>("number-asc");
+  const [configCardIds, setConfigCardIds] = useState<string[]>([]);
+  const [configCardKeyword, setConfigCardKeyword] = useState("");
 
   async function load() {
     const [cardData, packData, statsData, recordData] = await Promise.all([
@@ -113,8 +123,17 @@ export function DigitalAssetManagement() {
 
   async function openCard(card?: AdminCard) {
     if (!card) {
+      const latestCard = cards.reduce<AdminCard | null>((latest, candidate) => {
+        if (!latest) return candidate;
+        return new Date(candidate.createdAt ?? 0).getTime() >= new Date(latest.createdAt ?? 0).getTime() ? candidate : latest;
+      }, null);
       setEditingCardId(null);
-      setCardForm(blankCard);
+      setCardForm(latestCard ? {
+        ...blankCard,
+        cardNo: nextCardNo(latestCard.cardNo),
+        rarity: latestCard.rarity,
+        packIds: [...latestCard.packIds]
+      } : blankCard);
       setPackKeyword("");
       setPackTypeFilter("all");
       setCardModal(true);
@@ -138,6 +157,10 @@ export function DigitalAssetManagement() {
   }
 
   function toggleCardPack(packId: string) {
+    if (packs.find((pack) => pack.id === packId)?.enabled && (Boolean(editingCardId) || !cardForm.packIds.includes(packId))) {
+      setMessage("已上架卡包不能新增或移除卡牌，请先下架");
+      return;
+    }
     setCardForm((current) => ({
       ...current,
       packIds: current.packIds.includes(packId) ? current.packIds.filter((id) => id !== packId) : [...current.packIds, packId]
@@ -195,7 +218,25 @@ export function DigitalAssetManagement() {
 
   function openConfiguration(pack: AdminPack) {
     setConfigPack(pack);
+    setConfigCardIds(pack.cards.map((card) => card.id));
+    setConfigCardKeyword("");
     setProbabilities(Object.fromEntries(rarityKeys.map((rarity) => [rarity, String(pack.rarityProbabilities[rarity] ?? 0)])) as Record<AssetRarity, string>);
+  }
+
+  function toggleConfigCard(cardId: string) {
+    if (configPack?.enabled) return;
+    setConfigCardIds((current) => current.includes(cardId) ? current.filter((id) => id !== cardId) : [...current, cardId]);
+  }
+
+  async function savePackCards() {
+    if (!configPack || configPack.enabled) return;
+    setSaving(true); setMessage("");
+    try {
+      await api(`/api/admin/asset-packs/${configPack.id}/cards`, { method: "PUT", body: { cardIds: configCardIds } });
+      setConfigPack({ ...configPack, cards: cards.filter((card) => configCardIds.includes(card.id)) });
+      await load();
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setSaving(false); }
   }
 
   async function saveConfiguration() {
@@ -203,8 +244,9 @@ export function DigitalAssetManagement() {
     setSaving(true); setMessage("");
     try {
       const configured = Object.fromEntries(rarityKeys.map((rarity) => [rarity, Number(probabilities[rarity] || 0)]));
-      await api(`/api/admin/asset-packs/${configPack.id}/rarity-probabilities`, { method: "PUT", body: { probabilities: configured } });
-      setConfigPack(null); await load();
+      const result = await api<{ rarityProbabilities: Record<AssetRarity, number>; probabilityTotal: number; configurationReady: boolean }>(`/api/admin/asset-packs/${configPack.id}/rarity-probabilities`, { method: "PUT", body: { probabilities: configured } });
+      setConfigPack({ ...configPack, ...result });
+      await load();
     } catch (error) { setMessage((error as Error).message); }
     finally { setSaving(false); }
   }
@@ -224,6 +266,19 @@ export function DigitalAssetManagement() {
     const matchesKeyword = !packKeyword.trim() || pack.name.toLocaleLowerCase().includes(packKeyword.trim().toLocaleLowerCase());
     return matchesKeyword && (packTypeFilter === "all" || pack.packType === packTypeFilter);
   });
+  const sortedCards = [...cards].sort((left, right) => {
+    const numberOrder = left.cardNo.localeCompare(right.cardNo, "zh-CN", { numeric: true, sensitivity: "base" });
+    if (cardSort === "number-asc") return numberOrder;
+    if (cardSort === "number-desc") return -numberOrder;
+    const rarityOrder = rarityRank[left.rarity] - rarityRank[right.rarity];
+    return (cardSort === "rarity-asc" ? rarityOrder : -rarityOrder) || numberOrder;
+  });
+  const configuredCards = sortedCards.filter((card) => configCardIds.includes(card.id));
+  const availableConfigCards = sortedCards.filter((card) => {
+    if (configCardIds.includes(card.id)) return false;
+    const keyword = configCardKeyword.trim().toLocaleLowerCase();
+    return !keyword || card.name.toLocaleLowerCase().includes(keyword) || card.cardNo.toLocaleLowerCase().includes(keyword);
+  });
 
   return (
     <div className="space-y-4">
@@ -232,7 +287,7 @@ export function DigitalAssetManagement() {
 
       {stats && <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><div className="card p-4"><p className="text-xs text-muted">累计抽取</p><p className="mt-1 text-xl font-black text-ink">{stats.totalDraws.toLocaleString()}</p></div><div className="card p-4"><p className="text-xs text-muted">卡牌 / 上架卡包</p><p className="mt-1 text-xl font-black text-ink">{stats.cardCount} / {stats.enabledPackCount}</p></div><div className="card p-4"><p className="text-xs text-muted">贝壳消耗</p><p className="mt-1 flex items-center gap-1 text-xl font-black text-blue-600"><Shell size={18} />{stats.shellSpent.toLocaleString()}</p></div><div className="card p-4"><p className="text-xs text-muted">满星返还</p><p className="mt-1 text-xl font-black text-emerald-600">+{stats.shellRefunded.toLocaleString()}</p></div></div>}
 
-      {tab === "cards" ? <div className="card overflow-hidden"><div className="flex items-center justify-between border-b border-line p-4"><h3 className="font-black text-ink">卡牌库 {cards.length}</h3><button className="btn btn-primary" onClick={() => openCard()}><Plus size={17} />新增卡牌</button></div>{cards.length === 0 ? <div className="p-10 text-center text-sm text-muted">尚未上传卡牌素材</div> : <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4 lg:grid-cols-6">{cards.map((card) => <button key={card.id} className="min-w-0 text-left disabled:cursor-wait disabled:opacity-60" disabled={detailLoading === `card:${card.id}`} onClick={() => openCard(card)}><AssetCardVisual card={card} /><p className="mt-2 truncate text-sm font-black text-ink">{card.name}</p><p className="mt-1 text-[11px] text-muted">{detailLoading === `card:${card.id}` ? "正在加载原图…" : <>{ASSET_RARITY_LABELS[card.rarity]} · {card.status === "active" ? "启用" : "停用"} · {card.ownerCount} 人拥有</>}</p></button>)}</div>}</div> : tab === "packs" ? <div className="space-y-3"><div className="flex justify-end"><button className="btn btn-primary" onClick={() => openPack()}><Plus size={17} />新增卡包</button></div>{packs.length === 0 ? <div className="card p-10 text-center text-sm text-muted">尚未创建卡包</div> : packs.map((pack) => <div key={pack.id} className="card grid gap-4 p-4 sm:grid-cols-[112px_minmax(0,1fr)_auto]"><img src={pack.coverUrl} alt="" className="h-36 w-28 rounded-xl object-cover" /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-ink">{pack.name}</h3><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-primary">{ASSET_PACK_TYPE_LABELS[pack.packType]}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${pack.configurationReady ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>{pack.configurationReady ? "配置完整" : "待配置"}</span></div><p className="mt-2 text-xs text-muted">单抽 {pack.singlePrice} · 十连 {pack.tenPrice} · 免费 {pack.dailyFreeDraws}/日</p><p className="mt-2 text-xs font-bold text-ink">已绑定 {pack.cards.length} 张 · 品质概率合计 {pack.probabilityTotal.toFixed(6)}%</p></div><div className="flex flex-wrap content-start gap-2 sm:max-w-48"><button className="btn btn-secondary text-xs" disabled={detailLoading === `pack:${pack.id}`} onClick={() => openPack(pack)}>{detailLoading === `pack:${pack.id}` ? "加载原图中…" : "编辑"}</button><button className="btn btn-secondary text-xs" onClick={() => openConfiguration(pack)}>品质概率</button><button className={`btn text-xs ${pack.enabled ? "bg-red-50 text-red-600" : "btn-primary"}`} onClick={() => void togglePack(pack)}>{pack.enabled ? "下架" : "启用上架"}</button><button className="btn bg-red-50 text-xs text-red-600 disabled:cursor-not-allowed disabled:opacity-40" disabled={pack.cards.length > 0} title={pack.cards.length > 0 ? "已绑定卡牌的卡包不能删除" : "删除卡包"} onClick={() => void deletePack(pack)}><Trash2 size={15} />删除</button></div></div>)}</div> : <div className="card overflow-hidden"><div className="flex items-center gap-2 border-b border-line p-4"><Search size={17} className="text-muted" /><input className="field" placeholder="筛选用户、卡包或卡牌" value={recordKeyword} onChange={(event) => setRecordKeyword(event.target.value)} /></div><div className="overflow-x-auto"><table className="min-full text-left text-xs"><thead className="bg-slate-50 text-muted"><tr><th className="px-3 py-2">时间</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">卡包</th><th className="px-3 py-2">卡牌</th><th className="px-3 py-2">结果</th></tr></thead><tbody>{records.filter((record) => !recordKeyword || `${record.nickname}${record.packName}${record.cardName}`.includes(recordKeyword)).map((record) => <tr key={record.id} className="border-t border-line"><td className="whitespace-nowrap px-3 py-3 text-muted">{new Date(record.createdAt).toLocaleString("zh-CN")}</td><td className="px-3 py-3 font-bold text-ink">{record.nickname}</td><td className="px-3 py-3 text-muted">{record.packName}<br />{record.drawMode === "ten" ? "十连" : record.usedFreeDraw ? "免费单抽" : "单抽"}</td><td className="px-3 py-3"><span className="font-bold text-ink">{record.cardName}</span><br /><span className="text-muted">NO.{record.cardNo} · {ASSET_RARITY_LABELS[record.rarity]}</span></td><td className="px-3 py-3 text-muted">{record.firstObtained ? "首次获得" : record.fullStarDuplicate ? `满星返还 +${record.shellRefund}` : record.starUpgraded ? `升至${record.starAfter}星` : "重复卡"}{record.pityType ? " · 保底" : ""}</td></tr>)}</tbody></table></div></div>}
+      {tab === "cards" ? <div className="card overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4"><h3 className="font-black text-ink">卡牌库 {cards.length}</h3><div className="flex items-center gap-2"><select className="field h-10 w-auto min-w-36 py-0 text-sm" aria-label="卡牌排序" value={cardSort} onChange={(event) => setCardSort(event.target.value as CardSort)}><option value="number-asc">按序号正序</option><option value="number-desc">按序号倒序</option><option value="rarity-asc">按品质正序</option><option value="rarity-desc">按品质倒序</option></select><button className="btn btn-primary" onClick={() => openCard()}><Plus size={17} />新增卡牌</button></div></div>{cards.length === 0 ? <div className="p-10 text-center text-sm text-muted">尚未上传卡牌素材</div> : <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4 lg:grid-cols-6">{sortedCards.map((card) => <button key={card.id} className="min-w-0 text-left disabled:cursor-wait disabled:opacity-60" disabled={detailLoading === `card:${card.id}`} onClick={() => openCard(card)}><AssetCardVisual card={card} /><p className="mt-2 truncate text-sm font-black text-ink">{card.name}</p><p className="mt-1 text-[11px] text-muted">{detailLoading === `card:${card.id}` ? "正在加载原图…" : <>{ASSET_RARITY_LABELS[card.rarity]} · {card.status === "active" ? "启用" : "停用"} · {card.ownerCount} 人拥有</>}</p></button>)}</div>}</div> : tab === "packs" ? <div className="space-y-3"><div className="flex justify-end"><button className="btn btn-primary" onClick={() => openPack()}><Plus size={17} />新增卡包</button></div>{packs.length === 0 ? <div className="card p-10 text-center text-sm text-muted">尚未创建卡包</div> : packs.map((pack) => <div key={pack.id} className="card grid gap-4 p-4 sm:grid-cols-[112px_minmax(0,1fr)_auto]"><img src={pack.coverUrl} alt="" className="h-36 w-28 rounded-xl object-cover" /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-ink">{pack.name}</h3><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-primary">{ASSET_PACK_TYPE_LABELS[pack.packType]}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${pack.configurationReady ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>{pack.configurationReady ? "配置完整" : "待配置"}</span></div><p className="mt-2 text-xs text-muted">单抽 {pack.singlePrice} · 十连 {pack.tenPrice} · 免费 {pack.dailyFreeDraws}/日</p><p className="mt-2 text-xs font-bold text-ink">已绑定 {pack.cards.length} 张 · 品质概率合计 {pack.probabilityTotal.toFixed(6)}%</p></div><div className="flex flex-wrap content-start gap-2 sm:max-w-48"><button className="btn btn-secondary text-xs" disabled={detailLoading === `pack:${pack.id}`} onClick={() => openPack(pack)}>{detailLoading === `pack:${pack.id}` ? "加载原图中…" : "编辑"}</button><button className="btn btn-secondary text-xs" onClick={() => openConfiguration(pack)}>卡牌</button><button className={`btn text-xs ${pack.enabled ? "bg-red-50 text-red-600" : "btn-primary"}`} onClick={() => void togglePack(pack)}>{pack.enabled ? "下架" : "启用上架"}</button><button className="btn bg-red-50 text-xs text-red-600 disabled:cursor-not-allowed disabled:opacity-40" disabled={pack.cards.length > 0} title={pack.cards.length > 0 ? "已绑定卡牌的卡包不能删除" : "删除卡包"} onClick={() => void deletePack(pack)}><Trash2 size={15} />删除</button></div></div>)}</div> : <div className="card overflow-hidden"><div className="flex items-center gap-2 border-b border-line p-4"><Search size={17} className="text-muted" /><input className="field" placeholder="筛选用户、卡包或卡牌" value={recordKeyword} onChange={(event) => setRecordKeyword(event.target.value)} /></div><div className="overflow-x-auto"><table className="min-full text-left text-xs"><thead className="bg-slate-50 text-muted"><tr><th className="px-3 py-2">时间</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">卡包</th><th className="px-3 py-2">卡牌</th><th className="px-3 py-2">结果</th></tr></thead><tbody>{records.filter((record) => !recordKeyword || `${record.nickname}${record.packName}${record.cardName}`.includes(recordKeyword)).map((record) => <tr key={record.id} className="border-t border-line"><td className="whitespace-nowrap px-3 py-3 text-muted">{new Date(record.createdAt).toLocaleString("zh-CN")}</td><td className="px-3 py-3 font-bold text-ink">{record.nickname}</td><td className="px-3 py-3 text-muted">{record.packName}<br />{record.drawMode === "ten" ? "十连" : record.usedFreeDraw ? "免费单抽" : "单抽"}</td><td className="px-3 py-3"><span className="font-bold text-ink">{record.cardName}</span><br /><span className="text-muted">NO.{record.cardNo} · {ASSET_RARITY_LABELS[record.rarity]}</span></td><td className="px-3 py-3 text-muted">{record.firstObtained ? "首次获得" : record.fullStarDuplicate ? `满星返还 +${record.shellRefund}` : record.starUpgraded ? `升至${record.starAfter}星` : "重复卡"}{record.pityType ? " · 保底" : ""}</td></tr>)}</tbody></table></div></div>}
 
       {cardModal && <Modal full onClose={() => setCardModal(false)}>
         <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingCardId ? "编辑卡牌" : "新增卡牌"}</h2><button className="grid h-10 w-10 place-items-center rounded-full bg-slate-100" onClick={() => setCardModal(false)}><X size={18} /></button></div>
@@ -252,7 +307,8 @@ export function DigitalAssetManagement() {
             <div className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-line p-2">
               {packs.length === 0 ? <p className="p-4 text-center text-sm text-muted">请先创建卡包</p> : visibleCardPacks.length === 0 ? <p className="p-4 text-center text-sm text-muted">没有匹配的卡包</p> : <div className="grid gap-2 sm:grid-cols-2">{visibleCardPacks.map((pack) => {
                 const selected = cardForm.packIds.includes(pack.id);
-                return <button key={pack.id} type="button" className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${selected ? "border-primary bg-blue-50" : "border-line hover:bg-slate-50"}`} onClick={() => toggleCardPack(pack.id)}><span className={`grid h-5 w-5 shrink-0 place-items-center rounded border ${selected ? "border-primary bg-primary text-white" : "border-slate-300 bg-white"}`}>{selected && <Check size={14} />}</span><span className="min-w-0"><span className="block truncate text-sm font-bold text-ink">{pack.name}</span><span className="text-[11px] text-muted">{pack.packTypeLabel} · {pack.enabled ? "已上架" : "未上架"}</span></span></button>;
+                const locked = pack.enabled && (Boolean(editingCardId) || !selected);
+                return <button key={pack.id} type="button" disabled={locked} title={pack.enabled ? (selected && !editingCardId ? "该卡包已上架，只能取消本次自动勾选" : "已上架卡包不能调整卡牌") : undefined} className={`flex items-center gap-3 rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${selected ? "border-primary bg-blue-50" : "border-line hover:bg-slate-50"}`} onClick={() => toggleCardPack(pack.id)}><span className={`grid h-5 w-5 shrink-0 place-items-center rounded border ${selected ? "border-primary bg-primary text-white" : "border-slate-300 bg-white"}`}>{selected && <Check size={14} />}</span><span className="min-w-0"><span className="block truncate text-sm font-bold text-ink">{pack.name}</span><span className="text-[11px] text-muted">{pack.packTypeLabel} · {pack.enabled ? "已上架（不可新增）" : "未上架"}</span></span></button>;
               })}</div>}
             </div>
             <p className="mt-2 text-xs text-muted">绑定后自动参与对应品质的抽取；同品质存在多张卡牌时等概率抽取。</p>
@@ -283,7 +339,26 @@ export function DigitalAssetManagement() {
         <button className="btn btn-primary mt-5 w-full" disabled={saving || !packForm.coverUrl || !packForm.name || (packForm.packType !== "permanent" && (!packForm.saleStartAt || !packForm.saleEndAt))} onClick={() => void savePack()}><Save size={17} />{saving ? "压缩并保存中…" : "保存卡包"}</button>
       </Modal>}
 
-      {configPack && <Modal full onClose={() => setConfigPack(null)}><div className="flex items-center justify-between"><div><h2 className="text-xl font-black text-ink">配置「{configPack.name}」品质概率</h2><p className="mt-1 text-sm text-muted">四种品质概率合计必须精确为 100%；同品质卡牌等概率抽取。</p></div><button className="grid h-10 w-10 place-items-center rounded-full bg-slate-100" onClick={() => setConfigPack(null)}><X size={18} /></button></div><div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">{rarityKeys.map((rarity) => { const count = configPack.cards.filter((card) => card.status === "active" && card.rarity === rarity).length; return <label key={rarity} className={`rounded-xl border p-4 ${Number(probabilities[rarity] || 0) > 0 ? "border-primary bg-blue-50" : "border-line"}`}><span className="text-sm font-black text-ink">{ASSET_RARITY_LABELS[rarity]}</span><span className="mt-1 block text-xs text-muted">已绑定 {count} 张启用卡牌</span><span className="mt-3 flex items-center gap-2"><input type="number" min="0" max="100" step="0.000001" className="field h-10 px-2" value={probabilities[rarity]} placeholder="0" onChange={(event) => setProbabilities({ ...probabilities, [rarity]: event.target.value })} /><span className="text-sm font-bold">%</span></span></label>; })}</div><div className="sticky bottom-0 mt-5 flex items-center justify-between gap-3 rounded-xl border border-line bg-white p-3 shadow-soft"><span className={`text-sm font-black ${Math.abs(Object.values(probabilities).reduce((sum, value) => sum + Number(value || 0), 0) - 100) < 0.000001 ? "text-emerald-600" : "text-amber-600"}`}>合计 {Object.values(probabilities).reduce((sum, value) => sum + Number(value || 0), 0).toFixed(6)}%</span><button className="btn btn-primary" disabled={saving} onClick={() => void saveConfiguration()}>{saving ? <Sparkles size={17} /> : <Check size={17} />}保存品质概率</button></div></Modal>}
+      {configPack && <Modal full onClose={() => setConfigPack(null)}>
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">卡牌「{configPack.name}」</h2><p className="mt-1 text-sm text-muted">查看和管理卡包内卡牌，并配置各品质抽取概率。</p></div><button className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100" onClick={() => setConfigPack(null)}><X size={18} /></button></div>
+
+        <section className="mt-5">
+          <h3 className="font-black text-ink">品质概率</h3>
+          <p className="mt-1 text-xs text-muted">四种品质概率合计必须精确为 100%；同品质卡牌等概率抽取。</p>
+          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">{rarityKeys.map((rarity) => { const count = configuredCards.filter((card) => card.status === "active" && card.rarity === rarity).length; return <label key={rarity} className={`rounded-xl border p-4 ${Number(probabilities[rarity] || 0) > 0 ? "border-primary bg-blue-50" : "border-line"}`}><span className="text-sm font-black text-ink">{ASSET_RARITY_LABELS[rarity]}</span><span className="mt-1 block text-xs text-muted">已绑定 {count} 张启用卡牌</span><span className="mt-3 flex items-center gap-2"><input type="number" min="0" max="100" step="0.000001" className="field h-10 px-2" value={probabilities[rarity]} placeholder="0" onChange={(event) => setProbabilities({ ...probabilities, [rarity]: event.target.value })} /><span className="text-sm font-bold">%</span></span></label>; })}</div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-slate-50 p-3"><span className={`text-sm font-black ${Math.abs(Object.values(probabilities).reduce((sum, value) => sum + Number(value || 0), 0) - 100) < 0.000001 ? "text-emerald-600" : "text-amber-600"}`}>合计 {Object.values(probabilities).reduce((sum, value) => sum + Number(value || 0), 0).toFixed(6)}%</span><button className="btn btn-primary" disabled={saving} onClick={() => void saveConfiguration()}>{saving ? <Sparkles size={17} /> : <Check size={17} />}保存品质概率</button></div>
+        </section>
+
+        <section className="mt-6 border-t border-line pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black text-ink">已绑定卡牌 {configuredCards.length}</h3><p className="mt-1 text-xs text-muted">卡牌可同时存在于多个卡包；每张卡牌至少需要保留一个所属卡包。</p></div>{!configPack.enabled && <button className="btn btn-primary" disabled={saving} onClick={() => void savePackCards()}><Save size={16} />保存卡牌</button>}</div>
+          {configPack.enabled && <div className="mt-3 rounded-xl bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">该卡包已上架，当前不能新增或移除卡牌；品质概率仍可编辑。需要调整卡牌时请先下架。</div>}
+          <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-line">
+            {configuredCards.length === 0 ? <p className="p-6 text-center text-sm text-muted">该卡包尚未绑定卡牌</p> : configuredCards.map((card) => <div key={card.id} className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0"><span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-ink">{card.name}</span><span className="text-xs text-muted">NO.{card.cardNo} · {ASSET_RARITY_LABELS[card.rarity]} · {card.status === "active" ? "启用" : "停用"}</span></span><button type="button" className="btn bg-red-50 px-3 text-xs text-red-600 disabled:cursor-not-allowed disabled:opacity-40" disabled={configPack.enabled || saving} onClick={() => toggleConfigCard(card.id)}>移除</button></div>)}
+          </div>
+
+          {!configPack.enabled && <div className="mt-4 rounded-xl border border-line p-3"><label className="relative block"><Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={16} /><input className="field pr-9" placeholder="搜索卡牌名称或序号" value={configCardKeyword} onChange={(event) => setConfigCardKeyword(event.target.value)} /></label><div className="mt-2 max-h-64 overflow-y-auto">{availableConfigCards.length === 0 ? <p className="p-5 text-center text-sm text-muted">没有可新增的匹配卡牌</p> : availableConfigCards.map((card) => <div key={card.id} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-ink">{card.name}</span><span className="text-xs text-muted">NO.{card.cardNo} · {ASSET_RARITY_LABELS[card.rarity]}</span></span><button type="button" className="btn btn-secondary px-3 text-xs" disabled={saving} onClick={() => toggleConfigCard(card.id)}><Plus size={14} />新增</button></div>)}</div></div>}
+        </section>
+      </Modal>}
     </div>
   );
 }
