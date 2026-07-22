@@ -477,10 +477,10 @@ export default function DetailPage() {
 
       </div>
 
-      <div className="fixed inset-x-4 bottom-24 z-30 flex items-center justify-end gap-2 overflow-x-auto">
-        {user && soup.enableAiGame && isReviewApproved && <button className="flex h-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95 sm:px-5" onClick={() => setShowGame(true)} aria-label="AI 玩汤">AI玩汤</button>}
-        {soup.canViewFull && isReviewApproved && <button className="flex h-14 shrink-0 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95 sm:px-5" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }} aria-label="开房间"><DoorOpen size={17} />开房间</button>}
-        <button className="flex h-14 shrink-0 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95 sm:px-5" onClick={() => setShowShare(true)} aria-label="分享"><Share2 size={17} />分享</button>
+      <div className="fixed bottom-24 right-4 z-30 flex flex-col items-stretch gap-2">
+        {user && soup.enableAiGame && isReviewApproved && <button className="flex h-14 w-28 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => setShowGame(true)} aria-label="AI 玩汤">AI玩汤</button>}
+        {soup.canViewFull && isReviewApproved && <button className="flex h-14 w-28 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }} aria-label="开房间"><DoorOpen size={17} />开房间</button>}
+        <button className="flex h-14 w-28 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => setShowShare(true)} aria-label="分享"><Share2 size={17} />分享</button>
       </div>
 
       {showShare && <SoupShareModal soup={soup} onClose={() => setShowShare(false)} />}

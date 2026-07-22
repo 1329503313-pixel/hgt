@@ -195,7 +195,7 @@ export default function OnlineSoupLobbyPage() {
                 <div className="min-w-0"><h3 className="truncate font-black text-ink">{room.name}</h3><p className="mt-1 text-xs text-muted">#{room.code} · 主持人 {room.host.nickname}</p></div>
                 <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{statusText[room.status]}</span></div>
               </div>
-              <p className="mt-3 truncate text-sm text-ink">当前汤：{room.soupTitle ?? "尚未选择"}</p>
+              <p className="mt-3 truncate text-sm text-ink">当前汤：{room.soupTitle ?? "尚未选择海龟汤"}</p>
               <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1 text-sm text-muted"><Users size={15} /> {room.playerCount}/8</span><button className="btn btn-primary px-4" onClick={() => requestJoin(room)}>加入</button></div>
             </article>
           ))}

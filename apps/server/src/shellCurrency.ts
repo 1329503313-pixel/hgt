@@ -13,7 +13,7 @@ function reportBadgeProgress(userIds: string | string[]) {
   ids.forEach((userId) => badgeProgressListener?.(userId));
 }
 
-export const SHELL_DAILY_LIMIT = 30;
+export const SHELL_DAILY_LIMIT = 50;
 
 export type ShellTaskType =
   | "daily_login"
@@ -36,9 +36,9 @@ export type ShellTaskDefinition = {
 
 export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
   { type: "daily_login", name: "每日登录", description: "当天首次进入应用", reward: 5, dailyLimit: 1 },
-  { type: "publish_soup", name: "发布海龟汤", description: "审核通过并公开展示", reward: 8, dailyLimit: 2, consumeBeyondDailyLimit: true },
-  { type: "like_soup", name: "点赞海龟汤", description: "点赞不同的海龟汤", reward: 2, dailyLimit: 2 },
-  { type: "favorite_soup", name: "收藏海龟汤", description: "收藏不同的海龟汤", reward: 2, dailyLimit: 2 },
+  { type: "publish_soup", name: "发布海龟汤", description: "审核通过并公开展示", reward: 10, dailyLimit: 3, consumeBeyondDailyLimit: true },
+  { type: "like_soup", name: "点赞海龟汤", description: "点赞不同的海龟汤", reward: 2, dailyLimit: 3 },
+  { type: "favorite_soup", name: "收藏海龟汤", description: "收藏不同的海龟汤", reward: 2, dailyLimit: 3 },
   { type: "publish_evaluation", name: "发表评论", description: "首次发布评分或评论", reward: 3, dailyLimit: 1, consumeBeyondDailyLimit: true },
   { type: "speak_circle", name: "圈子发言", description: "在任意圈子发送一条文字消息", reward: 2, dailyLimit: 3 },
   { type: "join_online_soup", name: "完整参与玩汤", description: "满足完整参与条件并完成一轮", reward: 5, dailyLimit: 2 },

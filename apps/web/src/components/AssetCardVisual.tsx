@@ -93,7 +93,7 @@ export function AssetCardVisual({
               </span>
             )}
             <span className={`mt-0.5 block min-w-0 text-[11px] font-black sm:text-xs ${historyCompact ? "line-clamp-2 leading-tight" : "truncate"}`}>{card.name}</span>
-            {!historyCompact && card.story && <span className="mt-0.5 block line-clamp-2 text-[8px] font-medium leading-tight opacity-80 sm:text-[9px]">{card.story}</span>}
+            {!historyCompact && card.story && <span className="asset-card-story mt-0.5 block line-clamp-2 text-[8px] font-medium leading-tight opacity-80 sm:text-[9px]">{card.story}</span>}
           </span>
         </span>
       </span>

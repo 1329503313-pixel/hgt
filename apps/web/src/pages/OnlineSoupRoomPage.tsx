@@ -75,7 +75,7 @@ export default function OnlineSoupRoomPage() {
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
   const [stickersLoading, setStickersLoading] = useState(true);
   const [stickersOpen, setStickersOpen] = useState(false);
-  const [hostActionsOpen, setHostActionsOpen] = useState(false);
+  const [hostActionsOpen, setHostActionsOpen] = useState(true);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"back" | "close" | null>(null);
   const [entryPasswordOpen, setEntryPasswordOpen] = useState(false);
@@ -522,9 +522,15 @@ export default function OnlineSoupRoomPage() {
           <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded && snapshot.room.soup ? "flex-1" : "shrink-0"}`}>
             <div className="shrink-0 px-3 py-2.5">
               <div className="flex items-center gap-2">
-                <button className="flex min-w-0 flex-1 items-center gap-1 text-left" onClick={() => setSoupExpanded(!soupExpanded)}>
-                  <span className="min-w-0 flex-1 truncate text-xs font-black text-ink">{snapshot.room.soup?.title ?? "尚未选择"}</span>
-                  {soupExpanded ? <ChevronUp className="shrink-0" size={16} /> : <ChevronDown className="shrink-0" size={16} />}
+                <button
+                  className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                  onClick={() => isHost && snapshot.room.status === "preparing" ? openSoupSelector() : setSoupExpanded(!soupExpanded)}
+                  aria-label={isHost && snapshot.room.status === "preparing" ? (snapshot.room.soup ? "更换海龟汤" : "选择海龟汤") : (soupExpanded ? "收起汤面" : "展开汤面")}
+                >
+                  <span className="min-w-0 flex-1 truncate text-xs font-black text-ink">{snapshot.room.soup?.title ?? "尚未选择海龟汤"}</span>
+                  {isHost && snapshot.room.status === "preparing"
+                    ? <Soup className="shrink-0 text-primary" size={16} />
+                    : soupExpanded ? <ChevronUp className="shrink-0" size={16} /> : <ChevronDown className="shrink-0" size={16} />}
                 </button>
                 {isHost && snapshot.room.soup && <div className="flex min-w-0 rounded-lg bg-slate-100 p-0.5">
                   {([
@@ -624,6 +630,9 @@ export default function OnlineSoupRoomPage() {
           <FloatingAction tone="danger" label="关闭房间" onClick={() => { setHostActionsOpen(false); setConfirmAction("close"); }} />
         </div>}
         <button className={`grid h-12 w-12 place-items-center rounded-full border shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${hostActionsOpen ? "border-blue-500 bg-primary text-white" : "border-blue-200 bg-white text-primary"}`} onClick={() => setHostActionsOpen((open) => !open)} aria-label="主持人更多操作" title="主持人更多操作"><Menu size={22} /></button>
+      </div> : snapshot.me.role === "player" ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition duration-200 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`}>
+        {hostActionsOpen && <div className="absolute bottom-full right-1/2 mb-2 flex translate-x-1/2 flex-col items-center gap-2"><FloatingAction tone="amber" label="线索进度" onClick={() => { setHostActionsOpen(false); setCluePanelTab("clues"); setClueListOpen(true); }} /></div>}
+        <button className={`relative grid h-12 w-12 place-items-center rounded-full border bg-gradient-to-br from-amber-50 to-blue-50 text-amber-700 shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${hostActionsOpen ? "border-amber-400 ring-2 ring-amber-100" : "border-amber-200"}`} onClick={() => setHostActionsOpen((open) => !open)} aria-label="玩家更多操作" title="玩家更多操作"><span className="flex items-center gap-0.5"><Lightbulb size={18} /><ListChecks size={16} className="text-primary" /></span><span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-4 text-white ring-2 ring-white">{clueMessages.length}</span></button>
       </div> : <button className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 grid h-12 w-12 place-items-center rounded-full border border-amber-200 bg-gradient-to-br from-amber-50 to-blue-50 text-amber-700 shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`} onClick={() => { setCluePanelTab("clues"); setClueListOpen(true); }} aria-label={`查看线索与推理进度，当前 ${clueMessages.length} 条线索`} title="线索与进度"><span className="flex items-center gap-0.5"><Lightbulb size={18} /><ListChecks size={16} className="text-primary" /></span><span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-4 text-white ring-2 ring-white">{clueMessages.length}</span></button>}
 
       {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/8</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => isHost ? setConfirmAction("back") : void leaveRoom()}><LogOut size={16} /> {isHost ? "退出并解散房间" : "退出并释放席位"}</button></div></Modal>}
@@ -667,7 +676,7 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
     ? <Play size={30} fill="currentColor" />
     : label.includes("更换")
       ? <RefreshCw size={30} />
-      : label === "发布线索"
+    : label.includes("线索")
         ? <Lightbulb size={30} />
         : label.includes("汤底")
           ? <BookOpen size={30} />

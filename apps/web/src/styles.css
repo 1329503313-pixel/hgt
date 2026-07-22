@@ -1026,6 +1026,10 @@ textarea {
   background: linear-gradient(transparent, rgb(2 6 23 / 0.92));
 }
 
+.asset-card-cabinet:not(.asset-card-high-detail) .asset-card-story {
+  -webkit-line-clamp: 3;
+}
+
 .asset-card-stars {
   display: inline-flex;
   flex-shrink: 0;

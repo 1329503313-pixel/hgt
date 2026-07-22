@@ -30,7 +30,7 @@ export function OnlineSoupRoomInviteCard({ invite }: { invite: OnlineSoupRoomInv
       <span className="block space-y-2.5 p-4">
         <span className="block truncate text-base font-black text-ink">{invite.roomName}</span>
         <span className="flex items-center gap-2 text-xs text-muted"><Hash size={14} className="text-primary" /><span>房间号</span><strong className="font-mono text-sm tracking-[.12em] text-primary">{invite.roomCode}</strong></span>
-        <span className="flex min-w-0 items-center gap-2 text-xs text-muted"><Soup size={14} className="shrink-0 text-amber-600" /><span className="shrink-0">当前汤品</span><strong className="truncate text-ink">{invite.soupTitle || "尚未选择"}</strong></span>
+        <span className="flex min-w-0 items-center gap-2 text-xs text-muted"><Soup size={14} className="shrink-0 text-amber-600" /><span className="shrink-0">当前汤品</span><strong className="truncate text-ink">{invite.soupTitle || "尚未选择海龟汤"}</strong></span>
         <span className="flex items-center gap-2 text-xs text-muted"><Users size={14} className="text-emerald-600" /><span>房间人数</span><strong className="text-ink">{invite.playerCount}/{invite.playerCapacity}</strong></span>
         <span className="block rounded-xl bg-blue-50 px-3 py-2 text-center text-xs font-black text-primary">{closed ? "房间已关闭" : "点击免密加入房间"}</span>
       </span>
