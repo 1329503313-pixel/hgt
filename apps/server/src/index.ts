@@ -16,10 +16,16 @@ import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgr
 import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
 import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
+import { levelForExperience } from "./levelSystem.js";
 import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
 import { registerDigitalAssetRoutes } from "./digitalAssets.js";
 import { registerBannerRoutes } from "./banners.js";
+import {
+  SYSTEM_BADGE_ACHIEVEMENT_POINTS,
+  badgeUnlockNotificationContent,
+  calculateBadgeShellReward
+} from "./badgeRewards.js";
 import {
   adjustShellBalance,
   bulkAdjustShellBalances,
@@ -626,7 +632,7 @@ async function currentUser(req: express.Request): Promise<AuthenticatedUser | nu
   if (pending) return pending;
   const request = (async () => {
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, username, nickname, role, token_version, created_at,
+      `SELECT id, username, nickname, role, token_version, created_at, experience,
          equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
        FROM users WHERE id = ? LIMIT 1`,
       [claims.id]
@@ -714,6 +720,7 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
     avatar: avatarUrl(row.id, row.avatar, Boolean(row.has_avatar)),
     role: row.role,
     createdAt: new Date(row.created_at).toISOString(),
+    level: levelForExperience(row.experience),
     equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
   };
 }
@@ -823,6 +830,7 @@ function mapEvaluation(row: mysql.RowDataPacket) {
     reviewer: row.reviewer,
     reviewerId: row.reviewer_id,
     reviewerAvatar: avatarUrl(row.reviewer_id, row.reviewer_avatar, bool(row.reviewer_has_avatar)),
+    reviewerLevel: levelForExperience(row.reviewer_experience),
     reviewerEquippedBadge: equippedBadge(row.reviewer_badge_key, row.reviewer_badge_icon_url),
     writing: num(row.writing),
     logic: num(row.logic),
@@ -853,6 +861,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     creatorId: row.creator_id,
     creatorName: row.creator_name,
     creatorAvatar: avatarUrl(row.creator_id, row.creator_avatar, bool(row.creator_has_avatar)),
+    creatorLevel: levelForExperience(row.creator_experience),
     creatorEquippedBadge: equippedBadge(row.creator_badge_key, row.creator_badge_icon_url),
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
@@ -905,7 +914,7 @@ type CertificationSoupSummary = ReturnType<typeof mapSoupSummary> & { enableAiGa
 async function getSoupSummariesWhere(whereSql: string, params: unknown[]): Promise<CertificationSoupSummary[]> {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -1020,6 +1029,123 @@ async function notify(
     [nanoid(), userId, type, title.slice(0, 120), content.slice(0, 500), relatedId, actorId]
   );
   if (result.affectedRows > 0) emitUnreadChanged(userId, type);
+}
+
+type BadgeGrantNotification = {
+  type: string;
+  title: string;
+  content: string;
+  relatedId: string;
+  actorId: string | null;
+};
+
+type BadgeGrantResult = {
+  granted: boolean;
+  shellReward: number;
+  balanceAfter: number | null;
+  notificationCreated: boolean;
+};
+
+async function grantBadgeWithConnection(
+  connection: mysql.PoolConnection,
+  options: {
+    userId: string;
+    badgeKey: string;
+    badgeName: string;
+    achievementPoints: number;
+    rewardEligible?: boolean;
+    notification?: BadgeGrantNotification | null;
+  }
+): Promise<BadgeGrantResult> {
+  const [unlockResult] = await connection.query<mysql.ResultSetHeader>(
+    "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
+    [options.userId, options.badgeKey]
+  );
+  if (unlockResult.affectedRows === 0) {
+    return { granted: false, shellReward: 0, balanceAfter: null, notificationCreated: false };
+  }
+
+  const achievementPoints = Math.max(0, Math.floor(options.achievementPoints));
+  const [rewardHistoryResult] = await connection.query<mysql.ResultSetHeader>(
+    `INSERT IGNORE INTO badge_shell_reward_history
+      (user_id, badge_key, achievement_points_snapshot, shell_reward, settlement_status, reward_source)
+     VALUES (?, ?, ?, 0, 'settled', 'realtime')`,
+    [options.userId, options.badgeKey, achievementPoints]
+  );
+  const shellReward = calculateBadgeShellReward(
+    achievementPoints,
+    options.rewardEligible !== false,
+    rewardHistoryResult.affectedRows > 0
+  );
+  let balanceAfter: number | null = null;
+  if (shellReward > 0) {
+    const [[userRow]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT shell_balance FROM users WHERE id = ? FOR UPDATE",
+      [options.userId]
+    );
+    if (!userRow) throw new Error("BADGE_REWARD_USER_NOT_FOUND");
+    balanceAfter = Number(userRow.shell_balance ?? 0) + shellReward;
+    await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balanceAfter, options.userId]);
+    await connection.query(
+      `INSERT INTO shell_transactions
+        (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, idempotency_key)
+       VALUES (?, ?, 'badge_unlock_reward', ?, ?, 'badge', ?, ?, ?)`,
+      [
+        nanoid(),
+        options.userId,
+        shellReward,
+        balanceAfter,
+        options.badgeKey,
+        `首次获得徽章「${options.badgeName}」奖励`,
+        `badge-unlock:${options.userId}:${options.badgeKey}`
+      ]
+    );
+    await connection.query(
+      `UPDATE badge_shell_reward_history
+       SET shell_reward = ?
+       WHERE user_id = ? AND badge_key = ?`,
+      [shellReward, options.userId, options.badgeKey]
+    );
+  }
+
+  let notificationCreated = false;
+  if (options.notification) {
+    const notification = options.notification;
+    const [notificationResult] = await connection.query<mysql.ResultSetHeader>(
+      `INSERT IGNORE INTO notifications
+        (id, user_id, type, title, content, related_id, actor_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        nanoid(),
+        options.userId,
+        notification.type,
+        notification.title.slice(0, 120),
+        badgeUnlockNotificationContent(notification.content, shellReward).slice(0, 500),
+        notification.relatedId,
+        notification.actorId
+      ]
+    );
+    notificationCreated = notificationResult.affectedRows > 0;
+  }
+
+  return { granted: true, shellReward, balanceAfter, notificationCreated };
+}
+
+async function grantBadge(options: Parameters<typeof grantBadgeWithConnection>[1]) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await grantBadgeWithConnection(connection, options);
+    await connection.commit();
+    if (result.notificationCreated) emitUnreadChanged(options.userId, "badge_unlock");
+    if (result.shellReward > 0) queueSystemBadgeSync([options.userId]);
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 async function adminIds() {
@@ -1141,29 +1267,6 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "shellWealth:legend", stat: "totalShellEarned", target: 1_000_000 },
   { key: "shellBalance:epic", stat: "shellBalance", target: 10_000 }
 ];
-
-const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
-  "publish:normal": 10, "publish:rare": 30, "publish:epic": 100,
-  "insight:normal": 10, "insight:rare": 35, "insight:epic": 120,
-  "favorite:normal": 10, "favorite:rare": 30, "favorite:epic": 100,
-  "like:normal": 10, "like:rare": 30, "like:epic": 100,
-  "login:normal": 10, "login:rare": 45, "login:epic": 100,
-  "creatorLike:normal": 10, "creatorLike:rare": 40, "creatorLike:epic": 150,
-  "creatorFavorite:normal": 10, "creatorFavorite:rare": 30, "creatorFavorite:epic": 120,
-  "receivedComment:normal": 10, "receivedComment:rare": 40, "receivedComment:epic": 100,
-  "commenter:normal": 10, "commenter:rare": 30, "commenter:epic": 100,
-  "aiClear:normal": 10, "aiClear:rare": 35, "aiClear:epic": 120,
-  "heat:normal": 20, "heat:rare": 50, "heat:epic": 150, "heat:legend": 450,
-  "collectionValue:normal": 15, "collectionValue:rare": 35, "collectionValue:epic": 150, "collectionValue:legend": 500,
-  "cardCollector:normal": 15, "cardCollector:rare": 35, "cardCollector:epic": 150, "cardCollector:legend": 500,
-  "legendCard:normal": 10, "legendCard:rare": 50, "legendCard:epic": 180,
-  "threeStarEpic:epic": 180, "threeStarLegend:legend": 500,
-  "packCompletion:normal": 15, "packCompletion:rare": 35, "packCompletion:epic": 150, "packCompletion:legend": 500,
-  "packAllThreeStar:legend": 800,
-  "shellWealth:normal": 15, "shellWealth:rare": 40, "shellWealth:epic": 150, "shellWealth:legend": 1000,
-  "shellBalance:epic": 150,
-  "excellentAuthor:epic": 150
-};
 
 const SYSTEM_BADGE_ACHIEVEMENT_POINTS_SQL = Object.entries(SYSTEM_BADGE_ACHIEVEMENT_POINTS)
   .map(([key, points]) => `WHEN '${key}' THEN ${points}`)
@@ -1376,7 +1479,7 @@ async function syncActivityBadges(userId: string) {
   const cached = activityBadgeSyncCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) return cached.earned;
   const [badgeRows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id, name, activity_conditions FROM legendary_badges WHERE badge_type = 'activity' AND activity_conditions IS NOT NULL"
+    "SELECT id, name, achievement_points, activity_conditions FROM legendary_badges WHERE badge_type = 'activity' AND activity_conditions IS NOT NULL"
   );
   if (badgeRows.length === 0) {
     const earned: Array<{ key: string; name: string }> = [];
@@ -1411,16 +1514,26 @@ async function syncActivityBadges(userId: string) {
           "INSERT IGNORE INTO activity_badge_grant_history (user_id, badge_id) VALUES (?, ?)",
           [userId, badge.id]
         );
-        let granted = false;
+        let grantResult: BadgeGrantResult | null = null;
         if (historyResult.affectedRows > 0) {
-          const [unlockResult] = await connection.query<mysql.ResultSetHeader>(
-            "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
-            [userId, key]
-          );
-          granted = unlockResult.affectedRows > 0;
+          grantResult = await grantBadgeWithConnection(connection, {
+            userId,
+            badgeKey: key,
+            badgeName: String(badge.name),
+            achievementPoints: Number(badge.achievement_points ?? 0),
+            notification: {
+              type: "badge_unlock",
+              title: "获得活动徽章",
+              content: `恭喜你获得活动徽章「${badge.name}」`,
+              relatedId: key,
+              actorId: userId
+            }
+          });
         }
         await connection.commit();
-        if (granted) earned.push({ key, name: String(badge.name) });
+        if (grantResult?.notificationCreated) emitUnreadChanged(userId, "badge_unlock");
+        if ((grantResult?.shellReward ?? 0) > 0) queueSystemBadgeSync([userId]);
+        if (grantResult?.granted) earned.push({ key, name: String(badge.name) });
       } catch (error) {
         await connection.rollback();
         throw error;
@@ -1436,13 +1549,7 @@ async function syncActivityBadges(userId: string) {
   return earned;
 }
 
-async function notifyActivityBadgeUnlocks(userId: string, badges: Array<{ key: string; name: string }>) {
-  await Promise.all(badges.map((badge) => (
-    notify(userId, "badge_unlock", "获得活动徽章", `恭喜你获得活动徽章「${badge.name}」`, badge.key, userId)
-  )));
-}
-
-async function syncSystemBadgeUnlocks(userId: string) {
+async function syncSystemBadgeUnlocks(userId: string, rewardEligible = true) {
   const stats = await getAchievementStats(userId);
   const earnedKeys = BADGE_THRESHOLDS
     .filter((badge) => stats[badge.stat] >= badge.target)
@@ -1455,11 +1562,22 @@ async function syncSystemBadgeUnlocks(userId: string) {
   const candidates = earnedKeys.filter((key) => !unlocked.has(key));
   const newKeys: string[] = [];
   for (const key of candidates) {
-    const [result] = await pool.query<mysql.ResultSetHeader>(
-      "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
-      [userId, key]
-    );
-    if (result.affectedRows > 0) newKeys.push(key);
+    const badgeName = badgeNotificationLabel(key);
+    const result = await grantBadge({
+      userId,
+      badgeKey: key,
+      badgeName,
+      achievementPoints: SYSTEM_BADGE_ACHIEVEMENT_POINTS[key] ?? 0,
+      rewardEligible,
+      notification: rewardEligible ? {
+        type: "badge_unlock",
+        title: "获得新徽章",
+        content: `恭喜你获得徽章「${badgeName}」`,
+        relatedId: key,
+        actorId: userId
+      } : null
+    });
+    if (result.granted) newKeys.push(key);
   }
   return { stats, newKeys };
 }
@@ -1557,16 +1675,12 @@ function queueSystemBadgeSync(userIds: string[]) {
           );
           if (rows.length === 0) return;
           const wasInitialized = Boolean(rows[0].badges_initialized);
-          const { newKeys } = await syncSystemBadgeUnlocks(userId);
+          await syncSystemBadgeUnlocks(userId, wasInitialized);
           if (!wasInitialized) {
             await markPendingBadgePopupsSurfaced(userId);
             await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [userId]);
-          } else {
-            await Promise.all(newKeys.map((key) => (
-              notify(userId, "badge_unlock", "获得新徽章", `恭喜你获得徽章「${badgeNotificationLabel(key)}」`, key, userId)
-            )));
           }
-          await notifyActivityBadgeUnlocks(userId, await syncActivityBadges(userId));
+          await syncActivityBadges(userId);
         } catch (error) {
           console.error("badge event sync failed", { userId, error });
         }
@@ -1591,7 +1705,7 @@ function queueActivityBadgeSync(userIds: string[]) {
     for (let index = 0; index < users.length; index += 5) {
       await Promise.all(users.slice(index, index + 5).map(async (userId) => {
         try {
-          await notifyActivityBadgeUnlocks(userId, await syncActivityBadges(userId));
+          await syncActivityBadges(userId);
         } catch (error) {
           console.error("activity badge sync failed", { userId, error });
         }
@@ -1607,8 +1721,8 @@ async function optimizeCoverImage(base64: string): Promise<{ full: string; thumb
   try {
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
     const [full, thumbnail] = await Promise.all([
-      sharp(buf).rotate().resize({ width: 1600, withoutEnlargement: true }).webp({ quality: 82, effort: 4 }).toBuffer(),
-      sharp(buf).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 76, effort: 4 }).toBuffer()
+      sharp(buf).rotate().resize({ width: 1600, height: 900, fit: "cover", position: "centre" }).webp({ quality: 82, effort: 4 }).toBuffer(),
+      sharp(buf).rotate().resize({ width: 480, height: 270, fit: "cover", position: "centre" }).webp({ quality: 76, effort: 4 }).toBuffer()
     ]);
     return {
       full: `data:image/webp;base64,${full.toString("base64")}`,
@@ -1655,7 +1769,7 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   await recordLoginDay(id);
   queueActivityBadgeSync([id]);
 
-  const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString(), equippedBadge: null };
+  const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null };
   const token = signToken({ id, tokenVersion: 0 });
   setAuthCookie(res, token);
   res.json({ user, token });
@@ -1666,7 +1780,7 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   if (!parsed.success) return sendError(res, 400, "请输入账号和密码");
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, password, nickname, role, token_version, created_at,
+    `SELECT id, username, password, nickname, role, token_version, created_at, experience,
        equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
      FROM users WHERE username = ? LIMIT 1`,
     [parsed.data.username]
@@ -1914,7 +2028,7 @@ app.get("/api/me/soups", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -2045,7 +2159,7 @@ app.get("/api/users/search", async (req, res) => {
   const likeKeyword = `%${escapedKeyword}%`;
   const prefixKeyword = `${escapedKeyword}%`;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, nickname, avatar, role, created_at, equipped_badge_key, equipped_badge_icon_url
+    `SELECT id, nickname, avatar, role, created_at, experience, equipped_badge_key, equipped_badge_icon_url
      FROM users
      WHERE nickname LIKE ?
      ORDER BY CASE WHEN nickname = ? THEN 0 WHEN nickname LIKE ? THEN 1 ELSE 2 END, created_at DESC
@@ -2064,6 +2178,7 @@ app.get("/api/users/search", async (req, res) => {
       avatar: avatarUrl(row.id, row.avatar),
       role: String(row.role),
       createdAt: new Date(row.created_at).toISOString(),
+      level: levelForExperience(row.experience),
       equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
     }))
   });
@@ -2073,7 +2188,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const viewer = await requireAuth(req, res);
   if (!viewer) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, nickname, role, created_at, equipped_badge_key, equipped_badge_icon_url,
+    `SELECT id, username, nickname, role, created_at, experience, equipped_badge_key, equipped_badge_icon_url,
        avatar IS NOT NULL AS has_avatar, profile_background IS NOT NULL AS has_profile_background,
        profile_background_updated_at
      FROM users WHERE id = ? LIMIT 1`,
@@ -2084,7 +2199,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const includeSoups = req.query.includeSoups !== "false";
   const soupPromise = includeSoups ? pool.query<mysql.RowDataPacket[]>(
       `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-        u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+        u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
         (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
         (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
         EXISTS (SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,
@@ -2303,6 +2418,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
     sender: row.sender_id ? {
       id: String(row.sender_id),
       nickname: String(row.sender_nickname),
+      level: levelForExperience(row.sender_experience),
       avatar: avatarUrl(row.sender_id, row.sender_avatar, bool(row.sender_has_avatar)),
       equippedBadge: equippedBadge(row.sender_badge_key, row.sender_badge_icon_url),
       isOnline: isUserOnline(row.sender_id)
@@ -2320,7 +2436,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
 
 async function circleMembers(circleId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.nickname, u.avatar, u.created_at, u.role,
+    `SELECT u.id, u.nickname, u.avatar, u.created_at, u.role, u.experience,
        u.equipped_badge_key, u.equipped_badge_icon_url, m.joined_at
      FROM circle_members m
      INNER JOIN users u ON u.id = m.user_id
@@ -2541,7 +2657,7 @@ app.get("/api/circles/:id/messages", async (req, res) => {
   }
   params.push(limit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_nickname, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
      FROM circle_messages m
      LEFT JOIN users u ON u.id = m.sender_id
@@ -2624,7 +2740,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
     connection.release();
   }
   const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_nickname, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
      FROM circle_messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.id = ? LIMIT 1`,
     [id]
@@ -2639,6 +2755,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
       messageId: id,
       senderId: user.id,
       senderNickname: user.nickname,
+      senderLevel: user.level,
       senderAvatar: message.sender?.avatar ?? null,
       content: message.content,
       createdAt: message.createdAt
@@ -2837,7 +2954,7 @@ app.get("/api/conversations", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
      `SELECT c.id, c.last_message_at,
-       u.id AS other_id, u.nickname AS other_nickname, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
+       u.id AS other_id, u.nickname AS other_nickname, u.experience AS other_experience, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
        u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url,
        pm.content AS last_content, pm.message_type AS last_message_type, pm.sticker_id AS last_sticker_id,
        pm.sender_id AS last_sender_id, pm.created_at AS message_created_at,
@@ -2859,6 +2976,7 @@ app.get("/api/conversations", async (req, res) => {
     otherUser: {
       id: String(row.other_id),
       nickname: String(row.other_nickname),
+      level: levelForExperience(row.other_experience),
       avatar: avatarUrl(row.other_id, row.other_avatar, bool(row.other_has_avatar)),
       equippedBadge: equippedBadge(row.other_badge_key, row.other_badge_icon_url),
       isOnline: isUserOnline(row.other_id)
@@ -3117,9 +3235,8 @@ app.post("/api/me/badge-unlocks/sync", async (req, res) => {
     [user.id]
   );
   const wasInitialized = Boolean(userRows[0]?.badges_initialized);
-  const { stats } = await syncSystemBadgeUnlocks(user.id);
-  const activityBadges = await syncActivityBadges(user.id);
-  await notifyActivityBadgeUnlocks(user.id, activityBadges);
+  const { stats } = await syncSystemBadgeUnlocks(user.id, wasInitialized);
+  await syncActivityBadges(user.id);
 
   if (!wasInitialized) {
     await markPendingBadgePopupsSurfaced(user.id);
@@ -3127,12 +3244,6 @@ app.post("/api/me/badge-unlocks/sync", async (req, res) => {
   }
 
   const surfacedKeys = wasInitialized ? await claimPendingBadgePopups(user.id) : [];
-  const systemSurfacedKeys = surfacedKeys.filter((key) => !key.startsWith("legendary:"));
-  if (systemSurfacedKeys.length > 0) {
-    await Promise.all(systemSurfacedKeys.map((key) =>
-      notify(user.id, "badge_unlock", "获得新徽章", `恭喜你获得徽章「${badgeNotificationLabel(key)}」`, key, user.id)
-    ));
-  }
   const specialBadges = await getLegendaryBadgeUnlockDetails(user.id, surfacedKeys);
   res.json({ unlocks: surfacedKeys, specialBadges, stats });
 });
@@ -3340,7 +3451,7 @@ app.get("/api/me/favorites", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -3372,7 +3483,7 @@ app.get("/api/me/evaluations", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e2.id) AS evaluation_count,
@@ -3464,7 +3575,7 @@ app.get("/api/soups", async (req, res) => {
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
       s.review_status, s.review_reason, s.review_version,
       NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       ${user ? `EXISTS(SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,` : "FALSE AS is_liked,"}
@@ -3653,7 +3764,7 @@ app.get("/api/soups/:id", async (req, res) => {
   const [[statsRows], [evalRows], full] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(`
     SELECT s.id, s.view_count, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -3673,6 +3784,7 @@ app.get("/api/soups/:id", async (req, res) => {
     `,
     [req.params.id]),
     pool.query<mysql.RowDataPacket[]>(`SELECT e.*, NULL AS reviewer_avatar, reviewer.avatar IS NOT NULL AS reviewer_has_avatar,
+       reviewer.experience AS reviewer_experience,
        reviewer.equipped_badge_key AS reviewer_badge_key,
        reviewer.equipped_badge_icon_url AS reviewer_badge_icon_url
      FROM evaluations e
@@ -3762,6 +3874,14 @@ app.post("/api/soups/:id/like", async (req, res) => {
           connection
         });
       }
+      if (String(soup.creator_id) !== user.id) {
+        await awardShellTask(
+          String(soup.creator_id),
+          "receive_soup_like",
+          `receive-like:${user.id}:${req.params.id}`,
+          { relatedType: "soup", relatedId: req.params.id, connection }
+        );
+      }
     }
     const [[countRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_likes WHERE soup_id = ?", [req.params.id]);
     likeCount = Number(countRow.cnt);
@@ -3773,18 +3893,18 @@ app.post("/api/soups/:id/like", async (req, res) => {
     connection.release();
   }
   if (!isLiked) return res.json({ isLiked: false, likeCount });
+  res.status(201).json({ isLiked: true, likeCount });
   if (String(soup.creator_id) !== user.id) {
-    await notify(
+    void notify(
       String(soup.creator_id),
       "soup_like",
       "收到新的点赞",
       `${user.nickname} 点赞了你的海龟汤《${soup.title}》`,
       req.params.id,
       user.id
-    );
+    ).catch((error) => console.error("Failed to create soup-like notification:", error));
   }
   queueSystemBadgeSync([user.id, String(soup.creator_id)]);
-  res.status(201).json({ isLiked: true, likeCount });
 });
 
 app.get("/api/me/likes", async (req, res) => {
@@ -3800,7 +3920,7 @@ app.get("/api/me/likes", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u2.avatar IS NOT NULL AS creator_has_avatar,
-      u2.equipped_badge_key AS creator_badge_key, u2.equipped_badge_icon_url AS creator_badge_icon_url,
+      u2.experience AS creator_experience, u2.equipped_badge_key AS creator_badge_key, u2.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -3861,6 +3981,14 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
         relatedId: req.params.id,
         connection
       });
+      if (String(soup.creator_id) !== user.id) {
+        await awardShellTask(
+          String(soup.creator_id),
+          "receive_soup_favorite",
+          `receive-favorite:${user.id}:${req.params.id}`,
+          { relatedType: "soup", relatedId: req.params.id, connection }
+        );
+      }
     }
     const [[countRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS cnt FROM soup_favorites WHERE soup_id = ?", [req.params.id]);
     favoriteCount = Number(countRow.cnt);
@@ -3872,18 +4000,18 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
     connection.release();
   }
   if (!isFavorited) return res.json({ isFavorited: false, favoriteCount });
+  res.status(201).json({ isFavorited: true, favoriteCount });
   if (String(soup.creator_id) !== user.id) {
-    await notify(
+    void notify(
       String(soup.creator_id),
       "soup_favorite",
       "收到新的收藏",
       `${user.nickname} 收藏了你的海龟汤《${soup.title}》`,
       req.params.id,
       user.id
-    );
+    ).catch((error) => console.error("Failed to create soup-favorite notification:", error));
   }
   queueSystemBadgeSync([user.id, String(soup.creator_id)]);
-  res.status(201).json({ isFavorited: true, favoriteCount });
 });
 
 app.put("/api/soups/:id", async (req, res) => {
@@ -4103,6 +4231,14 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         "INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original) VALUES (?, ?, ?, ?)",
         [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
       );
+      if (String(soup.creator_id) !== user.id) {
+        await awardShellTask(
+          String(soup.creator_id),
+          "receive_soup_evaluation",
+          `receive-evaluation:${user.id}:${req.params.id}`,
+          { relatedType: "soup", relatedId: req.params.id }
+        );
+      }
     }
     queueSystemBadgeSync([user.id, String(soup.creator_id)]);
     return res.json({ id: existing.id });
@@ -4142,6 +4278,14 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
       relatedId: req.params.id,
       connection
     });
+    if (data.content?.trim() && String(soup.creator_id) !== user.id) {
+      await awardShellTask(
+        String(soup.creator_id),
+        "receive_soup_evaluation",
+        `receive-evaluation:${user.id}:${req.params.id}`,
+        { relatedType: "soup", relatedId: req.params.id, connection }
+      );
+    }
     await connection.commit();
   } catch (error) {
     await connection.rollback();
@@ -4361,6 +4505,7 @@ app.post("/api/admin/excellent-author-applications/:id/decision", async (req, re
   }
 
   const connection = await pool.getConnection();
+  let excellentBadgeGrant: BadgeGrantResult | null = null;
   try {
     await connection.beginTransaction();
     const [updated] = await connection.query<mysql.ResultSetHeader>(
@@ -4374,10 +4519,19 @@ app.post("/api/admin/excellent-author-applications/:id/decision", async (req, re
       return sendError(res, 409, "申请已处理");
     }
     if (parsed.data.decision === "approved") {
-      await connection.query(
-        "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, 'excellentAuthor:epic', NULL)",
-        [application.applicantId]
-      );
+      excellentBadgeGrant = await grantBadgeWithConnection(connection, {
+        userId: application.applicantId,
+        badgeKey: "excellentAuthor:epic",
+        badgeName: "优秀作者",
+        achievementPoints: SYSTEM_BADGE_ACHIEVEMENT_POINTS["excellentAuthor:epic"],
+        notification: {
+          type: "excellent_author_result",
+          title: "优秀作者认证已通过",
+          content: "恭喜你通过优秀作者认证，已获得优秀作者徽章",
+          relatedId: application.id,
+          actorId: admin.id
+        }
+      });
     }
     await connection.commit();
   } catch (error) {
@@ -4387,14 +4541,29 @@ app.post("/api/admin/excellent-author-applications/:id/decision", async (req, re
     connection.release();
   }
 
-  await notify(
-    application.applicantId,
-    "excellent_author_result",
-    parsed.data.decision === "approved" ? "优秀作者认证已通过" : "优秀作者认证未通过",
-    parsed.data.decision === "approved" ? "恭喜你通过优秀作者认证，已获得优秀作者徽章" : "你的优秀作者认证申请已被驳回，可调整作品后重新申请",
-    application.id,
-    admin.id
-  );
+  if (parsed.data.decision === "approved") {
+    if (excellentBadgeGrant?.notificationCreated) emitUnreadChanged(application.applicantId, "badge_unlock");
+    if ((excellentBadgeGrant?.shellReward ?? 0) > 0) queueSystemBadgeSync([application.applicantId]);
+    if (!excellentBadgeGrant?.granted) {
+      await notify(
+        application.applicantId,
+        "excellent_author_result",
+        "优秀作者认证已通过",
+        "恭喜你通过优秀作者认证，优秀作者徽章已在你的收藏中",
+        application.id,
+        admin.id
+      );
+    }
+  } else {
+    await notify(
+      application.applicantId,
+      "excellent_author_result",
+      "优秀作者认证未通过",
+      "你的优秀作者认证申请已被驳回，可调整作品后重新申请",
+      application.id,
+      admin.id
+    );
+  }
   res.json({ ok: true });
 });
 
@@ -4404,7 +4573,7 @@ app.get("/api/notifications", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT n.*,
       CASE
-           WHEN n.type IN ('badge_unlock', 'shell_adjustment') THEN NULL
+           WHEN n.type IN ('badge_unlock', 'shell_adjustment', 'badge_history_backfill') THEN NULL
            WHEN n.type = 'view_request' OR n.type = 'view_request_result' THEN vr.soup_id
            ELSE n.related_id
        END AS soup_id
@@ -4424,7 +4593,7 @@ app.get("/api/notifications", async (req, res) => {
       relatedId: row.soup_id,
       link: row.type === "badge_unlock"
         ? "/mine/achievements"
-        : row.type === "shell_adjustment"
+        : row.type === "shell_adjustment" || row.type === "badge_history_backfill"
           ? "/mine/shells/transactions"
         : row.type === "user_follow" && row.actor_id
           ? `/users/${row.actor_id}`
@@ -4880,18 +5049,24 @@ app.post("/api/admin/badges/users/:userId/legendary/:badgeId", async (req, res) 
   if (!actor) return;
   const [[target]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id = ? LIMIT 1", [req.params.userId]);
   if (!target) return sendError(res, 404, "用户不存在");
-  const [[badge]] = await pool.query<mysql.RowDataPacket[]>("SELECT id, name, badge_type FROM legendary_badges WHERE id = ? LIMIT 1", [req.params.badgeId]);
+  const [[badge]] = await pool.query<mysql.RowDataPacket[]>("SELECT id, name, badge_type, achievement_points FROM legendary_badges WHERE id = ? LIMIT 1", [req.params.badgeId]);
   if (!badge) return sendError(res, 404, "传说徽章不存在");
   if (String(badge.badge_type) !== "limited") return sendError(res, 403, "只有限定徽章支持管理员直接发放");
   const key = `legendary:${badge.id}`;
-  const [result] = await pool.query<mysql.ResultSetHeader>(
-    "INSERT IGNORE INTO user_badge_unlocks (user_id, badge_key, surfaced_at) VALUES (?, ?, NULL)",
-    [req.params.userId, key]
-  );
-  if (result.affectedRows > 0) {
-    await notify(req.params.userId, "badge_unlock", "获得传说徽章", `恭喜你获得传说徽章「${badge.name}」`, key, actor.id);
-  }
-  res.status(result.affectedRows > 0 ? 201 : 200).json({ ok: true, granted: result.affectedRows > 0 });
+  const result = await grantBadge({
+    userId: req.params.userId,
+    badgeKey: key,
+    badgeName: String(badge.name),
+    achievementPoints: Number(badge.achievement_points ?? 0),
+    notification: {
+      type: "badge_unlock",
+      title: "获得限定徽章",
+      content: `恭喜你获得限定徽章「${badge.name}」`,
+      relatedId: key,
+      actorId: actor.id
+    }
+  });
+  res.status(result.granted ? 201 : 200).json({ ok: true, granted: result.granted, shellReward: result.shellReward });
 });
 
 app.delete("/api/admin/badges/users/:userId/legendary/:badgeId", async (req, res) => {

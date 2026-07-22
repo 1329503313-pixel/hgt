@@ -9,6 +9,8 @@ import { CardSkeleton, ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { privateMessagePreview } from "../shared/messagePreview";
 import { useMessageUnreadCounts } from "../shared/useMessageUnread";
+import { LevelBadge } from "../components/LevelBadge";
+import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 
 export default function MessagesPage() {
   const { user, loadingUser } = useApp();
@@ -67,14 +69,14 @@ export default function MessagesPage() {
     { label: "通知", path: "/messages/notices", count: counts.notices, icon: Bell, iconClass: "bg-violet-100 text-violet-600" }
   ];
 
-  if (loadingUser || loading) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="消息" backTo="/" /><div className="mx-auto max-w-3xl space-y-4 px-4 pb-10"><CardSkeleton rows={2} /><ListSkeleton rows={6} /></div></section>;
+  if (loadingUser || loading) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="消息" backTo="/" /><div className="mx-auto max-w-6xl space-y-4 px-4 pb-10"><CardSkeleton rows={2} /><ListSkeleton rows={6} /></div></section>;
 
   return (
     <section className="min-h-screen bg-page pt-[72px]">
       <PageTopBar title="消息" backTo="/" />
 
-      <div className="mx-auto max-w-3xl px-4 pb-10">
-        <div className="grid grid-cols-4 gap-2 rounded-2xl bg-white px-2 py-5 shadow-soft sm:gap-6 sm:px-8">
+      <div className="message-center-layout mx-auto max-w-6xl px-4 pb-10">
+        <div className="message-center-categories grid grid-cols-4 gap-2 rounded-2xl bg-white px-2 py-5 shadow-soft sm:gap-6 sm:px-8">
           {entries.map((entry) => {
             const Icon = entry.icon;
             return (
@@ -93,7 +95,7 @@ export default function MessagesPage() {
           })}
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-2xl bg-white shadow-soft">
+        <div className="message-center-conversations mt-5 overflow-hidden rounded-2xl bg-white shadow-soft">
           <div className="flex items-center justify-between border-b border-line px-4 py-4">
             <h2 className="text-lg font-black text-ink">消息</h2>
             <span className="inline-flex items-center gap-1 text-xs text-muted">{counts.privateMessages} 条未读 <ChevronRight size={14} /></span>
@@ -108,7 +110,14 @@ export default function MessagesPage() {
                   {conversation.unreadCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full border-2 border-white bg-red-500 px-1 text-[10px] leading-none text-white">{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</span>}
                   {conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}
                 </span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-ink">{conversation.otherUser.nickname}</span><span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? `${conversation.lastMessage.isMine ? "我：" : ""}${privateMessagePreview(conversation.lastMessage)}` : "开始聊天吧"}</span></span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-sm font-black text-ink">{conversation.otherUser.nickname}</span>
+                    <LevelBadge level={conversation.otherUser.level} />
+                    <EquippedBadgeIcon badge={conversation.otherUser.equippedBadge} className="h-4 w-4" animated={false} />
+                  </span>
+                  <span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? `${conversation.lastMessage.isMine ? "我：" : ""}${privateMessagePreview(conversation.lastMessage)}` : "开始聊天吧"}</span>
+                </span>
                 <span className="shrink-0 text-xs text-muted">{new Date(conversation.lastMessage?.createdAt ?? conversation.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>
               </button>
             ))}

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import type { SoupSummary } from "../shared/types";
 import { SoupCard } from "./SoupCard";
 
@@ -21,13 +22,19 @@ export function MasonryList({
   onOpen,
   hasMore,
   loading,
-  onLoadMore
+  onLoadMore,
+  desktopLeadingContent,
+  desktopLoadingContent,
+  desktopSkipCount = 0
 }: {
   soups: SoupSummary[];
   onOpen: (id: string) => void;
   hasMore: boolean;
   loading: boolean;
   onLoadMore: () => void;
+  desktopLeadingContent?: ReactNode;
+  desktopLoadingContent?: ReactNode;
+  desktopSkipCount?: number;
 }) {
   const [colCount, setColCount] = useState(getColumnCount);
   const [heights, setHeights] = useState<Record<string, number>>({});
@@ -106,7 +113,7 @@ export function MasonryList({
 
   return (
     <>
-      <div className="home-masonry">
+      <div className="home-masonry home-mobile-masonry">
         {columns.map((column, idx) => (
           <div className="home-masonry-column" key={idx}>
             {column.map((soup) => (
@@ -119,6 +126,13 @@ export function MasonryList({
             ))}
           </div>
         ))}
+      </div>
+      <div className="home-desktop-grid" aria-busy={loading}>
+        {desktopLeadingContent && <div className="home-desktop-grid-banner">{desktopLeadingContent}</div>}
+        {soups.slice(desktopSkipCount).map((soup) => (
+          <SoupCard key={soup.id} soup={soup} onOpen={onOpen} />
+        ))}
+        {desktopLoadingContent}
       </div>
       <div ref={sentinelRef} className="h-1 w-full" />
     </>

@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { pool } from "./db.js";
 import { getSticker } from "./stickers.js";
 import { settleOnlineSoupRound } from "./shellCurrency.js";
+import { levelForExperience } from "./levelSystem.js";
 
 type OnlineUser = { id: string; nickname: string; role: "admin" | "user" };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -154,6 +155,36 @@ function notifyRoom(roomId: string, reason: string, details: Record<string, unkn
   if (lobbyChangingReasons.has(reason)) notifyLobby(reason);
 }
 
+type OnlineSoupActivityType = "chat" | "clue" | "progress";
+
+async function recordRoomActivity(
+  roomId: string,
+  activityType: OnlineSoupActivityType,
+  actorUserId: string | null,
+  referenceId: string | null,
+  db: mysql.Pool | mysql.PoolConnection = pool
+) {
+  const [result] = await db.query<mysql.ResultSetHeader>(
+    `INSERT INTO online_soup_activities (id, room_id, actor_user_id, activity_type, reference_id)
+     VALUES (?, ?, ?, ?, ?)`,
+    [nanoid(), roomId, actorUserId, activityType, referenceId]
+  );
+  return String(result.insertId);
+}
+
+async function roomActivitySummary(roomId: string, userId: string, lastReadSequence: string | number) {
+  const [[summary]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COALESCE(MAX(activity_sequence), 0) AS latest_sequence,
+       SUM(activity_sequence > ? AND (actor_user_id IS NULL OR actor_user_id <> ?)) AS unread_count
+     FROM online_soup_activities WHERE room_id = ?`,
+    [lastReadSequence, userId, roomId]
+  );
+  return {
+    latestActivitySequence: String(summary?.latest_sequence ?? 0),
+    unreadCount: Number(summary?.unread_count ?? 0)
+  };
+}
+
 async function releaseStaleSeats(roomId?: string, db: mysql.Pool | mysql.PoolConnection = pool) {
   await db.query(
     `UPDATE online_soup_members SET is_active = 0, left_at = NOW()
@@ -282,6 +313,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderId: row.sender_id ? String(row.sender_id) : null,
     senderName: row.sender_name ? String(row.sender_name) : null,
     senderAvatar: row.sender_id && row.sender_has_avatar ? `/api/media/users/${encodeURIComponent(String(row.sender_id))}/avatar` : null,
+    senderLevel: levelForExperience(row.sender_experience),
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
     type: String(row.message_type),
     content: String(row.content),
@@ -304,7 +336,7 @@ async function roomMessagePage(room: mysql.RowDataPacket, before?: string, limit
   if (after) params.push(after);
   params.push(safeLimit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_name, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_name, u.experience AS sender_experience, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
        sender_lb.name AS sender_special_badge_name, sender_lb.tier AS sender_special_badge_tier,
        r.soup_id AS message_soup_id, r.status AS message_round_status,
@@ -335,7 +367,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   if (!room) return null;
   const [[memberRows], messagePage] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, u.nickname, u.avatar IS NOT NULL AS has_avatar,
+    `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, u.nickname, u.experience, u.avatar IS NOT NULL AS has_avatar,
        u.equipped_badge_key, u.equipped_badge_icon_url, lb.name AS special_badge_name, lb.tier AS special_badge_tier
      FROM online_soup_members m JOIN users u ON u.id = m.user_id
      LEFT JOIN legendary_badges lb ON u.equipped_badge_key = CONCAT('legendary:', lb.id)
@@ -375,6 +407,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
     me: { role: isHost ? "host" : String(viewerMember?.member_role ?? "admin"), isHost },
     members: memberRows.map((row) => ({
       id: String(row.user_id), nickname: String(row.nickname), role: String(row.member_role),
+      level: levelForExperience(row.experience),
       avatar: row.has_avatar ? `/api/media/users/${encodeURIComponent(String(row.user_id))}/avatar` : null,
       equippedBadge: memberBadge(row.equipped_badge_key, row.equipped_badge_icon_url, row.special_badge_name, row.special_badge_tier),
       joinedAt: iso(row.joined_at)
@@ -398,6 +431,28 @@ router.get("/rooms", async (_req, res) => {
      GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 100`
   );
   res.json({ rooms: rows.map(lobbyRoom) });
+});
+
+router.get("/active-room", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const [members] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT m.*, r.status
+     FROM online_soup_members m
+     JOIN online_soup_rooms r ON r.id = m.room_id
+     WHERE m.user_id = ? AND m.is_active = 1 AND r.status <> 'closed'
+     ORDER BY m.last_seen_at DESC, m.joined_at DESC LIMIT 1`,
+    [user.id]
+  );
+  const member = members[0];
+  if (!member) return res.json({ session: null });
+  const room = await roomById(String(member.room_id));
+  if (!room) return res.json({ session: null });
+  const [snapshot, activity] = await Promise.all([
+    roomSnapshot(String(member.room_id), user, room),
+    roomActivitySummary(String(member.room_id), user.id, String(member.last_read_activity_sequence ?? 0))
+  ]);
+  res.json({ session: { snapshot, ...activity } });
 });
 
 router.get("/rooms/lookup/:code", async (req, res) => {
@@ -731,6 +786,20 @@ router.post("/rooms/:roomId/ping", async (req, res) => {
   res.json({ ok: true });
 });
 
+router.patch("/rooms/:roomId/read", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  const parsed = z.object({ through: z.string().regex(/^\d+$/) }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "已读游标不正确");
+  await pool.query(
+    `UPDATE online_soup_members
+     SET last_read_activity_sequence = GREATEST(last_read_activity_sequence, ?)
+     WHERE room_id = ? AND user_id = ? AND is_active = 1`,
+    [parsed.data.through, context.room.id, context.user.id]
+  );
+  res.json({ ok: true });
+});
+
 router.post("/rooms/:roomId/leave", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
@@ -802,7 +871,8 @@ router.post("/rooms/:roomId/start", async (req, res) => {
   await pool.query("UPDATE online_soup_rounds SET status = 'playing', started_at = NOW() WHERE id = ?", [context.room.current_round_id]);
   await pool.query("UPDATE online_soup_rooms SET status = 'playing' WHERE id = ?", [context.room.id]);
   await systemMessage(context.room.id, context.room.current_round_id, "新一轮推理开始");
-  res.json({ ok: true }); void notifyRoom(context.room.id, "round_started");
+  const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, context.room.current_round_id);
+  res.json({ ok: true }); void notifyRoom(context.room.id, "round_started", { activitySequence, activityType: "progress" });
 });
 
 router.post("/rooms/:roomId/messages", async (req, res) => {
@@ -824,6 +894,7 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   }
   const connection = await pool.getConnection();
   let questionNumber: number | null = null;
+  let activitySequence = "0";
   try {
     await connection.beginTransaction();
     if (parsed.data.type === "question") {
@@ -838,10 +909,11 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
       "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content, sticker_id, question_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [id, context.room.id, context.room.current_round_id, context.user.id, type, content, sticker?.id ?? null, questionNumber]
     );
+    activitySequence = await recordRoomActivity(context.room.id, parsed.data.type === "question" ? "progress" : "chat", context.user.id, id, connection);
     await connection.commit();
     res.status(201).json({ id, questionNumber });
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
-  void notifyRoom(context.room.id, "message");
+  void notifyRoom(context.room.id, "message", { activitySequence, activityType: parsed.data.type === "question" ? "progress" : "chat" });
 });
 
 router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
@@ -854,8 +926,9 @@ router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
     [parsed.data.answer, req.params.messageId, context.room.id]
   );
   if (!result.affectedRows) return fail(res, 404, "提问不存在");
+  const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, req.params.messageId);
   res.json({ ok: true });
-  void notifyRoom(context.room.id, "answer_changed", { messageId: req.params.messageId, answer: parsed.data.answer });
+  void notifyRoom(context.room.id, "answer_changed", { messageId: req.params.messageId, answer: parsed.data.answer, activitySequence, activityType: "progress" });
 });
 
 router.post("/rooms/:roomId/clues", async (req, res) => {
@@ -864,9 +937,11 @@ router.post("/rooms/:roomId/clues", async (req, res) => {
   if (context.room.status !== "playing") return fail(res, 409, "仅推理中可以发布线索");
   const parsed = z.object({ content: z.string().trim().min(1).max(2000) }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "线索内容不正确");
-  await pool.query("INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, ?, 'clue', ?)", [nanoid(), context.room.id, context.room.current_round_id, context.user.id, parsed.data.content]);
+  const clueId = nanoid();
+  await pool.query("INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, ?, 'clue', ?)", [clueId, context.room.id, context.room.current_round_id, context.user.id, parsed.data.content]);
   await systemMessage(context.room.id, context.room.current_round_id, "主持人发布了一条线索");
-  res.status(201).json({ ok: true }); void notifyRoom(context.room.id, "clue");
+  const activitySequence = await recordRoomActivity(context.room.id, "clue", context.user.id, clueId);
+  res.status(201).json({ ok: true }); void notifyRoom(context.room.id, "clue", { activitySequence, activityType: "clue" });
 });
 
 router.post("/rooms/:roomId/publish-surface", async (req, res) => {
@@ -910,8 +985,9 @@ router.post("/rooms/:roomId/publish-surface", async (req, res) => {
   } finally {
     connection.release();
   }
+  const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, `surface:${parsed.data.surfaceIndex}`);
   res.status(201).json({ ok: true });
-  void notifyRoom(context.room.id, "supplemental_surface_published");
+  void notifyRoom(context.room.id, "supplemental_surface_published", { activitySequence, activityType: "progress" });
 });
 
 router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
@@ -974,7 +1050,8 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
     }
     await connection.commit();
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
-  res.json({ ok: true, ended }); void notifyRoom(context.room.id, ended ? "round_ended" : "bottom_published");
+  const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, `bottom:${parsed.data.bottomIndex}`);
+  res.json({ ok: true, ended }); void notifyRoom(context.room.id, ended ? "round_ended" : "bottom_published", { activitySequence, activityType: "progress" });
 });
 
 router.post("/rooms/:roomId/close", async (req, res) => {

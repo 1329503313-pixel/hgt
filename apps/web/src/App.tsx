@@ -5,6 +5,7 @@ import { useApp } from "./context/AppContext";
 import { IncomingMessageBanner } from "./components/IncomingMessageBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import MainLayout from "./layouts/MainLayout";
+import ContentNavLayout from "./layouts/ContentNavLayout";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const DetailPage = lazy(() => import("./pages/DetailPage"));
@@ -78,27 +79,31 @@ export default function App() {
           <Route path="mine/settings/backgrounds" element={<ProfileBackgroundsPage />} />
           <Route path="online-soup" element={<OnlineSoupLobbyPage />} />
           <Route path="circles" element={<CirclesPage />} />
+          <Route path="mine/store/:packId" element={<AssetPackPage />} />
+          <Route path="messages" element={<MessagesPage />} />
+          <Route path="messages/system" element={<NotificationsPage category="system" />} />
+          <Route path="messages/interactions" element={<NotificationsPage category="interactions" />} />
+          <Route path="messages/notifications" element={<Navigate to="/messages/system" replace />} />
+          <Route path="messages/requests" element={<RequestsPage />} />
+          <Route path="messages/notices" element={<NoticesPage />} />
+          <Route path="messages/notices/:id" element={<NoticeDetailPage />} />
         </Route>
 
-        {/* Detail page — independent layout, no BottomNav */}
-        <Route path="soup/:id" element={<DetailPage />} />
+        {/* Content detail routes — desktop navigation, mobile page-native header */}
+        <Route element={<ContentNavLayout />}>
+          <Route path="soup/:id" element={<DetailPage />} />
+          <Route path="users/:id" element={<UserProfilePage />} />
+          <Route path="users/:id/following" element={<UserFollowsPage type="following" />} />
+          <Route path="users/:id/followers" element={<UserFollowsPage type="followers" />} />
+        </Route>
+
+        {/* Focused workspaces — independent full-height desktop layouts */}
         <Route path="online-soup/rooms/:roomId" element={<OnlineSoupRoomPage />} />
         <Route path="online-soup/rooms/:roomId/select-soup" element={<OnlineSoupSelectPage />} />
         <Route path="circles/:circleId" element={<CircleChatPage />} />
-        <Route path="mine/store/:packId" element={<AssetPackPage />} />
 
-        {/* Messages / Notifications / Requests / Admin */}
-        <Route path="messages" element={<MessagesPage />} />
-        <Route path="messages/system" element={<NotificationsPage category="system" />} />
-        <Route path="messages/interactions" element={<NotificationsPage category="interactions" />} />
-        <Route path="messages/notifications" element={<Navigate to="/messages/system" replace />} />
-        <Route path="messages/requests" element={<RequestsPage />} />
-        <Route path="messages/notices" element={<NoticesPage />} />
-        <Route path="messages/notices/:id" element={<NoticeDetailPage />} />
+        {/* Focused chat / admin routes */}
         <Route path="messages/chat/:id" element={<ChatPage />} />
-        <Route path="users/:id" element={<UserProfilePage />} />
-        <Route path="users/:id/following" element={<UserFollowsPage type="following" />} />
-        <Route path="users/:id/followers" element={<UserFollowsPage type="followers" />} />
         <Route path="admin" element={<AdminPage />} />
       </Routes>
         </Suspense>

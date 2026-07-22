@@ -18,6 +18,7 @@ export type PublicUser = {
   avatar: string | null;
   role: UserRole;
   createdAt: string;
+  level: number;
   equippedBadge: EquippedBadge | null;
 };
 
@@ -42,6 +43,7 @@ export type SoupSummary = {
   creatorId: string;
   creatorName: string;
   creatorAvatar: string | null;
+  creatorLevel: number;
   creatorEquippedBadge: EquippedBadge | null;
   isSurfacePublic: boolean;
   isBottomPublic: boolean;
@@ -67,6 +69,7 @@ export type Evaluation = {
   reviewer: string;
   reviewerId: string;
   reviewerAvatar: string | null;
+  reviewerLevel: number;
   reviewerEquippedBadge: EquippedBadge | null;
   writing: number | null;
   logic: number | null;
@@ -155,7 +158,12 @@ export type ShellTaskType =
   | "publish_evaluation"
   | "speak_circle"
   | "join_online_soup"
-  | "host_online_soup";
+  | "host_online_soup"
+  | "receive_soup_like"
+  | "receive_soup_favorite"
+  | "receive_soup_evaluation"
+  | "soup_ai_played"
+  | "soup_online_completed";
 
 export type ShellTask = {
   type: ShellTaskType;
@@ -166,6 +174,8 @@ export type ShellTask = {
   progress: number;
   completed: boolean;
   actualReward: number;
+  experienceReward: number;
+  actualExperience: number;
   dailyMaximum: number;
 };
 
@@ -173,8 +183,10 @@ export type ShellTaskCenter = {
   balance: number;
   taskDate: string;
   earnedToday: number;
+  earnedExperienceToday: number;
   dailyLimit: number;
   theoreticalMaximum: number;
+  levelProgress: import("./levelSystem").LevelProgress;
   tasks: ShellTask[];
 };
 
@@ -212,7 +224,7 @@ export type SoupShare = Pick<SoupSummary, "id" | "title" | "author" | "type" | "
 
 export type ConversationItem = {
   id: string;
-  otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean };
+  otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean };
   lastMessage: { content: string; type: "text" | "sticker" | "room_invite" | "soup_share"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; soupShare?: SoupShare | null; isMine: boolean; createdAt: string } | null;
   unreadCount: number;
   updatedAt: string;
@@ -281,7 +293,7 @@ export type CircleMessage = {
   id: string;
   sequence: number;
   circleId: string;
-  sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean }) | null;
+  sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean }) | null;
   content: string;
   type: "text" | "sticker" | "room_invite" | "soup_share";
   stickerId: string | null;
@@ -334,6 +346,7 @@ export type OnlineSoupMessage = {
   senderId: string | null;
   senderName: string | null;
   senderAvatar: string | null;
+  senderLevel: number;
   senderEquippedBadge: EquippedBadge | null;
   type: "discussion" | "question" | "host" | "sticker" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system";
   content: string;
@@ -372,7 +385,7 @@ export type OnlineSoupSnapshot = {
     createdAt: string;
   };
   me: { role: OnlineSoupMemberRole; isHost: boolean };
-  members: Array<{ id: string; nickname: string; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; joinedAt: string }>;
+  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; joinedAt: string }>;
   messages: OnlineSoupMessage[];
   messagesHasMore: boolean;
   messagesNextCursor: string | null;

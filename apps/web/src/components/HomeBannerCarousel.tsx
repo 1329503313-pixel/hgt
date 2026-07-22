@@ -6,6 +6,7 @@ type HomeBanner = {
   id: string;
   name: string;
   imageUrl: string | null;
+  desktopImageUrl: string | null;
   linkUrl: string | null;
 };
 
@@ -13,10 +14,11 @@ const fallbackBanner: HomeBanner = {
   id: "default-home-banner",
   name: "首页 Banner",
   imageUrl: null,
+  desktopImageUrl: null,
   linkUrl: null
 };
 
-export function HomeBannerCarousel() {
+export function HomeBannerCarousel({ variant = "mobile" }: { variant?: "desktop" | "mobile" }) {
   const [banners, setBanners] = useState<HomeBanner[]>([fallbackBanner]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [loadedBannerIds, setLoadedBannerIds] = useState<Set<string>>(() => new Set());
@@ -92,7 +94,7 @@ export function HomeBannerCarousel() {
         }}
       >
         {banners.map((banner, index) => {
-          const image = banner.imageUrl || homeBannerUrl;
+          const image = (variant === "desktop" ? banner.desktopImageUrl || banner.imageUrl : banner.imageUrl) || homeBannerUrl;
           const shouldLoad = index === activeIndex || index === nextIndex || loadedBannerIds.has(banner.id);
           const content = shouldLoad
             ? <img src={image} alt={banner.name} draggable={false} loading="eager" decoding="async" />

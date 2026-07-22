@@ -4,6 +4,7 @@ import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { createHash } from "crypto";
 import { pool } from "./db.js";
+import { awardShellTask } from "./shellCurrency.js";
 
 import { config } from "./config.js";
 
@@ -755,6 +756,14 @@ export async function forceReanalyzeKeyFacts(soupId: string): Promise<void> {
 
 // ================ 路由 ================
 
+async function awardCreatorAiPlay(creatorId: string, playerId: string, soupId: string, sessionId: string) {
+  if (creatorId === playerId) return;
+  await awardShellTask(creatorId, "soup_ai_played", `ai-play:${playerId}:${soupId}`, {
+    relatedType: "game_session",
+    relatedId: sessionId
+  });
+}
+
 gameRouter.post("/:soupId/start", async (req, res) => {
   const user = (req as any).user;
   if (!user) return res.status(401).json({ error: "请先登录" });
@@ -782,6 +791,7 @@ gameRouter.post("/:soupId/start", async (req, res) => {
       : (parseJson<{ surfaces: number[]; bottoms: number[] }>(s.revealed_supplements) ?? { surfaces: [], bottoms: [] });
     const progress = Math.max(s.progress ?? 0, recalculated.progress);
     const revealedKeys = parseJson<number[]>(s.revealed_keys) ?? [];
+    await awardCreatorAiPlay(soupData.creatorId, user.id, req.params.soupId, s.id);
     return res.json({
       sessionId: s.id,
       messages: trimConversationMessages(msgs),
@@ -820,6 +830,7 @@ gameRouter.post("/:soupId/start", async (req, res) => {
       [id, req.params.soupId, user.id, messages, "[]", JSON.stringify({ surfaces: [], bottoms: [] }), sessionContentHash(soupData), 0]
     );
   }
+  await awardCreatorAiPlay(soupData.creatorId, user.id, req.params.soupId, id);
   res.json({ sessionId: id, messages: [initialMsg], progress: 0, completed: false, revealedKeys: [], revealedSupplements: { surfaces: [], bottoms: [] } });
 });
 

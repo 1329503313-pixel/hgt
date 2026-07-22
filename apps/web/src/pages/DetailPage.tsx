@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
+import { Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api, SoupResponse, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -9,12 +9,14 @@ import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
 import { GameModal } from "../components/GameModal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
+import { LevelBadge } from "../components/LevelBadge";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import { DetailSkeleton } from "../components/Skeletons";
 import { refreshMineContentCache } from "../shared/mineContentCache";
 import { parentRoute } from "../shared/routeHierarchy";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import { SoupShareModal } from "../components/SoupShareModal";
+import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { Modal } from "../components/Modal";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
@@ -51,6 +53,8 @@ export default function DetailPage() {
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "" });
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
+  const [likePending, setLikePending] = useState(false);
+  const [favoritePending, setFavoritePending] = useState(false);
 
   const radarRef = useRef<HTMLDivElement | null>(null);
   const backTarget = navigationOrigin?.soupShareReturnTo || (onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname));
@@ -91,21 +95,35 @@ export default function DetailPage() {
   }
 
   async function handleFavorite() {
-    if (!soup) return;
+    if (!soup || favoritePending) return;
     if (!user) { openAuth(); return; }
-    const data = await api<{ isFavorited: boolean; favoriteCount: number }>(`/api/soups/${soup.id}/favorite`, { method: "POST" });
-    setSoup((old) => old ? { ...old, isFavorited: data.isFavorited, favoriteCount: data.favoriteCount } : old);
-    void refreshMineContentCache(user.id, "favorites").catch(() => {});
-    if (data.isFavorited) await checkBadgeUnlocks();
+    setFavoritePending(true);
+    try {
+      const data = await api<{ isFavorited: boolean; favoriteCount: number }>(`/api/soups/${soup.id}/favorite`, { method: "POST" });
+      setSoup((old) => old ? { ...old, isFavorited: data.isFavorited, favoriteCount: data.favoriteCount } : old);
+      void refreshMineContentCache(user.id, "favorites").catch(() => {});
+      if (data.isFavorited) void checkBadgeUnlocks();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "收藏失败，请稍后重试");
+    } finally {
+      setFavoritePending(false);
+    }
   }
 
   async function handleLike() {
-    if (!soup) return;
+    if (!soup || likePending) return;
     if (!user) { openAuth(); return; }
-    const data = await api<{ isLiked: boolean; likeCount: number }>(`/api/soups/${soup.id}/like`, { method: "POST" });
-    setSoup((old) => old ? { ...old, isLiked: data.isLiked, likeCount: data.likeCount } : old);
-    void refreshMineContentCache(user.id, "likes").catch(() => {});
-    if (data.isLiked) await checkBadgeUnlocks();
+    setLikePending(true);
+    try {
+      const data = await api<{ isLiked: boolean; likeCount: number }>(`/api/soups/${soup.id}/like`, { method: "POST" });
+      setSoup((old) => old ? { ...old, isLiked: data.isLiked, likeCount: data.likeCount } : old);
+      void refreshMineContentCache(user.id, "likes").catch(() => {});
+      if (data.isLiked) void checkBadgeUnlocks();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "点赞失败，请稍后重试");
+    } finally {
+      setLikePending(false);
+    }
   }
 
   async function handleRequest() {
@@ -251,13 +269,11 @@ export default function DetailPage() {
   const isReviewApproved = soup.reviewStatus === "approved";
 
   return (
-    <section className="pt-16">
+    <section className="detail-page pt-16">
       {/* Header */}
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-          <button className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink" onClick={() => navigate(backTarget, { replace: true })}>
-            <ArrowLeft size={18} /> <span>{navigationOrigin?.soupShareReturnTo ? "返回聊天" : onlineSoupRoomId ? "返回房间" : "返回列表"}</span>
-          </button>
+          <UnifiedBackButton compactOnMobile to={backTarget} />
           <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
             {user ? (
               <>
@@ -294,7 +310,11 @@ export default function DetailPage() {
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-4 space-y-4">
+      <div className="detail-page-content mx-auto max-w-6xl space-y-4 px-4">
+
+      <div className="hidden lg:flex">
+        <UnifiedBackButton to={backTarget} />
+      </div>
 
       {!isReviewApproved && (
         <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${soup.reviewStatus === "pending" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-700"}`}>
@@ -303,9 +323,9 @@ export default function DetailPage() {
       )}
 
       {/* Meta card */}
-      <div className="card p-4">
-        <img className="mb-4 max-h-72 w-full rounded-lg object-cover" src={soup.coverImage ?? defaultCoverUrl} alt={`${soup.title} 封面`} />
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div className="detail-meta-card card p-4">
+        <img className="detail-meta-cover mb-4 aspect-video w-full rounded-xl object-cover" src={soup.coverImage ?? defaultCoverUrl} alt={`${soup.title} 封面`} />
+        <div className="detail-meta-info flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-end justify-between gap-3">
               <h1 className="min-w-0 flex-1 break-words text-2xl font-black text-ink">
@@ -319,14 +339,14 @@ export default function DetailPage() {
                 <button
                   className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${soup.isLiked ? "border-red-200 bg-red-50 text-red-500" : "border-line bg-white text-muted hover:border-red-200 hover:text-red-500"}`}
                   style={{ height: "calc(1.5lh * 0.75)" }}
-                  onClick={handleLike} aria-pressed={soup.isLiked}
+                  onClick={handleLike} aria-pressed={soup.isLiked} aria-busy={likePending} disabled={likePending}
                 >
                   <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : "text-muted"} size={15} /> {soup.likeCount}
                 </button>
                 <button
                   className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${soup.isFavorited ? "border-amber-200 bg-amber-50 text-amber-500" : "border-line bg-white text-muted hover:border-amber-200 hover:text-amber-500"}`}
                   style={{ height: "calc(1.5lh * 0.75)" }}
-                  onClick={handleFavorite} aria-pressed={soup.isFavorited}
+                  onClick={handleFavorite} aria-pressed={soup.isFavorited} aria-busy={favoritePending} disabled={favoritePending}
                 >
                   <Star className={soup.isFavorited ? "fill-amber-400 text-amber-400" : "text-muted"} size={15} /> {soup.favoriteCount}
                 </button>
@@ -350,6 +370,7 @@ export default function DetailPage() {
                 {soup.creatorAvatar ? <img className="h-full w-full object-cover" src={soup.creatorAvatar} alt={`${soup.creatorName}头像`} /> : <User size={13} />}
               </button>
               <button className="font-bold text-primary hover:underline" onClick={() => navigate(`/users/${soup.creatorId}`)}>{soup.creatorName}</button>
+              <LevelBadge level={soup.creatorLevel} />
               <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />
               <span>· 评分 {soup.averageTotal ?? "-"}</span>
             </p>
@@ -443,6 +464,7 @@ export default function DetailPage() {
                   <span className="flex items-center gap-2">
                     {item.reviewerAvatar ? <img className="h-6 w-6 rounded-full object-cover" src={item.reviewerAvatar} alt="" /> : <span className="grid h-6 w-6 place-items-center rounded-full bg-blue-100 text-primary"><User size={14} /></span>}
                     <strong>{item.reviewer}</strong>
+                    <LevelBadge level={item.reviewerLevel} />
                     <EquippedBadgeIcon badge={item.reviewerEquippedBadge} className="h-5 w-5" />
                   </span>
                   <span className="rounded-lg bg-blue-50 px-2 py-1 text-sm font-black text-primary">{item.total}</span>

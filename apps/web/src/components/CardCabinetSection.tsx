@@ -126,6 +126,18 @@ export function CardCabinetSection({
     return () => window.clearTimeout(timer);
   }, [detailAnimation?.phase]);
 
+  useEffect(() => {
+    if (!detail) return;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [detail]);
+
   async function saveShowcase() {
     setSaving(true);
     try {
@@ -145,10 +157,11 @@ export function CardCabinetSection({
           <div><p className="text-xs font-bold text-cyan-200">{editable ? "我的收藏柜" : `${cabinet.user.nickname}的收藏柜`}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-black"><span>{cabinet.user.totalCollectionValue.toLocaleString()} 收藏值</span><span>{cabinet.user.unlockedCardCount} 张卡</span><span>{cabinet.user.legendaryCardCount} 张传说</span></div></div>
           <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-cyan-200 transition hover:bg-white/10 active:scale-95" onClick={() => setShowcaseCollapsed((collapsed) => !collapsed)} aria-expanded={!showcaseCollapsed} aria-label={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"} title={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"}><GalleryVerticalEnd size={30} /></button>
         </div>
-        {!showcaseCollapsed && <><div className="mt-4 grid grid-cols-3 gap-2">
-          {visibleShowcase.map((card) => <AssetCardVisual key={card.id} card={card} animated={card.rarity === "legend"} compactBadges className="asset-card-cabinet" onClick={(event) => openDetail(card, event.currentTarget)} />)}
+        {!showcaseCollapsed && <><div className="mt-4 grid grid-cols-3 gap-2 lg:grid-cols-6 lg:gap-3">
+          {visibleShowcase.map((card) => <AssetCardVisual key={card.id} card={card} animated={!editing && card.rarity === "legend"} compactBadges className="asset-card-cabinet" ariaLabel={editing ? `${card.name}，点击撤下陈列` : undefined} onClick={(event) => editing ? toggle(card, event.currentTarget) : openDetail(card, event.currentTarget)} />)}
           {Array.from({ length: Math.max(0, 6 - visibleShowcase.length) }, (_, index) => <div key={`empty-${index}`} className="aspect-[5/7] rounded-xl border border-dashed border-white/20 bg-white/5" />)}
         </div>
+        {editing && <p className="mt-3 text-right text-xs font-bold text-cyan-200">点击已陈列卡片即可撤下</p>}
         {editable && !compact && <div className="mt-4 flex justify-end gap-2">{editing ? <><button className="rounded-full border border-white/25 px-4 py-2 text-xs font-bold" onClick={() => { setEditing(false); setSelected(cabinet.showcase.map((card) => card.id)); }}>取消</button><button className="rounded-full bg-white px-4 py-2 text-xs font-black text-slate-950" disabled={saving} onClick={() => void saveShowcase()}>{saving ? "保存中…" : `保存陈列 (${selected.length}/6)`}</button></> : <button className="rounded-full bg-white px-4 py-2 text-xs font-black text-slate-950" onClick={() => setEditing(true)}>调整陈列卡</button>}</div>}
         {compact && editable && <button className="mt-4 w-full rounded-xl bg-white/10 py-2.5 text-xs font-bold" onClick={() => navigate("/mine/cards")}>查看全部收藏并调整陈列</button>}
         </>}
@@ -171,11 +184,12 @@ export function CardCabinetSection({
         full
         bare
         onClose={closeDetail}
+        contentClassName="scrollbar-hidden"
         overlayClassName={`transition-colors duration-[400ms] ${detailAnimation?.phase === "measuring" ? "bg-slate-950/0" : "bg-slate-950/80 backdrop-blur-sm"}`}
       >
         <div className="flex min-h-full items-center justify-center py-4">
           <div className="w-full max-w-md">
-            <div className={`flex items-center justify-between gap-4 text-white transition-opacity duration-200 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "pointer-events-none opacity-0" : "opacity-100"}`}><div><p className="flex items-baseline gap-1.5 font-bold text-cyan-200"><span className="text-sm">NO.{detail.cardNo}</span><span className="text-sm opacity-70">·</span><span className="text-base">{ASSET_RARITY_LABELS[detail.rarity]}</span></p><h2 className="mt-1.5 text-2xl font-black leading-tight">{detail.name}</h2></div><button className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-white backdrop-blur" onClick={closeDetail} aria-label="关闭卡片详情"><X size={21} /></button></div>
+            <div className={`flex items-center justify-between gap-4 text-white transition-opacity duration-200 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "pointer-events-none opacity-0" : "opacity-100"}`}><div><p className="flex items-baseline gap-1.5 font-bold text-cyan-200"><span className="text-sm">NO.{detail.cardNo}</span><span className="text-sm opacity-70">·</span><span className="text-base">{ASSET_RARITY_LABELS[detail.rarity]}</span></p><h2 className="mt-1.5 text-2xl font-black leading-tight">{detail.name}</h2></div><button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-slate-900 shadow-lg ring-1 ring-white/80 transition-transform hover:scale-105 active:scale-95" onClick={closeDetail} aria-label="关闭卡片详情"><X size={22} strokeWidth={2.4} /></button></div>
             <div ref={detailCardRef} className={`relative mx-auto mt-4 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "invisible" : "visible"}`}><AssetCardVisual card={detail} animated={detail.rarity === "legend"} highDetail className="asset-card-cabinet" /></div>
             <div className={`mt-4 overflow-hidden rounded-2xl bg-white text-ink shadow-soft transition-opacity duration-200 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "opacity-0" : "opacity-100"}`}>
               <div className="grid grid-cols-3 divide-x divide-line px-2 py-5 text-center text-sm">

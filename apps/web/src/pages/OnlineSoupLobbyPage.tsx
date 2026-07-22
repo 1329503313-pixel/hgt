@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DoorOpen, LockKeyhole, MessageCircleQuestion, RefreshCw, Search, Users } from "lucide-react";
+import { DoorOpen, LockKeyhole, MessageCircleQuestion, Plus, RefreshCw, Search, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
@@ -161,9 +161,9 @@ export default function OnlineSoupLobbyPage() {
   }
 
   return (
-    <section className="space-y-4">
+    <section className="online-soup-lobby space-y-4">
       <PageTopBar title="在线玩汤" />
-      <section className="relative isolate overflow-hidden rounded-[20px] border border-blue-300/20 bg-[#0b2147] px-5 py-4 text-white shadow-[0_12px_32px_rgba(15,45,100,0.22)] sm:px-6 sm:py-5">
+      <section className="online-soup-mobile-intro relative isolate overflow-hidden rounded-[20px] border border-blue-300/20 bg-[#0b2147] px-5 py-4 text-white shadow-[0_12px_32px_rgba(15,45,100,0.22)] sm:px-6 sm:py-5">
         <div className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-blue-500/25 blur-3xl" />
         <div className="pointer-events-none absolute right-5 top-1/2 grid h-16 w-16 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-blue-200/20">
           <MessageCircleQuestion size={36} strokeWidth={1.25} />
@@ -178,25 +178,51 @@ export default function OnlineSoupLobbyPage() {
         </div>
       </section>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-black text-ink">在线房间</h2>
-        <button className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-muted transition hover:bg-slate-50 hover:text-primary" onClick={loadRooms} aria-label="刷新房间列表" title="刷新">
-          <RefreshCw size={14} />
-        </button>
+      <div className="online-soup-lobby-toolbar">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-lg font-black text-ink lg:text-2xl">在线房间</h1>
+            {!loading && <span className="online-soup-room-count">{rooms.length} 间</span>}
+          </div>
+          <p className="online-soup-connection-state">
+            <span className={socketConnected ? "is-online" : ""} aria-hidden="true" />
+            {socketConnected ? "大厅动态实时更新" : "实时连接恢复中，列表仍会自动刷新"}
+          </p>
+        </div>
+        <div className="online-soup-lobby-actions">
+          <button className="online-soup-refresh-button" onClick={loadRooms} aria-label="刷新房间列表" title="刷新房间列表">
+            <RefreshCw size={16} />
+          </button>
+          <button className="online-soup-code-button" onClick={() => setJoinOpen(true)}>
+            <Search size={17} />
+            <span>房间号加入</span>
+          </button>
+          <button className="online-soup-create-button" onClick={openCreate}>
+            <Plus size={18} strokeWidth={2.6} />
+            <span>创建房间</span>
+          </button>
+        </div>
       </div>
 
-      {loading ? <div className="card h-32 animate-pulse bg-slate-100" /> : rooms.length === 0 ? (
-        <div className="card py-12 text-center"><DoorOpen className="mx-auto text-slate-300" size={36} /><p className="mt-3 font-bold text-muted">暂时没有在线房间</p></div>
+      {loading ? <div className="online-soup-room-grid" aria-label="房间列表加载中">
+        {Array.from({ length: 6 }, (_, index) => <div key={index} className="online-soup-room-card h-[174px] animate-pulse bg-slate-100" />)}
+      </div> : rooms.length === 0 ? (
+        <div className="online-soup-empty-state card py-12 text-center">
+          <DoorOpen className="mx-auto text-slate-300" size={40} />
+          <h2 className="mt-4 text-lg font-black text-ink">暂时没有在线房间</h2>
+          <p className="mt-1 text-sm text-muted">创建一个房间，邀请朋友开始今天的推理。</p>
+          <button className="online-soup-create-button mx-auto mt-5" onClick={openCreate}><Plus size={18} />创建第一个房间</button>
+        </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="online-soup-room-grid">
           {rooms.map((room) => (
-            <article key={room.id} className="card p-4">
+            <article key={room.id} className="online-soup-room-card card">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0"><h3 className="truncate font-black text-ink">{room.name}</h3><p className="mt-1 text-xs text-muted">#{room.code} · 主持人 {room.host.nickname}</p></div>
+                <div className="min-w-0"><h3 className="truncate text-base font-black text-ink">{room.name}</h3><p className="mt-1 text-xs font-semibold text-muted">房间号 {room.code} · 主持人 {room.host.nickname}</p></div>
                 <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{statusText[room.status]}</span></div>
               </div>
-              <p className="mt-3 truncate text-sm text-ink">当前汤：{room.soupTitle ?? "尚未选择海龟汤"}</p>
-              <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1 text-sm text-muted"><Users size={15} /> {room.playerCount}/8</span><button className="btn btn-primary px-4" onClick={() => requestJoin(room)}>加入</button></div>
+              <div className="online-soup-room-current"><span>当前海龟汤</span><strong title={room.soupTitle ?? "尚未选择海龟汤"}>{room.soupTitle ?? "尚未选择海龟汤"}</strong></div>
+              <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.playerCount}/8 位玩家</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>加入房间</button></div>
             </article>
           ))}
         </div>
@@ -235,7 +261,7 @@ export default function OnlineSoupLobbyPage() {
         <div className="space-y-4 text-center"><h2 className="text-xl font-black text-ink">{inviteEntryError}</h2><p className="text-sm text-muted">暂时无法进入该房间</p><button className="btn btn-primary w-full" onClick={() => setInviteEntryError(null)}>确认</button></div>
       </Modal>}
 
-      <div className="fixed right-5 bottom-[calc(92px+env(safe-area-inset-bottom))] z-30 flex flex-col gap-3">
+      <div className="online-soup-mobile-actions fixed right-5 bottom-[calc(92px+env(safe-area-inset-bottom))] z-30 flex flex-col gap-3">
         <button
           className="grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-[0_10px_28px_rgba(37,99,235,0.35)] transition hover:bg-blue-600 active:scale-95"
           onClick={openCreate}

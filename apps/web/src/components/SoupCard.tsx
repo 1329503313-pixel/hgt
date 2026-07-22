@@ -1,8 +1,8 @@
-import { useState } from "react";
 import type { SoupSummary } from "../shared/types";
 import { Flame, Star, User, ThumbsUp, Sparkles } from "lucide-react";
 import { formatViews } from "../context/AppContext";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
+import { LevelBadge } from "./LevelBadge";
 import { defaultCoverUrl } from "../shared/staticAssets";
 
 export function SoupCard({
@@ -24,15 +24,23 @@ export function SoupCard({
 
   return (
     <article ref={refTarget} className="soup-card" onClick={() => onOpen(soup.id)}>
-      {soup.coverImage ? (
-        <CoverImage src={soup.coverImage} alt={`${soup.title} 封面`} />
-      ) : (
-        <CoverImage src={defaultCoverUrl} alt={`${soup.title} 封面`} />
-      )}
+      <div className="soup-card-cover-shell">
+        {soup.coverImage ? (
+          <CoverImage src={soup.coverImage} alt={`${soup.title} 封面`} />
+        ) : (
+          <CoverImage src={defaultCoverUrl} alt={`${soup.title} 封面`} />
+        )}
+        <div className="soup-card-cover-metrics" aria-label="评分、点赞、收藏和热度">
+          <span title={soup.averageTotal ? `评分 ${soup.averageTotal}分` : "未评分"}><Sparkles size={13} />{soup.averageTotal ? `${soup.averageTotal}` : "-"}</span>
+          <span title={`点赞 ${soup.likeCount}`}><ThumbsUp className={`soup-card-metric-icon ${soup.isLiked ? "is-liked fill-current" : ""}`} size={13} />{formatViews(soup.likeCount)}</span>
+          <span title={`收藏 ${soup.favoriteCount}`}><Star className={`soup-card-metric-icon ${soup.isFavorited ? "is-favorited fill-current" : ""}`} size={13} />{formatViews(soup.favoriteCount)}</span>
+          <span title={`热度 ${soup.heatValue}`}><Flame className="soup-card-metric-icon is-heat fill-current" size={13} />{formatViews(soup.heatValue)}</span>
+        </div>
+      </div>
       <div className="p-3">
         <h2 className="flex min-w-0 items-end text-[16px] font-black leading-snug text-ink" title={soup.title}>
           <span className="min-w-0 flex-1 line-clamp-2">{soup.title}</span>
-          <span className="ml-1 inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap pb-0.5 text-[12px] font-black leading-none text-red-500" title={`热力值 ${soup.heatValue}`}>
+          <span className="soup-card-title-heat ml-1 inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap pb-0.5 text-[12px] font-black leading-none text-red-500" title={`热力值 ${soup.heatValue}`}>
             <Flame size={14} className="fill-red-500" />
             {soup.heatValue.toLocaleString()}
           </span>
@@ -44,6 +52,7 @@ export function SoupCard({
             <User size={14} />
           )}
           {soup.isOriginal ? (soup.author || soup.creatorName) : "佚名"}
+          {soup.isOriginal && <LevelBadge level={soup.creatorLevel} />}
           {soup.isOriginal && <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />}
         </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -52,21 +61,24 @@ export function SoupCard({
               {tag.label}
             </span>
           ))}
+          <span className="soup-card-difficulty-tag h-[24px] items-center rounded-md bg-orange-50 px-2 text-[12px] font-semibold text-orange-600 ring-1 ring-orange-100">
+            {soup.difficulty}
+          </span>
         </div>
         <p className="mt-2 line-clamp-3 text-[13px] leading-5 text-muted">{soup.summary || "暂无摘要，点开看看汤面留下的第一道线索。"}</p>
-        <div className="mt-3 flex items-center justify-between text-[13px] text-muted">
-          <span className="inline-flex items-center gap-1 font-semibold">
+        <div className="soup-card-footer mt-3 flex items-center justify-between text-[13px] text-muted">
+          <span className="soup-card-footer-score inline-flex items-center gap-1 font-semibold">
             <Sparkles size={14} />
             {soup.averageTotal ? `${soup.averageTotal}分` : "未评分"}
           </span>
-          <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-bold text-orange-600">
+          <span className="soup-card-footer-difficulty inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-bold text-orange-600">
             {soup.difficulty}
           </span>
-          <span className="inline-flex items-center gap-1">
+          <span className="soup-card-footer-like inline-flex items-center gap-1">
             <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : ""} size={14} />
             {soup.likeCount}
           </span>
-          <span className="inline-flex items-center gap-1">
+          <span className="soup-card-footer-favorite inline-flex items-center gap-1">
             <Star className={soup.isFavorited ? "fill-yellow-400 text-yellow-400" : ""} size={14} />
             {soup.favoriteCount}
           </span>
@@ -77,33 +89,9 @@ export function SoupCard({
 }
 
 export function CoverImage({ src, alt }: { src: string; alt: string }) {
-  const [ratio, setRatio] = useState<number | null>(null);
-  const isTooWide = ratio != null && ratio > 2;
-  const isTooTall = ratio != null && ratio < 0.5;
-
-  if (isTooWide || isTooTall) {
-    return (
-      <div className="soup-card-cover-frame" style={{ aspectRatio: isTooWide ? "2 / 1" : "1 / 2" }}>
-        <img
-          className="soup-card-cover h-full object-cover"
-          src={src}
-          alt={alt}
-          loading="lazy"
-          decoding="async"
-          onLoad={(event) => setRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight)}
-        />
-      </div>
-    );
-  }
-
   return (
-    <img
-      className="soup-card-cover"
-      src={src}
-      alt={alt}
-      loading="lazy"
-      decoding="async"
-      onLoad={(event) => setRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight)}
-    />
+    <div className="soup-card-cover-frame">
+      <img className="soup-card-cover" src={src} alt={alt} loading="lazy" decoding="async" />
+    </div>
   );
 }

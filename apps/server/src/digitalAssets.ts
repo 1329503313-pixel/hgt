@@ -219,6 +219,13 @@ function packPayload(row: mysql.RowDataPacket, mediaVariant?: "cover" | "thumbna
   };
 }
 
+function packDrawStatistics(row: { total_draw_count?: unknown; recent_7d_draw_count?: unknown }) {
+  return {
+    totalDrawCount: Number(row.total_draw_count ?? 0),
+    recent7dDrawCount: Number(row.recent_7d_draw_count ?? 0)
+  };
+}
+
 function starForTotal(total: number) {
   if (total >= 19) return 3;
   if (total >= 9) return 2;
@@ -778,30 +785,39 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
   app.get("/api/asset-store/packs/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-    res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
     const [[pack], configuration] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(`SELECT ${PUBLIC_PACK_COLUMNS} FROM asset_packs WHERE id = ? LIMIT 1`, [req.params.id]).then(([rows]) => rows),
       packConfiguration(req.params.id, pool, true)
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
     const type = packType(pack.pack_type);
-    const [[pity], [usageRows], [userRows]] = await Promise.all([
+    const [pityRows, usageRows, userRows, ownedRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, type]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
-      pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows)
+      pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
+      pool.query<mysql.RowDataPacket[]>("SELECT card_id FROM user_asset_cards WHERE user_id = ?", [user.id]).then(([rows]) => rows)
     ]);
+    const pity = pityRows[0];
+    const usage = usageRows[0];
+    const userRow = userRows[0];
+    const ownedCardIds = new Set(ownedRows.map((row: mysql.RowDataPacket) => String(row.card_id)));
+    res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
     res.json({
-      balance: Number(userRows?.shell_balance ?? 0),
+      balance: Number(userRow?.shell_balance ?? 0),
       pack: {
         ...packPayload(pack, "cover"),
         probabilityNotice: probabilityDisclosure(configuration),
-        freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - Number(usageRows?.used_count ?? 0)),
+        freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - Number(usage?.used_count ?? 0)),
         pity: {
           rare: Number(pity?.rare_count ?? 0), epic: Number(pity?.epic_count ?? 0), legend: Number(pity?.legend_count ?? 0),
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend
         },
         rarityProbabilities: configuration.rarityProbabilities,
-        cards: configuration.enabled.map((card) => ({ ...cardPayload({ ...card, story: "" }, true), actualProbability: actualCardProbability(configuration, card) }))
+        cards: configuration.enabled.map((card) => ({
+          ...cardPayload({ ...card, story: "" }, true),
+          actualProbability: actualCardProbability(configuration, card),
+          owned: ownedCardIds.has(String(card.id))
+        }))
       }
     });
   });
@@ -1215,14 +1231,33 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
   app.get("/api/admin/asset-packs", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, name, '' AS cover_url, description, pack_story, pack_type,
-        single_price, ten_price, daily_free_draws, sale_start_at, sale_end_at, enabled, sort_order,
-        probability_notice, created_at, updated_at
-       FROM asset_packs ORDER BY sort_order DESC, created_at DESC`
+      `SELECT p.id, p.name, '' AS cover_url, p.description, p.pack_story, p.pack_type,
+        p.single_price, p.ten_price, p.daily_free_draws, p.sale_start_at, p.sale_end_at, p.enabled, p.sort_order,
+        p.probability_notice, p.created_at, p.updated_at,
+        COALESCE(draw_stats.total_draw_count, 0) AS total_draw_count,
+        COALESCE(draw_stats.recent_7d_draw_count, 0) AS recent_7d_draw_count
+       FROM asset_packs p
+       LEFT JOIN (
+         SELECT pack_id,
+           COALESCE(SUM(draw_count), 0) AS total_draw_count,
+           COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN draw_count ELSE 0 END), 0) AS recent_7d_draw_count
+         FROM asset_draw_orders
+         WHERE status = 'completed'
+         GROUP BY pack_id
+       ) draw_stats ON draw_stats.pack_id = p.id
+       ORDER BY p.sort_order DESC, p.created_at DESC`
     );
     const packs = await Promise.all(rows.map(async (row) => {
       const config = await packConfiguration(String(row.id));
-      return { ...packPayload(row, "thumbnail"), probabilityNotice: probabilityDisclosure(config), rarityProbabilities: config.rarityProbabilities, probabilityTotal: config.probabilityTotal, configurationReady: config.ready, cards: config.cards.map((card) => ({ ...cardPayload(card, true), actualProbability: card.status === "active" ? actualCardProbability(config, card) : 0 })) };
+      return {
+        ...packPayload(row, "thumbnail"),
+        ...packDrawStatistics(row as mysql.RowDataPacket & { total_draw_count?: unknown; recent_7d_draw_count?: unknown }),
+        probabilityNotice: probabilityDisclosure(config),
+        rarityProbabilities: config.rarityProbabilities,
+        probabilityTotal: config.probabilityTotal,
+        configurationReady: config.ready,
+        cards: config.cards.map((card) => ({ ...cardPayload(card, true), actualProbability: card.status === "active" ? actualCardProbability(config, card) : 0 }))
+      };
     }));
     res.json({ packs });
   });
@@ -1399,6 +1434,7 @@ export const digitalAssetRules = {
   starForTotal,
   duplicateProgress,
   nextStarRequirement,
+  packDrawStatistics,
   pityTrigger,
   updatePity
 };

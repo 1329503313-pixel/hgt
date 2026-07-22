@@ -1,8 +1,10 @@
 import bcrypt from "bcryptjs";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
+import { nanoid } from "nanoid";
 import { config } from "./config.js";
 import { BANNER_MAX_BYTES, optimizeBannerImage, storedBannerImageBytes } from "./bannerImages.js";
+import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
 
 export const pool = mysql.createPool({
   ...config.db,
@@ -175,6 +177,7 @@ export async function initDatabase() {
   await ensureColumn("users", "equipped_badge_icon_url", "equipped_badge_icon_url VARCHAR(255) NULL AFTER equipped_badge_key");
   await ensureColumn("users", "last_login_at", "last_login_at DATETIME NULL AFTER badges_initialized");
   await ensureColumn("users", "shell_balance", "shell_balance INT UNSIGNED NOT NULL DEFAULT 0 AFTER last_login_at");
+  await ensureColumn("users", "experience", "experience BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER shell_balance");
   await ensureColumn("users", "profile_background", "profile_background LONGTEXT NULL AFTER avatar");
   await ensureColumn("users", "profile_background_card_id", "profile_background_card_id VARCHAR(64) NULL AFTER profile_background");
   await ensureColumn("users", "profile_background_crop_x", "profile_background_crop_x DECIMAL(6,3) NOT NULL DEFAULT 50 AFTER profile_background_card_id");
@@ -223,12 +226,14 @@ export async function initDatabase() {
       related_id VARCHAR(64) NULL,
       nominal_reward INT UNSIGNED NOT NULL,
       actual_reward INT UNSIGNED NOT NULL,
+      experience_reward INT UNSIGNED NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_shell_task_event_key (event_key),
       INDEX idx_shell_task_events_user_date (user_id, task_date, task_type, created_at),
       CONSTRAINT fk_shell_task_event_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("shell_task_events", "experience_reward", "experience_reward INT UNSIGNED NOT NULL DEFAULT 0 AFTER actual_reward");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shell_like_reward_history (
       soup_id VARCHAR(64) NOT NULL,
@@ -356,6 +361,20 @@ export async function initDatabase() {
       CONSTRAINT fk_online_message_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_activities (
+      activity_sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      id VARCHAR(64) NOT NULL UNIQUE,
+      room_id VARCHAR(64) NOT NULL,
+      actor_user_id VARCHAR(64) NULL,
+      activity_type ENUM('chat','clue','progress') NOT NULL,
+      reference_id VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_online_activities_room_sequence (room_id, activity_sequence),
+      CONSTRAINT fk_online_activity_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_activity_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
   await ensureColumn(
     "online_soup_rounds",
     "published_surface_indices",
@@ -395,6 +414,11 @@ export async function initDatabase() {
     "online_soup_members",
     "idx_online_members_presence",
     "is_active, last_seen_at"
+  );
+  await ensureColumn(
+    "online_soup_members",
+    "last_read_activity_sequence",
+    "last_read_activity_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER last_seen_at"
   );
   await ensureIndex(
     "online_soup_rooms",
@@ -549,6 +573,58 @@ export async function initDatabase() {
   await ensureIndex("user_badge_unlocks", "idx_badge_unlocks_badge_user", "badge_key, user_id");
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS badge_shell_reward_history (
+      user_id VARCHAR(64) NOT NULL,
+      badge_key VARCHAR(64) NOT NULL,
+      achievement_points_snapshot INT UNSIGNED NOT NULL,
+      shell_reward INT UNSIGNED NOT NULL,
+      settlement_status ENUM('pending','settled') NOT NULL DEFAULT 'pending',
+      reward_source ENUM('realtime','historical_backfill') NULL,
+      rewarded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, badge_key),
+      INDEX idx_badge_shell_rewards_time (user_id, rewarded_at),
+      CONSTRAINT fk_badge_shell_reward_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn(
+    "badge_shell_reward_history",
+    "settlement_status",
+    "settlement_status ENUM('pending','settled') NOT NULL DEFAULT 'pending' AFTER shell_reward"
+  );
+  await ensureColumn(
+    "badge_shell_reward_history",
+    "reward_source",
+    "reward_source ENUM('realtime','historical_backfill') NULL AFTER settlement_status"
+  );
+  await pool.query(`
+    UPDATE badge_shell_reward_history
+    SET settlement_status = 'settled', reward_source = COALESCE(reward_source, 'realtime')
+    WHERE shell_reward > 0 AND settlement_status = 'pending'
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_data_migrations (
+      migration_key VARCHAR(128) PRIMARY KEY,
+      completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await backfillHistoricalTaskExperience();
+  // Existing ownership and historical unlock notifications are a pre-feature baseline:
+  // record them without retroactively changing balances.
+  await pool.query(`
+    INSERT IGNORE INTO badge_shell_reward_history
+      (user_id, badge_key, achievement_points_snapshot, shell_reward, rewarded_at)
+    SELECT user_id, badge_key, 0, 0, unlocked_at
+    FROM user_badge_unlocks
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO badge_shell_reward_history
+      (user_id, badge_key, achievement_points_snapshot, shell_reward, rewarded_at)
+    SELECT user_id, related_id, 0, 0, created_at
+    FROM notifications
+    WHERE type = 'badge_unlock' AND related_id IS NOT NULL
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS legendary_badges (
       id VARCHAR(64) PRIMARY KEY,
       name VARCHAR(80) NOT NULL,
@@ -593,11 +669,19 @@ export async function initDatabase() {
     FROM user_badge_unlocks
     WHERE badge_key = 'legendary:excellent-author'
   `);
+  await pool.query(`
+    INSERT IGNORE INTO badge_shell_reward_history
+      (user_id, badge_key, achievement_points_snapshot, shell_reward, rewarded_at)
+    SELECT user_id, 'excellentAuthor:epic', 0, 0, rewarded_at
+    FROM badge_shell_reward_history
+    WHERE badge_key = 'legendary:excellent-author'
+  `);
   await pool.query(
     "UPDATE users SET equipped_badge_key = 'excellentAuthor:epic', equipped_badge_icon_url = '/badges/excellent-author.webp' WHERE equipped_badge_key = 'legendary:excellent-author'"
   );
   await pool.query("DELETE FROM user_badge_unlocks WHERE badge_key = 'legendary:excellent-author'");
   await pool.query("DELETE FROM legendary_badges WHERE id = 'excellent-author'");
+  await backfillHistoricalBadgeShellRewards();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS soup_like_history (
@@ -836,6 +920,7 @@ export async function initDatabase() {
       INDEX idx_home_banners_display (enabled, weight, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("home_banners", "desktop_image_url", "desktop_image_url LONGTEXT NULL AFTER image_url");
   await pool.query(
     `INSERT IGNORE INTO home_banners (id, name, image_url, link_url, weight, enabled, is_default)
      VALUES ('default-home-banner', '默认 Banner', NULL, NULL, 0, 1, 1)`
@@ -1188,17 +1273,32 @@ async function migrateAssetThumbnails() {
 
 async function migrateBannerImages() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id, image_url FROM home_banners WHERE image_url IS NOT NULL AND image_url LIKE 'data:image/%;base64,%'"
+    `SELECT id, image_url, desktop_image_url FROM home_banners
+     WHERE (image_url IS NOT NULL AND image_url LIKE 'data:image/%;base64,%')
+        OR (desktop_image_url IS NOT NULL AND desktop_image_url LIKE 'data:image/%;base64,%')`
   );
   for (const row of rows) {
-    const stored = String(row.image_url);
-    if (stored.startsWith("data:image/webp;base64,") && storedBannerImageBytes(stored) <= BANNER_MAX_BYTES) continue;
-    const optimized = await optimizeBannerImage(stored);
-    if (!optimized) {
-      console.error(`migrateBannerImages: banner ${row.id} could not be compressed below 300KB`);
+    const storedMobile = row.image_url ? String(row.image_url) : "";
+    const storedDesktop = row.desktop_image_url ? String(row.desktop_image_url) : "";
+    let mobile = storedMobile;
+    let desktop = storedDesktop;
+    if (storedMobile && (!storedMobile.startsWith("data:image/webp;base64,") || storedBannerImageBytes(storedMobile) > BANNER_MAX_BYTES)) {
+      mobile = await optimizeBannerImage(storedMobile, "mobile") ?? storedMobile;
+    }
+    if (storedDesktop && (!storedDesktop.startsWith("data:image/webp;base64,") || storedBannerImageBytes(storedDesktop) > BANNER_MAX_BYTES)) {
+      desktop = await optimizeBannerImage(storedDesktop, "desktop") ?? storedDesktop;
+    } else if (!storedDesktop && storedMobile) {
+      desktop = await optimizeBannerImage(storedMobile, "desktop") ?? "";
+    }
+    if (mobile === storedMobile && desktop === storedDesktop) continue;
+    if (!mobile || !desktop) {
+      console.error(`migrateBannerImages: banner ${row.id} could not generate both image variants`);
       continue;
     }
-    await pool.query("UPDATE home_banners SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [optimized, row.id]);
+    await pool.query(
+      "UPDATE home_banners SET image_url = ?, desktop_image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [mobile, desktop, row.id]
+    );
   }
 }
 
@@ -1229,6 +1329,196 @@ async function seedDefaultCircles() {
      WHERE (id = 'default-turtle-soup-circle' AND (avatar IS NULL OR avatar LIKE '/turtle-avatar.png%'))
         OR (id IN ('classic-turtle-soup-circle', 'variant-turtle-soup-circle', 'mechanism-turtle-soup-circle', 'casual-chat-circle') AND avatar IS NULL)`
   );
+}
+
+const BADGE_HISTORY_SHELL_BACKFILL_KEY = "badge-history-shell-rewards-v1";
+const TASK_EXPERIENCE_BACKFILL_KEY = "task-experience-backfill-v1";
+
+async function backfillHistoricalTaskExperience() {
+  const connection = await pool.getConnection();
+  let lockAcquired = false;
+  try {
+    const [[completed]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+      [TASK_EXPERIENCE_BACKFILL_KEY]
+    );
+    if (completed) return;
+    const [[lockRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT GET_LOCK(?, 30) AS acquired", [TASK_EXPERIENCE_BACKFILL_KEY]);
+    lockAcquired = Number(lockRow?.acquired ?? 0) === 1;
+    if (!lockAcquired) return;
+    const [[completedAfterLock]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+      [TASK_EXPERIENCE_BACKFILL_KEY]
+    );
+    if (completedAfterLock) return;
+
+    await connection.beginTransaction();
+    await connection.query(`
+      UPDATE shell_task_events event
+      INNER JOIN (
+        SELECT id, nominal_reward,
+          ROW_NUMBER() OVER (PARTITION BY user_id, task_date, task_type ORDER BY created_at, id) AS task_occurrence,
+          CASE task_type
+            WHEN 'daily_login' THEN 1 WHEN 'publish_soup' THEN 3 WHEN 'like_soup' THEN 3
+            WHEN 'favorite_soup' THEN 3 WHEN 'publish_evaluation' THEN 1 WHEN 'speak_circle' THEN 3
+            WHEN 'join_online_soup' THEN 2 WHEN 'host_online_soup' THEN 1 WHEN 'receive_soup_like' THEN 3
+            WHEN 'receive_soup_favorite' THEN 3 WHEN 'receive_soup_evaluation' THEN 3
+            WHEN 'soup_ai_played' THEN 3 WHEN 'soup_online_completed' THEN 2 ELSE 0
+          END AS task_limit
+        FROM shell_task_events
+      ) ranked ON ranked.id = event.id
+      SET event.experience_reward = IF(ranked.task_occurrence <= ranked.task_limit, ranked.nominal_reward, 0)
+    `);
+    await connection.query(`
+      UPDATE users user
+      LEFT JOIN (
+        SELECT user_id, LEAST(100000000, COALESCE(SUM(experience_reward), 0)) AS total_experience
+        FROM shell_task_events GROUP BY user_id
+      ) rewards ON rewards.user_id = user.id
+      SET user.experience = COALESCE(rewards.total_experience, 0)
+    `);
+    await connection.query("INSERT INTO app_data_migrations (migration_key) VALUES (?)", [TASK_EXPERIENCE_BACKFILL_KEY]);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => undefined);
+    throw error;
+  } finally {
+    if (lockAcquired) await connection.query("SELECT RELEASE_LOCK(?)", [TASK_EXPERIENCE_BACKFILL_KEY]).catch(() => undefined);
+    connection.release();
+  }
+}
+
+const SYSTEM_BADGE_POINTS_CASE_SQL = Object.entries(SYSTEM_BADGE_ACHIEVEMENT_POINTS)
+  .map(([key, points]) => `WHEN '${key}' THEN ${points}`)
+  .join(" ");
+
+async function backfillHistoricalBadgeShellRewards() {
+  const connection = await pool.getConnection();
+  let lockAcquired = false;
+  try {
+    const [[completed]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+      [BADGE_HISTORY_SHELL_BACKFILL_KEY]
+    );
+    if (completed) return;
+
+    const [[lockRow]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT GET_LOCK(?, 30) AS acquired",
+      [BADGE_HISTORY_SHELL_BACKFILL_KEY]
+    );
+    lockAcquired = Number(lockRow?.acquired ?? 0) === 1;
+    if (!lockAcquired) return;
+
+    const [[completedAfterLock]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+      [BADGE_HISTORY_SHELL_BACKFILL_KEY]
+    );
+    if (completedAfterLock) return;
+
+    // Scan ownership once. No badge qualification queries are involved: only persisted unlocks
+    // whose reward ledger is still pending can enter this migration.
+    const [userRows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT DISTINCT rewards.user_id
+       FROM badge_shell_reward_history rewards
+       INNER JOIN user_badge_unlocks unlocks
+         ON unlocks.user_id = rewards.user_id AND unlocks.badge_key = rewards.badge_key
+       WHERE rewards.settlement_status = 'pending'
+       ORDER BY rewards.user_id`
+    );
+
+    for (const userRow of userRows) {
+      const userId = String(userRow.user_id);
+      await connection.beginTransaction();
+      try {
+        const [badgeRows] = await connection.query<mysql.RowDataPacket[]>(
+          `SELECT rewards.badge_key,
+             CASE
+               WHEN rewards.badge_key LIKE 'legendary:%' THEN COALESCE(special_badge.achievement_points, 0)
+               ELSE CASE rewards.badge_key ${SYSTEM_BADGE_POINTS_CASE_SQL} ELSE 0 END
+             END AS reward_points
+           FROM badge_shell_reward_history rewards
+           INNER JOIN user_badge_unlocks unlocks
+             ON unlocks.user_id = rewards.user_id AND unlocks.badge_key = rewards.badge_key
+           LEFT JOIN legendary_badges special_badge
+             ON rewards.badge_key = CONCAT('legendary:', special_badge.id)
+           WHERE rewards.user_id = ? AND rewards.settlement_status = 'pending'
+           ORDER BY rewards.badge_key
+           FOR UPDATE`,
+          [userId]
+        );
+        if (badgeRows.length === 0) {
+          await connection.commit();
+          continue;
+        }
+
+        const rewards = badgeRows.map((row) => ({
+          badgeKey: String(row.badge_key),
+          points: Math.max(0, Math.floor(Number(row.reward_points ?? 0)))
+        }));
+        const totalReward = rewards.reduce((sum, item) => sum + item.points, 0);
+        if (totalReward > 0) {
+          const [[user]] = await connection.query<mysql.RowDataPacket[]>(
+            "SELECT shell_balance FROM users WHERE id = ? FOR UPDATE",
+            [userId]
+          );
+          if (!user) throw new Error("BADGE_HISTORY_BACKFILL_USER_NOT_FOUND");
+          const balanceAfter = Number(user.shell_balance ?? 0) + totalReward;
+          await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balanceAfter, userId]);
+          await connection.query(
+            `INSERT INTO shell_transactions
+              (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, idempotency_key)
+             VALUES (?, ?, 'badge_history_backfill', ?, ?, 'badge_history_backfill', ?, ?, ?)`,
+            [
+              nanoid(),
+              userId,
+              totalReward,
+              balanceAfter,
+              BADGE_HISTORY_SHELL_BACKFILL_KEY,
+              "历史徽章奖励贝壳补发",
+              `badge-history-backfill:${userId}`
+            ]
+          );
+          await connection.query(
+            `INSERT IGNORE INTO notifications
+              (id, user_id, type, title, content, related_id, actor_id)
+             VALUES (?, ?, 'badge_history_backfill', '历史徽章奖励补发', '历史徽章奖励贝壳补发', ?, ?)`,
+            [nanoid(), userId, BADGE_HISTORY_SHELL_BACKFILL_KEY, userId]
+          );
+        }
+
+        for (const reward of rewards) {
+          await connection.query(
+            `UPDATE badge_shell_reward_history
+             SET achievement_points_snapshot = ?, shell_reward = ?, settlement_status = 'settled',
+                 reward_source = 'historical_backfill', rewarded_at = CURRENT_TIMESTAMP
+             WHERE user_id = ? AND badge_key = ? AND settlement_status = 'pending'`,
+            [reward.points, reward.points, userId, reward.badgeKey]
+          );
+        }
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      }
+    }
+
+    await connection.query(`
+      UPDATE badge_shell_reward_history rewards
+      LEFT JOIN user_badge_unlocks unlocks
+        ON unlocks.user_id = rewards.user_id AND unlocks.badge_key = rewards.badge_key
+      SET rewards.settlement_status = 'settled', rewards.reward_source = 'historical_backfill'
+      WHERE rewards.settlement_status = 'pending' AND unlocks.user_id IS NULL
+    `);
+    await connection.query(
+      "INSERT IGNORE INTO app_data_migrations (migration_key) VALUES (?)",
+      [BADGE_HISTORY_SHELL_BACKFILL_KEY]
+    );
+  } finally {
+    if (lockAcquired) {
+      await connection.query("SELECT RELEASE_LOCK(?)", [BADGE_HISTORY_SHELL_BACKFILL_KEY]).catch(() => undefined);
+    }
+    connection.release();
+  }
 }
 
 async function seedLegendaryBadges() {

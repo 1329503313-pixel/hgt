@@ -29,6 +29,7 @@ export function AssetCardVisual({
   compactBadges = false,
   selected = false,
   onClick,
+  ariaLabel,
   className = ""
 }: {
   card: AssetCard | OwnedAssetCard;
@@ -39,6 +40,7 @@ export function AssetCardVisual({
   compactBadges?: boolean;
   selected?: boolean;
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
+  ariaLabel?: string;
   className?: string;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -79,7 +81,7 @@ export function AssetCardVisual({
       onPointerLeave={reset}
       onClick={onClick}
       style={card.rarity === "legend" ? ({ "--legend-breathe-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s` } as React.CSSProperties) : undefined}
-      aria-label={`${card.name}，${ASSET_RARITY_LABELS[card.rarity]}${"starLevel" in card ? `，${starLevel}星` : ""}`}
+      aria-label={ariaLabel ?? `${card.name}，${ASSET_RARITY_LABELS[card.rarity]}${"starLevel" in card ? `，${starLevel}星` : ""}${owned === false ? "，未获得" : ""}`}
     >
       <span className="asset-card-frame">
         <img src={highDetail ? card.imageUrl : (card.thumbnailUrl || card.imageUrl)} alt="" className="asset-card-image" loading={highDetail ? "eager" : "lazy"} decoding="async" draggable={false} />

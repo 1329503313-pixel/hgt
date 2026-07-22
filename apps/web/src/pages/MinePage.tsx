@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Award, Check, ChevronLeft, ChevronRight, GalleryVerticalEnd, ListChecks, Medal, Plus, Shell, ShoppingBag, Trophy } from "lucide-react";
+import { ArrowLeft, ArrowRight, Award, Check, ChevronLeft, ChevronRight, GalleryVerticalEnd, ListChecks, Medal, Plus, Settings2, Shell, ShoppingBag, Trophy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, prefetchApi, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -13,6 +13,8 @@ import { CoverGridSkeleton, ProfileSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { MINE_CONTENT_CACHE_MAX_AGE, mineCountsCacheKey, mineListCacheKey, type MineContentCounts, type MineContentTab, type MineContentTabData } from "../shared/mineContentCache";
 import { SoupExportButton } from "../components/SoupExportButton";
+import { useShellBalance } from "../shared/useShellBalance";
+import { LevelBadge } from "../components/LevelBadge";
 
 type BadgeCollectionResponse = { badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; equippedBadge: EquippedBadge | null };
 type TabKey = MineContentTab;
@@ -24,6 +26,7 @@ const profileCacheKey = (userId: string) => `hgt:mine:profile:${userId}`;
 const listEndpoints: Record<TabKey, string> = { published: "/api/me/soups", favorites: "/api/me/favorites", likes: "/api/me/likes" };
 const tabLabels: Record<TabKey, string> = { published: "发布", favorites: "收藏", likes: "点赞" };
 const pageSize = 10;
+const desktopHiddenFeaturePaths = new Set(["/mine/store", "/mine/rankings", "/mine/tasks"]);
 
 function paginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -44,6 +47,7 @@ export default function MinePage() {
   const [badgeCollection, setBadgeCollection] = useState<BadgeCollectionResponse | null>(null);
   const [badgeSaving, setBadgeSaving] = useState(false);
   const [shellSummary, setShellSummary] = useState<ShellTaskCenter | null>(null);
+  const liveShellBalance = useShellBalance(user?.id);
 
   async function loadProfile(userId: string) {
     const data = await api<{ profile: SocialProfile }>(`/api/users/${userId}/profile?includeSoups=false`);
@@ -189,38 +193,88 @@ export default function MinePage() {
   }
 
   const features = [
-    { label: "商城", icon: ShoppingBag, color: "bg-rose-100 text-rose-600", path: "/mine/store" },
-    { label: "收藏柜", icon: GalleryVerticalEnd, color: "bg-indigo-100 text-indigo-700", path: "/mine/cards" },
-    { label: "优秀作者", icon: Award, color: "bg-amber-100 text-amber-600", path: "/mine/excellent-author" },
-    { label: "我的成就", icon: Trophy, color: "bg-violet-100 text-violet-600", path: "/mine/achievements" },
-    { label: "排行榜", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" },
-    { label: "任务中心", icon: ListChecks, color: "bg-sky-100 text-sky-600", path: "/mine/tasks" }
+    { label: "数字商城", description: "探索卡包与限定收藏", icon: ShoppingBag, color: "bg-rose-100 text-rose-600", path: "/mine/store" },
+    { label: "收藏柜", description: "整理卡牌与主页陈列", icon: GalleryVerticalEnd, color: "bg-indigo-100 text-indigo-700", path: "/mine/cards" },
+    { label: "优秀作者", description: "查看认证进度与权益", icon: Award, color: "bg-amber-100 text-amber-600", path: "/mine/excellent-author" },
+    { label: "我的成就", description: "回顾里程碑与徽章", icon: Trophy, color: "bg-violet-100 text-violet-600", path: "/mine/achievements" },
+    { label: "排行榜", description: "查看热度与收藏排名", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" },
+    { label: "任务中心", description: "完成今日任务赚贝壳", icon: ListChecks, color: "bg-sky-100 text-sky-600", path: "/mine/tasks" }
   ];
 
-  return (
-    <section className="space-y-3">
-      <PageTopBar title="我的" />
-      <ProfileHero profile={profile} showBadge={false} onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} meta={
-        <div className="flex items-center gap-2 text-sm font-bold text-white/90">
-          <span className="inline-flex items-center gap-1"><Shell size={14} />贝壳：{shellSummary ? shellSummary.balance.toLocaleString() : "—"}</span>
-          <button className="rounded-full bg-white/15 px-2 py-0.5 text-xs text-white transition hover:bg-white/25" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
-        </div>
-      } actions={
-        <button className="grid h-12 w-12 place-items-center overflow-hidden rounded-xl border border-white/60 bg-white/20" onClick={openBadges} title="装配徽章">
-          {profile.equippedBadge ? <EquippedBadgeIcon badge={profile.equippedBadge} className="h-full w-full rounded-xl" title={profile.equippedBadge.name} animated showName={false} /> : <Plus size={22} />}
-        </button>
-      } />
+  const levelProgress = shellSummary?.levelProgress;
+  const shellBalance = liveShellBalance ?? shellSummary?.balance;
+  const shellProgress = shellSummary ? Math.min(100, Math.round((shellSummary.earnedToday / Math.max(1, shellSummary.dailyLimit)) * 100)) : 0;
 
-      <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white px-2 py-4 shadow-soft sm:grid-cols-6">
-        {features.map((feature) => { const Icon = feature.icon; return (
-          <button key={feature.path} className="flex flex-col items-center gap-2" onClick={() => navigate(feature.path)}>
-            <span className={`grid h-12 w-12 place-items-center rounded-2xl ${feature.color}`}><Icon size={23} /></span>
-            <span className="text-xs font-bold text-ink">{feature.label}</span>
+  return (
+    <section className="mine-page space-y-3 lg:space-y-5">
+      <PageTopBar title="我的" />
+      <div className="mine-overview-grid">
+        <ProfileHero className="mine-profile-hero" profile={profile} showBadge={false} onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} meta={
+          <div className="flex items-center gap-2 text-sm font-bold text-white/90">
+            <span className="inline-flex items-center gap-1"><Shell size={14} />贝壳：{(liveShellBalance ?? shellSummary?.balance)?.toLocaleString() ?? "—"}</span>
+            <button className="rounded-full bg-white/15 px-2 py-0.5 text-xs text-white transition hover:bg-white/25" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
+          </div>
+        } actions={
+          <button className="grid h-12 w-12 place-items-center overflow-hidden rounded-xl border border-white/60 bg-white/20 transition hover:bg-white/30" onClick={openBadges} title="装配徽章">
+            {profile.equippedBadge ? <EquippedBadgeIcon badge={profile.equippedBadge} className="h-full w-full rounded-xl" title={profile.equippedBadge.name} animated showName={false} /> : <Plus size={22} />}
           </button>
-        ); })}
+        } />
+
+        <aside className="mine-growth-card hidden lg:flex">
+          <div className="flex items-start justify-between gap-4">
+            <div><p className="text-xs font-black tracking-[0.16em] text-primary">GROWTH</p><h2 className="mt-1 flex items-center gap-2 text-xl font-black text-ink">等级成长 {levelProgress && <LevelBadge level={levelProgress.level} animated />}</h2></div>
+            <button className="grid h-10 w-10 place-items-center rounded-xl border border-line bg-white text-muted transition hover:border-primary/30 hover:text-primary" onClick={() => navigate("/mine/settings")} title="个人设置"><Settings2 size={19} /></button>
+          </div>
+          <div className="mt-5 flex items-end justify-between gap-3">
+            <div><p className="text-sm text-muted">累计经验</p><p className="mt-1 text-3xl font-black text-ink"><span className="text-primary">{levelProgress?.experience.toLocaleString() ?? "—"}</span><span className="ml-1 text-sm font-bold text-muted">EXP</span></p></div>
+            <p className="pb-1 text-sm font-bold text-muted">{levelProgress?.isMaxLevel ? "已满级" : `还需 ${levelProgress?.remainingExperience.toLocaleString() ?? "—"}`}</p>
+          </div>
+          <div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>{levelProgress?.isMaxLevel ? "MAX" : `${levelProgress?.currentLevelExperience.toLocaleString() ?? 0} / ${levelProgress?.experienceForNextLevel.toLocaleString() ?? 0}`}</span><span>{levelProgress?.progressPercent ?? 0}%</span></div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600 transition-all" style={{ width: `${levelProgress?.progressPercent ?? 0}%` }} /></div>
+          <div className="mt-auto grid grid-cols-2 gap-3 pt-5">
+            <button className="mine-growth-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />查看任务</button>
+            <button className="mine-growth-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />贝壳明细</button>
+          </div>
+        </aside>
+
+        <aside className="mine-shell-card hidden lg:flex">
+          <div className="flex items-start justify-between gap-4">
+            <div><p className="text-xs font-black tracking-[0.16em] text-amber-600">ASSETS</p><h2 className="mt-1 flex items-center gap-2 text-xl font-black text-ink"><Shell size={20} className="text-amber-500" />贝壳资产</h2></div>
+            <button className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700 transition hover:bg-amber-100" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
+          </div>
+          <div className="mt-5"><p className="text-sm text-muted">当前余额</p><p className="mt-1 text-3xl font-black text-ink"><span className="text-amber-600">{shellBalance?.toLocaleString() ?? "—"}</span><span className="ml-1 text-sm font-bold text-muted">贝壳</span></p></div>
+          <div className="mt-4 flex items-center justify-between text-xs font-bold text-muted"><span>今日获得 +{shellSummary?.earnedToday ?? 0}</span><span>{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span></div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all" style={{ width: `${shellProgress}%` }} /></div>
+          <div className="mt-auto grid grid-cols-2 gap-3 pt-5"><button className="mine-shell-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />赚取贝壳</button><button className="mine-shell-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />收支明细</button></div>
+        </aside>
       </div>
 
-      <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
+      <div className="grid gap-3 sm:grid-cols-2 lg:hidden">
+        {levelProgress && <div className="card p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold text-muted">等级成长</p><p className="mt-1 flex items-center gap-2 text-xl font-black text-ink"><LevelBadge level={levelProgress.level} animated />{levelProgress.experience.toLocaleString()} <span className="text-xs text-muted">EXP</span></p></div><p className="text-xs font-bold text-muted">{levelProgress.isMaxLevel ? "已满级" : `距下一级 ${levelProgress.remainingExperience.toLocaleString()}`}</p></div><div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>{levelProgress.isMaxLevel ? "MAX" : `${levelProgress.currentLevelExperience.toLocaleString()} / ${levelProgress.experienceForNextLevel.toLocaleString()}`}</span><span>{levelProgress.progressPercent}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600" style={{ width: `${levelProgress.progressPercent}%` }} /></div></div>}
+        <div className="card p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold text-muted">贝壳资产</p><p className="mt-1 flex items-center gap-2 text-xl font-black text-ink"><Shell size={19} className="text-amber-500" />{shellBalance?.toLocaleString() ?? "—"}<span className="text-xs text-muted">贝壳</span></p></div><button className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700" onClick={() => navigate("/mine/shells/transactions")}>明细</button></div><div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>今日获得 +{shellSummary?.earnedToday ?? 0}</span><span>{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${shellProgress}%` }} /></div></div>
+      </div>
+
+      <div className="mine-feature-panel rounded-2xl bg-white px-2 py-4 shadow-soft lg:p-5">
+        <div className="mb-4 hidden items-end justify-between lg:flex">
+          <div><p className="text-xs font-black tracking-[0.16em] text-primary">PERSONAL HUB</p><h2 className="mt-1 text-xl font-black text-ink">功能导航</h2></div>
+          <p className="text-sm text-muted">管理成长记录、数字资产与创作权益</p>
+        </div>
+        <div className="mine-feature-grid grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-3">
+        {features.map((feature) => { const Icon = feature.icon; return (
+          <button key={feature.path} className={`mine-feature-card flex flex-col items-center gap-2 ${desktopHiddenFeaturePaths.has(feature.path) ? "lg:hidden" : ""}`} onClick={() => navigate(feature.path)}>
+            <span className={`mine-feature-icon grid h-12 w-12 place-items-center rounded-2xl ${feature.color}`}><Icon size={23} /></span>
+            <span className="mine-feature-copy min-w-0"><span className="block text-xs font-bold text-ink lg:text-base lg:font-black">{feature.label}</span><span className="mt-1 hidden text-xs text-muted lg:block">{feature.description}</span></span>
+            <ArrowRight className="mine-feature-arrow hidden shrink-0 text-slate-300 lg:block" size={18} />
+          </button>
+        ); })}
+        </div>
+      </div>
+
+      <div className="mine-content-card overflow-hidden rounded-2xl bg-white shadow-soft">
+        <div className="hidden items-end justify-between border-b border-line px-5 py-4 lg:flex">
+          <div><p className="text-xs font-black tracking-[0.16em] text-primary">CONTENT</p><h2 className="mt-1 text-xl font-black text-ink">内容管理</h2></div>
+          <p className="text-sm text-muted">当前列表每页展示 {pageSize} 条内容</p>
+        </div>
         <div className="grid grid-cols-3 border-b border-line">
           {([['published', '发布'], ['favorites', '收藏'], ['likes', '点赞']] as const).map(([key, label]) => (
             <button key={key} className={`relative py-3.5 text-sm font-bold ${activeTab === key ? "text-ink" : "text-muted"}`} onClick={() => setActiveTab(key)}>
@@ -230,7 +284,7 @@ export default function MinePage() {
           ))}
         </div>
         {tabs[activeTab].loading && !tabs[activeTab].loaded ? <CoverGridSkeleton /> : <>
-          <SoupCoverGrid soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} />
+          <SoupCoverGrid className="lg:grid-cols-4 lg:gap-4 lg:p-5" soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} />
           {tabs[activeTab].total > pageSize && (
             <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-line p-3">
               <button className="btn btn-secondary h-9 px-2.5 text-xs" disabled={pages[activeTab] <= 1 || tabs[activeTab].loading} onClick={() => changePage(activeTab, pages[activeTab] - 1)}><ChevronLeft size={15} />上一页</button>

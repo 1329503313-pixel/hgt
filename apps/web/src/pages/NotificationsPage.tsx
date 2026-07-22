@@ -48,7 +48,7 @@ export default function NotificationsPage({ category }: { category: Notification
   return (
     <section className="min-h-screen bg-page pt-[72px]">
       <PageTopBar title={title} backTo="/messages" />
-      <div className="mx-auto max-w-3xl px-4 pb-10">
+      <div className="mx-auto max-w-4xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
           {unread && (
             <div className="flex justify-end border-b border-line px-4 py-3">

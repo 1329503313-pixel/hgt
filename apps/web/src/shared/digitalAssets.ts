@@ -55,7 +55,7 @@ export type AssetPack = {
   rarityProbabilities: Record<AssetRarity, number>;
   pity: AssetPity;
   previewCards?: AssetCard[];
-  cards?: Array<AssetCard & { actualProbability: number }>;
+  cards?: Array<AssetCard & { actualProbability: number; owned: boolean }>;
 };
 
 export type CardCabinet = {

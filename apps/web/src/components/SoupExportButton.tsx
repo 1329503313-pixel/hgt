@@ -112,7 +112,7 @@ export function SoupExportButton({
   return (
     <>
       <button
-        className="fixed bottom-24 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:bg-blue-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+        className="fixed bottom-24 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:bg-blue-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 lg:hidden"
         aria-label="导出当前页海龟汤列表"
         title="导出当前页海龟汤列表"
         disabled={disabled || soups.length === 0}

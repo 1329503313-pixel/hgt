@@ -7,6 +7,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { useApp } from "../context/AppContext";
 import type { ShellTaskCenter, ShellTransactionsResponse } from "../shared/types";
+import { useShellBalance } from "../shared/useShellBalance";
 
 const pageSize = 20;
 
@@ -21,6 +22,7 @@ export default function ShellTransactionsPage() {
   const [data, setData] = useState<ShellTransactionsResponse | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const liveShellBalance = useShellBalance(user?.id);
 
   useEffect(() => {
     if (!user) {
@@ -50,7 +52,7 @@ export default function ShellTransactionsPage() {
       <PageTopBar title="贝壳明细" />
       <MineBackButton to={shellReturnTo} />
       <div className="card flex items-center justify-between p-4">
-        <div><p className="text-xs font-bold text-muted">当前余额</p><p className="mt-1 flex items-center gap-2 text-2xl font-black text-primary"><Shell size={23} />{balance.toLocaleString()}</p></div>
+        <div><p className="text-xs font-bold text-muted">当前余额</p><p className="mt-1 flex items-center gap-2 text-2xl font-black text-primary"><Shell size={23} />{(liveShellBalance ?? balance).toLocaleString()}</p></div>
         <p className="text-xs text-muted">共 {data?.total ?? 0} 条记录</p>
       </div>
 

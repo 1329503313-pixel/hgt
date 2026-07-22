@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { FastForward, Shell, Sparkles, X } from "lucide-react";
 import type { AssetDrawOrder } from "../shared/digitalAssets";
 import { AssetCardVisual } from "./AssetCardVisual";
@@ -31,8 +32,8 @@ export function AssetDrawOverlay({ order, onClose, onDrawAgain }: { order: Asset
     setRevealed((value) => Math.min(order.results.length + 1, value + 1));
   }
 
-  return (
-    <div className="fixed inset-0 z-[80] text-white" role="dialog" aria-modal="true" aria-label="抽卡结果">
+  return createPortal(
+    <div className="fixed inset-0 z-[140] text-white" role="dialog" aria-modal="true" aria-label="抽卡结果">
       <div className={`absolute inset-0 overflow-y-auto bg-slate-950/95 px-4 pb-28 pt-[max(20px,env(safe-area-inset-top))] backdrop-blur-md ${waitingForLegend ? "cursor-pointer" : ""}`} onClick={continueAfterLegend}>
         <div className="mx-auto flex min-h-full max-w-5xl flex-col">
         <div className="flex items-center justify-between gap-3">
@@ -107,6 +108,7 @@ export function AssetDrawOverlay({ order, onClose, onDrawAgain }: { order: Asset
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 }

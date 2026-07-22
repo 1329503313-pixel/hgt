@@ -1,6 +1,7 @@
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
+import { experienceProgress, MAX_EXPERIENCE } from "./levelSystem.js";
 
 let badgeProgressListener: ((userId: string) => void) | null = null;
 
@@ -13,7 +14,7 @@ function reportBadgeProgress(userIds: string | string[]) {
   ids.forEach((userId) => badgeProgressListener?.(userId));
 }
 
-export const SHELL_DAILY_LIMIT = 50;
+export const SHELL_DAILY_LIMIT = 60;
 
 export type ShellTaskType =
   | "daily_login"
@@ -23,7 +24,12 @@ export type ShellTaskType =
   | "publish_evaluation"
   | "speak_circle"
   | "join_online_soup"
-  | "host_online_soup";
+  | "host_online_soup"
+  | "receive_soup_like"
+  | "receive_soup_favorite"
+  | "receive_soup_evaluation"
+  | "soup_ai_played"
+  | "soup_online_completed";
 
 export type ShellTaskDefinition = {
   type: ShellTaskType;
@@ -42,7 +48,12 @@ export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
   { type: "publish_evaluation", name: "发表评论", description: "首次发布评分或评论", reward: 3, dailyLimit: 1, consumeBeyondDailyLimit: true },
   { type: "speak_circle", name: "圈子发言", description: "在任意圈子发送一条文字消息", reward: 2, dailyLimit: 3 },
   { type: "join_online_soup", name: "完整参与玩汤", description: "满足完整参与条件并完成一轮", reward: 5, dailyLimit: 2 },
-  { type: "host_online_soup", name: "完整主持玩汤", description: "满足完整主持条件并完成一轮", reward: 10, dailyLimit: 1 }
+  { type: "host_online_soup", name: "完整主持玩汤", description: "满足完整主持条件并完成一轮", reward: 10, dailyLimit: 1 },
+  { type: "receive_soup_like", name: "作品获得点赞", description: "其他用户首次点赞你发布的作品", reward: 2, dailyLimit: 3, consumeBeyondDailyLimit: true },
+  { type: "receive_soup_favorite", name: "作品获得收藏", description: "其他用户首次收藏你发布的作品", reward: 2, dailyLimit: 3, consumeBeyondDailyLimit: true },
+  { type: "receive_soup_evaluation", name: "作品获得评论", description: "其他用户首次评论你发布的作品", reward: 5, dailyLimit: 3, consumeBeyondDailyLimit: true },
+  { type: "soup_ai_played", name: "作品被 AI 玩汤", description: "其他用户使用 AI 玩汤开启你的作品", reward: 5, dailyLimit: 3, consumeBeyondDailyLimit: true },
+  { type: "soup_online_completed", name: "作品被完整玩汤", description: "其他玩家完整玩完你发布的作品", reward: 10, dailyLimit: 2, consumeBeyondDailyLimit: true }
 ] as const;
 
 const TASK_BY_TYPE = new Map(SHELL_TASKS.map((task) => [task.type, task]));
@@ -64,11 +75,16 @@ export function isEligibleOnlineSoupDuration(startedAt: Date, endedAt: Date) {
   return endedAt.getTime() - startedAt.getTime() > 5 * 60_000;
 }
 
+export function hasOtherEligibleOnlineSoupPlayer(creatorId: string, playerIds: string[]) {
+  return playerIds.some((playerId) => playerId !== creatorId);
+}
+
 type QueryConnection = mysql.PoolConnection;
 
 export type AwardTaskResult = {
   recorded: boolean;
   actualReward: number;
+  experienceReward: number;
   balance: number;
   dailyEarned: number;
 };
@@ -86,13 +102,14 @@ async function awardTaskEventWithConnection(
   if (!definition) throw new Error(`UNKNOWN_SHELL_TASK:${taskType}`);
   const taskDate = beijingTaskDate(now);
   const [[userRow]] = await connection.query<mysql.RowDataPacket[]>(
-    "SELECT shell_balance FROM users WHERE id = ? FOR UPDATE",
+    "SELECT shell_balance, experience FROM users WHERE id = ? FOR UPDATE",
     [userId]
   );
   if (!userRow) throw new Error("SHELL_USER_NOT_FOUND");
   const balance = Number(userRow.shell_balance ?? 0);
+  const experience = Number(userRow.experience ?? 0);
   const [[existing]] = await connection.query<mysql.RowDataPacket[]>(
-    "SELECT actual_reward FROM shell_task_events WHERE event_key = ? LIMIT 1",
+    "SELECT actual_reward, experience_reward FROM shell_task_events WHERE event_key = ? LIMIT 1",
     [eventKey]
   );
   const [[dailyRow]] = await connection.query<mysql.RowDataPacket[]>(
@@ -101,7 +118,7 @@ async function awardTaskEventWithConnection(
   );
   const dailyEarned = Number(dailyRow?.earned ?? 0);
   if (existing) {
-    return { recorded: false, actualReward: Number(existing.actual_reward ?? 0), balance, dailyEarned };
+    return { recorded: false, actualReward: Number(existing.actual_reward ?? 0), experienceReward: Number(existing.experience_reward ?? 0), balance, dailyEarned };
   }
   const [[progressRow]] = await connection.query<mysql.RowDataPacket[]>(
     "SELECT COUNT(*) AS progress FROM shell_task_events WHERE user_id = ? AND task_date = ? AND task_type = ?",
@@ -111,23 +128,27 @@ async function awardTaskEventWithConnection(
     if (definition.consumeBeyondDailyLimit) {
       await connection.query(
         `INSERT INTO shell_task_events
-          (id, user_id, task_date, task_type, event_key, related_type, related_id, nominal_reward, actual_reward, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+          (id, user_id, task_date, task_type, event_key, related_type, related_id, nominal_reward, actual_reward, experience_reward, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
         [nanoid(), userId, taskDate, taskType, eventKey, relatedType, relatedId, definition.reward, now]
       );
-      return { recorded: true, actualReward: 0, balance, dailyEarned };
+      return { recorded: true, actualReward: 0, experienceReward: 0, balance, dailyEarned };
     }
-    return { recorded: false, actualReward: 0, balance, dailyEarned };
+    return { recorded: false, actualReward: 0, experienceReward: 0, balance, dailyEarned };
   }
 
   const actualReward = calculateTaskReward(dailyEarned, definition.reward);
+  const experienceReward = Math.max(0, Math.min(definition.reward, MAX_EXPERIENCE - experience));
   const balanceAfter = balance + actualReward;
   await connection.query(
     `INSERT INTO shell_task_events
-      (id, user_id, task_date, task_type, event_key, related_type, related_id, nominal_reward, actual_reward, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [nanoid(), userId, taskDate, taskType, eventKey, relatedType, relatedId, definition.reward, actualReward, now]
+      (id, user_id, task_date, task_type, event_key, related_type, related_id, nominal_reward, actual_reward, experience_reward, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [nanoid(), userId, taskDate, taskType, eventKey, relatedType, relatedId, definition.reward, actualReward, experienceReward, now]
   );
+  if (experienceReward > 0) {
+    await connection.query("UPDATE users SET experience = experience + ? WHERE id = ?", [experienceReward, userId]);
+  }
   if (actualReward > 0) {
     await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balanceAfter, userId]);
     await connection.query(
@@ -147,7 +168,7 @@ async function awardTaskEventWithConnection(
       ]
     );
   }
-  return { recorded: true, actualReward, balance: balanceAfter, dailyEarned: dailyEarned + actualReward };
+  return { recorded: true, actualReward, experienceReward, balance: balanceAfter, dailyEarned: dailyEarned + actualReward };
 }
 
 export async function awardShellTask(
@@ -200,9 +221,10 @@ export async function awardShellTask(
 export async function shellTaskCenter(userId: string, now = new Date()) {
   const taskDate = beijingTaskDate(now);
   const [[userRow], eventRows] = await Promise.all([
-    pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [userId]).then(([rows]) => rows),
+    pool.query<mysql.RowDataPacket[]>("SELECT shell_balance, experience FROM users WHERE id = ? LIMIT 1", [userId]).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT task_type, COUNT(*) AS progress, COALESCE(SUM(actual_reward), 0) AS actual_reward
+      `SELECT task_type, COUNT(*) AS progress, COALESCE(SUM(actual_reward), 0) AS actual_reward,
+         COALESCE(SUM(experience_reward), 0) AS experience_reward
        FROM shell_task_events
        WHERE user_id = ? AND task_date = ?
        GROUP BY task_type`,
@@ -219,13 +241,17 @@ export async function shellTaskCenter(userId: string, now = new Date()) {
       progress: current,
       completed: current >= task.dailyLimit,
       actualReward: Number(row?.actual_reward ?? 0),
+      experienceReward: task.reward,
+      actualExperience: Number(row?.experience_reward ?? 0),
       dailyMaximum: task.reward * task.dailyLimit
     };
   });
   return {
     balance: Number(userRow.shell_balance ?? 0),
+    levelProgress: experienceProgress(userRow.experience),
     taskDate,
     earnedToday: tasks.reduce((sum, task) => sum + task.actualReward, 0),
+    earnedExperienceToday: tasks.reduce((sum, task) => sum + task.actualExperience, 0),
     dailyLimit: SHELL_DAILY_LIMIT,
     theoreticalMaximum: SHELL_TASKS.reduce((sum, task) => sum + task.reward * task.dailyLimit, 0),
     tasks
@@ -234,6 +260,8 @@ export async function shellTaskCenter(userId: string, now = new Date()) {
 
 const TRANSACTION_LABELS: Record<string, string> = {
   daily_task_reward: "每日任务奖励",
+  badge_unlock_reward: "首次获得徽章奖励",
+  badge_history_backfill: "历史徽章奖励贝壳补发",
   pack_single_draw: "卡包单抽消费",
   pack_ten_draw: "卡包十连消费",
   duplicate_card_refund: "满星重复卡片返还",
@@ -398,9 +426,10 @@ export async function bulkAdjustShellBalances(userIds: string[], operatorId: str
 
 export async function settleOnlineSoupRound(connection: QueryConnection, roundId: string) {
   const [[round]] = await connection.query<mysql.RowDataPacket[]>(
-    `SELECT r.id, r.room_id, r.started_at, r.ended_at, rooms.host_id
+    `SELECT r.id, r.room_id, r.soup_id, r.started_at, r.ended_at, rooms.host_id, soups.creator_id AS soup_creator_id
      FROM online_soup_rounds r
      INNER JOIN online_soup_rooms rooms ON rooms.id = r.room_id
+     INNER JOIN soups ON soups.id = r.soup_id
      WHERE r.id = ? AND r.status = 'ended'
      LIMIT 1`,
     [roundId]
@@ -443,6 +472,18 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
       eventKey: `online-host:${round.host_id}:${roundId}`
     });
   }
+  const soupCreatorId = String(round.soup_creator_id ?? "");
+  const hasOtherEligiblePlayer = hasOtherEligibleOnlineSoupPlayer(
+    soupCreatorId,
+    playerRows.map((row) => String(row.user_id))
+  );
+  if (soupCreatorId && hasOtherEligiblePlayer) {
+    awards.push({
+      userId: soupCreatorId,
+      taskType: "soup_online_completed",
+      eventKey: `online-soup-completed:${soupCreatorId}:${roundId}`
+    });
+  }
   awards.sort((a, b) => a.userId.localeCompare(b.userId));
   const awardedUsers: string[] = [];
   for (const award of awards) {
@@ -456,6 +497,7 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
       endedAt
     );
     if (result.recorded) awardedUsers.push(award.userId);
+    if (result.recorded && result.actualReward > 0) reportBadgeProgress(award.userId);
   }
   return { eligible: true, awardedUsers };
 }

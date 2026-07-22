@@ -550,7 +550,7 @@ function BadgeDetail({
 
         {/* 文字 — 400ms 渐显 */}
         <div
-          className={`flex w-screen max-w-sm flex-col items-center px-6 text-center transition-opacity sm:px-8 ${
+          className={`flex w-full max-w-sm flex-col items-center px-6 text-center transition-opacity sm:px-8 ${
             showText ? "opacity-100" : "opacity-0"
           }`}
           style={{

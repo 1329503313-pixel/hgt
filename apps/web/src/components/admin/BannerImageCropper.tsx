@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
-
-const TARGET_WIDTH = 1600;
-const TARGET_HEIGHT = 900;
+import { createPortal } from "react-dom";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -11,11 +9,17 @@ function clamp(value: number, min: number, max: number) {
 export function BannerImageCropper({
   source,
   onCancel,
-  onConfirm
+  onConfirm,
+  targetWidth = 960,
+  targetHeight = 540,
+  title = "裁剪手机端 Banner"
 }: {
   source: string;
   onCancel: () => void;
   onConfirm: (image: string) => void;
+  targetWidth?: number;
+  targetHeight?: number;
+  title?: string;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -65,24 +69,25 @@ export function BannerImageCropper({
     const sourceX = naturalSize.width / 2 + (-offset.x - frameSize.width / 2) / displayScale;
     const sourceY = naturalSize.height / 2 + (-offset.y - frameSize.height / 2) / displayScale;
     const canvas = document.createElement("canvas");
-    canvas.width = TARGET_WIDTH;
-    canvas.height = TARGET_HEIGHT;
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
     const context = canvas.getContext("2d");
     if (!context) return;
-    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, TARGET_WIDTH, TARGET_HEIGHT);
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, targetWidth, targetHeight);
     onConfirm(canvas.toDataURL("image/webp", 0.9));
   }
 
-  return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-2xl bg-white p-4 shadow-2xl">
+  const cropper = (
+    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-sm">
+      <div className="max-h-[calc(100dvh-24px)] w-full max-w-2xl overflow-auto overscroll-contain rounded-2xl bg-white p-4 shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
-          <div><h3 className="text-lg font-black text-ink">裁剪 Banner</h3><p className="mt-1 text-sm text-muted">拖动图片选择区域，使用滑块调整大小，最终比例固定为 16:9。</p></div>
+          <div><h3 className="text-lg font-black text-ink">{title}</h3><p className="mt-1 text-sm text-muted">拖动图片选择区域，使用滑块调整大小，最终输出 {targetWidth} × {targetHeight}。</p></div>
           <button className="btn btn-secondary shrink-0 px-3" type="button" onClick={onCancel} aria-label="取消裁剪"><X size={18} /></button>
         </div>
         <div
           ref={frameRef}
-          className="relative aspect-video w-full cursor-grab touch-none select-none overflow-hidden rounded-xl bg-slate-950 active:cursor-grabbing"
+          className="relative w-full cursor-grab touch-none select-none overflow-hidden rounded-xl bg-slate-950 active:cursor-grabbing"
+          style={{ aspectRatio: `${targetWidth} / ${targetHeight}` }}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
             dragRef.current = { x: event.clientX, y: event.clientY, offsetX: offset.x, offsetY: offset.y };
@@ -125,4 +130,5 @@ export function BannerImageCropper({
       </div>
     </div>
   );
+  return createPortal(cropper, document.body);
 }

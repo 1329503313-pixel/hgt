@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AtSign, ChevronDown, Send, Smile, Users, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, AtSign, ChevronDown, Send, Smile, Users, Wifi, WifiOff } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -8,6 +8,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
+import { LevelBadge } from "../components/LevelBadge";
 import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
@@ -347,39 +348,52 @@ export default function CircleChatPage() {
   ), [stickerSeries]);
 
   if (loadingUser || loading || !state) {
-    return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="圈子" backTo="/circles" /><div className="mx-auto max-w-3xl px-4"><ListSkeleton rows={8} /></div></section>;
+    return <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5"><div className="lg:hidden"><PageTopBar title="圈子" backTo="/circles" /></div><div className="mx-auto h-full max-w-3xl px-4 lg:max-w-[1388px] lg:rounded-[28px] lg:bg-white lg:p-6"><ListSkeleton rows={8} /></div></section>;
   }
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
-      <PageTopBar
-        title={state.circle.name}
-        titleContent={(
-          <span className="flex min-w-0 items-center gap-2.5">
-            <img className="h-9 w-9 shrink-0 rounded-xl object-cover" src={state.circle.avatar} alt="" />
-            <span className="min-w-0">
-              <span className="block max-w-40 truncate text-base font-black text-ink sm:max-w-64">{state.circle.name}</span>
-              <span className="flex items-center gap-1 text-[10px] font-bold text-muted">
-                {socketConnected ? <Wifi size={11} className="text-emerald-600" /> : <WifiOff size={11} className="text-red-500" />}
-                {state.circle.onlineCount} 人在线
+    <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5">
+      <div className="lg:hidden">
+        <PageTopBar
+          title={state.circle.name}
+          titleContent={(
+            <span className="flex min-w-0 items-center gap-2.5">
+              <img className="h-9 w-9 shrink-0 rounded-xl object-cover" src={state.circle.avatar} alt="" />
+              <span className="min-w-0">
+                <span className="block max-w-40 truncate text-base font-black text-ink sm:max-w-64">{state.circle.name}</span>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-muted">
+                  {socketConnected ? <Wifi size={11} className="text-emerald-600" /> : <WifiOff size={11} className="text-red-500" />}
+                  {state.circle.onlineCount} 人在线
+                </span>
               </span>
             </span>
-          </span>
-        )}
-        titleTo="/circles"
-        backTo="/circles"
-        rightAction={(
-          <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft" onClick={() => setMembersOpen(true)} aria-label="成员列表">
-            <Users size={19} />
-            <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[9px] font-black text-white">{state.circle.memberCount > 99 ? "99+" : state.circle.memberCount}</span>
-          </button>
-        )}
-      />
+          )}
+          titleTo="/circles"
+          backTo="/circles"
+          rightAction={(
+            <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft" onClick={() => setMembersOpen(true)} aria-label="成员列表">
+              <Users size={19} />
+              <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[9px] font-black text-white">{state.circle.memberCount > 99 ? "99+" : state.circle.memberCount}</span>
+            </button>
+          )}
+        />
+      </div>
 
-      <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col">
+      <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col lg:h-full lg:max-w-[1388px] lg:overflow-hidden lg:rounded-[28px] lg:border lg:border-line lg:bg-white lg:shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
+        <header className="hidden h-20 shrink-0 items-center justify-between border-b border-line bg-white px-6 lg:flex">
+          <div className="flex min-w-0 items-center gap-4">
+            <button className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-slate-50 text-ink transition hover:border-blue-200 hover:bg-blue-50 hover:text-primary" onClick={() => navigate("/circles")} aria-label="返回圈子列表"><ArrowLeft size={21} /></button>
+            <img className="h-12 w-12 shrink-0 rounded-2xl object-cover shadow-sm" src={state.circle.avatar} alt={`${state.circle.name}头像`} />
+            <div className="min-w-0"><div className="flex items-center gap-2"><h1 className="truncate text-xl font-black text-ink">{state.circle.name}</h1><span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-black text-primary">圈子聊天</span></div><p className="mt-1 flex items-center gap-1.5 text-xs font-bold text-muted">{socketConnected ? <Wifi size={13} className="text-emerald-600" /> : <WifiOff size={13} className="text-red-500" />}<span className={socketConnected ? "text-emerald-600" : "text-red-500"}>{socketConnected ? "实时连接" : "正在重连"}</span><span>·</span><span>{state.circle.onlineCount} 人在线</span></p></div>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-muted"><span>消息实时同步</span><span className="h-4 w-px bg-line" /><span className="font-bold text-ink">{state.circle.memberCount} 位成员</span></div>
+        </header>
+
+        <div className="min-h-0 min-w-0 flex flex-1 lg:grid lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-page">
         <div
           ref={messagesRef}
-          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4"
+          className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4 lg:px-8 lg:py-6"
           onScroll={(event) => {
             const element = event.currentTarget;
             const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
@@ -410,9 +424,10 @@ export default function CircleChatPage() {
                 >
                   <Avatar avatar={message.sender?.avatar ?? null} nickname={senderName} online={Boolean(message.sender?.isOnline)} />
                 </MentionableAvatarButton>
-                <div className={`flex max-w-[78%] flex-col ${message.type === "soup_share" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
+                <div className={`flex min-w-0 max-w-[78%] flex-col ${message.type === "soup_share" || message.type === "room_invite" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
                   <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] text-muted ${mine ? "flex-row-reverse" : ""}`}>
                     <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>
+                    {message.sender && <LevelBadge level={message.sender.level} />}
                     <EquippedBadgeIcon badge={message.sender?.equippedBadge} className="h-4 w-4" animated={false} />
                   </div>
                   {message.type === "room_invite" && message.roomInvite ? (
@@ -438,7 +453,7 @@ export default function CircleChatPage() {
 
         {unreadMentions.length > 0 && !stickersOpen && (
           <button
-            className={`fixed right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-blue-200 bg-primary text-white shadow-[0_8px_24px_rgba(15,23,42,0.2)] ${showScrollBottom ? "bottom-32" : "bottom-20"}`}
+            className={`fixed right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-blue-200 bg-primary text-white shadow-[0_8px_24px_rgba(15,23,42,0.2)] lg:absolute lg:right-6 ${showScrollBottom ? "bottom-32 lg:bottom-36" : "bottom-20 lg:bottom-24"}`}
             disabled={navigatingMention}
             onClick={() => void openNextMention()}
             aria-label={`查看@我的消息，剩余${unreadMentions.length}条`}
@@ -449,7 +464,7 @@ export default function CircleChatPage() {
             </span>
           </button>
         )}
-        {showScrollBottom && !stickersOpen && <button className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)]" onClick={() => { followBottomRef.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowScrollBottom(false); }} aria-label="回到底部"><ChevronDown size={22} /></button>}
+        {showScrollBottom && !stickersOpen && <button className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] lg:absolute lg:bottom-24 lg:right-6" onClick={() => { followBottomRef.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowScrollBottom(false); }} aria-label="回到底部"><ChevronDown size={22} /></button>}
         <Composer
           members={state.members}
           currentUserId={user?.id ?? ""}
@@ -460,6 +475,25 @@ export default function CircleChatPage() {
           onSend={sendText}
         />
         {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="shrink-0 border-t border-line px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3" />}
+          </div>
+
+          <aside className="hidden min-h-0 flex-col bg-white lg:flex">
+            <div className="flex items-center justify-between border-b border-line px-5 py-4"><div><h2 className="font-black text-ink">圈子成员</h2><p className="mt-0.5 text-xs text-muted">{state.circle.onlineCount} 人当前在线</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-muted">{state.circle.memberCount}</span></div>
+            <div className="min-h-0 flex-1 divide-y divide-line overflow-y-auto px-3">
+              {[...state.members].sort((a, b) => Number(b.isOnline) - Number(a.isOnline)).map((member) => (
+                <button
+                  key={member.id}
+                  className="flex w-full items-center gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50"
+                  onClick={() => navigate(member.id === user?.id ? "/mine" : `/users/${member.id}`, { state: member.id === user?.id ? undefined : { circleId } })}
+                >
+                  <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
+                  <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} /></span><span className={`mt-1 block text-xs ${member.isOnline ? "font-bold text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
+                </button>
+              ))}
+            </div>
+            <div className="border-t border-line bg-slate-50/70 px-5 py-3 text-xs leading-5 text-muted">长按消息头像可快速 @ 对方，点击头像可查看个人主页。</div>
+          </aside>
+        </div>
       </div>
 
       {membersOpen && <Modal onClose={() => setMembersOpen(false)}>
@@ -475,7 +509,7 @@ export default function CircleChatPage() {
                 })}
               >
                 <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
-                <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><EquippedBadgeIcon badge={member.equippedBadge} className="h-5 w-5" animated={false} /></span><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
+                <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-5 w-5" animated={false} /></span><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
               </button>
             ))}
           </div>
@@ -580,6 +614,7 @@ function Composer({ members, currentUserId, mentionRequest, sending, stickersOpe
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-bold text-ink">{member.nickname}</span>
+                    <LevelBadge level={member.level} />
                     <EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} />
                   </span>
                 </span>

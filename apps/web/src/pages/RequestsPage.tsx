@@ -44,7 +44,7 @@ export default function RequestsPage() {
   return (
     <section className="min-h-screen bg-page pt-[72px]">
       <PageTopBar title="申请" backTo="/messages" />
-      <div className="mx-auto max-w-3xl px-4 pb-10">
+      <div className="mx-auto max-w-4xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
           {loading ? <ListSkeleton rows={6} /> : (
             <RequestList requests={requests} onDecision={(id, decision) => void decideRequest(id, decision)} onOpenSoup={(id) => navigate(`/soup/${id}`)} />

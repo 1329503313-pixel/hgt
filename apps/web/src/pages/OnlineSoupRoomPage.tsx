@@ -1,12 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRightLeft, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LogOut, Menu, MessageCircle, Play, Plus, RefreshCw, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowRightLeft, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LogOut, Menu, MessageCircle, Minimize2, Play, Plus, RefreshCw, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
+import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
+import { LevelBadge } from "../components/LevelBadge";
 import { OnlineSoupInviteModal } from "../components/OnlineSoupInviteModal";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { useApp } from "../context/AppContext";
+import { useOnlineSoupDock } from "../context/OnlineSoupDockContext";
 import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
@@ -53,6 +56,7 @@ export default function OnlineSoupRoomPage() {
     ? inviteReturnToCandidate
     : "/online-soup";
   const { showToast, user, loadingUser, openAuth } = useApp();
+  const { minimizeRoom, showFullRoom } = useOnlineSoupDock();
   const [snapshot, setSnapshot] = useState<OnlineSoupSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(false);
@@ -77,7 +81,8 @@ export default function OnlineSoupRoomPage() {
   const [stickersOpen, setStickersOpen] = useState(false);
   const [hostActionsOpen, setHostActionsOpen] = useState(true);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<"back" | "close" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"back" | "close" | "leave" | null>(null);
+  const [exitChoiceOpen, setExitChoiceOpen] = useState(false);
   const [entryPasswordOpen, setEntryPasswordOpen] = useState(false);
   const [entryPassword, setEntryPassword] = useState("");
   const [entryError, setEntryError] = useState<string | null>(null);
@@ -94,6 +99,7 @@ export default function OnlineSoupRoomPage() {
   const entryStarted = useRef(false);
   const progressLoadedRoundId = useRef<string | null>(null);
   const progressPending = useRef(false);
+  useEffect(() => { showFullRoom(roomId); }, [roomId, showFullRoom]);
   const returnFromInvite = useCallback(() => {
     navigate(inviteReturnTo, { replace: true });
   }, [inviteReturnTo, navigate]);
@@ -470,6 +476,23 @@ export default function OnlineSoupRoomPage() {
     navigate("/online-soup");
   }
 
+  function minimizeCurrentRoom() {
+    if (!snapshot) return;
+    minimizeRoom(snapshot);
+    disarmExitGuard();
+    setExitChoiceOpen(false);
+    navigate("/online-soup");
+  }
+
+  function requestRoomExit() {
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      setExitChoiceOpen(true);
+      return;
+    }
+    if (isHost) setConfirmAction("back");
+    else void leaveRoom();
+  }
+
   async function closeRoom() {
     try { await hostAction("close"); disarmExitGuard(); navigate("/online-soup", { replace: true }); } catch { /* toast above */ }
   }
@@ -502,11 +525,13 @@ export default function OnlineSoupRoomPage() {
 
   return (
     <div className="h-[100dvh] overflow-hidden bg-page">
-      <header className="top-nav-shell">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5">
-          <button className="grid h-10 w-10 place-items-center rounded-full hover:bg-slate-100" onClick={() => isHost ? setConfirmAction("back") : void leaveRoom()}><ArrowLeft size={20} /></button>
+      <header className="top-nav-shell online-soup-room-header">
+        <div className="mx-auto flex max-w-[1388px] items-center gap-3 px-4 py-2.5 lg:px-6">
+          <UnifiedBackButton compactOnMobile onClick={requestRoomExit} />
           <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]}</p></div>
           <span title={socketConnected ? "实时连接正常" : "正在重新连接"}>{socketConnected ? <Wifi size={18} className="text-emerald-600" /> : <WifiOff size={18} className="text-red-500" />}</span>
+          <button className="btn btn-secondary hidden h-10 px-3 text-xs lg:inline-flex" onClick={minimizeCurrentRoom}><Minimize2 size={16} />收起房间</button>
+          <button className="btn hidden h-10 bg-red-50 px-3 text-xs text-red-600 hover:bg-red-100 lg:inline-flex" onClick={() => setExitChoiceOpen(true)}><LogOut size={16} />退出</button>
           <button className="btn btn-secondary h-10 w-10 p-0" onClick={() => setMembersOpen(true)} aria-label={`房间成员，共 ${snapshot.members.length} 人`} title={`房间成员 · ${snapshot.members.length} 人`}>
             <span className="relative grid h-7 w-7 place-items-center">
               <Users size={19} />
@@ -516,8 +541,8 @@ export default function OnlineSoupRoomPage() {
         </div>
       </header>
 
-      <main className="mx-auto grid h-full max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-[76px] lg:grid-cols-[320px_44px_minmax(0,1fr)] lg:grid-rows-1 lg:gap-3">
-        <aside className="flex max-h-[30dvh] min-h-0 flex-col gap-3 overflow-hidden lg:max-h-none">
+      <main className="online-soup-room-workspace mx-auto grid h-full max-w-[1388px] grid-rows-[auto_auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-[76px] lg:grid-cols-[340px_minmax(0,1fr)_76px] lg:grid-rows-1 lg:gap-4 lg:px-6 lg:pb-5 lg:pt-[82px]">
+        <aside className="flex max-h-[30dvh] min-h-0 flex-col gap-3 overflow-hidden lg:order-1 lg:max-h-none">
           {!snapshot.room.hostOnline && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-700">主持人暂时离线，玩家仍可继续讨论和正式提问，等待主持人重新连接后回复。</div>}
           <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded && snapshot.room.soup ? "flex-1" : "shrink-0"}`}>
             <div className="shrink-0 px-3 py-2.5">
@@ -574,12 +599,12 @@ export default function OnlineSoupRoomPage() {
 
         </aside>
 
-        <section className="flex min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:min-h-0 lg:flex-col lg:overflow-x-hidden lg:overflow-y-auto" aria-label="房间成员头像">
+        <section className="online-soup-room-member-rail flex min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
           {snapshot.members.map((member) => <button key={member.id} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.role === "host" ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} onClick={() => openMemberProfile(member.id)} aria-label={`查看${member.nickname}的主页`} title={`${member.nickname} · ${member.role === "host" ? "主持人" : member.role === "player" ? "玩家" : "旁观者"}`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.role === "host" && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}</button>)}
           <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
         </section>
 
-        <section className="card flex min-h-0 flex-col overflow-hidden">
+        <section className="card flex min-h-0 flex-col overflow-hidden lg:order-2">
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">讨论、正式提问、主持人回复和线索会实时同步</p></div>
           <div ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4" onScroll={updateMessagesScrollPosition}>
             {snapshot.messagesHasMore && <button className="mx-auto block rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-blue-50 disabled:opacity-50" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
@@ -635,7 +660,7 @@ export default function OnlineSoupRoomPage() {
         <button className={`relative grid h-12 w-12 place-items-center rounded-full border bg-gradient-to-br from-amber-50 to-blue-50 text-amber-700 shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${hostActionsOpen ? "border-amber-400 ring-2 ring-amber-100" : "border-amber-200"}`} onClick={() => setHostActionsOpen((open) => !open)} aria-label="玩家更多操作" title="玩家更多操作"><span className="flex items-center gap-0.5"><Lightbulb size={18} /><ListChecks size={16} className="text-primary" /></span><span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-4 text-white ring-2 ring-white">{clueMessages.length}</span></button>
       </div> : <button className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 grid h-12 w-12 place-items-center rounded-full border border-amber-200 bg-gradient-to-br from-amber-50 to-blue-50 text-amber-700 shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`} onClick={() => { setCluePanelTab("clues"); setClueListOpen(true); }} aria-label={`查看线索与推理进度，当前 ${clueMessages.length} 条线索`} title="线索与进度"><span className="flex items-center gap-0.5"><Lightbulb size={18} /><ListChecks size={16} className="text-primary" /></span><span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-black leading-4 text-white ring-2 ring-white">{clueMessages.length}</span></button>}
 
-      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/8</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => isHost ? setConfirmAction("back") : void leaveRoom()}><LogOut size={16} /> {isHost ? "退出并解散房间" : "退出并释放席位"}</button></div></Modal>}
+      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/8</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => { setMembersOpen(false); requestRoomExit(); }}><LogOut size={16} /> 房间退出选项</button></div></Modal>}
       {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
       {clueListOpen && <Modal onClose={() => setClueListOpen(false)}><div className="room-assistant-panel space-y-4">
         <div className="pr-10"><h2 className="text-xl font-black text-ink">推理辅助</h2><p className="mt-1 text-sm text-muted">{snapshot.room.soup?.title ?? "当前海龟汤"}</p></div>
@@ -647,7 +672,8 @@ export default function OnlineSoupRoomPage() {
         {cluePanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <article key={question.id} className="rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="flex items-center gap-2"><button className="shrink-0 rounded-full" disabled={!question.sender.id} onClick={() => question.sender.id && openMemberProfile(question.sender.id)}>{question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="shrink-0 text-xs font-black text-primary">#{question.number}</span><span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span><time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p></div></div><div className="mt-2 pl-10">{question.answer ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{answerLabels[question.answer]}</span> : <span className="inline-flex rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted">等待主持人回复</span>}</div></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
         <button className="btn btn-secondary w-full" onClick={() => setClueListOpen(false)}>关闭</button>
       </div></Modal>}
-      {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "close" ? "确认解散房间？" : "确认返回并解散房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">主持人离开后房间将立即解散，所有玩家都会退出，此操作无法撤销。</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>确认解散</button></div></div></Modal>}
+      {exitChoiceOpen && <Modal onClose={() => setExitChoiceOpen(false)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">离开完整房间</h2><p className="mt-2 text-sm leading-6 text-muted">收起后会继续保持在线，并在桌面右下角接收聊天、线索和进度。</p></div><button className="btn btn-primary w-full" onClick={minimizeCurrentRoom}><Minimize2 size={17} />收起到右下角</button><button className="btn w-full bg-red-50 text-red-600 hover:bg-red-100" onClick={() => { setExitChoiceOpen(false); setConfirmAction(isHost ? "back" : "leave"); }}><LogOut size={17} />{isHost ? "退出并解散房间" : "退出并释放席位"}</button><button className="btn btn-secondary w-full" onClick={() => setExitChoiceOpen(false)}>取消</button></div></Modal>}
+      {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "close" ? "确认解散房间？" : confirmAction === "leave" ? "确认退出房间？" : "确认退出并解散房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "leave" ? "退出后将释放当前席位，重新进入时可能需要再次验证。" : "主持人离开后房间将立即解散，所有玩家都会退出，此操作无法撤销。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{confirmAction === "leave" ? "确认退出" : "确认解散"}</button></div></div></Modal>}
       {clueOpen && <Modal onClose={() => setClueOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">发布主持人线索</h2><textarea className="field min-h-32 w-full" maxLength={2000} value={clue} onChange={(e) => setClue(e.target.value)} placeholder="输入给所有玩家看的线索…" /><button className="btn btn-primary w-full" onClick={publishClue}><Lightbulb size={16} /> 发布线索</button></div></Modal>}
       {surfacePublishOpen && <Modal onClose={() => setSurfacePublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">发布补充汤面</h2><p className="mt-1 text-sm text-muted">选择一条尚未发布的补充汤面。</p></div><div className="space-y-2">{unpublishedSurfaces.map(({ content: surface, index }) => <button key={index} className="w-full rounded-xl border border-blue-200 bg-blue-50 p-3 text-left transition hover:border-blue-400" onClick={() => void publishSurface(index)}><span className="text-sm font-black text-blue-800">补充汤面 {index + 1}</span><span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{surface.replace(/<[^>]*>/g, "")}</span></button>)}</div><button className="btn btn-secondary w-full" onClick={() => setSurfacePublishOpen(false)}>取消</button></div></Modal>}
       {publishOpen && snapshot.room.soup && <Modal onClose={() => setPublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">选择要发布的汤底</h2><p className="mt-1 text-sm leading-6 text-muted">汤底可以按任意顺序发布。全部发布后本轮结束，并自动发布主持人手册。</p></div><div className="space-y-2">{[snapshot.room.soup.bottom ?? "", ...(snapshot.room.soup.supplementalBottoms ?? [])].map((bottom, index) => { const published = snapshot.room.soup?.publishedBottomIndices?.includes(index) ?? false; return <button key={index} className={`w-full rounded-xl border p-3 text-left transition ${published ? "border-slate-200 bg-slate-50 text-muted" : "border-amber-200 bg-amber-50 hover:border-amber-400"}`} disabled={published} onClick={() => void publishBottom(index)}><span className="text-sm font-black">{index === 0 ? "主汤底" : `补充汤底 ${index}`}{published ? " · 已发布" : ""}</span><span className="mt-1 block line-clamp-2 text-xs leading-5">{bottom.replace(/<[^>]*>/g, "")}</span></button>; })}</div><button className="btn btn-secondary w-full" onClick={() => setPublishOpen(false)}>取消</button></div></Modal>}
@@ -656,7 +682,7 @@ export default function OnlineSoupRoomPage() {
 }
 
 function MemberRow({ member, onOpenUser }: { member: OnlineSoupSnapshot["members"][number]; onOpenUser: (id: string) => void }) {
-  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={`查看${member.nickname}的主页`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}</button><div className="flex min-w-0 flex-1 items-center gap-1.5"><span className="truncate font-bold text-ink">{member.nickname}</span><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" /></div>{member.role === "host" && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 主持人</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
+  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={`查看${member.nickname}的主页`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}</button><div className="flex min-w-0 flex-1 items-center gap-1.5"><span className="truncate font-bold text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" /></div>{member.role === "host" && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 主持人</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
 }
 
 function FloatingAction({ label, onClick, tone = "default" }: { label: string; onClick: () => void; tone?: "default" | "primary" | "amber" | "danger" }) {

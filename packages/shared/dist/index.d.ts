@@ -10,6 +10,7 @@ export type PublicUser = {
     avatar: string | null;
     role: UserRole;
     createdAt: string;
+    level: number;
 };
 export type RadarStats = {
     writing: number | null;

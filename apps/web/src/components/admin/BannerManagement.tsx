@@ -11,6 +11,7 @@ type AdminBanner = {
   id: string;
   name: string;
   imageUrl: string | null;
+  desktopImageUrl: string | null;
   linkUrl: string | null;
   weight: number;
   enabled: boolean;
@@ -19,8 +20,8 @@ type AdminBanner = {
   updatedAt: string;
 };
 
-type BannerForm = { name: string; image: string | null; linkUrl: string; weight: number; enabled: boolean };
-const emptyForm: BannerForm = { name: "", image: null, linkUrl: "", weight: 0, enabled: true };
+type BannerForm = { name: string; mobileImage: string | null; desktopImage: string | null; linkUrl: string; weight: number; enabled: boolean };
+const emptyForm: BannerForm = { name: "", mobileImage: null, desktopImage: null, linkUrl: "", weight: 0, enabled: true };
 
 function normalizeBannerLink(value: string) {
   const link = value.trim();
@@ -41,7 +42,7 @@ export function BannerManagement() {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<AdminBanner | null | "new">(null);
   const [form, setForm] = useState<BannerForm>(emptyForm);
-  const [cropSource, setCropSource] = useState<string | null>(null);
+  const [cropSource, setCropSource] = useState<{ source: string; variant: "desktop" | "mobile" } | null>(null);
 
   const load = useCallback(async () => {
     const data = await api<{ banners: AdminBanner[] }>("/api/admin/banners", { bypassCache: true, dedupe: false });
@@ -59,11 +60,11 @@ export function BannerManagement() {
   }
 
   function edit(banner: AdminBanner) {
-    setForm({ name: banner.name, image: banner.imageUrl, linkUrl: banner.linkUrl ?? "", weight: banner.weight, enabled: banner.enabled });
+    setForm({ name: banner.name, mobileImage: banner.imageUrl, desktopImage: banner.desktopImageUrl, linkUrl: banner.linkUrl ?? "", weight: banner.weight, enabled: banner.enabled });
     setEditing(banner);
   }
 
-  function readImage(event: ChangeEvent<HTMLInputElement>) {
+  function readImage(event: ChangeEvent<HTMLInputElement>, variant: "desktop" | "mobile") {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
@@ -71,22 +72,14 @@ export function BannerManagement() {
     if (file.size > 4 * 1024 * 1024) return showToast("Banner 图片不能超过 4MB");
     const reader = new FileReader();
     reader.onload = () => {
-      const source = String(reader.result);
-      const image = new Image();
-      image.onload = () => {
-        const ratio = image.naturalWidth / image.naturalHeight;
-        if (Math.abs(ratio - 16 / 9) < 0.01) setForm((current) => ({ ...current, image: source }));
-        else setCropSource(source);
-      };
-      image.onerror = () => showToast("图片读取失败");
-      image.src = source;
+      setCropSource({ source: String(reader.result), variant });
     };
     reader.onerror = () => showToast("图片读取失败");
     reader.readAsDataURL(file);
   }
 
   async function save() {
-    if (!form.name.trim() || saving || (editing === "new" && !form.image)) return;
+    if (!form.name.trim() || saving || !form.mobileImage || !form.desktopImage) return;
     setSaving(true);
     try {
       const body = { ...form, name: form.name.trim(), linkUrl: normalizeBannerLink(form.linkUrl) };
@@ -128,7 +121,10 @@ export function BannerManagement() {
           <div className="divide-y divide-line">
             {banners.map((banner) => (
               <div key={banner.id} className="flex flex-wrap items-center gap-4 p-4">
-                <img className="aspect-video w-44 max-w-[42vw] shrink-0 rounded-xl bg-slate-900 object-cover object-bottom" src={banner.imageUrl || homeBannerUrl} alt="" loading="lazy" />
+                <div className="grid w-44 max-w-[42vw] shrink-0 gap-1.5">
+                  <img className="aspect-[2/1] w-full rounded-lg bg-slate-900 object-cover" src={banner.desktopImageUrl || banner.imageUrl || homeBannerUrl} alt="PC Banner" loading="lazy" />
+                  <img className="aspect-video w-full rounded-lg bg-slate-900 object-cover" src={banner.imageUrl || homeBannerUrl} alt="手机 Banner" loading="lazy" />
+                </div>
                 <div className="min-w-[180px] flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-black text-ink">{banner.name}</p>
@@ -150,12 +146,19 @@ export function BannerManagement() {
 
       {editing && <Modal onClose={() => !saving && setEditing(null)}>
         <div className="space-y-4">
-          <div><h2 className="text-xl font-black text-ink">{editing === "new" ? "新增 Banner" : "编辑 Banner"}</h2><p className="mt-1 text-sm text-muted">图片将以 16:9 展示，比例不符时可手动拖动和缩放裁剪。</p></div>
+          <div><h2 className="text-xl font-black text-ink">{editing === "new" ? "新增 Banner" : "编辑 Banner"}</h2><p className="mt-1 text-sm text-muted">每条 Banner 需分别上传 PC 图和手机图，比例不符时可手动裁剪。</p></div>
           <label className="block space-y-1"><span className="label">名称</span><input className="field" maxLength={120} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="用于后台识别" /></label>
           <div className="space-y-2">
-            <span className="label">Banner 图片</span>
-            <img className="aspect-video w-full rounded-2xl bg-slate-900 object-cover object-bottom" src={form.image || homeBannerUrl} alt="Banner 预览" />
-            <label className="btn btn-secondary w-full cursor-pointer"><ImagePlus size={17} />{form.image ? "更换图片" : "选择图片"}<input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={readImage} /></label>
+            <span className="label">PC 端 Banner</span>
+            <span className="block text-xs text-muted">推荐 1600 × 800，比例 2:1</span>
+            <img className="aspect-[2/1] w-full rounded-xl bg-slate-900 object-cover" src={form.desktopImage || homeBannerUrl} alt="PC Banner 预览" />
+            <label className="btn btn-secondary w-full cursor-pointer"><ImagePlus size={17} />{form.desktopImage ? "更换 PC 图片" : "选择 PC 图片"}<input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => readImage(event, "desktop")} /></label>
+          </div>
+          <div className="space-y-2">
+            <span className="label">手机端 Banner</span>
+            <span className="block text-xs text-muted">推荐 960 × 540，比例 16:9</span>
+            <img className="aspect-video w-full rounded-xl bg-slate-900 object-cover" src={form.mobileImage || homeBannerUrl} alt="手机 Banner 预览" />
+            <label className="btn btn-secondary w-full cursor-pointer"><ImagePlus size={17} />{form.mobileImage ? "更换手机图片" : "选择手机图片"}<input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => readImage(event, "mobile")} /></label>
           </div>
           <label className="block space-y-1">
             <span className="label">跳转链接（选填）</span>
@@ -169,14 +172,18 @@ export function BannerManagement() {
           </label>
           <label className="block space-y-1"><span className="label">权重</span><input className="field" type="number" min={-999999} max={999999} value={form.weight} onChange={(event) => setForm((current) => ({ ...current, weight: Number(event.target.value) }))} /><span className="text-xs text-muted">权重越大，展示越靠前</span></label>
           <label className="flex items-center justify-between rounded-xl border border-line px-3 py-3"><span><strong className="block text-sm text-ink">上架</strong><span className="text-xs text-muted">关闭后前台不展示</span></span><input className="h-5 w-5 accent-blue-600" type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /></label>
-          <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={saving} onClick={() => setEditing(null)}>取消</button><button className="btn btn-primary" disabled={saving || !form.name.trim() || (editing === "new" && !form.image)} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button></div>
+          <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={saving} onClick={() => setEditing(null)}>取消</button><button className="btn btn-primary" disabled={saving || !form.name.trim() || !form.mobileImage || !form.desktopImage} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button></div>
         </div>
       </Modal>}
       {cropSource && <BannerImageCropper
-        source={cropSource}
+        source={cropSource.source}
+        targetWidth={cropSource.variant === "desktop" ? 1600 : 960}
+        targetHeight={cropSource.variant === "desktop" ? 800 : 540}
+        title={cropSource.variant === "desktop" ? "裁剪 PC 端 Banner" : "裁剪手机端 Banner"}
         onCancel={() => setCropSource(null)}
         onConfirm={(image) => {
-          setForm((current) => ({ ...current, image }));
+          const key = cropSource.variant === "desktop" ? "desktopImage" : "mobileImage";
+          setForm((current) => ({ ...current, [key]: image }));
           setCropSource(null);
         }}
       />}

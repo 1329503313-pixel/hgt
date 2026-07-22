@@ -25,21 +25,21 @@ export function SoupLinkList({
     return <div className="card p-4 text-center text-sm text-muted">{emptyHint}</div>;
   }
   return (
-    <div className="card p-4">
+    <div className="soup-link-list-card card p-4">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-sm text-muted">{soups.length} 条</span>
       </div>
-      <div className="space-y-3">
+      <div className="soup-link-list-items space-y-3">
         {soups.map((soup) => (
           <button
             key={soup.id}
-            className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-line bg-white p-3 text-left"
+            className="soup-link-list-item flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-white p-3 text-left transition hover:border-blue-200 hover:bg-blue-50/30 hover:shadow-sm"
             onClick={() => onOpen(soup.id)}
           >
             {soup.coverImage ? (
-              <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />
+              <img className="soup-link-list-cover h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />
             ) : (
-              <img className="h-14 w-14 shrink-0 rounded-lg object-cover" src={defaultCoverUrl} alt="" />
+              <img className="soup-link-list-cover h-14 w-14 shrink-0 rounded-lg object-cover" src={defaultCoverUrl} alt="" />
             )}
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 truncate">
@@ -71,6 +71,7 @@ export function SoupLinkList({
                 )}
                 {soup.author || soup.creatorName} · <ThumbsUp size={12} /> {soup.likeCount} · <Star size={12} /> {soup.favoriteCount} · <Eye size={12} /> {formatViews(soup.viewCount)}
               </span>
+              <span className="mt-2 hidden line-clamp-2 text-xs leading-5 text-muted lg:block">{soup.summary || "暂无摘要"}</span>
             </span>
           </button>
         ))}
@@ -187,7 +188,7 @@ export function SubListPage({
   }
 
   return (
-    <section className="space-y-3">
+    <section className="soup-sub-list-page space-y-3">
       <PageTopBar title={title} />
       <MineBackButton />
       <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} emptyHint={emptyHint} showHeatValue={showHeatValue} />

@@ -42,7 +42,7 @@ export default function NoticesPage() {
   return (
     <section className="min-h-screen bg-page pt-[72px]">
       <PageTopBar title="通知" backTo="/messages" />
-      <div className="mx-auto max-w-3xl px-4 pb-10">
+      <div className="mx-auto max-w-4xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
           {loading ? <ListSkeleton rows={6} /> : activeNotices.length === 0 ? (
             <p className="py-16 text-center text-sm text-muted">暂无通知</p>

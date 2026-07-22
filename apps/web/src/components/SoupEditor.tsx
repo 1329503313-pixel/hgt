@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { ArrowLeft, ImagePlus, Plus, Trash2, X } from "lucide-react";
+import { ImagePlus, Plus, Trash2, X } from "lucide-react";
 import type { SoupForm } from "../context/AppContext";
 import { soupDifficulties, soupTypes } from "../context/AppContext";
 import { Modal } from "./Modal";
@@ -8,6 +8,7 @@ import { useApp } from "../context/AppContext";
 import { api } from "../api";
 import { useNavigate } from "react-router-dom";
 import { refreshMineContentCache } from "../shared/mineContentCache";
+import { CoverCropper } from "./CoverCropper";
 
 function SupplementEditor({
   title,
@@ -89,6 +90,7 @@ export function SoupEditor() {
   const [termsOpen, setTermsOpen] = useState(false);
   const [termsError, setTermsError] = useState("");
   const [coverError, setCoverError] = useState("");
+  const [coverCropSource, setCoverCropSource] = useState<string | null>(null);
   const [advSettingsOpen, setAdvSettingsOpen] = useState(false);
   const [reanalyzeConfirmOpen, setReanalyzeConfirmOpen] = useState(false);
 
@@ -138,7 +140,7 @@ export function SoupEditor() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => patch({ coverImage: String(reader.result) });
+    reader.onload = () => setCoverCropSource(String(reader.result));
     reader.readAsDataURL(file);
   }
 
@@ -190,17 +192,26 @@ export function SoupEditor() {
   }
 
   return (
-    <Modal full onClose={closeSoupEditor}>
-      <form className="space-y-4 pb-24" onSubmit={handleSubmit}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <button type="button" className="mb-2 inline-flex min-h-11 items-center gap-2 text-sm font-bold text-muted" onClick={closeSoupEditor}>
-              <ArrowLeft size={17} /> 返回
-            </button>
-            <h2 className="text-xl font-black text-ink">{editing ? "编辑海龟汤" : "新建海龟汤"}</h2>
-            <p className="mt-1 text-sm text-muted">支持文本内容与 JPG/PNG 封面。</p>
+    <Modal
+      full
+      bare
+      onClose={closeSoupEditor}
+      overlayClassName="bg-slate-950/55 backdrop-blur-sm"
+      contentClassName="!max-w-5xl sm:!h-[92vh]"
+    >
+      <form className="soup-editor-dialog flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-white shadow-[0_28px_80px_rgba(15,23,42,.28)] sm:rounded-3xl" onSubmit={handleSubmit}>
+        <header className="soup-editor-header flex shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4 py-4 sm:px-7 sm:py-5">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black tracking-[0.18em] text-primary">内容创作 · SOUP EDITOR</p>
+            <h2 className="mt-1 text-xl font-black text-ink sm:text-2xl">{editing ? "编辑海龟汤" : "发布海龟汤"}</h2>
+            <p className="mt-1 hidden text-sm text-muted sm:block">完善汤面、汤底与展示信息，带给玩家完整的推理体验。</p>
           </div>
-        </div>
+          <button type="button" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-slate-50 text-muted transition hover:border-primary hover:bg-blue-50 hover:text-primary" onClick={closeSoupEditor} aria-label="关闭发布窗口" title="关闭">
+            <X size={19} />
+          </button>
+        </header>
+        <div className="soup-editor-body min-h-0 flex-1 overflow-y-auto bg-slate-50/80 px-4 py-5 sm:px-7 sm:py-6">
+          <div className="soup-editor-content mx-auto max-w-4xl space-y-4 sm:space-y-5">
         <div className="grid gap-3 md:grid-cols-2">
           <label className="space-y-2">
             <span className="text-xs font-bold text-muted"><span className="text-danger">*</span> 标题</span>
@@ -247,12 +258,13 @@ export function SoupEditor() {
           <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
             {value.coverImage ? (
               <div className="space-y-3">
-                <img className="max-h-56 w-full rounded-lg object-cover" src={value.coverImage} alt="封面预览" />
-                <div className="grid grid-cols-2 gap-2">
+                <img className="aspect-video w-full rounded-lg object-cover" src={value.coverImage} alt="封面预览" />
+                <div className="grid gap-2 sm:grid-cols-3">
                   <label className="btn btn-secondary cursor-pointer">
                     更换封面
                     <input className="hidden" type="file" accept="image/jpeg,image/png" onChange={(e) => handleCoverUpload(e.target.files?.[0])} />
                   </label>
+                  <button className="btn btn-secondary" type="button" onClick={() => setCoverCropSource(value.coverImage)}>调整裁剪</button>
                   <button className="btn btn-secondary" type="button" onClick={() => patch({ coverImage: "" })}>移除封面</button>
                 </div>
               </div>
@@ -331,13 +343,28 @@ export function SoupEditor() {
           {termsError && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-danger">{termsError}</div>}
         </div>
 
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white/95 px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(17,24,39,0.07)] backdrop-blur">
-          <div className="mx-auto max-w-3xl">
-            <button className="btn btn-primary w-full">{editing ? "保存修改" : "发布"}</button>
           </div>
         </div>
+        <footer className="soup-editor-footer shrink-0 border-t border-line bg-white px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-7 sm:py-4">
+          <div className="mx-auto flex max-w-4xl items-center justify-end gap-3">
+            <p className="mr-auto hidden text-xs leading-5 text-muted sm:block">发布前请确认必填内容及公开权限设置。</p>
+            <button type="button" className="btn btn-secondary hidden min-w-28 sm:inline-flex" onClick={closeSoupEditor}>取消</button>
+            <button className="btn btn-primary w-full sm:w-auto sm:min-w-44">{editing ? "保存修改" : "发布海龟汤"}</button>
+          </div>
+        </footer>
       </form>
       {termsOpen && <TermsModal onClose={() => setTermsOpen(false)} onAccept={() => { setTermsAccepted(true); setTermsError(""); setTermsOpen(false); }} />}
+      {coverCropSource && (
+        <CoverCropper
+          source={coverCropSource}
+          onCancel={() => setCoverCropSource(null)}
+          onConfirm={(croppedDataUrl) => {
+            patch({ coverImage: croppedDataUrl });
+            setCoverCropSource(null);
+            setCoverError("");
+          }}
+        />
+      )}
 
       {/* 高级设置弹窗 */}
       {advSettingsOpen && (

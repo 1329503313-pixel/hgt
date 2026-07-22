@@ -6,8 +6,14 @@ export function parentRoute(pathname: string) {
   if (/^\/messages\/(system|interactions|notifications|requests|notices)$/.test(path)) return "/messages";
   if (path === "/messages") return "/";
 
+  const onlineSoupSelectRoute = path.match(/^\/online-soup\/rooms\/([^/]+)\/select-soup$/);
+  if (onlineSoupSelectRoute) return `/online-soup/rooms/${onlineSoupSelectRoute[1]}`;
+  if (/^\/online-soup\/rooms\/[^/]+$/.test(path)) return "/online-soup";
+  if (/^\/circles\/[^/]+$/.test(path)) return "/circles";
+
   if (path === "/mine/settings/password") return "/mine/settings";
   if (path === "/mine/settings/backgrounds") return "/mine/settings";
+  if (/^\/mine\/store\/[^/]+$/.test(path)) return "/mine/store";
   if (path === "/mine/shells/transactions") return "/mine";
   if (path === "/mine/store" || path === "/mine/cards") return "/mine";
   if (path === "/mine/asset-draw-history") return "/mine/store";

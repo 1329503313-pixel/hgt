@@ -1,22 +1,13 @@
-import { ArrowLeft } from "lucide-react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { parentRoute } from "../shared/routeHierarchy";
+import { UnifiedBackButton } from "./UnifiedBackButton";
 
 interface MineBackButtonProps {
   to?: string;
+  hideOnDesktop?: boolean;
 }
 
-export function MineBackButton({ to }: MineBackButtonProps) {
-  const navigate = useNavigate();
+export function MineBackButton({ to, hideOnDesktop = false }: MineBackButtonProps) {
   const location = useLocation();
-  return (
-    <button
-      className="flex min-h-10 items-center gap-2 px-4 text-sm font-bold text-muted"
-      type="button"
-      onClick={() => navigate(to ?? parentRoute(location.pathname), { replace: true })}
-    >
-      <ArrowLeft size={18} />
-      <span>返回</span>
-    </button>
-  );
+  return <UnifiedBackButton to={to ?? parentRoute(location.pathname)} className={`mine-back-button ${hideOnDesktop ? "mine-back-button-hide-desktop" : ""}`} />;
 }

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Check, Search, Soup } from "lucide-react";
+import { Check, Search, Soup } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
+import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import type { OnlineSoupChoice } from "../shared/types";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
@@ -79,16 +80,10 @@ export default function OnlineSoupSelectPage() {
   }
 
   return (
-    <div className="min-h-screen bg-page pb-[max(32px,env(safe-area-inset-bottom))]">
+    <div className="online-soup-selector min-h-screen bg-page pb-[max(32px,env(safe-area-inset-bottom))]">
       <header className="top-nav-shell">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-2.5">
-          <button
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-slate-100"
-            onClick={() => navigate(`/online-soup/rooms/${roomId}`)}
-            aria-label="返回房间"
-          >
-            <ArrowLeft size={20} />
-          </button>
+        <div className="mx-auto flex max-w-[1388px] items-center gap-3 px-4 py-2.5 lg:px-8">
+          <UnifiedBackButton compactOnMobile to={`/online-soup/rooms/${roomId}`} replace={false} />
           <div>
             <h1 className="font-black text-ink">选择海龟汤</h1>
             <p className="text-xs text-muted">选择后返回房间，由主持人开始游戏</p>
@@ -96,8 +91,8 @@ export default function OnlineSoupSelectPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 pt-[76px]">
-        <div className="sticky top-[60px] z-20 -mx-4 border-b border-line bg-page/95 px-4 pb-3 backdrop-blur">
+      <main className="mx-auto max-w-[1388px] px-4 pt-[76px] lg:px-8 lg:pt-[88px]">
+        <div className="online-soup-selector-toolbar sticky top-[60px] z-20 -mx-4 border-b border-line bg-page/95 px-4 pb-3 backdrop-blur lg:mx-0 lg:grid lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-4 lg:rounded-2xl lg:border lg:bg-white/95 lg:p-3 lg:shadow-sm">
           <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1">
             <button
               className={`rounded-lg py-2.5 text-sm font-black transition ${tab === "library" ? "bg-white text-primary shadow-sm" : "text-muted"}`}
@@ -112,7 +107,7 @@ export default function OnlineSoupSelectPage() {
               发布
             </button>
           </div>
-          <label className="field mt-3 flex items-center gap-2 bg-white">
+          <label className="field mt-3 flex items-center gap-2 bg-white lg:mt-0">
             <Search size={17} className="shrink-0 text-muted" />
             <input
               className="min-w-0 flex-1 bg-transparent outline-none"
@@ -124,12 +119,12 @@ export default function OnlineSoupSelectPage() {
         </div>
 
         {loading ? (
-          <div className="mt-4 grid grid-cols-2 items-start gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 items-start gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-5">
             {[0, 1, 2, 3].map((item) => <div key={item} className="h-64 animate-pulse rounded-2xl bg-slate-200" />)}
           </div>
         ) : soups.length > 0 ? (
           <>
-          <div className="mt-4 grid grid-cols-2 items-start gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 items-start gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-5">
             {soups.map((soup) => (
               <article
                 key={soup.id}

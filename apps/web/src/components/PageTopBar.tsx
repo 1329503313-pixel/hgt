@@ -1,9 +1,10 @@
-import { ArrowLeft, Bell, LogOut, Shield } from "lucide-react";
+import { Bell, LogOut, Shield } from "lucide-react";
 import type { AccountUser } from "../shared/types";
 import { useApp } from "../context/AppContext";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useMessageUnread } from "../shared/useMessageUnread";
+import { UnifiedBackButton } from "./UnifiedBackButton";
 
 export function PageTopBar({ title, titleContent, titleTo = "/", backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; backTo?: string; rightAction?: React.ReactNode }) {
   const { user } = useApp();
@@ -22,9 +23,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", backTo, rightAc
               <UserMenuDropdown user={user} />
               {rightAction}
               {backTo ? (
-                <button className="grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate(backTo, { replace: true })} aria-label="返回">
-                  <ArrowLeft size={20} />
-                </button>
+                <UnifiedBackButton to={backTo} compactOnMobile />
               ) : (
                 <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate("/messages")} aria-label="消息">
                   <Bell size={20} />

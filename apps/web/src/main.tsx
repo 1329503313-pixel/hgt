@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { AppProvider } from "./context/AppContext";
+import { OnlineSoupDockProvider } from "./context/OnlineSoupDockContext";
 import App from "./App";
 import "./styles.css";
 import { setupPerformanceMonitoring } from "./performance";
@@ -18,7 +19,9 @@ createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <AppProvider>
-        <App />
+        <OnlineSoupDockProvider>
+          <App />
+        </OnlineSoupDockProvider>
       </AppProvider>
     </BrowserRouter>
   </React.StrictMode>

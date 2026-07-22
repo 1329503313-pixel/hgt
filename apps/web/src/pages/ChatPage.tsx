@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Send, Smile } from "lucide-react";
+import { ArrowLeft, ChevronDown, Send, Smile, UserRound } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -10,9 +10,11 @@ import { subscribeServerEvent } from "../shared/serverEvents";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
+import { EquippedBadgeIcon } from "../components/BadgeVisuals";
+import { LevelBadge } from "../components/LevelBadge";
 
 type ChatResponse = {
-  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "equippedBadge"> & { isOnline: boolean } };
+  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean } };
   messages: PrivateMessageItem[];
   hasMore?: boolean;
   nextCursor?: string | null;
@@ -177,11 +179,11 @@ export default function ChatPage() {
     stickerSeries.flatMap((series) => series.stickers.map((sticker) => [sticker.id, sticker] as const))
   ), [stickerSeries]);
 
-  if (loadingUser || !chat) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="私信" backTo="/messages" /><div className="mx-auto max-w-3xl px-4"><ListSkeleton rows={7} /></div></section>;
+  if (loadingUser || !chat) return <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5"><div className="lg:hidden"><PageTopBar title="私信" backTo="/messages" /></div><div className="mx-auto h-full max-w-3xl px-4 lg:max-w-[1180px] lg:rounded-[28px] lg:bg-white lg:p-6"><ListSkeleton rows={7} /></div></section>;
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
-      <PageTopBar
+    <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5">
+      <div className="lg:hidden"><PageTopBar
         title={chat.conversation.otherUser.nickname}
         titleContent={(
           <span className="flex min-w-0 items-center gap-2.5">
@@ -194,15 +196,27 @@ export default function ChatPage() {
               {chat.conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
             </span>
             <span className="max-w-36 truncate text-base font-black text-ink sm:max-w-56 sm:text-lg">{chat.conversation.otherUser.nickname}</span>
+            <LevelBadge level={chat.conversation.otherUser.level} />
           </span>
         )}
         titleTo={`/users/${chat.conversation.otherUser.id}`}
         backTo="/messages"
-      />
-      <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col">
+      /></div>
+      <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col lg:h-full lg:max-w-[1180px] lg:overflow-hidden lg:rounded-[28px] lg:border lg:border-line lg:bg-white lg:shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
+        <header className="hidden h-20 shrink-0 items-center justify-between border-b border-line px-6 lg:flex">
+          <div className="flex min-w-0 items-center gap-4">
+            <button className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-slate-50 text-ink transition hover:border-blue-200 hover:bg-blue-50 hover:text-primary" onClick={() => navigate("/messages")} aria-label="返回消息中心"><ArrowLeft size={21} /></button>
+            <span className="relative grid h-12 w-12 shrink-0 place-items-center"><span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 font-black text-primary">{chat.conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt="" /> : chat.conversation.otherUser.nickname.slice(0, 1)}</span>{chat.conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}</span>
+            <div className="min-w-0"><div className="flex items-center gap-2"><h1 className="truncate text-xl font-black text-ink">{chat.conversation.otherUser.nickname}</h1><LevelBadge level={chat.conversation.otherUser.level} /><EquippedBadgeIcon badge={chat.conversation.otherUser.equippedBadge} className="h-4 w-4" animated={false} /></div><p className={`mt-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "text-emerald-600" : "text-muted"}`}>{chat.conversation.otherUser.isOnline ? "在线 · 消息实时送达" : "离线 · 上线后可查看消息"}</p></div>
+          </div>
+          <button className="btn btn-secondary" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`)}><UserRound size={17} />查看主页</button>
+        </header>
+
+        <div className="min-h-0 flex flex-1 lg:grid lg:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="relative flex min-h-0 flex-col bg-page">
         <div
           ref={messagesRef}
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4"
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4 lg:px-8 lg:py-6"
           onScroll={(event) => {
             const element = event.currentTarget;
             const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
@@ -257,7 +271,7 @@ export default function ChatPage() {
         {showScrollBottom && !showStickers && (
           <button
             type="button"
-            className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition active:scale-95 sm:right-6"
+            className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition active:scale-95 sm:right-6 lg:absolute lg:bottom-24 lg:right-6"
             aria-label="滑到底部"
             title="滑到底部"
             onClick={() => {
@@ -277,6 +291,17 @@ export default function ChatPage() {
           onSend={send}
         />
         {showStickers && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setShowStickers(false)} onSend={sendSticker} className="shrink-0 border-t border-line px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3" />}
+          </div>
+
+          <aside className="hidden min-h-0 flex-col items-center bg-white px-6 py-8 text-center lg:flex">
+            <span className="relative grid h-24 w-24 place-items-center"><span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-3xl font-black text-primary">{chat.conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt={`${chat.conversation.otherUser.nickname}头像`} /> : chat.conversation.otherUser.nickname.slice(0, 1)}</span>{chat.conversation.otherUser.isOnline && <span className="absolute bottom-1 right-1 h-5 w-5 rounded-full border-[3px] border-white bg-emerald-500" />}</span>
+            <h2 className="mt-4 max-w-full truncate text-lg font-black text-ink">{chat.conversation.otherUser.nickname}</h2>
+            <div className="mt-2 flex items-center gap-1.5"><LevelBadge level={chat.conversation.otherUser.level} /><EquippedBadgeIcon badge={chat.conversation.otherUser.equippedBadge} className="h-5 w-5" animated={false} /></div>
+            <span className={`mt-3 rounded-full px-3 py-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{chat.conversation.otherUser.isOnline ? "当前在线" : "当前离线"}</span>
+            <div className="mt-6 w-full border-t border-line pt-5"><button className="btn btn-secondary w-full" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`)}><UserRound size={17} />查看个人主页</button></div>
+            <p className="mt-auto text-xs leading-5 text-muted">聊天记录仅你和对方可见。发送表情或文字后会自动滚动到最新消息。</p>
+          </aside>
+        </div>
       </div>
     </section>
   );
