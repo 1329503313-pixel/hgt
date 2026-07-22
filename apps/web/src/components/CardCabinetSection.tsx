@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown01, GalleryVerticalEnd, Gem, Layers3, Star, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -9,6 +9,15 @@ import { ListSkeleton } from "./Skeletons";
 import { Modal } from "./Modal";
 
 const raritySortRank = { normal: 0, rare: 1, epic: 2, legend: 3 } as const;
+const CARD_BACK_URL = "/card-back.webp?v=20260721";
+const DETAIL_CARD_FLIP_MS = 1200;
+const DETAIL_CHROME_FADE_MS = 200;
+
+type CardDetailAnimation = {
+  phase: "measuring" | "opening" | "revealing" | "open";
+  sourceRect: DOMRect;
+  targetRect?: DOMRect;
+};
 
 export function CardCabinetSection({
   userId,
@@ -27,9 +36,15 @@ export function CardCabinetSection({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<OwnedAssetCard | null>(null);
+  const [detailAnimation, setDetailAnimation] = useState<CardDetailAnimation | null>(null);
+  const detailCardRef = useRef<HTMLDivElement | null>(null);
   const [activePackId, setActivePackId] = useState("all");
   const [showcaseCollapsed, setShowcaseCollapsed] = useState(true);
   const [cardSort, setCardSort] = useState<"number" | "rarity">("number");
+
+  useEffect(() => {
+    warmAssetImage(CARD_BACK_URL);
+  }, []);
 
   useEffect(() => {
     const endpoint = `${editable ? "/api/me/card-cabinet" : `/api/users/${userId}/card-cabinet`}${compact ? "?compact=true" : ""}`;
@@ -64,8 +79,8 @@ export function CardCabinetSection({
 
   const visibleCards = activePackId === "all" ? sortedCards : (packTabs.find((pack) => pack.id === activePackId)?.cards ?? []);
 
-  function toggle(card: OwnedAssetCard) {
-    if (!editing) { void openDetail(card); return; }
+  function toggle(card: OwnedAssetCard, source?: HTMLElement) {
+    if (!editing) { openDetail(card, source); return; }
     setSelected((current) => {
       if (current.includes(card.id)) return current.filter((id) => id !== card.id);
       if (current.length >= 6) { onError?.("最多陈列 6 张卡片"); return current; }
@@ -73,10 +88,43 @@ export function CardCabinetSection({
     });
   }
 
-  function openDetail(card: OwnedAssetCard) {
+  function openDetail(card: OwnedAssetCard, source?: HTMLElement) {
     warmAssetImage(card.imageUrl);
     setDetail(card);
+    if (source) setDetailAnimation({ phase: "measuring", sourceRect: source.getBoundingClientRect() });
+    else setDetailAnimation(null);
   }
+
+  function closeDetail() {
+    setDetail(null);
+    setDetailAnimation(null);
+  }
+
+  useLayoutEffect(() => {
+    if (!detail || detailAnimation?.phase !== "measuring" || !detailCardRef.current) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setDetailAnimation(null);
+      return;
+    }
+    const targetRect = detailCardRef.current.getBoundingClientRect();
+    setDetailAnimation((current) => current?.phase === "measuring" ? { ...current, phase: "opening", targetRect } : current);
+  }, [detail, detailAnimation]);
+
+  useEffect(() => {
+    if (detailAnimation?.phase !== "opening") return;
+    const timer = window.setTimeout(() => {
+      setDetailAnimation((current) => current?.phase === "opening" ? { ...current, phase: "revealing" } : current);
+    }, DETAIL_CARD_FLIP_MS);
+    return () => window.clearTimeout(timer);
+  }, [detailAnimation?.phase]);
+
+  useEffect(() => {
+    if (detailAnimation?.phase !== "revealing") return;
+    const timer = window.setTimeout(() => {
+      setDetailAnimation((current) => current?.phase === "revealing" ? { ...current, phase: "open" } : current);
+    }, DETAIL_CHROME_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [detailAnimation?.phase]);
 
   async function saveShowcase() {
     setSaving(true);
@@ -98,7 +146,7 @@ export function CardCabinetSection({
           <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-cyan-200 transition hover:bg-white/10 active:scale-95" onClick={() => setShowcaseCollapsed((collapsed) => !collapsed)} aria-expanded={!showcaseCollapsed} aria-label={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"} title={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"}><GalleryVerticalEnd size={30} /></button>
         </div>
         {!showcaseCollapsed && <><div className="mt-4 grid grid-cols-3 gap-2">
-          {visibleShowcase.map((card) => <AssetCardVisual key={card.id} card={card} animated={card.rarity === "legend"} compactBadges className="asset-card-cabinet" onClick={() => void openDetail(card)} />)}
+          {visibleShowcase.map((card) => <AssetCardVisual key={card.id} card={card} animated={card.rarity === "legend"} compactBadges className="asset-card-cabinet" onClick={(event) => openDetail(card, event.currentTarget)} />)}
           {Array.from({ length: Math.max(0, 6 - visibleShowcase.length) }, (_, index) => <div key={`empty-${index}`} className="aspect-[5/7] rounded-xl border border-dashed border-white/20 bg-white/5" />)}
         </div>
         {editable && !compact && <div className="mt-4 flex justify-end gap-2">{editing ? <><button className="rounded-full border border-white/25 px-4 py-2 text-xs font-bold" onClick={() => { setEditing(false); setSelected(cabinet.showcase.map((card) => card.id)); }}>取消</button><button className="rounded-full bg-white px-4 py-2 text-xs font-black text-slate-950" disabled={saving} onClick={() => void saveShowcase()}>{saving ? "保存中…" : `保存陈列 (${selected.length}/6)`}</button></> : <button className="rounded-full bg-white px-4 py-2 text-xs font-black text-slate-950" onClick={() => setEditing(true)}>调整陈列卡</button>}</div>}
@@ -114,17 +162,22 @@ export function CardCabinetSection({
           </div>
           <div className="mb-4 flex items-center justify-between gap-3"><h3 className="font-black text-ink">{activePackId === "all" ? "全部卡牌" : packTabs.find((pack) => pack.id === activePackId)?.name}</h3><div className="flex items-center gap-2">{editing && <span className="hidden text-xs font-bold text-primary sm:inline">按选择顺序陈列</span>}<button type="button" className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-black transition active:scale-95 ${cardSort === "rarity" ? "border-violet-200 bg-violet-50 text-violet-700" : "border-blue-200 bg-blue-50 text-blue-700"}`} onClick={() => setCardSort((sort) => sort === "number" ? "rarity" : "number")} aria-label={`当前${cardSort === "number" ? "按序号排序" : "按品质排序"}，点击切换`}><span className="relative grid h-4 w-4 place-items-center">{cardSort === "number" ? <ArrowDown01 size={16} /> : <Gem size={16} />}</span>{cardSort === "number" ? "按序号排序" : "按品质排序"}</button></div></div>
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 md:grid-cols-6">
-            {visibleCards.map((card) => <div key={card.id} className="min-w-0"><AssetCardVisual card={card} compactBadges className="asset-card-cabinet" selected={editing && selected.includes(card.id)} onClick={() => toggle(card)} /><div className="mt-2 flex items-center justify-between gap-1 text-[10px] font-bold"><span className="truncate text-muted">{ASSET_RARITY_LABELS[card.rarity]}</span><span className="text-ink">收藏值 {card.collectionValue}</span></div></div>)}
+            {visibleCards.map((card) => <div key={card.id} className="min-w-0"><AssetCardVisual card={card} compactBadges className="asset-card-cabinet" selected={editing && selected.includes(card.id)} onClick={(event) => toggle(card, event.currentTarget)} /><div className="mt-2 flex items-center justify-between gap-1 text-[10px] font-bold"><span className="truncate text-muted">{ASSET_RARITY_LABELS[card.rarity]}</span><span className="text-ink">收藏值 {card.collectionValue}</span></div></div>)}
           </div>
         </div>
       ))}
 
-      {detail && <Modal full bare onClose={() => setDetail(null)}>
+      {detail && <Modal
+        full
+        bare
+        onClose={closeDetail}
+        overlayClassName={`transition-colors duration-[400ms] ${detailAnimation?.phase === "measuring" ? "bg-slate-950/0" : "bg-slate-950/80 backdrop-blur-sm"}`}
+      >
         <div className="flex min-h-full items-center justify-center py-4">
           <div className="w-full max-w-md">
-            <div className="flex items-center justify-between gap-4 text-white"><div><p className="flex items-baseline gap-1.5 font-bold text-cyan-200"><span className="text-sm">NO.{detail.cardNo}</span><span className="text-sm opacity-70">·</span><span className="text-base">{ASSET_RARITY_LABELS[detail.rarity]}</span></p><h2 className="mt-1.5 text-2xl font-black leading-tight">{detail.name}</h2></div><button className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-white backdrop-blur" onClick={() => setDetail(null)} aria-label="关闭卡片详情"><X size={21} /></button></div>
-            <div className="relative mx-auto mt-4"><AssetCardVisual card={detail} animated={detail.rarity === "legend"} highDetail className="asset-card-cabinet" /></div>
-            <div className="mt-4 overflow-hidden rounded-2xl bg-white text-ink shadow-soft">
+            <div className={`flex items-center justify-between gap-4 text-white transition-opacity duration-200 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "pointer-events-none opacity-0" : "opacity-100"}`}><div><p className="flex items-baseline gap-1.5 font-bold text-cyan-200"><span className="text-sm">NO.{detail.cardNo}</span><span className="text-sm opacity-70">·</span><span className="text-base">{ASSET_RARITY_LABELS[detail.rarity]}</span></p><h2 className="mt-1.5 text-2xl font-black leading-tight">{detail.name}</h2></div><button className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-white backdrop-blur" onClick={closeDetail} aria-label="关闭卡片详情"><X size={21} /></button></div>
+            <div ref={detailCardRef} className={`relative mx-auto mt-4 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "invisible" : "visible"}`}><AssetCardVisual card={detail} animated={detail.rarity === "legend"} highDetail className="asset-card-cabinet" /></div>
+            <div className={`mt-4 overflow-hidden rounded-2xl bg-white text-ink shadow-soft transition-opacity duration-200 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "opacity-0" : "opacity-100"}`}>
               <div className="grid grid-cols-3 divide-x divide-line px-2 py-5 text-center text-sm">
                 <div className="px-2"><Star className="mx-auto text-amber-500" size={24} /><p className="mt-2 font-black">{detail.starLevel} 星</p></div>
                 <div className="px-2"><Gem className="mx-auto text-violet-500" size={24} /><p className="mt-2 font-black">{detail.collectionValue} 收藏值</p></div>
@@ -137,6 +190,30 @@ export function CardCabinetSection({
             </div>
           </div>
         </div>
+        {detailAnimation?.phase === "opening" && detailAnimation.targetRect && (
+          <div
+            className="pointer-events-none fixed z-10 [perspective:1400px]"
+            style={{
+              left: detailAnimation.targetRect.left,
+              top: detailAnimation.targetRect.top,
+              width: detailAnimation.targetRect.width,
+              height: detailAnimation.targetRect.height,
+              "--cabinet-card-start-x": `${detailAnimation.sourceRect.left + detailAnimation.sourceRect.width / 2 - (detailAnimation.targetRect.left + detailAnimation.targetRect.width / 2)}px`,
+              "--cabinet-card-start-y": `${detailAnimation.sourceRect.top + detailAnimation.sourceRect.height / 2 - (detailAnimation.targetRect.top + detailAnimation.targetRect.height / 2)}px`,
+              "--cabinet-card-start-scale": detailAnimation.sourceRect.width / detailAnimation.targetRect.width,
+            } as React.CSSProperties}
+            aria-hidden="true"
+          >
+            <div className="card-cabinet-detail-flight absolute inset-0">
+              <div className="card-cabinet-detail-flight-face">
+                <AssetCardVisual card={detail} animated={false} highDetail className="asset-card-cabinet" />
+              </div>
+              <div className="card-cabinet-detail-flight-face card-cabinet-detail-flight-back">
+                <img src={CARD_BACK_URL} alt="" className="h-full w-full object-cover" decoding="async" draggable={false} />
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>}
     </div>
   );

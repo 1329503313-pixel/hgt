@@ -1027,7 +1027,39 @@ textarea {
 }
 
 .asset-card-cabinet:not(.asset-card-high-detail) .asset-card-story {
-  -webkit-line-clamp: 3;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* 收藏柜卡牌从网格原位逆时针翻转并放大到详情卡位。 */
+.card-cabinet-detail-flight {
+  transform-origin: center;
+  transform-style: preserve-3d;
+  animation: card-cabinet-detail-open 1200ms cubic-bezier(.2,.65,.3,1) both;
+}
+
+.card-cabinet-detail-flight-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 15px;
+  backface-visibility: hidden;
+}
+
+.card-cabinet-detail-flight-back {
+  transform: rotateY(180deg);
+  background: #0f172a;
+}
+
+@keyframes card-cabinet-detail-open {
+  from {
+    transform: translate3d(var(--cabinet-card-start-x), var(--cabinet-card-start-y), 0) scale(var(--cabinet-card-start-scale)) rotateY(0deg);
+  }
+  to {
+    transform: translate3d(0, 0, 0) scale(1) rotateY(-360deg);
+  }
 }
 
 .asset-card-stars {
@@ -1135,6 +1167,7 @@ textarea {
   .asset-pack-sealed,
   .asset-draw-flip-inner,
   .asset-draw-caption,
+  .card-cabinet-detail-flight,
   .asset-card-new-burst,
   .asset-result-pop { animation: none !important; }
   .asset-card-legend .asset-card-image,

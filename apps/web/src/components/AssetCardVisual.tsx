@@ -38,7 +38,7 @@ export function AssetCardVisual({
   historyCompact?: boolean;
   compactBadges?: boolean;
   selected?: boolean;
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
   className?: string;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
