@@ -222,7 +222,7 @@ export default function MinePage() {
 
         <aside className="mine-growth-card hidden lg:flex">
           <div className="flex items-start justify-between gap-4">
-            <div><p className="text-xs font-black tracking-[0.16em] text-primary">GROWTH</p><h2 className="mt-1 flex items-center gap-2 text-xl font-black text-ink">等级成长 {levelProgress && <LevelBadge level={levelProgress.level} animated />}</h2></div>
+            <div><p className="text-xs font-black tracking-[0.16em] text-primary">GROWTH</p><h2 className="mt-1 flex items-center gap-2 text-xl font-black text-ink">等级成长 {levelProgress && <LevelBadge level={levelProgress.level} />}</h2></div>
             <button className="grid h-10 w-10 place-items-center rounded-xl border border-line bg-white text-muted transition hover:border-primary/30 hover:text-primary" onClick={() => navigate("/mine/settings")} title="个人设置"><Settings2 size={19} /></button>
           </div>
           <div className="mt-5 flex items-end justify-between gap-3">
@@ -260,7 +260,7 @@ export default function MinePage() {
               <span className="shrink-0 text-[11px] font-bold text-muted">{levelProgress.isMaxLevel ? "已满级" : `差 ${levelProgress.remainingExperience.toLocaleString()} EXP`}</span>
             </div>
             <p className="mt-2 flex min-w-0 items-center gap-1.5 text-[clamp(1rem,4.3vw,1.25rem)] font-black leading-none text-ink">
-              <LevelBadge level={levelProgress.level} animated />
+              <LevelBadge level={levelProgress.level} />
               <span className="min-w-0 truncate tabular-nums">{levelProgress.experience.toLocaleString()}</span>
               <span className="shrink-0 text-[10px] text-muted">EXP</span>
             </p>

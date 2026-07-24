@@ -129,7 +129,7 @@ export function EmailBindingCard() {
   return (
     <>
       <div className="card p-4">
-        <div className="flex items-start gap-3">
+        <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-blue-50 text-primary">
             <Mail size={20} />
           </span>
@@ -153,25 +153,25 @@ export function EmailBindingCard() {
               <p className="mt-2 text-xs font-semibold text-danger">邮件服务尚未配置，请联系管理员</p>
             )}
           </div>
-        </div>
-        {!loading && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!status?.configured}
-              onClick={() => openDialog(boundEmail ? "change" : "bind")}
-            >
-              {boundEmail ? "更换邮箱" : "绑定邮箱"}
-            </button>
-            {boundEmail && (
-              <button type="button" className="btn btn-secondary" onClick={() => openDialog("unbind")}>
-                <Unlink size={16} />
-                解绑
+          {!loading && (
+            <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                className="btn btn-primary whitespace-nowrap px-3"
+                disabled={!status?.configured}
+                onClick={() => openDialog(boundEmail ? "change" : "bind")}
+              >
+                {boundEmail ? "更换邮箱" : "绑定邮箱"}
               </button>
-            )}
-          </div>
-        )}
+              {boundEmail && (
+                <button type="button" className="btn btn-secondary whitespace-nowrap px-3" onClick={() => openDialog("unbind")}>
+                  <Unlink size={16} />
+                  解绑
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {(dialog === "bind" || dialog === "change") && (

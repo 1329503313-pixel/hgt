@@ -9,6 +9,7 @@ import { removeSessionCache } from "../shared/sessionCache";
 import { CardSkeleton } from "../components/Skeletons";
 import { ProfileBackgroundEditor } from "../components/ProfileBackgroundEditor";
 import { EmailBindingCard } from "../components/EmailBindingCard";
+import { FeedbackCard } from "../components/FeedbackCard";
 
 type InvitationSummary = {
   inviteCode: string;
@@ -112,6 +113,8 @@ export default function AccountSettingsPage() {
           <span className="min-w-0 flex-1"><span className="block text-sm font-black text-ink">重置密码</span><span className="mt-0.5 block text-xs text-muted">设置一个新的登录密码</span></span>
           <ChevronRight className="text-muted" size={19} />
         </button>
+
+        <FeedbackCard />
 
         <button className="card flex w-full items-center gap-3 p-4 text-left" onClick={() => navigate("/mine/settings/invitations")}>
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-amber-50 text-amber-600"><TicketCheck size={20} /></span>

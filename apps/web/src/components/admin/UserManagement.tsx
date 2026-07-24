@@ -467,7 +467,7 @@ export function UserManagement() {
             <div className="rounded-2xl bg-violet-50 p-4">
               <p className="text-xs font-bold text-violet-700">当前等级与当前经验</p>
               <div className="mt-2 flex items-center gap-3">
-                <LevelBadge level={experienceUser.level} animated />
+                <LevelBadge level={experienceUser.level} />
                 <strong className="text-2xl text-ink">{experienceUser.experience.toLocaleString()} <span className="text-sm text-muted">EXP</span></strong>
               </div>
             </div>

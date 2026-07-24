@@ -29,6 +29,28 @@ export const LEGENDARY_CARD_DRAW_COUNT_SQL = `
   WHERE owned.user_id = ? AND card.rarity = 'legend'
 `;
 
+const BADGE_TIER_ORDER = ["normal", "rare", "epic", "legend"] as const;
+
+export function systemBadgeKeysWithPrerequisites(
+  earnedKeys: string[],
+  unlockedKeys: Iterable<string>,
+  definedKeys: string[]
+) {
+  const qualified = new Set([...earnedKeys, ...unlockedKeys]);
+  const highestTierBySeries = new Map<string, number>();
+  for (const key of qualified) {
+    const [series, tier] = key.split(":");
+    const tierIndex = BADGE_TIER_ORDER.indexOf(tier as (typeof BADGE_TIER_ORDER)[number]);
+    if (!series || tierIndex < 0) continue;
+    highestTierBySeries.set(series, Math.max(highestTierBySeries.get(series) ?? -1, tierIndex));
+  }
+  return definedKeys.filter((key) => {
+    const [series, tier] = key.split(":");
+    const tierIndex = BADGE_TIER_ORDER.indexOf(tier as (typeof BADGE_TIER_ORDER)[number]);
+    return qualified.has(key) || (tierIndex >= 0 && tierIndex <= (highestTierBySeries.get(series) ?? -1));
+  });
+}
+
 export function calculateBadgeShellReward(
   achievementPoints: number,
   rewardEligible: boolean,

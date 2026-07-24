@@ -35,7 +35,7 @@ export function ProfileHero({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h1 className="truncate text-xl font-black">{profile.nickname}</h1>
-              <LevelBadge level={profile.level} animated />
+              <LevelBadge level={profile.level} />
               {showBadge && profile.equippedBadge && <EquippedBadgeIcon badge={profile.equippedBadge} className="h-8 w-8 rounded-lg" title={profile.equippedBadge.name} animated={false} showName={false} />}
             </div>
             {meta && <div className="mt-1">{meta}</div>}

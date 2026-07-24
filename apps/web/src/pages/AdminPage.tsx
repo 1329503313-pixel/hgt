@@ -14,6 +14,7 @@ import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomMana
 import { CircleManagement } from "../components/admin/CircleManagement";
 import { DigitalAssetManagement } from "../components/admin/DigitalAssetManagement";
 import { BannerManagement } from "../components/admin/BannerManagement";
+import { FeedbackManagement } from "../components/admin/FeedbackManagement";
 
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
@@ -46,6 +47,7 @@ export default function AdminPage() {
           {activeTab === "circles" && <CircleManagement />}
           {activeTab === "assets" && <DigitalAssetManagement />}
           {activeTab === "notices" && <NoticeManagement />}
+          {activeTab === "feedback" && <FeedbackManagement />}
         </div>
       </div>
     </section>

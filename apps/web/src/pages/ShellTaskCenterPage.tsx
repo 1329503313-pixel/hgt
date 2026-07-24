@@ -171,7 +171,7 @@ export default function ShellTaskCenterPage() {
         <div className="grid grid-cols-2 gap-3 lg:col-span-6 lg:grid-cols-2 lg:gap-5">
           <div className="card flex min-h-28 flex-col justify-between p-4 lg:min-h-0 lg:p-5">
             <span className="grid h-10 w-10 place-items-center rounded-2xl bg-blue-50 text-primary"><CircleGauge size={21} /></span>
-            <div className="mt-4"><p className="flex items-center gap-2 text-2xl font-black text-ink lg:text-3xl"><LevelBadge level={data.levelProgress.level} animated />{data.levelProgress.isMaxLevel ? "满级" : `${data.levelProgress.progressPercent}%`}</p><p className="mt-1 text-xs font-bold text-muted">当前成长等级</p></div>
+            <div className="mt-4"><p className="flex items-center gap-2 text-2xl font-black text-ink lg:text-3xl"><LevelBadge level={data.levelProgress.level} />{data.levelProgress.isMaxLevel ? "满级" : `${data.levelProgress.progressPercent}%`}</p><p className="mt-1 text-xs font-bold text-muted">当前成长等级</p></div>
           </div>
           <div className="card flex min-h-28 flex-col justify-between p-4 lg:min-h-0 lg:p-5">
             <span className="grid h-10 w-10 place-items-center rounded-2xl bg-emerald-50 text-emerald-600"><Trophy size={21} /></span>

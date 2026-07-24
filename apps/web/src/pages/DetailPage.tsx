@@ -335,128 +335,157 @@ export default function DetailPage() {
       )}
 
       {/* Meta card */}
-      <div className="detail-meta-card card p-4">
-        <img className="detail-meta-cover mb-4 aspect-video w-full rounded-xl object-cover" src={soup.coverImage ?? defaultCoverUrl} alt={`${soup.title} 封面`} />
-        <div className="detail-meta-info flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-end justify-between gap-3">
-              <h1 className="min-w-0 flex-1 break-words text-2xl font-black text-ink">
-                {soup.title}
-                <span className="ml-2 inline-flex items-center gap-1 whitespace-nowrap align-middle text-base font-black text-red-500" title={`热力值 ${soup.heatValue}`}>
-                  <Flame size={18} className="fill-red-500" />
-                  {soup.heatValue.toLocaleString()}
-                </span>
-              </h1>
-              {isReviewApproved && <div className="flex shrink-0 items-end gap-2" style={{ height: "calc(1.5lh * 0.75)" }}>
-                <button
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${soup.isLiked ? "border-red-200 bg-red-50 text-red-500" : "border-line bg-white text-muted hover:border-red-200 hover:text-red-500"}`}
-                  style={{ height: "calc(1.5lh * 0.75)" }}
-                  onClick={handleLike} aria-pressed={soup.isLiked} aria-busy={likePending} disabled={likePending}
-                >
-                  <ThumbsUp className={soup.isLiked ? "fill-red-400 text-red-400" : "text-muted"} size={15} /> {soup.likeCount}
-                </button>
-                <button
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition ${soup.isFavorited ? "border-amber-200 bg-amber-50 text-amber-500" : "border-line bg-white text-muted hover:border-amber-200 hover:text-amber-500"}`}
-                  style={{ height: "calc(1.5lh * 0.75)" }}
-                  onClick={handleFavorite} aria-pressed={soup.isFavorited} aria-busy={favoritePending} disabled={favoritePending}
-                >
-                  <Star className={soup.isFavorited ? "fill-amber-400 text-amber-400" : "text-muted"} size={15} /> {soup.favoriteCount}
-                </button>
-                <button
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 text-xs font-bold text-muted hover:text-primary transition"
-                  style={{ height: "calc(1.5lh * 0.75)" }}
-                  onClick={() => { document.getElementById("evaluations")?.scrollIntoView({ behavior: "smooth" }); }}
-                >
-                  <MessageSquare size={15} /> {soup.evaluationCount}
-                </button>
-              </div>}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+      <div className="detail-meta-card card overflow-hidden p-4">
+        <div className="detail-meta-cover-shell">
+          <img className="detail-meta-cover aspect-video w-full rounded-xl object-cover" src={soup.coverImage ?? defaultCoverUrl} alt={`${soup.title} 封面`} />
+          <span className="detail-cover-originality">{soup.isOriginal ? "原创作品" : "转载作品"}</span>
+        </div>
+        <div className="detail-meta-info min-w-0">
+          <div>
+            <p className="detail-meta-eyebrow">TURTLE SOUP · CASE FILE</p>
+            <h1 className="mt-2 break-words text-2xl font-black leading-tight text-ink lg:text-4xl">{soup.title}</h1>
+            {soup.summary && <p className="detail-summary mt-3 line-clamp-3 text-sm leading-7 text-muted lg:text-base">{soup.summary}</p>}
+            <div className="mt-4 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
               <span className="pill bg-orange-50 text-orange-600">{soup.difficulty}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
             </div>
-            <p className="mt-3 flex flex-wrap items-center gap-1.5 text-sm text-muted">
-              <span>作者 {soup.author} · 发布者</span>
-              <button className="grid h-5 w-5 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-primary" onClick={() => navigate(`/users/${soup.creatorId}`)} aria-label={`查看${soup.creatorName}的个人主页`}>
-                {soup.creatorAvatar ? <img className="h-full w-full object-cover" src={soup.creatorAvatar} alt={`${soup.creatorName}头像`} /> : <User size={13} />}
+            <div className="detail-author-row mt-5 flex items-center gap-3">
+              <button className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-primary" onClick={() => navigate(`/users/${soup.creatorId}`)} aria-label={`查看${soup.creatorName}的个人主页`}>
+                {soup.creatorAvatar ? <img className="h-full w-full object-cover" src={soup.creatorAvatar} alt={`${soup.creatorName}头像`} /> : <User size={18} />}
               </button>
-              <button className="font-bold text-primary hover:underline" onClick={() => navigate(`/users/${soup.creatorId}`)}>{soup.creatorName}</button>
-              <LevelBadge level={soup.creatorLevel} />
-              <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />
-              <span>· 评分 {soup.averageTotal ?? "-"}</span>
-            </p>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-muted">作者 {soup.author} · 发布者</p>
+                <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                  <button className="truncate text-sm font-black text-primary hover:underline" onClick={() => navigate(`/users/${soup.creatorId}`)}>{soup.creatorName}</button>
+                  <LevelBadge level={soup.creatorLevel} />
+                  <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-4 w-4" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="detail-stat-grid mt-5 grid grid-cols-4 gap-2">
+              <div><Eye size={17} /><strong>{soup.viewCount.toLocaleString()}</strong><span>浏览</span></div>
+              <div><Flame size={17} /><strong>{soup.heatValue.toLocaleString()}</strong><span>热力</span></div>
+              <div><Star size={17} /><strong>{soup.averageTotal ?? "—"}</strong><span>评分</span></div>
+              <div><MessageSquare size={17} /><strong>{soup.evaluationCount}</strong><span>评价</span></div>
+            </div>
+            {isReviewApproved && (
+              <div className="detail-interaction-row mt-4 grid grid-cols-3 gap-2">
+                <button className={`detail-interaction-button ${soup.isLiked ? "is-liked" : ""}`} onClick={handleLike} aria-pressed={soup.isLiked} aria-busy={likePending} disabled={likePending}>
+                  <ThumbsUp className={soup.isLiked ? "fill-current" : ""} size={17} />点赞 {soup.likeCount}
+                </button>
+                <button className={`detail-interaction-button ${soup.isFavorited ? "is-favorited" : ""}`} onClick={handleFavorite} aria-pressed={soup.isFavorited} aria-busy={favoritePending} disabled={favoritePending}>
+                  <Star className={soup.isFavorited ? "fill-current" : ""} size={17} />收藏 {soup.favoriteCount}
+                </button>
+                <button className="detail-interaction-button" onClick={() => { document.getElementById("evaluations")?.scrollIntoView({ behavior: "smooth" }); }}>
+                  <MessageSquare size={17} />查看评价
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Surface */}
-      <ContentCard title="汤面" text={soup.surface}>
+      <div className="detail-body-grid">
+      <div className="detail-story-column space-y-3 lg:space-y-4">
+        {/* Surface */}
+        <ContentCard title="汤面" text={soup.surface}>
         <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(soup.surface, `${soup.title}-汤面`, "汤面")}>
           <Download size={18} /> 导出汤面
         </button>
-      </ContentCard>
-      {soup.supplementalSurfaces.map((text, i) => (
-        <CollapsibleSection key={`ss-${i}`}>
-          <ContentCard key={`${i}-${text}`} title={`补充汤面${i + 1}`} text={text}>
-            <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(text, `${soup.title}-补充汤面${i + 1}`, `补充汤面${i + 1}`)}>
-              <Download size={18} /> 导出补充汤面{i + 1}
-            </button>
-          </ContentCard>
-        </CollapsibleSection>
-      ))}
+        </ContentCard>
+        {soup.supplementalSurfaces.map((text, i) => (
+          <CollapsibleSection key={`ss-${i}`}>
+            <ContentCard key={`${i}-${text}`} title={`补充汤面${i + 1}`} text={text}>
+              <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(text, `${soup.title}-补充汤面${i + 1}`, `补充汤面${i + 1}`)}>
+                <Download size={18} /> 导出补充汤面{i + 1}
+              </button>
+            </ContentCard>
+          </CollapsibleSection>
+        ))}
 
-      {/* Bottom */}
-      {soup.canViewFull ? (
-        <CollapsibleSection>
-          <ContentCard title="汤底" text={soup.bottom ?? ""}>
-            <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(soup.bottom ?? "", `${soup.title}-汤底`, "汤底")}>
-              <Download size={18} /> 导出汤底
-            </button>
-          </ContentCard>
-          {(soup.supplementalBottoms ?? []).map((text, i) => (
-            <ContentCard key={`${i}-${text}`} title={`补充汤底${i + 1}`} text={text}>
-              <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(text, `${soup.title}-补充汤底${i + 1}`, `补充汤底${i + 1}`)}>
-                <Download size={18} /> 导出补充汤底{i + 1}
+        {/* Bottom */}
+        {soup.canViewFull ? (
+          <CollapsibleSection>
+            <ContentCard title="汤底" text={soup.bottom ?? ""}>
+              <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(soup.bottom ?? "", `${soup.title}-汤底`, "汤底")}>
+                <Download size={18} /> 导出汤底
               </button>
             </ContentCard>
-          ))}
-          {soup.manual && (
-            <ContentCard key="manual" title="主持人手册" text={soup.manual}>
-              <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(soup.manual ?? "", `${soup.title}-主持人手册`, "主持人手册")}>
-                <Download size={18} /> 导出手册
-              </button>
-            </ContentCard>
-          )}
-        </CollapsibleSection>
-      ) : (
-        <div className="card p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="rounded-lg bg-orange-50 p-3 text-warning"><Lock size={22} /></div>
-              <div>
-                <h2 className="font-black text-ink">汤底和主持人手册需要授权</h2>
-                <p className="mt-1 text-sm text-muted">发送申请后，作者和管理员会收到站内提醒。</p>
+            {(soup.supplementalBottoms ?? []).map((text, i) => (
+              <ContentCard key={`${i}-${text}`} title={`补充汤底${i + 1}`} text={text}>
+                <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(text, `${soup.title}-补充汤底${i + 1}`, `补充汤底${i + 1}`)}>
+                  <Download size={18} /> 导出补充汤底{i + 1}
+                </button>
+              </ContentCard>
+            ))}
+            {soup.manual && (
+              <ContentCard key="manual" title="主持人手册" text={soup.manual}>
+                <button className="btn btn-secondary w-full sm:w-auto" onClick={() => handleExport(soup.manual ?? "", `${soup.title}-主持人手册`, "主持人手册")}>
+                  <Download size={18} /> 导出手册
+                </button>
+              </ContentCard>
+            )}
+          </CollapsibleSection>
+        ) : (
+          <div className="card p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="rounded-lg bg-orange-50 p-3 text-warning"><Lock size={22} /></div>
+                <div>
+                  <h2 className="font-black text-ink">汤底和主持人手册需要授权</h2>
+                  <p className="mt-1 text-sm text-muted">发送申请后，作者和管理员会收到站内提醒。</p>
+                </div>
               </div>
+              <button className="btn btn-primary" disabled={Boolean(soup.pendingRequestId)} onClick={handleRequest}>
+                {soup.pendingRequestId ? "已申请，待处理" : "申请查看全部"}
+              </button>
             </div>
-            <button className="btn btn-primary" disabled={Boolean(soup.pendingRequestId)} onClick={handleRequest}>
-              {soup.pendingRequestId ? "已申请，待处理" : "申请查看全部"}
-            </button>
           </div>
-        </div>
-      )}  {/* soup.canViewFull */}
+        )}
+      </div>
 
-      {/* Radar + Evaluations */}
-      <div className={hasRadarData ? "grid gap-4 lg:grid-cols-[360px_1fr]" : "grid gap-4"}>
+      <aside className="detail-insight-sidebar space-y-3 lg:space-y-4">
         {hasRadarData && (
-          <div className="card flex h-[360px] flex-col p-3" ref={radarRef}>
-            <h2 className="mb-3 font-black text-ink">六维雷达图</h2>
+          <div className="detail-radar-card card flex h-[360px] flex-col p-4" ref={radarRef}>
+            <div className="flex items-center justify-between">
+              <div><p className="text-xs font-black tracking-[0.14em] text-primary">RATING</p><h2 className="mt-1 font-black text-ink">六维评分</h2></div>
+              <span className="text-2xl font-black text-primary">{soup.averageTotal ?? "—"}</span>
+            </div>
             <div className="min-h-0 flex-1"><RadarChart radar={soup.radar} /></div>
           </div>
         )}
-        <div className="card p-4" id="evaluations">
+
+        <div className="detail-desktop-action-card card hidden p-4 lg:block">
+          <p className="text-xs font-black tracking-[0.14em] text-primary">ACTIONS</p>
+          <h2 className="mt-1 font-black text-ink">开始推理</h2>
+          <div className="mt-4 grid gap-2">
+            {user && soup.enableAiGame && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => setShowGame(true)}>AI 玩汤</button>}
+            {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }}><DoorOpen size={17} />创建玩汤房间</button>}
+            <button className="btn btn-secondary w-full" onClick={() => setShowShare(true)}><Share2 size={17} />分享作品</button>
+          </div>
+        </div>
+
+        {soup.canEdit && (
+          <div className="detail-desktop-action-card card hidden p-4 lg:block">
+            <p className="text-xs font-black tracking-[0.14em] text-primary">MANAGE</p>
+            <h2 className="mt-1 font-black text-ink">作品管理</h2>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button className="btn btn-secondary" onClick={() => openSoupEditor(soup)}><Pencil size={17} />编辑</button>
+              <button className="btn btn-danger" onClick={handleDelete}><Trash2 size={17} />删除</button>
+            </div>
+          </div>
+        )}
+      </aside>
+      </div>
+
+      {/* Evaluations */}
+      <div className="detail-evaluations-card card p-4" id="evaluations">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="font-black text-ink">评价</h2>
+            <div><p className="text-xs font-black tracking-[0.14em] text-primary">REVIEWS</p><h2 className="mt-1 text-xl font-black text-ink">玩家评价 <span className="text-sm text-muted">{soup.evaluationCount}</span></h2></div>
             {hasEvaluations && (
               <button
                 className="btn btn-primary"
@@ -469,13 +498,13 @@ export default function DetailPage() {
             )}
           </div>
           {!soup.canViewFull && <p className="mb-3 text-xs text-warning">获得汤底查看权限后才能评价。</p>}
-          <div className="space-y-3">
+          <div className="detail-evaluation-list">
             {soup.evaluations.map((item) => (
-              <div key={item.id} className="rounded-lg border border-line bg-slate-50 p-3">
+              <div key={item.id} className="detail-evaluation-item rounded-xl border border-line bg-slate-50 p-4">
                 <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-2">
+                  <span className="flex min-w-0 items-center gap-2">
                     {item.reviewerAvatar ? <img className="h-6 w-6 rounded-full object-cover" src={item.reviewerAvatar} alt="" /> : <span className="grid h-6 w-6 place-items-center rounded-full bg-blue-100 text-primary"><User size={14} /></span>}
-                    <strong>{item.reviewer}</strong>
+                    <strong className="truncate">{item.reviewer}</strong>
                     <LevelBadge level={item.reviewerLevel} />
                     <EquippedBadgeIcon badge={item.reviewerEquippedBadge} className="h-5 w-5" />
                   </span>
@@ -506,12 +535,11 @@ export default function DetailPage() {
               </div>
             )}
           </div>
-        </div>
       </div>
 
       </div>
 
-      <div className="fixed bottom-24 right-4 z-30 flex flex-col items-stretch gap-2">
+      <div className="detail-side-actions site-footer-safe-bottom-24 fixed right-4 z-30 flex flex-col items-stretch gap-2 lg:hidden">
         {user && soup.enableAiGame && isReviewApproved && <button className="flex h-14 w-28 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => setShowGame(true)} aria-label="AI 玩汤">AI玩汤</button>}
         {soup.canViewFull && isReviewApproved && <button className="flex h-14 w-28 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }} aria-label="开房间"><DoorOpen size={17} />开房间</button>}
         <button className="flex h-14 w-28 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => setShowShare(true)} aria-label="分享"><Share2 size={17} />分享</button>
@@ -522,12 +550,12 @@ export default function DetailPage() {
 
       {/* Edit/Delete floating bar */}
       {soup.canEdit && (
-        <div className="fixed inset-x-4 bottom-4 z-30 mx-auto grid max-w-md grid-cols-2 gap-3 rounded-2xl border border-line bg-white/95 p-3 shadow-soft backdrop-blur">
+        <div className="site-footer-safe-bottom-4 fixed inset-x-4 z-30 mx-auto grid max-w-md grid-cols-2 gap-3 rounded-2xl border border-line bg-white/95 p-3 shadow-soft backdrop-blur lg:hidden">
           <button className="btn btn-secondary" onClick={() => openSoupEditor(soup)}><Pencil size={18} /> 编辑</button>
           <button className="btn btn-danger" onClick={handleDelete}><Trash2 size={18} /> 删除</button>
         </div>
       )}
-      {soup.canEdit && <div className="h-20" />}
+      {soup.canEdit && <div className="h-20 lg:hidden" />}
     </section>
   );
 }

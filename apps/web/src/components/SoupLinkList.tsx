@@ -195,7 +195,7 @@ export function SubListPage({
 
       {/* 导出汤名悬浮按钮 */}
       <button
-        className="fixed bottom-24 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:bg-blue-600 active:scale-95"
+        className="site-footer-safe-bottom-24 fixed right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:bg-blue-600 active:scale-95"
         aria-label="导出汤名"
         title="导出汤名"
         onClick={() => setShowExportConfirm(true)}

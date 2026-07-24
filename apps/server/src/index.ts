@@ -40,7 +40,8 @@ import {
   LEGENDARY_CARD_DRAW_COUNT_SQL,
   SYSTEM_BADGE_ACHIEVEMENT_POINTS,
   badgeUnlockNotificationContent,
-  calculateBadgeShellReward
+  calculateBadgeShellReward,
+  systemBadgeKeysWithPrerequisites
 } from "./badgeRewards.js";
 import {
   adjustShellBalance,
@@ -554,6 +555,14 @@ const adminNoticeSchema = z.object({
   message: "有效时间至少为 1 小时"
 });
 
+const feedbackTypeSchema = z.enum(["bug", "feature", "activity"]);
+const userFeedbackSchema = z.object({
+  title: z.string().trim().min(1, "意见标题不能为空").max(100, "意见标题不超过 100 字"),
+  type: feedbackTypeSchema,
+  content: z.string().trim().min(1, "意见内容不能为空").max(5000, "意见内容不超过 5000 字"),
+  screenshot: z.string().max(6_000_000, "截图内容过大").nullable().optional()
+});
+
 function noticePayload(row: mysql.RowDataPacket) {
   const expiresAt = row.expires_at ? new Date(row.expires_at).toISOString() : null;
   const validDurationMinutes = Number(row.valid_duration_minutes ?? 0);
@@ -568,6 +577,22 @@ function noticePayload(row: mysql.RowDataPacket) {
     validDurationMinutes,
     status: expiresAt && new Date(expiresAt).getTime() <= Date.now() ? "expired" : "published",
     readCount: Number(row.read_count ?? 0)
+  };
+}
+
+function feedbackPayload(row: mysql.RowDataPacket, includeScreenshot = false) {
+  return {
+    id: String(row.id),
+    title: String(row.title),
+    type: feedbackTypeSchema.parse(row.feedback_type),
+    content: String(row.content),
+    publisher: {
+      id: row.user_id ? String(row.user_id) : null,
+      nickname: String(row.publisher_name),
+      username: String(row.publisher_username)
+    },
+    createdAt: new Date(row.created_at).toISOString(),
+    ...(includeScreenshot ? { screenshot: row.screenshot ? String(row.screenshot) : null } : {})
   };
 }
 
@@ -655,6 +680,22 @@ async function optimizeCircleAvatar(base64: string): Promise<string | null> {
       .resize({ width: 320, height: 320, fit: "cover", withoutEnlargement: true })
       .webp({ quality: 80, effort: 4 })
       .toBuffer();
+    return `data:image/webp;base64,${output.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+async function optimizeFeedbackScreenshot(base64: string): Promise<string | null> {
+  const decoded = decodeDataImage(base64);
+  if (!decoded || decoded.buffer.length > 5 * 1024 * 1024) return null;
+  try {
+    const output = await sharp(decoded.buffer)
+      .rotate()
+      .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 80, effort: 4 })
+      .toBuffer();
+    if (output.length > 2 * 1024 * 1024) return null;
     return `data:image/webp;base64,${output.toString("base64")}`;
   } catch {
     return null;
@@ -1606,7 +1647,12 @@ async function syncSystemBadgeUnlocks(userId: string, rewardEligible = true) {
     [userId]
   );
   const unlocked = new Set(unlockRows.map((row) => String(row.badge_key)));
-  const candidates = earnedKeys.filter((key) => !unlocked.has(key));
+  const qualifiedKeys = systemBadgeKeysWithPrerequisites(
+    earnedKeys,
+    unlocked,
+    BADGE_THRESHOLDS.map((badge) => badge.key)
+  );
+  const candidates = qualifiedKeys.filter((key) => !unlocked.has(key));
   const newKeys: string[] = [];
   for (const key of candidates) {
     const badgeName = badgeNotificationLabel(key);
@@ -1644,7 +1690,15 @@ async function claimPendingBadgePopups(userId: string) {
       `SELECT badge_key
        FROM user_badge_unlocks
        WHERE user_id = ? AND surfaced_at IS NULL
-       ORDER BY unlocked_at ASC
+       ORDER BY unlocked_at ASC,
+         CASE SUBSTRING_INDEX(badge_key, ':', -1)
+           WHEN 'normal' THEN 0
+           WHEN 'rare' THEN 1
+           WHEN 'epic' THEN 2
+           WHEN 'legend' THEN 3
+           ELSE 4
+         END ASC,
+         badge_key ASC
        FOR UPDATE`,
       [userId]
     );
@@ -5405,6 +5459,72 @@ app.delete("/api/admin/badges/users/:userId/legendary/:badgeId", async (req, res
     [req.params.userId, `legendary:${req.params.badgeId}`]
   );
   res.json({ ok: true });
+});
+
+app.post("/api/me/feedback", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const parsed = userFeedbackSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "意见内容不正确");
+
+  let screenshot: string | null = null;
+  if (parsed.data.screenshot) {
+    screenshot = await optimizeFeedbackScreenshot(parsed.data.screenshot);
+    if (!screenshot) return sendError(res, 400, "截图无效、格式不支持或压缩后仍超过 2MB");
+  }
+
+  const id = nanoid();
+  await pool.query(
+    `INSERT INTO user_feedback
+       (id, user_id, publisher_name, publisher_username, title, feedback_type, content, screenshot)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, user.id, user.nickname, user.username, parsed.data.title, parsed.data.type, parsed.data.content, screenshot]
+  );
+  res.status(201).json({ id });
+});
+
+app.get("/api/admin/feedback", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const keyword = req.query.keyword ? String(req.query.keyword).trim().slice(0, 100) : "";
+  const type = feedbackTypeSchema.safeParse(req.query.type).success ? String(req.query.type) : "all";
+  const order = req.query.order === "asc" ? "ASC" : "DESC";
+  const rawOffset = Number(req.query.offset ?? 0);
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (keyword) {
+    conditions.push("f.title LIKE ?");
+    params.push(`%${keyword}%`);
+  }
+  if (type !== "all") {
+    conditions.push("f.feedback_type = ?");
+    params.push(type);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT f.id, f.user_id, f.publisher_name, f.publisher_username, f.title, f.feedback_type, f.content, f.created_at
+     FROM user_feedback f
+     ${where}
+     ORDER BY f.created_at ${order}, f.id ${order}
+     LIMIT 10 OFFSET ?`,
+    [...params, offset]
+  );
+  const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM user_feedback f ${where}`,
+    params
+  );
+  res.json({ feedback: rows.map((row) => feedbackPayload(row)), total: Number(totalRow.total ?? 0) });
+});
+
+app.get("/api/admin/feedback/:id", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, user_id, publisher_name, publisher_username, title, feedback_type, content, screenshot, created_at
+     FROM user_feedback WHERE id = ? LIMIT 1`,
+    [req.params.id]
+  );
+  if (!rows[0]) return sendError(res, 404, "建议不存在");
+  res.json({ feedback: feedbackPayload(rows[0], true) });
 });
 
 app.get("/api/admin/notices", async (req, res) => {

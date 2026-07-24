@@ -593,6 +593,24 @@ export async function initDatabase() {
   await ensureAdminNoticeCreatorConstraint();
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_feedback (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NULL,
+      publisher_name VARCHAR(50) NOT NULL,
+      publisher_username VARCHAR(50) NOT NULL,
+      title VARCHAR(100) NOT NULL,
+      feedback_type ENUM('bug','feature','activity') NOT NULL,
+      content TEXT NOT NULL,
+      screenshot LONGTEXT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user_feedback_created (created_at, id),
+      INDEX idx_user_feedback_type_created (feedback_type, created_at),
+      INDEX idx_user_feedback_user_created (user_id, created_at),
+      CONSTRAINT fk_user_feedback_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS excellent_author_applications (
       id VARCHAR(64) PRIMARY KEY,
       applicant_id VARCHAR(64) NOT NULL,

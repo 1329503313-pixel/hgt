@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   Images,
   MessageSquare,
+  MessageSquareText,
   PackageOpen,
   Radio,
   RefreshCw,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-export type AdminTab = "data" | "banners" | "users" | "soups" | "evaluations" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices";
+export type AdminTab = "data" | "banners" | "users" | "soups" | "evaluations" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices" | "feedback";
 
 const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "data", label: "数据", icon: <BarChart3 size={17} /> },
@@ -28,7 +29,8 @@ const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "online-soup", label: "玩汤", icon: <Radio size={17} /> },
   { key: "circles", label: "圈子", icon: <CircleEllipsis size={17} /> },
   { key: "assets", label: "卡牌", icon: <PackageOpen size={17} /> },
-  { key: "notices", label: "通知", icon: <Bell size={17} /> }
+  { key: "notices", label: "通知", icon: <Bell size={17} /> },
+  { key: "feedback", label: "建议", icon: <MessageSquareText size={17} /> }
 ];
 
 export function AdminTopBar() {
