@@ -18,6 +18,7 @@ import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import { SoupShareModal } from "../components/SoupShareModal";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { Modal } from "../components/Modal";
+import { seoDescription, setDocumentSeo } from "../shared/seo";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -39,7 +40,7 @@ export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const navigationOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; soupShareReturnTo?: string } | null;
+  const navigationOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; soupShareReturnTo?: string; soupReturnTo?: string } | null;
   const onlineSoupOrigin = navigationOrigin;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
@@ -57,7 +58,7 @@ export default function DetailPage() {
   const [favoritePending, setFavoritePending] = useState(false);
 
   const radarRef = useRef<HTMLDivElement | null>(null);
-  const backTarget = navigationOrigin?.soupShareReturnTo || (onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname));
+  const backTarget = navigationOrigin?.soupShareReturnTo || navigationOrigin?.soupReturnTo || (onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname));
 
   async function createRoomForSoup() {
     if (!soup || creatingRoom) return;
@@ -81,6 +82,17 @@ export default function DetailPage() {
       .catch(() => { setLoading(false); });
     window.scrollTo(0, 0);
   }, [id, user?.id]);
+
+  useEffect(() => {
+    if (!soup) return;
+    const isPublic = soup.reviewStatus === "approved" && soup.isSurfacePublic;
+    setDocumentSeo({
+      title: `${soup.title}｜海龟汤推理解谜`,
+      description: seoDescription(soup.summary || soup.surface),
+      index: isPublic,
+      path: `/soup/${soup.id}`
+    });
+  }, [soup?.id, soup?.title, soup?.summary, soup?.surface, soup?.reviewStatus, soup?.isSurfacePublic]);
 
   const ownEvaluation = useMemo(() => {
     if (!soup || !user) return null;
@@ -269,7 +281,7 @@ export default function DetailPage() {
   const isReviewApproved = soup.reviewStatus === "approved";
 
   return (
-    <section className="detail-page pt-16">
+    <section className="detail-page pt-[72px]">
       {/* Header */}
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
@@ -310,7 +322,7 @@ export default function DetailPage() {
         </div>
       </header>
 
-      <div className="detail-page-content mx-auto max-w-6xl space-y-4 px-4">
+      <div className="detail-page-content mx-auto max-w-6xl space-y-3 px-4 lg:space-y-4">
 
       <div className="hidden lg:flex">
         <UnifiedBackButton to={backTarget} />

@@ -59,7 +59,7 @@ export default function UserFollowsPage({ type }: { type: "following" | "followe
   return (
     <section className="user-follows-page min-h-screen bg-page pt-[72px]">
       <PageTopBar title={type === "following" ? "关注" : "粉丝"} backTo={id === user?.id ? "/mine" : `/users/${id}`} />
-      <div className="user-follows-shell mx-auto max-w-3xl">
+      <div className="user-follows-shell mx-auto max-w-3xl pt-3 lg:pt-0">
         <div className="mb-4 hidden lg:flex"><UnifiedBackButton to={id === user?.id ? "/mine" : `/users/${id}`} /></div>
         <div className="user-follows-list overflow-hidden bg-white sm:rounded-2xl sm:shadow-soft">
         {(loadingUser || loading) ? <ListSkeleton rows={7} /> : <>

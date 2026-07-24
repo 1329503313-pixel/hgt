@@ -13,6 +13,8 @@ export function parentRoute(pathname: string) {
 
   if (path === "/mine/settings/password") return "/mine/settings";
   if (path === "/mine/settings/backgrounds") return "/mine/settings";
+  if (path === "/mine/settings/invitations") return "/mine/settings";
+  if (path === "/forgot-password" || path === "/reset-password") return "/";
   if (/^\/mine\/store\/[^/]+$/.test(path)) return "/mine/store";
   if (path === "/mine/shells/transactions") return "/mine";
   if (path === "/mine/store" || path === "/mine/cards") return "/mine";

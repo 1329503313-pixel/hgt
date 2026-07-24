@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, KeyRound, Search, Shell, Trash2, X } from "lucide-react";
+import { ArrowUpDown, KeyRound, Search, Shell, Sparkles, Trash2, X } from "lucide-react";
 import type { PublicUser } from "../../shared/types";
 import type { ShellTransaction } from "../../shared/types";
 import { api } from "../../api";
@@ -11,6 +11,7 @@ import { subscribeServerEvent } from "../../shared/serverEvents";
 import { useApp } from "../../context/AppContext";
 import type { ActivityBadgeCondition } from "../BadgeVisuals";
 import { ActivityConditionsEditor, newActivityCondition } from "./ActivityConditionsEditor";
+import { LevelBadge } from "../LevelBadge";
 
 type AdminUser = PublicUser & {
   username: string;
@@ -18,20 +19,22 @@ type AdminUser = PublicUser & {
   isOnline: boolean;
   loggedInToday: boolean;
   shellBalance: number;
+  experience: number;
   achievementPoints: number;
   stats: { soupCount: number; evaluationCount: number; likeCount: number; favoriteCount: number };
 };
 
 type UsersResponseExt = { users: AdminUser[]; total: number };
 type TodayFilter = "all" | "yes" | "no";
-type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "achievementPoints";
+type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "achievementPoints" | "experience";
 type SortOrder = "asc" | "desc";
-type UserColumn = "user" | "role" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
+type UserColumn = "user" | "role" | "level" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
 type BulkShellPreview = { matchedCount: number; eligibleCount: number; skippedCount: number };
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "user", label: "用户", width: "minmax(190px, 1fr)" },
   { key: "role", label: "角色", width: "110px" },
+  { key: "level", label: "等级 / 当前经验", width: "150px" },
   { key: "createdAt", label: "加入时间", width: "110px" },
   { key: "lastLoginAt", label: "最后登录时间", width: "160px" },
   { key: "loggedToday", label: "今日登录", width: "90px" },
@@ -69,6 +72,11 @@ export function UserManagement() {
   const [shellAmount, setShellAmount] = useState("");
   const [shellError, setShellError] = useState("");
   const [shellAdjusting, setShellAdjusting] = useState(false);
+  const [experienceUser, setExperienceUser] = useState<AdminUser | null>(null);
+  const [experienceOperation, setExperienceOperation] = useState<"add" | "deduct" | null>(null);
+  const [experienceAmount, setExperienceAmount] = useState("");
+  const [experienceError, setExperienceError] = useState("");
+  const [experienceAdjusting, setExperienceAdjusting] = useState(false);
   const [bulkShellOpen, setBulkShellOpen] = useState(false);
   const [bulkShellOperation, setBulkShellOperation] = useState<"add" | "deduct">("add");
   const [bulkShellAmount, setBulkShellAmount] = useState("");
@@ -178,6 +186,41 @@ export function UserManagement() {
     }
   }
 
+  function closeExperienceAdjustment() {
+    if (experienceAdjusting) return;
+    setExperienceUser(null);
+    setExperienceOperation(null);
+    setExperienceAmount("");
+    setExperienceError("");
+  }
+
+  async function adjustExperience() {
+    if (!experienceUser || !experienceOperation) return;
+    const amount = Number(experienceAmount);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setExperienceError("请输入正整数");
+      return;
+    }
+    setExperienceAdjusting(true);
+    setExperienceError("");
+    try {
+      const operation = experienceOperation;
+      const result = await api<{ experience: number; level: number }>(
+        `/api/admin/users/${experienceUser.id}/experience-adjustments`,
+        { method: "POST", body: { operation, amount } }
+      );
+      setExperienceUser((current) => current ? { ...current, experience: result.experience, level: result.level } : current);
+      setExperienceAmount("");
+      setExperienceOperation(null);
+      showToast(`已${operation === "add" ? "增加" : "扣除"} ${amount.toLocaleString()} 经验`);
+      await loadUsers();
+    } catch (error) {
+      setExperienceError(error instanceof Error ? error.message : "经验调整失败");
+    } finally {
+      setExperienceAdjusting(false);
+    }
+  }
+
   function bulkShellBody() {
     return { operation: bulkShellOperation, amount: Number(bulkShellAmount), conditions: bulkShellConditions };
   }
@@ -268,6 +311,7 @@ export function UserManagement() {
           <option value="favoriteCount">按收藏</option>
           <option value="shellBalance">按贝壳</option>
           <option value="achievementPoints">按成就点</option>
+          <option value="experience">按经验</option>
         </select>
         <button
           className="btn btn-secondary h-10 px-3 text-xs whitespace-nowrap"
@@ -280,7 +324,7 @@ export function UserManagement() {
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1370px]">
+        <div className="min-w-[1530px]">
           <div className="mb-2 grid items-center justify-items-center gap-2 px-3 text-center text-xs font-bold text-muted" style={{ gridTemplateColumns: template }}>
             {userColumns.filter((column) => visibleColumns.has(column.key)).map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
@@ -303,6 +347,22 @@ export function UserManagement() {
                     <option value="user">普通用户</option>
                     <option value="admin">管理员</option>
                   </select>
+                )}
+                {visibleColumns.has("level") && (
+                  <button
+                    type="button"
+                    className="inline-flex flex-col items-center gap-1 rounded-lg px-2 py-1 font-black text-violet-700 transition hover:bg-violet-50"
+                    onClick={() => {
+                      setExperienceUser(user);
+                      setExperienceOperation(null);
+                      setExperienceAmount("");
+                      setExperienceError("");
+                    }}
+                    aria-label={`调整 ${user.nickname} 的经验`}
+                  >
+                    <LevelBadge level={user.level} />
+                    <span className="text-[11px]">{user.experience.toLocaleString()} EXP</span>
+                  </button>
                 )}
                 {visibleColumns.has("createdAt") && <span className="text-xs text-muted">{new Date(user.createdAt).toLocaleDateString()}</span>}
                 {visibleColumns.has("lastLoginAt") && <span className={`text-xs font-bold ${user.isOnline ? "text-emerald-600" : "text-muted"}`}>{user.isOnline ? "在线" : user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "从未登录"}</span>}
@@ -390,6 +450,42 @@ export function UserManagement() {
                 </div>
               )) : <p className="p-8 text-center text-sm text-muted">暂无贝壳明细</p>}
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {experienceUser && (
+        <Modal onClose={closeExperienceAdjustment}>
+          <div className="space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-black text-ink">调整用户经验</h2>
+                <p className="mt-1 text-sm text-muted">{experienceUser.nickname}（@{experienceUser.username}）</p>
+              </div>
+              <button type="button" className="btn btn-secondary shrink-0 px-3" disabled={experienceAdjusting} onClick={closeExperienceAdjustment}><X size={17} />关闭</button>
+            </div>
+            <div className="rounded-2xl bg-violet-50 p-4">
+              <p className="text-xs font-bold text-violet-700">当前等级与当前经验</p>
+              <div className="mt-2 flex items-center gap-3">
+                <LevelBadge level={experienceUser.level} animated />
+                <strong className="text-2xl text-ink">{experienceUser.experience.toLocaleString()} <span className="text-sm text-muted">EXP</span></strong>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="btn btn-primary" onClick={() => { setExperienceOperation("add"); setExperienceError(""); }}><Sparkles size={16} />增加经验</button>
+              <button className="btn btn-secondary text-red-600" onClick={() => { setExperienceOperation("deduct"); setExperienceError(""); }}>扣除经验</button>
+            </div>
+            {experienceOperation && (
+              <form className="rounded-xl border border-line bg-slate-50 p-3" onSubmit={(event) => { event.preventDefault(); void adjustExperience(); }}>
+                <label className="text-sm font-bold text-ink">{experienceOperation === "add" ? "增加经验值" : "扣除经验值"}</label>
+                <div className="mt-2 flex gap-2">
+                  <input className="field min-w-0 flex-1" type="number" min="1" max="100000000" step="1" autoFocus value={experienceAmount} onChange={(event) => setExperienceAmount(event.target.value)} />
+                  <button className="btn btn-primary shrink-0" disabled={experienceAdjusting}>{experienceAdjusting ? "处理中…" : "确认"}</button>
+                </div>
+                <p className="mt-2 text-xs text-muted">经验最低为 0，最高为 100,000,000；调整后等级自动重新计算。</p>
+              </form>
+            )}
+            {experienceError && <p className="text-sm font-bold text-red-600">{experienceError}</p>}
           </div>
         </Modal>
       )}

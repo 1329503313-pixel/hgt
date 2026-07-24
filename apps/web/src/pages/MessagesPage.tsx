@@ -69,10 +69,10 @@ export default function MessagesPage() {
     { label: "通知", path: "/messages/notices", count: counts.notices, icon: Bell, iconClass: "bg-violet-100 text-violet-600" }
   ];
 
-  if (loadingUser || loading) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="消息" backTo="/" /><div className="mx-auto max-w-6xl space-y-4 px-4 pb-10"><CardSkeleton rows={2} /><ListSkeleton rows={6} /></div></section>;
+  if (loadingUser || loading) return <section className="min-h-screen bg-page"><PageTopBar title="消息" backTo="/" /><div className="mx-auto max-w-6xl space-y-4 px-4 pb-10"><CardSkeleton rows={2} /><ListSkeleton rows={6} /></div></section>;
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
+    <section className="min-h-screen bg-page">
       <PageTopBar title="消息" backTo="/" />
 
       <div className="message-center-layout mx-auto max-w-6xl px-4 pb-10">

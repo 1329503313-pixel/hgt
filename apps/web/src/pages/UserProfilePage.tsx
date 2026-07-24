@@ -43,7 +43,7 @@ export default function UserProfilePage() {
     void loadProfile(cacheKey).catch((error) => { if (!cached) showToast((error as Error).message); });
   }, [id, user?.id, loadingUser]);
 
-  if (!profile) return <section className="user-profile-page min-h-screen bg-page pt-[72px]"><PageTopBar title="用户主页" backTo={backTarget} /><div className="user-profile-content mx-auto max-w-3xl px-4"><div className="user-profile-desktop-back mb-4 hidden lg:flex"><UnifiedBackButton to={backTarget} /></div><ProfileSkeleton /></div></section>;
+  if (!profile) return <section className="user-profile-page min-h-screen bg-page pt-[72px]"><PageTopBar title="用户主页" backTo={backTarget} /><div className="user-profile-content mx-auto max-w-3xl px-4 pt-3 lg:pt-0"><div className="user-profile-desktop-back mb-4 hidden lg:flex"><UnifiedBackButton to={backTarget} /></div><ProfileSkeleton /></div></section>;
 
   async function toggleFollow() {
     try {

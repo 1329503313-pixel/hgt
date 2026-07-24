@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 import { ListSkeleton } from "../Skeletons";
+import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 
 type AdminCircle = {
   id: string;
@@ -24,6 +25,8 @@ export function CircleManagement() {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<AdminCircle | null | "new">(null);
   const [form, setForm] = useState(emptyForm);
+  const pagination = useAdminPagination(circles.length);
+  const visibleCircles = paginateAdminItems(circles, pagination);
 
   const load = useCallback(async () => {
     const data = await api<{ circles: AdminCircle[] }>("/api/admin/circles", { bypassCache: true, dedupe: false });
@@ -105,7 +108,7 @@ export function CircleManagement() {
       <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
         {loading ? <ListSkeleton rows={6} /> : circles.length ? (
           <div className="divide-y divide-line">
-            {circles.map((circle) => (
+            {visibleCircles.map((circle) => (
               <div key={circle.id} className="flex flex-wrap items-center gap-3 px-4 py-4">
                 <img className="h-14 w-14 shrink-0 rounded-2xl object-cover" src={circle.avatar} alt="" loading="lazy" decoding="async" />
                 <div className="min-w-0 flex-1">
@@ -124,6 +127,7 @@ export function CircleManagement() {
             ))}
           </div>
         ) : <p className="py-20 text-center text-sm text-muted">暂无圈子</p>}
+        {!loading && circles.length > 0 && <div className="px-4 pb-4"><AdminPagination {...pagination} /></div>}
       </div>
 
       {editing && <Modal onClose={() => !saving && setEditing(null)}>

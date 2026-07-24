@@ -4,7 +4,7 @@ export const BANNER_MAX_BYTES = 300 * 1024;
 export type BannerImageVariant = "desktop" | "mobile";
 
 const BANNER_TARGETS: Record<BannerImageVariant, { width: number; height: number }> = {
-  desktop: { width: 1600, height: 800 },
+  desktop: { width: 2000, height: 800 },
   mobile: { width: 960, height: 540 }
 };
 

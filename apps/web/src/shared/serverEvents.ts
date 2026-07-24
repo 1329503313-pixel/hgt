@@ -21,6 +21,12 @@ function dispatch(_type: string, typeListeners: Set<ServerEventListener>) {
 
 const dispatchers = new Map<string, EventListener>();
 
+export function resetServerEventConnection() {
+  source?.close();
+  source = null;
+  dispatchers.clear();
+}
+
 export function subscribeServerEvent(type: string, listener: ServerEventListener) {
   let typeListeners = listeners.get(type);
   if (!typeListeners) {

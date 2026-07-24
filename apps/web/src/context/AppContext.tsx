@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { AccountUser, SoupDetail, KeyFact } from "../shared/types";
-import { api, BadgeUnlocksResponse, MeResponse, SpecialBadgeUnlock, StatsResponse } from "../api";
-import { subscribeServerEvent } from "../shared/serverEvents";
+import { api, BadgeUnlocksResponse, clearApiCache, MeResponse, SpecialBadgeUnlock, StatsResponse } from "../api";
+import { resetServerEventConnection, subscribeServerEvent } from "../shared/serverEvents";
+import { removeSessionCachePrefix } from "../shared/sessionCache";
 
 export type BadgeUnlockEvent = { key: string; stats: StatsResponse; specialBadge?: SpecialBadgeUnlock };
 
@@ -144,7 +145,8 @@ export function useApp() {
 
 // ---------- Provider ----------
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AccountUser | null>(null);
+  const [user, setUserState] = useState<AccountUser | null>(null);
+  const userIdRef = useRef<string | null>(null);
   const [loadingUser, setLoadingUser] = useState(true); // 初始 true，等待 /me 返回
   const [toast, setToastRaw] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -181,6 +183,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback((msg: string) => setToastRaw(msg), []);
   const triggerRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const setUser = useCallback((nextUser: AccountUser | null) => {
+    const nextUserId = nextUser?.id ?? null;
+    if (userIdRef.current !== nextUserId) {
+      clearApiCache();
+      removeSessionCachePrefix("hgt:");
+      resetServerEventConnection();
+    }
+    userIdRef.current = nextUserId;
+    setUserState(nextUser);
+  }, []);
   const checkBadgeUnlocks = useCallback(async (force = false) => {
     if (badgeCheckInFlightRef.current) return;
     if (!force && Date.now() - badgeLastCheckedAtRef.current < 60_000) return;
@@ -207,8 +219,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // 页面加载时读取登录状态
   useEffect(() => {
-    api<MeResponse>("/api/auth/me", { cacheTtlMs: 30_000 })
-      .then((data) => setUser(data.user))
+    api<MeResponse>("/api/auth/me", { bypassCache: true, dedupe: false })
+      .then((data) => {
+        userIdRef.current = data.user?.id ?? null;
+        setUserState(data.user);
+      })
       .catch(() => undefined)
       .finally(() => setLoadingUser(false));
   }, []);

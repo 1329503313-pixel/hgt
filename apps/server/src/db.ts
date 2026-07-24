@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { config } from "./config.js";
 import { BANNER_MAX_BYTES, optimizeBannerImage, storedBannerImageBytes } from "./bannerImages.js";
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
+import { generateInviteCode } from "./inviteCodes.js";
 
 export const pool = mysql.createPool({
   ...config.db,
@@ -25,9 +26,111 @@ export async function initDatabase() {
       username VARCHAR(50) NOT NULL UNIQUE,
       password VARCHAR(128) NOT NULL,
       nickname VARCHAR(50) NOT NULL,
+      invite_code CHAR(5) NULL,
       role ENUM('admin','user') NOT NULL DEFAULT 'user',
       token_version INT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_invite_bindings (
+      invitee_user_id VARCHAR(64) PRIMARY KEY,
+      inviter_user_id VARCHAR(64) NOT NULL,
+      invite_code CHAR(5) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user_invite_bindings_inviter_created (inviter_user_id, created_at),
+      CONSTRAINT fk_user_invite_bindings_invitee FOREIGN KEY (invitee_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_invite_bindings_inviter FOREIGN KEY (inviter_user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_experience_adjustments (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      admin_id VARCHAR(64) NULL,
+      amount BIGINT NOT NULL,
+      experience_after BIGINT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user_experience_adjustments_user_time (user_id, created_at),
+      INDEX idx_user_experience_adjustments_admin_time (admin_id, created_at),
+      CONSTRAINT fk_user_experience_adjustment_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_experience_adjustment_admin FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_invite_reward_progress (
+      invitee_user_id VARCHAR(64) PRIMARY KEY,
+      inviter_user_id VARCHAR(64) NOT NULL,
+      email_rewarded_at DATETIME NULL,
+      email_shell_reward INT UNSIGNED NOT NULL DEFAULT 0,
+      email_experience_reward INT UNSIGNED NOT NULL DEFAULT 0,
+      qualifying_shell_earned BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      shell_milestones_rewarded BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      shell_experience_reward BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      settled_through DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_user_invite_reward_progress_inviter (inviter_user_id),
+      INDEX idx_user_invite_reward_progress_email (email_rewarded_at, invitee_user_id),
+      CONSTRAINT fk_user_invite_reward_progress_invitee FOREIGN KEY (invitee_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_invite_reward_progress_inviter FOREIGN KEY (inviter_user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO user_invite_reward_progress
+      (invitee_user_id, inviter_user_id, settled_through)
+    SELECT invitee_user_id, inviter_user_id, created_at
+    FROM user_invite_bindings
+  `);
+  await ensureIndex(
+    "user_invite_reward_progress",
+    "idx_user_invite_reward_progress_email",
+    "email_rewarded_at, invitee_user_id"
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_identities (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      identity_type VARCHAR(20) NOT NULL,
+      identifier VARCHAR(255) NOT NULL,
+      verified_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_user_identity_type_identifier (identity_type, identifier),
+      UNIQUE KEY uq_user_identity_user_type (user_id, identity_type),
+      INDEX idx_user_identities_user (user_id),
+      CONSTRAINT fk_user_identity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS email_verification_challenges (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      purpose ENUM('bind','change') NOT NULL,
+      code_hash CHAR(64) NOT NULL,
+      attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+      expires_at DATETIME NOT NULL,
+      consumed_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_email_challenge_user_created (user_id, created_at),
+      INDEX idx_email_challenge_email_created (email, created_at),
+      CONSTRAINT fk_email_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      token_hash CHAR(64) NOT NULL UNIQUE,
+      expires_at DATETIME NOT NULL,
+      consumed_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_password_reset_user_created (user_id, created_at),
+      CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -172,6 +275,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "is_sensitive", "is_sensitive BOOLEAN NOT NULL DEFAULT FALSE AFTER is_original");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
+  await ensureColumn("users", "invite_code", "invite_code CHAR(5) NULL AFTER nickname");
   await ensureColumn("users", "badges_initialized", "badges_initialized TINYINT(1) NOT NULL DEFAULT 0 AFTER avatar");
   await ensureColumn("users", "equipped_badge_key", "equipped_badge_key VARCHAR(128) NULL AFTER badges_initialized");
   await ensureColumn("users", "equipped_badge_icon_url", "equipped_badge_icon_url VARCHAR(255) NULL AFTER equipped_badge_key");
@@ -190,6 +294,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
   await ensureIndex("users", "idx_users_created_at", "created_at");
   await ensureIndex("users", "idx_users_nickname", "nickname");
+  await ensureIndex("users", "uq_users_invite_code", "invite_code", true);
   await ensureIndex("soups", "idx_soups_created_at", "created_at");
   await ensureIndex("soups", "idx_soups_type_created", "type, created_at");
   await ensureIndex("soups", "idx_soups_home_visibility", "review_status, is_surface_public, created_at");
@@ -234,6 +339,19 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await ensureColumn("shell_task_events", "experience_reward", "experience_reward INT UNSIGNED NOT NULL DEFAULT 0 AFTER actual_reward");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS beginner_task_events (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      task_type VARCHAR(40) NOT NULL,
+      shell_reward INT UNSIGNED NOT NULL,
+      experience_reward INT UNSIGNED NOT NULL,
+      completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_beginner_task_user_type (user_id, task_type),
+      INDEX idx_beginner_task_events_user_time (user_id, completed_at),
+      CONSTRAINT fk_beginner_task_event_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shell_like_reward_history (
       soup_id VARCHAR(64) NOT NULL,
@@ -808,6 +926,7 @@ export async function initDatabase() {
       message_type ENUM('text','sticker','room_invite','soup_share') NOT NULL DEFAULT 'text',
       sticker_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
+      reply_to_message_id VARCHAR(64) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_circle_message_sequence (message_sequence),
       INDEX idx_circle_messages_circle_sequence (circle_id, message_sequence),
@@ -825,6 +944,12 @@ export async function initDatabase() {
     );
   }
   await ensureColumn("circle_messages", "mentions_json", "mentions_json JSON NULL AFTER sticker_id");
+  await ensureColumn(
+    "circle_messages",
+    "reply_to_message_id",
+    "reply_to_message_id VARCHAR(64) NULL AFTER mentions_json"
+  );
+  await ensureIndex("circle_messages", "idx_circle_messages_reply", "reply_to_message_id");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS circle_message_mentions (
@@ -1097,7 +1222,27 @@ export async function initDatabase() {
   `);
 
   await seedAdmin();
+  await backfillInviteCodes();
   await seedDefaultCircles();
+}
+
+async function backfillInviteCodes() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE invite_code IS NULL OR invite_code = ''");
+  for (const row of rows) {
+    let assigned = false;
+    for (let attempt = 0; attempt < 20 && !assigned; attempt += 1) {
+      try {
+        await pool.query(
+          "UPDATE users SET invite_code = ? WHERE id = ? AND (invite_code IS NULL OR invite_code = '')",
+          [generateInviteCode(), row.id]
+        );
+        assigned = true;
+      } catch (error) {
+        if ((error as { code?: string }).code !== "ER_DUP_ENTRY") throw error;
+      }
+    }
+    if (!assigned) throw new Error(`Unable to generate a unique invite code for user ${String(row.id)}`);
+  }
 }
 
 async function ensureColumn(table: string, column: string, ddl: string) {

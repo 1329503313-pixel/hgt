@@ -240,18 +240,53 @@ export default function MinePage() {
         <aside className="mine-shell-card hidden lg:flex">
           <div className="flex items-start justify-between gap-4">
             <div><p className="text-xs font-black tracking-[0.16em] text-amber-600">ASSETS</p><h2 className="mt-1 flex items-center gap-2 text-xl font-black text-ink"><Shell size={20} className="text-amber-500" />贝壳资产</h2></div>
-            <button className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700 transition hover:bg-amber-100" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
+            <button className="grid h-10 place-items-center rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-black text-amber-700 transition hover:bg-amber-100" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
           </div>
-          <div className="mt-5"><p className="text-sm text-muted">当前余额</p><p className="mt-1 text-3xl font-black text-ink"><span className="text-amber-600">{shellBalance?.toLocaleString() ?? "—"}</span><span className="ml-1 text-sm font-bold text-muted">贝壳</span></p></div>
-          <div className="mt-4 flex items-center justify-between text-xs font-bold text-muted"><span>今日获得 +{shellSummary?.earnedToday ?? 0}</span><span>{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span></div>
+          <div className="mt-5 flex items-end justify-between gap-3">
+            <div><p className="text-sm text-muted">当前余额</p><p className="mt-1 text-3xl font-black text-ink"><span className="text-amber-600">{shellBalance?.toLocaleString() ?? "—"}</span><span className="ml-1 text-sm font-bold text-muted">贝壳</span></p></div>
+            <p className="pb-1 text-sm font-bold text-muted">今日 +{shellSummary?.earnedToday ?? 0}</p>
+          </div>
+          <div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>每日上限</span><span>{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span></div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all" style={{ width: `${shellProgress}%` }} /></div>
           <div className="mt-auto grid grid-cols-2 gap-3 pt-5"><button className="mine-shell-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />赚取贝壳</button><button className="mine-shell-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />收支明细</button></div>
         </aside>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:hidden">
-        {levelProgress && <div className="card p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold text-muted">等级成长</p><p className="mt-1 flex items-center gap-2 text-xl font-black text-ink"><LevelBadge level={levelProgress.level} animated />{levelProgress.experience.toLocaleString()} <span className="text-xs text-muted">EXP</span></p></div><p className="text-xs font-bold text-muted">{levelProgress.isMaxLevel ? "已满级" : `距下一级 ${levelProgress.remainingExperience.toLocaleString()}`}</p></div><div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>{levelProgress.isMaxLevel ? "MAX" : `${levelProgress.currentLevelExperience.toLocaleString()} / ${levelProgress.experienceForNextLevel.toLocaleString()}`}</span><span>{levelProgress.progressPercent}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600" style={{ width: `${levelProgress.progressPercent}%` }} /></div></div>}
-        <div className="card p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold text-muted">贝壳资产</p><p className="mt-1 flex items-center gap-2 text-xl font-black text-ink"><Shell size={19} className="text-amber-500" />{shellBalance?.toLocaleString() ?? "—"}<span className="text-xs text-muted">贝壳</span></p></div><button className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700" onClick={() => navigate("/mine/shells/transactions")}>明细</button></div><div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>今日获得 +{shellSummary?.earnedToday ?? 0}</span><span>{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${shellProgress}%` }} /></div></div>
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:hidden">
+        {levelProgress && (
+          <div className="card min-w-0 p-3 sm:p-4">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <p className="truncate text-xs font-bold text-muted">等级成长</p>
+              <span className="shrink-0 text-[11px] font-bold text-muted">{levelProgress.isMaxLevel ? "已满级" : `差 ${levelProgress.remainingExperience.toLocaleString()} EXP`}</span>
+            </div>
+            <p className="mt-2 flex min-w-0 items-center gap-1.5 text-[clamp(1rem,4.3vw,1.25rem)] font-black leading-none text-ink">
+              <LevelBadge level={levelProgress.level} animated />
+              <span className="min-w-0 truncate tabular-nums">{levelProgress.experience.toLocaleString()}</span>
+              <span className="shrink-0 text-[10px] text-muted">EXP</span>
+            </p>
+            <div className="mt-3 flex items-center justify-between gap-2 text-[10px] font-bold text-muted">
+              <span className="truncate tabular-nums">{levelProgress.isMaxLevel ? "MAX" : `${levelProgress.currentLevelExperience.toLocaleString()} / ${levelProgress.experienceForNextLevel.toLocaleString()}`}</span>
+              <span className="shrink-0">{levelProgress.progressPercent}%</span>
+            </div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600" style={{ width: `${levelProgress.progressPercent}%` }} /></div>
+          </div>
+        )}
+        <div className="card min-w-0 p-3 sm:p-4">
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <p className="truncate text-xs font-bold text-muted">贝壳资产</p>
+            <button className="shrink-0 text-[11px] font-bold text-muted" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
+          </div>
+          <p className="mt-2 flex min-w-0 items-center gap-1.5 text-[clamp(1rem,4.3vw,1.25rem)] font-black leading-none text-ink">
+            <Shell size={18} className="shrink-0 text-amber-500" />
+            <span className="min-w-0 truncate tabular-nums">{shellBalance?.toLocaleString() ?? "—"}</span>
+            <span className="shrink-0 text-[10px] text-muted">贝壳</span>
+          </p>
+          <div className="mt-3 flex items-center justify-between gap-2 text-[10px] font-bold text-muted">
+            <span className="truncate">今日 +{shellSummary?.earnedToday ?? 0}</span>
+            <span className="shrink-0 tabular-nums">{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span>
+          </div>
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${shellProgress}%` }} /></div>
+        </div>
       </div>
 
       <div className="mine-feature-panel rounded-2xl bg-white px-2 py-4 shadow-soft lg:p-5">
@@ -284,7 +319,7 @@ export default function MinePage() {
           ))}
         </div>
         {tabs[activeTab].loading && !tabs[activeTab].loaded ? <CoverGridSkeleton /> : <>
-          <SoupCoverGrid className="lg:grid-cols-4 lg:gap-4 lg:p-5" soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} />
+          <SoupCoverGrid className="lg:grid-cols-4 lg:gap-4 lg:p-5" soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} returnTo="/mine" />
           {tabs[activeTab].total > pageSize && (
             <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-line p-3">
               <button className="btn btn-secondary h-9 px-2.5 text-xs" disabled={pages[activeTab] <= 1 || tabs[activeTab].loading} onClick={() => changePage(activeTab, pages[activeTab] - 1)}><ChevronLeft size={15} />上一页</button>

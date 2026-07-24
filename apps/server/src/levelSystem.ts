@@ -22,6 +22,27 @@ export function levelForExperience(value: unknown) {
   return low;
 }
 
+export function calculateExperienceAdjustment(
+  currentValue: unknown,
+  operation: "add" | "deduct",
+  amountValue: unknown
+) {
+  const current = Math.floor(Number(currentValue));
+  const amount = Math.floor(Number(amountValue));
+  if (!Number.isSafeInteger(current) || current < 0 || current > MAX_EXPERIENCE) {
+    throw new Error("EXPERIENCE_CURRENT_INVALID");
+  }
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > MAX_EXPERIENCE) {
+    throw new Error("EXPERIENCE_AMOUNT_INVALID");
+  }
+  if (operation === "deduct") {
+    if (amount > current) throw new Error("EXPERIENCE_INSUFFICIENT");
+    return current - amount;
+  }
+  if (current + amount > MAX_EXPERIENCE) throw new Error("EXPERIENCE_MAX_EXCEEDED");
+  return current + amount;
+}
+
 export function experienceProgress(value: unknown) {
   const experience = Math.max(0, Math.min(MAX_EXPERIENCE, Math.floor(Number(value) || 0)));
   const level = levelForExperience(experience);

@@ -2,6 +2,7 @@ import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
 import { experienceProgress, MAX_EXPERIENCE } from "./levelSystem.js";
+import { inviteRewardTaskStats } from "./inviteRewards.js";
 
 let badgeProgressListener: ((userId: string) => void) | null = null;
 
@@ -40,6 +41,22 @@ export type ShellTaskDefinition = {
   consumeBeyondDailyLimit?: boolean;
 };
 
+export type BeginnerTaskType =
+  | "upload_avatar"
+  | "complete_ten_draws"
+  | "equip_badge"
+  | "bind_email"
+  | "change_profile_background"
+  | "invite_verified_email"
+  | "invite_shell_milestone";
+
+export type BeginnerTaskDefinition = {
+  type: BeginnerTaskType;
+  name: string;
+  description: string;
+  reward: number;
+};
+
 export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
   { type: "daily_login", name: "每日登录", description: "当天首次进入应用", reward: 5, dailyLimit: 1 },
   { type: "publish_soup", name: "发布海龟汤", description: "审核通过并公开展示", reward: 10, dailyLimit: 3, consumeBeyondDailyLimit: true },
@@ -56,7 +73,16 @@ export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
   { type: "soup_online_completed", name: "作品被完整玩汤", description: "其他玩家完整玩完你发布的作品", reward: 10, dailyLimit: 2, consumeBeyondDailyLimit: true }
 ] as const;
 
+export const BEGINNER_TASKS: readonly BeginnerTaskDefinition[] = [
+  { type: "upload_avatar", name: "上传一次头像", description: "在账号设置中上传个人头像", reward: 10 },
+  { type: "complete_ten_draws", name: "完成 10 次抽卡", description: "单抽与十连抽均按实际抽取次数累计", reward: 10 },
+  { type: "equip_badge", name: "装配一枚徽章", description: "在个人中心装配任意已获得徽章", reward: 10 },
+  { type: "bind_email", name: "绑定邮箱", description: "完成邮箱验证码验证并绑定", reward: 25 },
+  { type: "change_profile_background", name: "更换一次主页背景", description: "使用已解锁的卡牌设置主页背景", reward: 10 }
+] as const;
+
 const TASK_BY_TYPE = new Map(SHELL_TASKS.map((task) => [task.type, task]));
+const BEGINNER_TASK_BY_TYPE = new Map(BEGINNER_TASKS.map((task) => [task.type, task]));
 
 export function beijingTaskDate(now = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -218,9 +244,126 @@ export async function awardShellTask(
   }
 }
 
+export async function awardBeginnerTask(userId: string, taskType: BeginnerTaskType) {
+  const definition = BEGINNER_TASK_BY_TYPE.get(taskType);
+  if (!definition) throw new Error(`UNKNOWN_BEGINNER_TASK:${taskType}`);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[userRow]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT shell_balance, experience FROM users WHERE id = ? FOR UPDATE",
+      [userId]
+    );
+    if (!userRow) throw new Error("SHELL_USER_NOT_FOUND");
+    const [[existing]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM beginner_task_events WHERE user_id = ? AND task_type = ? LIMIT 1",
+      [userId, taskType]
+    );
+    if (existing) {
+      await connection.commit();
+      return { recorded: false, balance: Number(userRow.shell_balance ?? 0), experienceReward: 0 };
+    }
+
+    const balanceAfter = Number(userRow.shell_balance ?? 0) + definition.reward;
+    const experienceReward = Math.max(
+      0,
+      Math.min(definition.reward, MAX_EXPERIENCE - Number(userRow.experience ?? 0))
+    );
+    const eventId = nanoid();
+    await connection.query(
+      `INSERT INTO beginner_task_events
+        (id, user_id, task_type, shell_reward, experience_reward)
+       VALUES (?, ?, ?, ?, ?)`,
+      [eventId, userId, taskType, definition.reward, experienceReward]
+    );
+    await connection.query(
+      "UPDATE users SET shell_balance = ?, experience = experience + ? WHERE id = ?",
+      [balanceAfter, experienceReward, userId]
+    );
+    await connection.query(
+      `INSERT INTO shell_transactions
+        (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, idempotency_key)
+       VALUES (?, ?, 'beginner_task_reward', ?, ?, 'beginner_task', ?, ?, ?)`,
+      [
+        nanoid(),
+        userId,
+        definition.reward,
+        balanceAfter,
+        taskType,
+        `${definition.name}奖励`,
+        `beginner-task:${userId}:${taskType}`
+      ]
+    );
+    await connection.commit();
+    reportBadgeProgress(userId);
+    return { recorded: true, balance: balanceAfter, experienceReward };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export function eligibleBeginnerTaskTypes(state: {
+  hasAvatar: boolean;
+  completedDraws: number;
+  hasEquippedBadge: boolean;
+  hasVerifiedEmail: boolean;
+  hasProfileBackground: boolean;
+}) {
+  const eligible: BeginnerTaskType[] = [];
+  if (state.hasAvatar) eligible.push("upload_avatar");
+  if (state.completedDraws >= 10) eligible.push("complete_ten_draws");
+  if (state.hasEquippedBadge) eligible.push("equip_badge");
+  if (state.hasVerifiedEmail) eligible.push("bind_email");
+  if (state.hasProfileBackground) eligible.push("change_profile_background");
+  return eligible;
+}
+
+export async function syncBeginnerTasks(userId: string) {
+  const [[state], completedRows] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT
+         u.avatar IS NOT NULL AS has_avatar,
+         u.equipped_badge_key IS NOT NULL AS has_equipped_badge,
+         u.profile_background IS NOT NULL AS has_profile_background,
+         EXISTS (
+           SELECT 1 FROM user_identities identity
+           WHERE identity.user_id = u.id
+             AND identity.identity_type = 'email'
+             AND identity.verified_at IS NOT NULL
+         ) AS has_verified_email,
+         COALESCE((
+           SELECT SUM(draw_count) FROM asset_draw_orders
+           WHERE user_id = u.id AND status = 'completed'
+         ), 0) AS completed_draws
+       FROM users u WHERE u.id = ? LIMIT 1`,
+      [userId]
+    ).then(([rows]) => rows),
+    pool.query<mysql.RowDataPacket[]>(
+      "SELECT task_type FROM beginner_task_events WHERE user_id = ?",
+      [userId]
+    ).then(([rows]) => rows)
+  ]);
+  if (!state) throw new Error("SHELL_USER_NOT_FOUND");
+  const completed = new Set(completedRows.map((row) => String(row.task_type)));
+  const eligible = eligibleBeginnerTaskTypes({
+    hasAvatar: Number(state.has_avatar) === 1,
+    completedDraws: Number(state.completed_draws ?? 0),
+    hasEquippedBadge: Number(state.has_equipped_badge) === 1,
+    hasVerifiedEmail: Number(state.has_verified_email) === 1,
+    hasProfileBackground: Number(state.has_profile_background) === 1
+  });
+  for (const taskType of eligible) {
+    if (!completed.has(taskType)) await awardBeginnerTask(userId, taskType);
+  }
+}
+
 export async function shellTaskCenter(userId: string, now = new Date()) {
+  await syncBeginnerTasks(userId);
   const taskDate = beijingTaskDate(now);
-  const [[userRow], eventRows] = await Promise.all([
+  const [[userRow], eventRows, beginnerEventRows, inviteStats] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>("SELECT shell_balance, experience FROM users WHERE id = ? LIMIT 1", [userId]).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
       `SELECT task_type, COUNT(*) AS progress, COALESCE(SUM(actual_reward), 0) AS actual_reward,
@@ -229,7 +372,13 @@ export async function shellTaskCenter(userId: string, now = new Date()) {
        WHERE user_id = ? AND task_date = ?
        GROUP BY task_type`,
       [userId, taskDate]
-    ).then(([rows]) => rows)
+    ).then(([rows]) => rows),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT task_type, shell_reward, experience_reward, completed_at
+       FROM beginner_task_events WHERE user_id = ?`,
+      [userId]
+    ).then(([rows]) => rows),
+    inviteRewardTaskStats(userId)
   ]);
   if (!userRow) throw new Error("SHELL_USER_NOT_FOUND");
   const progress = new Map(eventRows.map((row) => [String(row.task_type), row]));
@@ -246,6 +395,66 @@ export async function shellTaskCenter(userId: string, now = new Date()) {
       dailyMaximum: task.reward * task.dailyLimit
     };
   });
+  const beginnerProgress = new Map(beginnerEventRows.map((row) => [String(row.task_type), row]));
+  const beginnerTasks: Array<{
+    type: BeginnerTaskType;
+    name: string;
+    description: string;
+    reward: number;
+    progress: number;
+    target: number;
+    completed: boolean;
+    actualReward: number;
+    experienceReward: number;
+    actualExperience: number;
+    completedAt: string | null;
+    repeatable?: boolean;
+    completedCount?: number;
+  }> = BEGINNER_TASKS.map((task) => {
+    const row = beginnerProgress.get(task.type);
+    return {
+      ...task,
+      progress: row ? 1 : 0,
+      target: 1,
+      completed: Boolean(row),
+      actualReward: Number(row?.shell_reward ?? 0),
+      experienceReward: task.reward,
+      actualExperience: Number(row?.experience_reward ?? 0),
+      completedAt: row?.completed_at ? new Date(row.completed_at).toISOString() : null
+    };
+  });
+  beginnerTasks.push(
+    {
+      type: "invite_verified_email",
+      name: "邀请新用户并绑定邮箱",
+      description: "每邀请 1 名新用户注册并完成邮箱绑定",
+      reward: 50,
+      progress: inviteStats.emailCompletedCount,
+      target: 1,
+      completed: inviteStats.emailCompletedCount > 0,
+      actualReward: inviteStats.emailShellReward,
+      experienceReward: 50,
+      actualExperience: inviteStats.emailExperienceReward,
+      completedAt: null,
+      repeatable: true,
+      completedCount: inviteStats.emailCompletedCount
+    },
+    {
+      type: "invite_shell_milestone",
+      name: "邀请用户成长奖励",
+      description: "每名受邀用户累计获得 20 贝壳，次日结算",
+      reward: 1,
+      progress: inviteStats.shellCompletedCount,
+      target: 1,
+      completed: inviteStats.shellCompletedCount > 0,
+      actualReward: inviteStats.shellReward,
+      experienceReward: 1,
+      actualExperience: inviteStats.shellExperienceReward,
+      completedAt: null,
+      repeatable: true,
+      completedCount: inviteStats.shellCompletedCount
+    }
+  );
   return {
     balance: Number(userRow.shell_balance ?? 0),
     levelProgress: experienceProgress(userRow.experience),
@@ -254,12 +463,16 @@ export async function shellTaskCenter(userId: string, now = new Date()) {
     earnedExperienceToday: tasks.reduce((sum, task) => sum + task.actualExperience, 0),
     dailyLimit: SHELL_DAILY_LIMIT,
     theoreticalMaximum: SHELL_TASKS.reduce((sum, task) => sum + task.reward * task.dailyLimit, 0),
-    tasks
+    tasks,
+    beginnerTasks
   };
 }
 
 const TRANSACTION_LABELS: Record<string, string> = {
   daily_task_reward: "每日任务奖励",
+  beginner_task_reward: "新手任务奖励",
+  invite_email_reward: "邀请用户绑定邮箱奖励",
+  invite_shell_milestone_reward: "邀请用户成长奖励",
   badge_unlock_reward: "首次获得徽章奖励",
   badge_history_backfill: "历史徽章奖励贝壳补发",
   pack_single_draw: "卡包单抽消费",

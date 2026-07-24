@@ -24,7 +24,9 @@ const desktopModules: Record<string, { active: DesktopModuleKey; title: string; 
   "/mine/cards": { active: "cards", title: "收藏故事旅程中的每一张珍贵卡片", eyebrow: "收藏柜 · COLLECTION" },
   "/mine/settings": { active: "mine", title: "管理账号、安全与主页展示", eyebrow: "账号设置 · SETTINGS" },
   "/mine/settings/password": { active: "mine", title: "更新密码，守护账号安全", eyebrow: "重置密码 · SECURITY" },
-  "/mine/settings/backgrounds": { active: "cards", title: "选择已经解锁的主页背景", eyebrow: "卡牌背景 · BACKGROUNDS" }
+  "/mine/settings/backgrounds": { active: "cards", title: "选择已经解锁的主页背景", eyebrow: "卡牌背景 · BACKGROUNDS" },
+  "/forgot-password": { active: "mine", title: "通过绑定邮箱找回账号", eyebrow: "找回密码 · ACCOUNT RECOVERY" },
+  "/reset-password": { active: "mine", title: "设置新的登录密码", eyebrow: "重置密码 · ACCOUNT RECOVERY" }
 };
 
 function desktopModuleForPath(path: string) {

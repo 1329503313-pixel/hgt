@@ -206,6 +206,7 @@ npm run check                 # TypeScript 类型检查
 | `NODE_ENV` | development | production 时 serve 前端静态文件 |
 | `PORT` | 4000 | API 端口 |
 | `WEB_ORIGIN` | http://localhost:5173 | CORS origin |
+| `PUBLIC_SITE_URL` | http://localhost:5173 | SEO canonical、robots 和 sitemap 使用的正式站点地址 |
 | `JWT_SECRET` | dev fallback | 生产必须设置 |
 | `DB_HOST/PORT/USER/PASSWORD/NAME` | 本地 MySQL | 数据库连接 |
 | `ADMIN_DEFAULT_PASSWORD` | — | 首次启动时创建 admin 用户 |

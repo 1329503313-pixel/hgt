@@ -5,6 +5,7 @@ import { useApp } from "../../context/AppContext";
 import { homeBannerUrl } from "../../shared/staticAssets";
 import { Modal } from "../Modal";
 import { ListSkeleton } from "../Skeletons";
+import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { BannerImageCropper } from "./BannerImageCropper";
 
 type AdminBanner = {
@@ -43,6 +44,8 @@ export function BannerManagement() {
   const [editing, setEditing] = useState<AdminBanner | null | "new">(null);
   const [form, setForm] = useState<BannerForm>(emptyForm);
   const [cropSource, setCropSource] = useState<{ source: string; variant: "desktop" | "mobile" } | null>(null);
+  const pagination = useAdminPagination(banners.length);
+  const visibleBanners = paginateAdminItems(banners, pagination);
 
   const load = useCallback(async () => {
     const data = await api<{ banners: AdminBanner[] }>("/api/admin/banners", { bypassCache: true, dedupe: false });
@@ -119,10 +122,10 @@ export function BannerManagement() {
       <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
         {loading ? <ListSkeleton rows={4} /> : banners.length ? (
           <div className="divide-y divide-line">
-            {banners.map((banner) => (
+            {visibleBanners.map((banner) => (
               <div key={banner.id} className="flex flex-wrap items-center gap-4 p-4">
                 <div className="grid w-44 max-w-[42vw] shrink-0 gap-1.5">
-                  <img className="aspect-[2/1] w-full rounded-lg bg-slate-900 object-cover" src={banner.desktopImageUrl || banner.imageUrl || homeBannerUrl} alt="PC Banner" loading="lazy" />
+                  <img className="aspect-[5/2] w-full rounded-lg bg-slate-900 object-cover" src={banner.desktopImageUrl || banner.imageUrl || homeBannerUrl} alt="PC Banner" loading="lazy" />
                   <img className="aspect-video w-full rounded-lg bg-slate-900 object-cover" src={banner.imageUrl || homeBannerUrl} alt="手机 Banner" loading="lazy" />
                 </div>
                 <div className="min-w-[180px] flex-1">
@@ -142,6 +145,7 @@ export function BannerManagement() {
             ))}
           </div>
         ) : <p className="py-20 text-center text-sm text-muted">暂无 Banner</p>}
+        {!loading && banners.length > 0 && <div className="px-4 pb-4"><AdminPagination {...pagination} /></div>}
       </div>
 
       {editing && <Modal onClose={() => !saving && setEditing(null)}>
@@ -150,8 +154,8 @@ export function BannerManagement() {
           <label className="block space-y-1"><span className="label">名称</span><input className="field" maxLength={120} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="用于后台识别" /></label>
           <div className="space-y-2">
             <span className="label">PC 端 Banner</span>
-            <span className="block text-xs text-muted">推荐 1600 × 800，比例 2:1</span>
-            <img className="aspect-[2/1] w-full rounded-xl bg-slate-900 object-cover" src={form.desktopImage || homeBannerUrl} alt="PC Banner 预览" />
+            <span className="block text-xs text-muted">推荐 2000 × 800，比例 2.5:1；上下为安全区域，窄屏可能裁切左右</span>
+            <img className="aspect-[5/2] w-full rounded-xl bg-slate-900 object-cover" src={form.desktopImage || homeBannerUrl} alt="PC Banner 预览" />
             <label className="btn btn-secondary w-full cursor-pointer"><ImagePlus size={17} />{form.desktopImage ? "更换 PC 图片" : "选择 PC 图片"}<input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => readImage(event, "desktop")} /></label>
           </div>
           <div className="space-y-2">
@@ -177,7 +181,7 @@ export function BannerManagement() {
       </Modal>}
       {cropSource && <BannerImageCropper
         source={cropSource.source}
-        targetWidth={cropSource.variant === "desktop" ? 1600 : 960}
+        targetWidth={cropSource.variant === "desktop" ? 2000 : 960}
         targetHeight={cropSource.variant === "desktop" ? 800 : 540}
         title={cropSource.variant === "desktop" ? "裁剪 PC 端 Banner" : "裁剪手机端 Banner"}
         onCancel={() => setCropSource(null)}

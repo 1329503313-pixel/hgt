@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, ImagePlus, Plus, Save, Search, Shell, Sparkles, Trash2, X } from "lucide-react";
 import { api } from "../../api";
 import { Modal } from "../Modal";
 import { AssetCardVisual } from "../AssetCardVisual";
 import type { AssetCard, AssetPackType, AssetRarity } from "../../shared/digitalAssets";
 import { ASSET_PACK_TYPE_LABELS, ASSET_RARITY_LABELS } from "../../shared/digitalAssets";
+import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
 
 type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[] };
@@ -121,23 +122,61 @@ export function DigitalAssetManagement() {
   const [message, setMessage] = useState("");
   const [stats, setStats] = useState<AssetStats | null>(null);
   const [records, setRecords] = useState<DrawRecord[]>([]);
+  const [recordTotal, setRecordTotal] = useState(0);
+  const [recordsLoading, setRecordsLoading] = useState(true);
   const [recordKeyword, setRecordKeyword] = useState("");
+  const [cardListKeyword, setCardListKeyword] = useState("");
+  const [packListKeyword, setPackListKeyword] = useState("");
   const [packKeyword, setPackKeyword] = useState("");
   const [packTypeFilter, setPackTypeFilter] = useState<"all" | AssetPackType>("all");
   const [cardSort, setCardSort] = useState<CardSort>("number-asc");
   const [configCardIds, setConfigCardIds] = useState<string[]>([]);
   const [configCardKeyword, setConfigCardKeyword] = useState("");
+  const normalizedCardListKeyword = cardListKeyword.trim().toLocaleLowerCase();
+  const normalizedPackListKeyword = packListKeyword.trim().toLocaleLowerCase();
+  const cardPagination = useAdminPagination(cards.filter((card) =>
+    !normalizedCardListKeyword
+    || card.cardNo.toLocaleLowerCase().includes(normalizedCardListKeyword)
+    || card.name.toLocaleLowerCase().includes(normalizedCardListKeyword)
+  ).length);
+  const packPagination = useAdminPagination(packs.filter((pack) =>
+    !normalizedPackListKeyword || pack.name.toLocaleLowerCase().includes(normalizedPackListKeyword)
+  ).length);
+  const recordPagination = useAdminPagination(recordTotal);
+  const { page: recordPage, pageSize: recordPageSize } = recordPagination;
 
   async function load() {
-    const [cardData, packData, statsData, recordData] = await Promise.all([
+    const [cardData, packData, statsData] = await Promise.all([
       api<{ cards: AdminCard[] }>("/api/admin/asset-cards", { bypassCache: true }),
       api<{ packs: AdminPack[] }>("/api/admin/asset-packs", { bypassCache: true }),
-      api<AssetStats>("/api/admin/asset-stats", { bypassCache: true }),
-      api<{ records: DrawRecord[] }>("/api/admin/asset-draw-records", { bypassCache: true })
+      api<AssetStats>("/api/admin/asset-stats", { bypassCache: true })
     ]);
-    setCards(cardData.cards); setPacks(packData.packs); setStats(statsData); setRecords(recordData.records);
+    setCards(cardData.cards); setPacks(packData.packs); setStats(statsData);
   }
   useEffect(() => { void load().catch((error) => setMessage((error as Error).message)); }, []);
+
+  const loadRecords = useCallback(async () => {
+    setRecordsLoading(true);
+    try {
+      const query = new URLSearchParams({
+        limit: String(recordPageSize),
+        offset: String((recordPage - 1) * recordPageSize)
+      });
+      if (recordKeyword.trim()) query.set("keyword", recordKeyword.trim());
+      const data = await api<{ records: DrawRecord[]; total: number }>(`/api/admin/asset-draw-records?${query}`, { bypassCache: true });
+      setRecords(data.records);
+      setRecordTotal(data.total);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setRecordsLoading(false);
+    }
+  }, [recordKeyword, recordPage, recordPageSize]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadRecords(), 250);
+    return () => window.clearTimeout(timer);
+  }, [loadRecords]);
 
   async function openCard(card?: AdminCard) {
     if (!card) {
@@ -291,6 +330,16 @@ export function DigitalAssetManagement() {
     const rarityOrder = rarityRank[left.rarity] - rarityRank[right.rarity];
     return (cardSort === "rarity-asc" ? rarityOrder : -rarityOrder) || numberOrder;
   });
+  const filteredCards = sortedCards.filter((card) =>
+    !normalizedCardListKeyword
+    || card.cardNo.toLocaleLowerCase().includes(normalizedCardListKeyword)
+    || card.name.toLocaleLowerCase().includes(normalizedCardListKeyword)
+  );
+  const filteredPacks = packs.filter((pack) =>
+    !normalizedPackListKeyword || pack.name.toLocaleLowerCase().includes(normalizedPackListKeyword)
+  );
+  const visibleCards = paginateAdminItems(filteredCards, cardPagination);
+  const visiblePacks = paginateAdminItems(filteredPacks, packPagination);
   const configuredCards = sortedCards.filter((card) => configCardIds.includes(card.id));
   const availableConfigCards = sortedCards.filter((card) => {
     if (configCardIds.includes(card.id)) return false;
@@ -305,7 +354,142 @@ export function DigitalAssetManagement() {
 
       {stats && <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><div className="card p-4"><p className="text-xs text-muted">累计抽取</p><p className="mt-1 text-xl font-black text-ink">{stats.totalDraws.toLocaleString()}</p></div><div className="card p-4"><p className="text-xs text-muted">卡牌 / 上架卡包</p><p className="mt-1 text-xl font-black text-ink">{stats.cardCount} / {stats.enabledPackCount}</p></div><div className="card p-4"><p className="text-xs text-muted">贝壳消耗</p><p className="mt-1 flex items-center gap-1 text-xl font-black text-blue-600"><Shell size={18} />{stats.shellSpent.toLocaleString()}</p></div><div className="card p-4"><p className="text-xs text-muted">满星返还</p><p className="mt-1 text-xl font-black text-emerald-600">+{stats.shellRefunded.toLocaleString()}</p></div></div>}
 
-      {tab === "cards" ? <div className="card overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4"><h3 className="font-black text-ink">卡牌库 {cards.length}</h3><div className="flex items-center gap-2"><select className="field h-10 w-auto min-w-36 py-0 text-sm" aria-label="卡牌排序" value={cardSort} onChange={(event) => setCardSort(event.target.value as CardSort)}><option value="number-asc">按序号正序</option><option value="number-desc">按序号倒序</option><option value="rarity-asc">按品质正序</option><option value="rarity-desc">按品质倒序</option></select><button className="btn btn-primary" onClick={() => openCard()}><Plus size={17} />新增卡牌</button></div></div>{cards.length === 0 ? <div className="p-10 text-center text-sm text-muted">尚未上传卡牌素材</div> : <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4 lg:grid-cols-6">{sortedCards.map((card) => <button key={card.id} className="min-w-0 text-left disabled:cursor-wait disabled:opacity-60" disabled={detailLoading === `card:${card.id}`} onClick={() => openCard(card)}><AssetCardVisual card={card} /><p className="mt-2 truncate text-sm font-black text-ink">{card.name}</p><p className="mt-1 text-[11px] text-muted">{detailLoading === `card:${card.id}` ? "正在加载原图…" : <>{ASSET_RARITY_LABELS[card.rarity]} · {card.status === "active" ? "启用" : "停用"} · {card.ownerCount} 人拥有</>}</p></button>)}</div>}</div> : tab === "packs" ? <div className="space-y-3"><div className="flex justify-end"><button className="btn btn-primary" onClick={() => openPack()}><Plus size={17} />新增卡包</button></div>{packs.length === 0 ? <div className="card p-10 text-center text-sm text-muted">尚未创建卡包</div> : packs.map((pack) => <div key={pack.id} className="card grid gap-4 p-4 sm:grid-cols-[112px_minmax(0,1fr)_auto]"><img src={pack.coverUrl} alt="" className="h-36 w-28 rounded-xl object-cover" /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-ink">{pack.name}</h3><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-primary">{ASSET_PACK_TYPE_LABELS[pack.packType]}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${pack.configurationReady ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>{pack.configurationReady ? "配置完整" : "待配置"}</span></div><p className="mt-2 text-xs text-muted">单抽 {pack.singlePrice} · 十连 {pack.tenPrice} · 免费 {pack.dailyFreeDraws}/日</p><p className="mt-2 text-xs font-bold text-ink">已绑定 {pack.cards.length} 张 · 品质概率合计 {pack.probabilityTotal.toFixed(6)}%</p><PackDrawStats pack={pack} /></div><div className="flex flex-wrap content-start gap-2 sm:max-w-48"><button className="btn btn-secondary text-xs" disabled={detailLoading === `pack:${pack.id}`} onClick={() => openPack(pack)}>{detailLoading === `pack:${pack.id}` ? "加载原图中…" : "编辑"}</button><button className="btn btn-secondary text-xs" onClick={() => openConfiguration(pack)}>卡牌</button><button className={`btn text-xs ${pack.enabled ? "bg-red-50 text-red-600" : "btn-primary"}`} onClick={() => void togglePack(pack)}>{pack.enabled ? "下架" : "启用上架"}</button><button className="btn bg-red-50 text-xs text-red-600 disabled:cursor-not-allowed disabled:opacity-40" disabled={pack.cards.length > 0} title={pack.cards.length > 0 ? "已绑定卡牌的卡包不能删除" : "删除卡包"} onClick={() => void deletePack(pack)}><Trash2 size={15} />删除</button></div></div>)}</div> : <div className="card overflow-hidden"><div className="flex items-center gap-2 border-b border-line p-4"><Search size={17} className="text-muted" /><input className="field" placeholder="筛选用户、卡包或卡牌" value={recordKeyword} onChange={(event) => setRecordKeyword(event.target.value)} /></div><div className="overflow-x-auto"><table className="min-full text-left text-xs"><thead className="bg-slate-50 text-muted"><tr><th className="px-3 py-2">时间</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">卡包</th><th className="px-3 py-2">卡牌</th><th className="px-3 py-2">结果</th></tr></thead><tbody>{records.filter((record) => !recordKeyword || `${record.nickname}${record.packName}${record.cardName}`.includes(recordKeyword)).map((record) => <tr key={record.id} className="border-t border-line"><td className="whitespace-nowrap px-3 py-3 text-muted">{new Date(record.createdAt).toLocaleString("zh-CN")}</td><td className="px-3 py-3 font-bold text-ink">{record.nickname}</td><td className="px-3 py-3 text-muted">{record.packName}<br />{record.drawMode === "ten" ? "十连" : record.usedFreeDraw ? "免费单抽" : "单抽"}</td><td className="px-3 py-3"><span className="font-bold text-ink">{record.cardName}</span><br /><span className="text-muted">NO.{record.cardNo} · {ASSET_RARITY_LABELS[record.rarity]}</span></td><td className="px-3 py-3 text-muted">{record.firstObtained ? "首次获得" : record.fullStarDuplicate ? `满星返还 +${record.shellRefund}` : record.starUpgraded ? `升至${record.starAfter}星` : "重复卡"}{record.pityType ? " · 保底" : ""}</td></tr>)}</tbody></table></div></div>}
+      {tab === "cards" ? (
+        <div className="card overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4">
+            <h3 className="font-black text-ink">卡牌库 {cards.length}</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="relative">
+                <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
+                <input
+                  className="field h-10 w-52 pr-9 text-sm"
+                  placeholder="搜索序号或名称"
+                  aria-label="搜索卡牌序号或名称"
+                  value={cardListKeyword}
+                  onChange={(event) => {
+                    setCardListKeyword(event.target.value);
+                    cardPagination.onPageChange(1);
+                  }}
+                />
+              </label>
+              <select
+                className="field h-10 w-auto min-w-36 py-0 text-sm"
+                aria-label="卡牌排序"
+                value={cardSort}
+                onChange={(event) => {
+                  setCardSort(event.target.value as CardSort);
+                  cardPagination.onPageChange(1);
+                }}
+              >
+                <option value="number-asc">按序号正序</option>
+                <option value="number-desc">按序号倒序</option>
+                <option value="rarity-asc">按品质正序</option>
+                <option value="rarity-desc">按品质倒序</option>
+              </select>
+              <button className="btn btn-primary" onClick={() => openCard()}><Plus size={17} />新增卡牌</button>
+            </div>
+          </div>
+          {filteredCards.length === 0 ? (
+            <div className="p-10 text-center text-sm text-muted">{cardListKeyword.trim() ? "没有匹配的卡牌" : "尚未上传卡牌素材"}</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4 lg:grid-cols-6">
+                {visibleCards.map((card) => (
+                  <button key={card.id} className="min-w-0 text-left disabled:cursor-wait disabled:opacity-60" disabled={detailLoading === `card:${card.id}`} onClick={() => openCard(card)}>
+                    <AssetCardVisual card={card} />
+                    <p className="mt-2 truncate text-sm font-black text-ink">{card.name}</p>
+                    <p className="mt-1 text-[11px] text-muted">
+                      {detailLoading === `card:${card.id}` ? "正在加载原图…" : <>{ASSET_RARITY_LABELS[card.rarity]} · {card.status === "active" ? "启用" : "停用"} · {card.ownerCount} 人拥有</>}
+                    </p>
+                  </button>
+                ))}
+              </div>
+              <div className="px-4 pb-4"><AdminPagination {...cardPagination} /></div>
+            </>
+          )}
+        </div>
+      ) : tab === "packs" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className="relative">
+              <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
+              <input
+                className="field h-10 w-52 pr-9 text-sm"
+                placeholder="搜索卡包名称"
+                aria-label="搜索卡包名称"
+                value={packListKeyword}
+                onChange={(event) => {
+                  setPackListKeyword(event.target.value);
+                  packPagination.onPageChange(1);
+                }}
+              />
+            </label>
+            <button className="btn btn-primary" onClick={() => openPack()}><Plus size={17} />新增卡包</button>
+          </div>
+          {filteredPacks.length === 0 ? (
+            <div className="card p-10 text-center text-sm text-muted">{packListKeyword.trim() ? "没有匹配的卡包" : "尚未创建卡包"}</div>
+          ) : (
+            <>
+              {visiblePacks.map((pack) => (
+                <div key={pack.id} className="card grid gap-4 p-4 sm:grid-cols-[112px_minmax(0,1fr)_auto]">
+                  <img src={pack.coverUrl} alt="" className="h-36 w-28 rounded-xl object-cover" />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-black text-ink">{pack.name}</h3>
+                      <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-primary">{ASSET_PACK_TYPE_LABELS[pack.packType]}</span>
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${pack.configurationReady ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>{pack.configurationReady ? "配置完整" : "待配置"}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-muted">单抽 {pack.singlePrice} · 十连 {pack.tenPrice} · 免费 {pack.dailyFreeDraws}/日</p>
+                    <p className="mt-2 text-xs font-bold text-ink">已绑定 {pack.cards.length} 张 · 品质概率合计 {pack.probabilityTotal.toFixed(6)}%</p>
+                    <PackDrawStats pack={pack} />
+                  </div>
+                  <div className="flex flex-wrap content-start gap-2 sm:max-w-48">
+                    <button className="btn btn-secondary text-xs" disabled={detailLoading === `pack:${pack.id}`} onClick={() => openPack(pack)}>{detailLoading === `pack:${pack.id}` ? "加载原图中…" : "编辑"}</button>
+                    <button className="btn btn-secondary text-xs" onClick={() => openConfiguration(pack)}>卡牌</button>
+                    <button className={`btn text-xs ${pack.enabled ? "bg-red-50 text-red-600" : "btn-primary"}`} onClick={() => void togglePack(pack)}>{pack.enabled ? "下架" : "启用上架"}</button>
+                    <button className="btn bg-red-50 text-xs text-red-600 disabled:cursor-not-allowed disabled:opacity-40" disabled={pack.cards.length > 0} title={pack.cards.length > 0 ? "已绑定卡牌的卡包不能删除" : "删除卡包"} onClick={() => void deletePack(pack)}><Trash2 size={15} />删除</button>
+                  </div>
+                </div>
+              ))}
+              <div className="card px-4 pb-4"><AdminPagination {...packPagination} /></div>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-line p-4">
+            <Search size={17} className="text-muted" />
+            <input
+              className="field"
+              placeholder="筛选用户、卡包或卡牌"
+              value={recordKeyword}
+              onChange={(event) => {
+                setRecordKeyword(event.target.value);
+                recordPagination.onPageChange(1);
+              }}
+            />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-xs">
+              <thead className="bg-slate-50 text-muted"><tr><th className="px-3 py-2">时间</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">卡包</th><th className="px-3 py-2">卡牌</th><th className="px-3 py-2">结果</th></tr></thead>
+              <tbody>
+                {records.map((record) => (
+                  <tr key={record.id} className="border-t border-line">
+                    <td className="whitespace-nowrap px-3 py-3 text-muted">{new Date(record.createdAt).toLocaleString("zh-CN")}</td>
+                    <td className="px-3 py-3 font-bold text-ink">{record.nickname}</td>
+                    <td className="px-3 py-3 text-muted">{record.packName}<br />{record.drawMode === "ten" ? "十连" : record.usedFreeDraw ? "免费单抽" : "单抽"}</td>
+                    <td className="px-3 py-3"><span className="font-bold text-ink">{record.cardName}</span><br /><span className="text-muted">NO.{record.cardNo} · {ASSET_RARITY_LABELS[record.rarity]}</span></td>
+                    <td className="px-3 py-3 text-muted">{record.firstObtained ? "首次获得" : record.fullStarDuplicate ? `满星返还 +${record.shellRefund}` : record.starUpgraded ? `升至${record.starAfter}星` : "重复卡"}{record.pityType ? " · 保底" : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {recordsLoading && <div className="p-8 text-center text-sm text-muted">加载中…</div>}
+          {!recordsLoading && records.length === 0 && <div className="p-10 text-center text-sm text-muted">{recordKeyword.trim() ? "没有匹配的抽取记录" : "暂无抽取记录"}</div>}
+          {!recordsLoading && recordTotal > 0 && <div className="px-4 pb-4"><AdminPagination {...recordPagination} /></div>}
+        </div>
+      )}
 
       {cardModal && <Modal full onClose={() => setCardModal(false)}>
         <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingCardId ? "编辑卡牌" : "新增卡牌"}</h2><button className="grid h-10 w-10 place-items-center rounded-full bg-slate-100" onClick={() => setCardModal(false)}><X size={18} /></button></div>

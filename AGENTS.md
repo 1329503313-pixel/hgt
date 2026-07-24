@@ -2,6 +2,14 @@
 
 海龟汤 (HGT) 评价管理系统 — 全栈 monorepo
 
+## 线上部署禁令（永久）
+
+- 禁止将本项目或任何修改部署、发布、同步到线上环境。
+- 禁止执行生产服务器的 SCP、SSH、rsync、Docker 发布、云平台部署、线上数据库迁移、服务重启或其他会改变线上状态的操作。
+- 仅允许在本地工作区进行代码修改、类型检查、测试、本地构建和本地预览。
+- 即使任务要求“完成”“上线”或“发布”，也必须停在本地验证完成的状态，不得执行线上部署。
+- 只有用户明确要求修改或删除本节永久禁令后，才可改变这一约束。
+
 ## 前端交互与展示规范（强制）
 
 项目的跨页面交互与展示规范统一维护在：
@@ -186,6 +194,23 @@ npm run check                 # TypeScript 类型检查
 - `/api/auth/me` 从 DB 补全 avatar 字段
 - 生产环境通过环境变量 `JWT_SECRET` 注入，不写入代码仓库（部署命令中指定）
 
+### 生产认证配置永久不变规则（最高优先级）
+
+1. 生产环境现有 `JWT_SECRET` 必须永久沿用。任何开发、部署、容器重建、迁移、故障修复或安全加固都禁止自动生成、替换、清空、回退或轮换该值。
+2. 禁止把生产 `JWT_SECRET` 的原文写入代码、文档、日志、命令输出或版本库。部署时只能从服务器持久化环境文件或当前线上容器继承；需要比较时只比较不可逆哈希。
+3. 生产认证 Cookie 配置必须永久保持：
+   - 名称：`hgt_token`
+   - `httpOnly=true`
+   - `sameSite=lax`
+   - `secure=false`
+   - `domain=.caqis.com`
+   - `path=/`
+   - 有效期：30 天
+4. 所有生产部署必须显式传递并保留 `JWT_SECRET`、`COOKIE_DOMAIN` 和 `COOKIE_SECURE`。禁止使用可能覆盖线上认证配置的旧 `.env`、默认值或手写的不完整 `docker run -e ...` 参数列表。
+5. 容器切换前必须将新配置与当前线上容器对比：`JWT_SECRET` 使用哈希比较，Cookie 配置逐项比较。任一项不一致时立即中止部署，不得先上线后修复。
+6. 任何会使现有 JWT 失效、改变 Cookie 作用域或导致用户重新登录的操作均禁止执行。即使检测到密钥强度告警，也不得自行轮换。
+7. 只有用户明确撤销本永久规则，并明确授权认证迁移方案、维护窗口和全量用户重新登录影响后，才允许改变上述配置。
+
 ## 前端架构关键点
 
 - **路由**: react-router-dom v7，`MainLayout` 包裹首页/我的等带 BottomNav 的页面
@@ -216,6 +241,7 @@ npm run check                 # TypeScript 类型检查
 | `NODE_ENV` | development | production 时 serve 前端静态文件 |
 | `PORT` | 4000 | API 端口 |
 | `WEB_ORIGIN` | http://localhost:5173 | CORS origin |
+| `PUBLIC_SITE_URL` | http://localhost:5173 | SEO canonical、robots 和 sitemap 使用的正式站点地址 |
 | `JWT_SECRET` | dev fallback | 生产必须设置 |
 | `DB_HOST/PORT/USER/PASSWORD/NAME` | 本地 MySQL | 数据库连接 |
 | `ADMIN_DEFAULT_PASSWORD` | — | 首次启动时创建 admin 用户 |

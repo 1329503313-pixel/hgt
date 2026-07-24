@@ -8,6 +8,7 @@ import {
   LogOut,
   MessageCircleQuestion,
   Plus,
+  Settings,
   Shield,
   Shell,
   ShoppingBag,
@@ -66,8 +67,10 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
 
   return (
     <header ref={heroParallax.heroRef} className="home-desktop-hero desktop-module-hero" onPointerMove={heroParallax.onPointerMove} onPointerLeave={heroParallax.onPointerLeave}>
-      <img className="home-desktop-fixed-cover" src={desktopNavigationBannerUrl} alt="" aria-hidden="true" />
-      <div className="home-desktop-hero-shade" aria-hidden="true" />
+      <div className="home-desktop-hero-media" aria-hidden="true">
+        <img className="home-desktop-fixed-cover" src={desktopNavigationBannerUrl} alt="" />
+        <div className="home-desktop-hero-shade" />
+      </div>
       <div className="home-desktop-nav">
         <button type="button" className="home-desktop-brand" onClick={() => navigate("/")} aria-label="返回首页">
           <img className="home-desktop-brand-mark" src="/favicon.svg" alt="" aria-hidden="true" />
@@ -98,6 +101,7 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
                 </summary>
                 <div>
                   <button type="button" onClick={() => navigate("/mine")}><UserRound size={16} />个人中心</button>
+                  <button type="button" onClick={() => navigate("/mine/settings")}><Settings size={16} />账号设置</button>
                   <button type="button" onClick={() => navigate("/mine/achievements")}><Award size={16} />我的成就</button>
                   <button type="button" onClick={() => navigate("/mine/cards")}><GalleryVerticalEnd size={16} />收藏柜</button>
                   <button type="button" onClick={handleLogout}><LogOut size={16} />退出登录</button>

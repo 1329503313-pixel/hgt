@@ -1,0 +1,4 @@
+ARG BASE_IMAGE=hgt:invite-code-hardening-base
+FROM ${BASE_IMAGE}
+
+COPY inviteCodes.js /app/server/dist/inviteCodes.js

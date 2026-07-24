@@ -46,7 +46,7 @@ export default function NotificationsPage({ category }: { category: Notification
   const unread = visible.some((item) => !item.isRead);
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
+    <section className="min-h-screen bg-page">
       <PageTopBar title={title} backTo="/messages" />
       <div className="mx-auto max-w-4xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">

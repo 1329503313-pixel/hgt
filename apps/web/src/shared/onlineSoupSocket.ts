@@ -13,21 +13,27 @@ export function connectOnlineSoupSocket(
   const connect = () => {
     if (closed) return;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    socket = new WebSocket(`${protocol}//${window.location.host}/ws/online-soup?roomId=${encodeURIComponent(roomId)}`);
-    socket.addEventListener("open", () => {
+    const currentSocket = new WebSocket(`${protocol}//${window.location.host}/ws/online-soup?roomId=${encodeURIComponent(roomId)}`);
+    socket = currentSocket;
+    currentSocket.addEventListener("open", () => {
+      if (closed || socket !== currentSocket) {
+        currentSocket.close();
+        return;
+      }
       reconnectAttempt = 0;
       lastPongAt = Date.now();
       onConnectionChange?.(true);
       pingTimer = window.setInterval(() => {
-        if (socket?.readyState !== WebSocket.OPEN) return;
+        if (currentSocket.readyState !== WebSocket.OPEN) return;
         if (Date.now() - lastPongAt > 75_000) {
-          socket.close();
+          currentSocket.close();
           return;
         }
-        socket.send(JSON.stringify({ type: "ping" }));
+        currentSocket.send(JSON.stringify({ type: "ping" }));
       }, 30_000);
     });
-    socket.addEventListener("message", (event) => {
+    currentSocket.addEventListener("message", (event) => {
+      if (socket !== currentSocket) return;
       try {
         const message = JSON.parse(String(event.data));
         if (message.event === "pong") {
@@ -39,7 +45,9 @@ export function connectOnlineSoupSocket(
         }
       } catch { /* Ignore malformed frames. */ }
     });
-    socket.addEventListener("close", () => {
+    currentSocket.addEventListener("close", () => {
+      if (socket !== currentSocket) return;
+      socket = null;
       onConnectionChange?.(false);
       if (pingTimer != null) window.clearInterval(pingTimer);
       if (!closed) {
@@ -48,7 +56,7 @@ export function connectOnlineSoupSocket(
         reconnectTimer = window.setTimeout(connect, baseDelay + Math.floor(Math.random() * 500));
       }
     });
-    socket.addEventListener("error", () => socket?.close());
+    currentSocket.addEventListener("error", () => currentSocket.close());
   };
 
   connect();
@@ -74,21 +82,27 @@ export function connectOnlineSoupLobbySocket(
   const connect = () => {
     if (closed) return;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    socket = new WebSocket(`${protocol}//${window.location.host}/ws/online-soup-lobby`);
-    socket.addEventListener("open", () => {
+    const currentSocket = new WebSocket(`${protocol}//${window.location.host}/ws/online-soup-lobby`);
+    socket = currentSocket;
+    currentSocket.addEventListener("open", () => {
+      if (closed || socket !== currentSocket) {
+        currentSocket.close();
+        return;
+      }
       reconnectAttempt = 0;
       lastPongAt = Date.now();
       onConnectionChange?.(true);
       pingTimer = window.setInterval(() => {
-        if (socket?.readyState !== WebSocket.OPEN) return;
+        if (currentSocket.readyState !== WebSocket.OPEN) return;
         if (Date.now() - lastPongAt > 75_000) {
-          socket.close();
+          currentSocket.close();
           return;
         }
-        socket.send(JSON.stringify({ type: "ping" }));
+        currentSocket.send(JSON.stringify({ type: "ping" }));
       }, 30_000);
     });
-    socket.addEventListener("message", (event) => {
+    currentSocket.addEventListener("message", (event) => {
+      if (socket !== currentSocket) return;
       try {
         const message = JSON.parse(String(event.data));
         if (message.event === "pong") {
@@ -100,7 +114,9 @@ export function connectOnlineSoupLobbySocket(
         }
       } catch { /* Ignore malformed frames. */ }
     });
-    socket.addEventListener("close", () => {
+    currentSocket.addEventListener("close", () => {
+      if (socket !== currentSocket) return;
+      socket = null;
       onConnectionChange?.(false);
       if (pingTimer != null) window.clearInterval(pingTimer);
       if (!closed) {
@@ -109,7 +125,7 @@ export function connectOnlineSoupLobbySocket(
         reconnectTimer = window.setTimeout(connect, baseDelay + Math.floor(Math.random() * 500));
       }
     });
-    socket.addEventListener("error", () => socket?.close());
+    currentSocket.addEventListener("error", () => currentSocket.close());
   };
 
   connect();

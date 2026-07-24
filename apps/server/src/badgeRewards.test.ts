@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { badgeUnlockNotificationContent, calculateBadgeShellReward } from "./badgeRewards.js";
+import {
+  LEGENDARY_CARD_DRAW_COUNT_SQL,
+  badgeUnlockNotificationContent,
+  calculateBadgeShellReward
+} from "./badgeRewards.js";
 
 test("徽章贝壳奖励只按首次创建的奖励记录发放", () => {
   assert.equal(calculateBadgeShellReward(150, true, true), 150);
@@ -22,4 +26,10 @@ test("通知仅在实际发放贝壳时追加奖励文案", () => {
     badgeUnlockNotificationContent("恭喜你获得徽章「熬汤新秀」", 0),
     "恭喜你获得徽章「熬汤新秀」"
   );
+});
+
+test("传说降临徽章从永久卡牌累计数据统计，不依赖会被裁剪的抽卡历史", () => {
+  assert.match(LEGENDARY_CARD_DRAW_COUNT_SQL, /SUM\(owned\.total_obtained\)/);
+  assert.match(LEGENDARY_CARD_DRAW_COUNT_SQL, /FROM user_asset_cards owned/);
+  assert.doesNotMatch(LEGENDARY_CARD_DRAW_COUNT_SQL, /asset_draw_(?:orders|results)/);
 });

@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, AtSign, ChevronDown, Send, Smile, Users, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, AtSign, ChevronDown, Reply, Send, Smile, Users, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
-import type { CircleMember, CircleMessage, CircleSummary, StickerAsset, StickerSeries } from "../shared/types";
+import type { CircleMember, CircleMessage, CircleMessageReply, CircleSummary, StickerAsset, StickerSeries } from "../shared/types";
 import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { Modal } from "../components/Modal";
@@ -34,10 +34,11 @@ function Avatar({ avatar, nickname, online, size = "h-10 w-10" }: { avatar: stri
   );
 }
 
-function MentionableAvatarButton({ canMention, onMention, onOpen, children }: {
+function MentionableAvatarButton({ canMention, onMention, onOpen, ariaLabel, children }: {
   canMention: boolean;
   onMention: () => void;
   onOpen: () => void;
+  ariaLabel: string;
   children: React.ReactNode;
 }) {
   const timerRef = useRef<number | null>(null);
@@ -46,10 +47,14 @@ function MentionableAvatarButton({ canMention, onMention, onOpen, children }: {
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
   };
+  useEffect(() => () => {
+    if (timerRef.current != null) window.clearTimeout(timerRef.current);
+  }, []);
   return (
     <button
       type="button"
       className={canMention ? "mention-avatar-trigger" : undefined}
+      aria-label={ariaLabel}
       onPointerDown={() => {
         longPressedRef.current = false;
         if (!canMention) return;
@@ -97,6 +102,90 @@ function CircleMessageText({ message, currentUserId }: { message: CircleMessage;
   </>;
 }
 
+function messagePreview(message: CircleMessage | CircleMessageReply) {
+  if (message.type === "sticker") return `[表情] ${message.stickerName ?? "表情"}`;
+  if (message.type === "room_invite") return "[玩汤房间邀请]";
+  if (message.type === "soup_share") return "[海龟汤分享]";
+  return message.content.trim() || "[空消息]";
+}
+
+function ReplyQuote({ reply, mine, onLocate }: {
+  reply: CircleMessageReply;
+  mine: boolean;
+  onLocate: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`mt-2 block w-full truncate rounded-lg border-l-2 px-2.5 py-1.5 text-left text-xs ${
+        mine
+          ? "border-white/60 bg-white/15 text-white/85"
+          : "border-blue-300 bg-slate-100/90 text-muted hover:bg-blue-50"
+      }`}
+      onClick={onLocate}
+      title="点击定位到原消息"
+    >
+      <span className={`mr-1 font-bold ${mine ? "text-white" : "text-primary"}`}>
+        {reply.sender?.nickname ?? "已注销用户"}:
+      </span>
+      {messagePreview(reply)}
+    </button>
+  );
+}
+
+function ReplyableMessageBubble({ onReply, wide = false, children }: {
+  onReply: () => void;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  const timerRef = useRef<number | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickRef = useRef(false);
+  const ignoreContextMenuUntilRef = useRef(0);
+  const cancelTimer = () => {
+    if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+  };
+  useEffect(() => () => cancelTimer(), []);
+  return (
+    <div
+      className={`circle-reply-trigger select-none ${wide ? "w-full" : "max-w-full"}`}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        cancelTimer();
+        suppressClickRef.current = false;
+        pointerStartRef.current = { x: event.clientX, y: event.clientY };
+        timerRef.current = window.setTimeout(() => {
+          suppressClickRef.current = true;
+          ignoreContextMenuUntilRef.current = Date.now() + 800;
+          onReply();
+        }, 550);
+      }}
+      onPointerMove={(event) => {
+        const start = pointerStartRef.current;
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) cancelTimer();
+      }}
+      onPointerUp={cancelTimer}
+      onPointerCancel={cancelTimer}
+      onPointerLeave={cancelTimer}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        cancelTimer();
+        if (Date.now() >= ignoreContextMenuUntilRef.current) onReply();
+      }}
+      onClickCapture={(event) => {
+        if (!suppressClickRef.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        suppressClickRef.current = false;
+      }}
+      onDragStart={(event) => event.preventDefault()}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function CircleChatPage() {
   const { circleId = "" } = useParams();
   const { user, loadingUser, showToast } = useApp();
@@ -118,10 +207,13 @@ export default function CircleChatPage() {
   const [unreadMentions, setUnreadMentions] = useState<UnreadMention[]>([]);
   const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(null);
   const [navigatingMention, setNavigatingMention] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<CircleMessage | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState("");
   const messagesRef = useRef<HTMLDivElement>(null);
   const firstScrollRef = useRef(false);
   const followBottomRef = useRef(true);
   const handledMentionNavigationRef = useRef("");
+  const highlightTimerRef = useRef<number | null>(null);
   const requestedMentionId = (location.state as { circleMentionMessageId?: string } | null)?.circleMentionMessageId ?? "";
 
   async function loadInitial() {
@@ -164,6 +256,7 @@ export default function CircleChatPage() {
 
   useEffect(() => {
     return () => {
+      if (highlightTimerRef.current != null) window.clearTimeout(highlightTimerRef.current);
       window.setTimeout(() => {
         if (window.location.pathname !== `/circles/${circleId}`) void markAllMentionsRead();
       }, 0);
@@ -268,31 +361,55 @@ export default function CircleChatPage() {
     }
   }
 
+  async function locateMessage(messageId: string) {
+    let loadedMessages = messages;
+    let cursor = nextCursor;
+    let more = hasMore;
+    while (!loadedMessages.some((message) => message.id === messageId) && more && cursor) {
+      const page = await api<MessagePage>(
+        `/api/circles/${circleId}/messages?limit=100&before=${encodeURIComponent(cursor)}`,
+        { bypassCache: true, dedupe: false }
+      );
+      loadedMessages = [...page.messages, ...loadedMessages];
+      cursor = page.nextCursor;
+      more = page.hasMore;
+    }
+    if (!loadedMessages.some((message) => message.id === messageId)) {
+      showToast("未找到被回复的原消息");
+      return false;
+    }
+    setMessages(loadedMessages);
+    setNextCursor(cursor);
+    setHasMore(more);
+    followBottomRef.current = false;
+    if (highlightTimerRef.current != null) window.clearTimeout(highlightTimerRef.current);
+    setHighlightedMessageId(messageId);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      document.getElementById(`circle-message-${messageId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
+    highlightTimerRef.current = window.setTimeout(() => setHighlightedMessageId(""), 1800);
+    return true;
+  }
+
   async function openMention(target: UnreadMention) {
     if (navigatingMention) return;
     setNavigatingMention(true);
     try {
-      let loadedMessages = messages;
-      let cursor = nextCursor;
-      let more = hasMore;
-      while (!loadedMessages.some((message) => message.id === target.id) && more && cursor) {
-        const page = await api<MessagePage>(
-          `/api/circles/${circleId}/messages?limit=100&before=${encodeURIComponent(cursor)}`,
-          { bypassCache: true, dedupe: false }
-        );
-        loadedMessages = [...page.messages, ...loadedMessages];
-        cursor = page.nextCursor;
-        more = page.hasMore;
-      }
-      setMessages(loadedMessages);
-      setNextCursor(cursor);
-      setHasMore(more);
-      followBottomRef.current = false;
-      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-        document.getElementById(`circle-message-${target.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }));
+      await locateMessage(target.id);
       await api(`/api/circles/${circleId}/mentions/${target.id}/read`, { method: "PATCH" });
       setUnreadMentions((current) => current.filter((mention) => mention.id !== target.id));
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setNavigatingMention(false);
+    }
+  }
+
+  async function openReplyTarget(messageId: string) {
+    if (navigatingMention) return;
+    setNavigatingMention(true);
+    try {
+      await locateMessage(messageId);
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -306,6 +423,24 @@ export default function CircleChatPage() {
     await openMention(target);
   }
 
+  function mentionMember(member: Pick<CircleMember, "id" | "nickname">) {
+    if (member.id === user?.id) return;
+    setStickersOpen(false);
+    setMentionRequest({ userId: member.id, nickname: member.nickname, key: Date.now() });
+    showToast(`已@${member.nickname}`);
+  }
+
+  function openMemberProfile(member: Pick<CircleMember, "id">) {
+    navigate(member.id === user?.id ? "/mine" : `/users/${member.id}`, {
+      state: member.id === user?.id ? undefined : { circleId }
+    });
+  }
+
+  function beginReply(message: CircleMessage) {
+    setStickersOpen(false);
+    setReplyingTo(message);
+  }
+
   async function sendText(value: string, mentionedUserIds: string[]) {
     const content = value.trim();
     if (!content || sending) return false;
@@ -314,9 +449,10 @@ export default function CircleChatPage() {
       followBottomRef.current = true;
       const data = await api<SendResponse>(`/api/circles/${circleId}/messages`, {
         method: "POST",
-        body: { content, mentionedUserIds }
+        body: { content, mentionedUserIds, replyToMessageId: replyingTo?.id }
       });
       setMessages((current) => current.some((item) => item.id === data.message.id) ? current : [...current, data.message]);
+      setReplyingTo(null);
       void markRead();
       return true;
     } catch (error) {
@@ -333,8 +469,12 @@ export default function CircleChatPage() {
     setStickersOpen(false);
     try {
       followBottomRef.current = true;
-      const data = await api<SendResponse>(`/api/circles/${circleId}/messages`, { method: "POST", body: { stickerId: sticker.id } });
+      const data = await api<SendResponse>(`/api/circles/${circleId}/messages`, {
+        method: "POST",
+        body: { stickerId: sticker.id, replyToMessageId: replyingTo?.id }
+      });
       setMessages((current) => current.some((item) => item.id === data.message.id) ? current : [...current, data.message]);
+      setReplyingTo(null);
       void markRead();
     } catch (error) {
       showToast((error as Error).message);
@@ -407,20 +547,24 @@ export default function CircleChatPage() {
             const senderName = message.sender?.nickname ?? "已注销用户";
             const sticker = message.stickerId ? stickersById.get(message.stickerId) : null;
             return (
-              <div id={`circle-message-${message.id}`} key={message.id} className={`flex scroll-mt-24 items-start gap-2.5 ${mine ? "flex-row-reverse" : ""}`}>
+              <div
+                id={`circle-message-${message.id}`}
+                key={message.id}
+                className={`flex scroll-mt-24 items-start gap-2.5 rounded-2xl outline-offset-4 transition-[outline-color,background-color] ${
+                  mine ? "flex-row-reverse" : ""
+                } ${highlightedMessageId === message.id ? "bg-blue-100/70 outline outline-2 outline-blue-300" : "outline-transparent"}`}
+              >
                 <MentionableAvatarButton
                   canMention={Boolean(message.sender && message.sender.id !== user?.id)}
                   onMention={() => {
                     if (!message.sender) return;
-                    setMentionRequest({ userId: message.sender.id, nickname: message.sender.nickname, key: Date.now() });
-                    showToast(`已@${message.sender.nickname}`);
+                    mentionMember(message.sender);
                   }}
                   onOpen={() => {
                     if (!message.sender) return;
-                    navigate(message.sender.id === user?.id ? "/mine" : `/users/${message.sender.id}`, {
-                      state: message.sender.id === user?.id ? undefined : { circleId }
-                    });
+                    openMemberProfile(message.sender);
                   }}
+                  ariaLabel={message.sender && message.sender.id !== user?.id ? `查看${senderName}的主页，长按@他` : `查看${senderName}的主页`}
                 >
                   <Avatar avatar={message.sender?.avatar ?? null} nickname={senderName} online={Boolean(message.sender?.isOnline)} />
                 </MentionableAvatarButton>
@@ -430,19 +574,34 @@ export default function CircleChatPage() {
                     {message.sender && <LevelBadge level={message.sender.level} />}
                     <EquippedBadgeIcon badge={message.sender?.equippedBadge} className="h-4 w-4" animated={false} />
                   </div>
-                  {message.type === "room_invite" && message.roomInvite ? (
-                    <OnlineSoupRoomInviteCard invite={message.roomInvite} />
-                  ) : message.type === "soup_share" && message.soupShare ? (
-                    <SoupShareCard soup={message.soupShare} />
-                  ) : message.type === "sticker" ? (
-                    sticker
-                      ? <img className="h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
-                      : <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-muted">表情已下架</span>
-                  ) : (
-                    <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${mine ? "rounded-br-md bg-primary text-white" : "rounded-bl-md bg-white text-ink shadow-sm"}`}>
-                      <p className="whitespace-pre-wrap break-words"><CircleMessageText message={message} currentUserId={user?.id ?? ""} /></p>
-                    </div>
-                  )}
+                  <ReplyableMessageBubble
+                    wide={message.type === "soup_share" || message.type === "room_invite"}
+                    onReply={() => beginReply(message)}
+                  >
+                    {message.type === "room_invite" && message.roomInvite ? (
+                      <div>
+                        <OnlineSoupRoomInviteCard invite={message.roomInvite} />
+                        {message.replyTo && <ReplyQuote reply={message.replyTo} mine={false} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
+                      </div>
+                    ) : message.type === "soup_share" && message.soupShare ? (
+                      <div>
+                        <SoupShareCard soup={message.soupShare} />
+                        {message.replyTo && <ReplyQuote reply={message.replyTo} mine={false} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
+                      </div>
+                    ) : message.type === "sticker" ? (
+                      <div className={mine ? "text-right" : "text-left"}>
+                        {sticker
+                          ? <img className="inline-block h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
+                          : <span className="inline-block rounded-xl bg-slate-100 px-3 py-2 text-sm text-muted">表情已下架</span>}
+                        {message.replyTo && <ReplyQuote reply={message.replyTo} mine={false} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
+                      </div>
+                    ) : (
+                      <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${mine ? "rounded-br-md bg-primary text-white" : "rounded-bl-md bg-white text-ink shadow-sm"}`}>
+                        <p className="whitespace-pre-wrap break-words"><CircleMessageText message={message} currentUserId={user?.id ?? ""} /></p>
+                        {message.replyTo && <ReplyQuote reply={message.replyTo} mine={mine} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
+                      </div>
+                    )}
+                  </ReplyableMessageBubble>
                   <span className="mt-1 px-1 text-[10px] text-muted">{new Date(message.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
                 </div>
               </div>
@@ -469,9 +628,11 @@ export default function CircleChatPage() {
           members={state.members}
           currentUserId={user?.id ?? ""}
           mentionRequest={mentionRequest}
+          replyTo={replyingTo}
           sending={sending}
           stickersOpen={stickersOpen}
           onToggleStickers={() => setStickersOpen((value) => !value)}
+          onCancelReply={() => setReplyingTo(null)}
           onSend={sendText}
         />
         {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="shrink-0 border-t border-line px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3" />}
@@ -481,17 +642,23 @@ export default function CircleChatPage() {
             <div className="flex items-center justify-between border-b border-line px-5 py-4"><div><h2 className="font-black text-ink">圈子成员</h2><p className="mt-0.5 text-xs text-muted">{state.circle.onlineCount} 人当前在线</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-muted">{state.circle.memberCount}</span></div>
             <div className="min-h-0 flex-1 divide-y divide-line overflow-y-auto px-3">
               {[...state.members].sort((a, b) => Number(b.isOnline) - Number(a.isOnline)).map((member) => (
-                <button
-                  key={member.id}
-                  className="flex w-full items-center gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50"
-                  onClick={() => navigate(member.id === user?.id ? "/mine" : `/users/${member.id}`, { state: member.id === user?.id ? undefined : { circleId } })}
-                >
-                  <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
-                  <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} /></span><span className={`mt-1 block text-xs ${member.isOnline ? "font-bold text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
-                </button>
+                <div key={member.id} className="flex w-full items-center gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50">
+                  <MentionableAvatarButton
+                    canMention={member.id !== user?.id}
+                    onMention={() => mentionMember(member)}
+                    onOpen={() => openMemberProfile(member)}
+                    ariaLabel={member.id !== user?.id ? `查看${member.nickname}的主页，长按@他` : "查看我的主页"}
+                  >
+                    <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
+                  </MentionableAvatarButton>
+                  <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openMemberProfile(member)}>
+                    <span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} /></span>
+                    <span className={`mt-1 block text-xs ${member.isOnline ? "font-bold text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span>
+                  </button>
+                </div>
               ))}
             </div>
-            <div className="border-t border-line bg-slate-50/70 px-5 py-3 text-xs leading-5 text-muted">长按消息头像可快速 @ 对方，点击头像可查看个人主页。</div>
+            <div className="border-t border-line bg-slate-50/70 px-5 py-3 text-xs leading-5 text-muted">长按头像可快速 @ 对方；长按或右键聊天气泡可回复消息。</div>
           </aside>
         </div>
       </div>
@@ -528,13 +695,15 @@ function activeMentionAt(content: string, cursor: number) {
   return { start: atIndex, end: cursor, query };
 }
 
-function Composer({ members, currentUserId, mentionRequest, sending, stickersOpen, onToggleStickers, onSend }: {
+function Composer({ members, currentUserId, mentionRequest, replyTo, sending, stickersOpen, onToggleStickers, onCancelReply, onSend }: {
   members: CircleMember[];
   currentUserId: string;
   mentionRequest: MentionRequest | null;
+  replyTo: CircleMessage | null;
   sending: boolean;
   stickersOpen: boolean;
   onToggleStickers: () => void;
+  onCancelReply: () => void;
   onSend: (value: string, mentionedUserIds: string[]) => Promise<boolean>;
 }) {
   const [content, setContent] = useState("");
@@ -567,6 +736,11 @@ function Composer({ members, currentUserId, mentionRequest, sending, stickersOpe
       inputRef.current?.setSelectionRange(nextCursor, nextCursor);
     });
   }, [mentionRequest?.key]);
+
+  useEffect(() => {
+    if (!replyTo) return;
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }, [replyTo?.id]);
 
   function chooseMention(member: CircleMember) {
     if (!activeMention) return;
@@ -621,6 +795,23 @@ function Composer({ members, currentUserId, mentionRequest, sending, stickersOpe
               </button>
             ))}
           </div>
+        </div>
+      )}
+      {replyTo && (
+        <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-2">
+          <Reply size={16} className="shrink-0 text-primary" />
+          <p className="min-w-0 flex-1 truncate text-xs text-muted">
+            <span className="font-bold text-primary">回复 {replyTo.sender?.nickname ?? "已注销用户"}：</span>
+            {messagePreview(replyTo)}
+          </p>
+          <button
+            type="button"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-white hover:text-ink"
+            onClick={onCancelReply}
+            aria-label="取消回复"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
       <div className="mx-auto flex max-w-3xl items-end gap-2">

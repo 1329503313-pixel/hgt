@@ -35,13 +35,16 @@ npm run check:images -w apps/web
 ### 构建与启动
 
 ```bash
-# 1. 构建镜像并启动
-docker compose up -d --build
+# 1. 使用服务器上的持久化环境文件校验配置
+docker compose --env-file /opt/hgt/.env config --quiet
 
-# 2. 查看日志
+# 2. 构建镜像并启动
+docker compose --env-file /opt/hgt/.env up -d --build
+
+# 3. 查看日志
 docker compose logs -f
 
-# 3. 查看服务状态
+# 4. 查看服务状态
 docker compose ps
 ```
 
@@ -55,7 +58,13 @@ docker compose ps
 | `ADMIN_DEFAULT_PASSWORD` | 管理员初始密码 |
 | `DB_PASSWORD` | MySQL 密码 |
 | `WEB_ORIGIN` | 前端域名（替换为实际域名） |
+| `PUBLIC_SITE_URL` | SEO canonical、robots 和 sitemap 使用的正式站点地址，例如 `https://hgt.caqis.com/` |
 | `RUN_DB_MIGRATIONS` | 启动时自动补齐表和索引，默认 `true`；多实例部署时可先单独执行迁移再设为 `false` |
+
+生产部署必须始终通过同一个服务器绝对路径环境文件启动。不要用手写的
+`docker run -e ...` 重建应用容器；手写变量清单容易在新增配置后漏传变量。
+Compose 和服务端都会拒绝在邮件必填配置缺失时启动，避免容器表面健康、
+实际到绑定邮箱时才返回 503。
 
 ### 安全部署数据库迁移
 
@@ -84,3 +93,17 @@ docker compose up -d --build
 服务启动后访问 `http://<服务器IP>:4000`。
 
 如果要配置 HTTPS + 域名，在服务器前面加 Nginx 或 Caddy 反向代理。
+
+### 邮箱验证与找回密码
+
+账号设置支持绑定、换绑和解绑邮箱；登录页支持通过已验证邮箱找回密码。生产环境需配置：
+
+- `EMAIL_VERIFICATION_SECRET`：独立的随机密钥，建议使用 `openssl rand -hex 32` 生成。
+- `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURE`：SMTP 服务地址与连接方式。
+- `SMTP_USER`、`SMTP_PASSWORD`：SMTP 账号和授权码。
+- `SMTP_FROM`：发件人，例如 `汤汤解谜乐园 <no-reply@hgt.caqis.com>`。
+- `SMTP_REPLY_TO`：可选回复地址。
+- `PUBLIC_SITE_URL`：公开站点地址，用于生成密码重置链接。
+
+发件域名应按邮件服务商说明配置 SPF、DKIM 和 DMARC。开发环境未配置 SMTP 时，邮箱入口会显示服务尚未开放，后端不会向日志或接口回传验证码。
+生产环境中 `SMTP_HOST`、`SMTP_USER`、`SMTP_PASSWORD` 和 `SMTP_FROM` 均为启动必填项；部署前的 `docker compose config --quiet` 会检查它们，服务端启动时会再次校验。

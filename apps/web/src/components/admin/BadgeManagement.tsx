@@ -5,7 +5,7 @@ import { useApp } from "../../context/AppContext";
 import { BADGES, getBadgeKey, TIER_COLORS_EARNED, TIER_LABEL, type BadgeDef } from "../../pages/MyAchievementsPage";
 import { ActivityBadgeCondition, LegendaryBadge, LegendaryBadgeIcon, LegendaryBadgeTile, activityConditionText } from "../BadgeVisuals";
 import { Modal } from "../Modal";
-import { AdminPageSize, AdminPagination } from "./AdminPagination";
+import { AdminPageSize, AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { CardSkeleton, ListSkeleton } from "../Skeletons";
 import { ActivityConditionsEditor } from "./ActivityConditionsEditor";
 
@@ -106,6 +106,10 @@ export function BadgeManagement() {
   }, [legendaryBadges, userDetail]);
   const activityBadges = legendaryBadges.filter((badge) => badge.badgeType === "activity");
   const limitedBadges = legendaryBadges.filter((badge) => badge.badgeType === "limited");
+  const activityBadgePagination = useAdminPagination(activityBadges.length);
+  const limitedBadgePagination = useAdminPagination(limitedBadges.length);
+  const visibleActivityBadges = paginateAdminItems(activityBadges, activityBadgePagination);
+  const visibleLimitedBadges = paginateAdminItems(limitedBadges, limitedBadgePagination);
   const grantableLimitedBadges = grantableBadges.filter((badge) => badge.badgeType === "limited");
   const ownedActivityBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "activity");
   const ownedLimitedBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "limited");
@@ -232,7 +236,7 @@ export function BadgeManagement() {
             <div>
               <h3 className="mb-3 text-sm font-black text-ink">活动徽章</h3>
               <div className="space-y-2">
-                {activityBadges.map((badge) => (
+                {visibleActivityBadges.map((badge) => (
                   <div key={badge.id} className="flex flex-col gap-4 rounded-xl border border-line p-4 sm:flex-row sm:items-center">
                     <LegendaryBadgeIcon badge={badge} className="h-20 w-20" />
                     <div className="min-w-0 flex-1">
@@ -248,12 +252,13 @@ export function BadgeManagement() {
                   </div>
                 ))}
                 {activityBadges.length === 0 && <p className="rounded-xl border border-dashed border-line py-8 text-center text-sm text-muted">暂无活动徽章</p>}
+                {activityBadges.length > 0 && <AdminPagination {...activityBadgePagination} />}
               </div>
             </div>
             <div>
               <h3 className="mb-3 text-sm font-black text-ink">限定徽章</h3>
               <div className="space-y-2">
-                {limitedBadges.map((badge) => (
+                {visibleLimitedBadges.map((badge) => (
                   <div key={badge.id} className="flex flex-col gap-4 rounded-xl border border-line p-4 sm:flex-row sm:items-center">
                     <LegendaryBadgeIcon badge={badge} className="h-20 w-20" />
                     <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h4 className="font-black text-ink">{badge.name}</h4><span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-black text-violet-600">限定</span></div><p className="mt-1 text-sm text-muted">{badge.description}</p>{badge.requirement && <p className="mt-2 text-xs text-muted">获取条件：{badge.requirement}</p>}</div>
@@ -261,6 +266,7 @@ export function BadgeManagement() {
                   </div>
                 ))}
                 {limitedBadges.length === 0 && <p className="rounded-xl border border-dashed border-line py-8 text-center text-sm text-muted">暂无限定徽章</p>}
+                {limitedBadges.length > 0 && <AdminPagination {...limitedBadgePagination} />}
               </div>
             </div>
           </div>

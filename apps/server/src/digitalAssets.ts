@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { z } from "zod";
 import { pool } from "./db.js";
-import { beijingTaskDate } from "./shellCurrency.js";
+import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCurrency.js";
 
 type RouteUser = { id: string; role: "admin" | "user" | string };
 type RouteDependencies = {
@@ -829,6 +829,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (!parsed.success) return sendError(res, 400, "抽卡请求无效");
     try {
       const order = await performDraw(user.id, req.params.id, parsed.data.mode, parsed.data.requestId);
+      await syncBeginnerTasks(user.id);
       onBadgeProgress?.(user.id);
       res.json({ order });
     } catch (error) {
@@ -970,6 +971,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         [background, parsed.data.cardId, crop.x, crop.y, crop.zoom, user.id]
       );
       const [[updated]] = await pool.query<mysql.RowDataPacket[]>("SELECT profile_background_updated_at FROM users WHERE id = ? LIMIT 1", [user.id]);
+      await awardBeginnerTask(user.id, "change_profile_background");
       res.json({
         profileBackgroundUrl: `/api/media/users/${encodeURIComponent(user.id)}/profile-background?v=${new Date(updated.profile_background_updated_at).getTime()}`
       });

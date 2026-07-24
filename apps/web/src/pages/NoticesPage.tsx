@@ -40,7 +40,7 @@ export default function NoticesPage() {
   const activeNotices = notices.filter((notice) => !notice.expiresAt || new Date(notice.expiresAt).getTime() > clock);
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
+    <section className="min-h-screen bg-page">
       <PageTopBar title="通知" backTo="/messages" />
       <div className="mx-auto max-w-4xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">

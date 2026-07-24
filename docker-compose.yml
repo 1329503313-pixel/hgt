@@ -1,6 +1,7 @@
 services:
   hgt:
     build: .
+    image: hgt:latest
     container_name: hgt-app
     restart: unless-stopped
     ports:
@@ -9,6 +10,8 @@ services:
       - NODE_ENV=production
       - PORT=4000
       - WEB_ORIGIN=${WEB_ORIGIN:?WEB_ORIGIN must be set}
+      - PUBLIC_SITE_URL=${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be set}
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:?ADMIN_DEFAULT_PASSWORD must be set}
@@ -18,6 +21,14 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set}
       - DB_NAME=hgt
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - EMAIL_VERIFICATION_SECRET=${EMAIL_VERIFICATION_SECRET:?EMAIL_VERIFICATION_SECRET must be set}
+      - SMTP_HOST=${SMTP_HOST:?SMTP_HOST must be set}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_SECURE=${SMTP_SECURE:-true}
+      - SMTP_USER=${SMTP_USER:?SMTP_USER must be set}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD must be set}
+      - SMTP_FROM=${SMTP_FROM:?SMTP_FROM must be set}
+      - SMTP_REPLY_TO=${SMTP_REPLY_TO:-}
       - RUN_DB_MIGRATIONS=${RUN_DB_MIGRATIONS:-true}
     networks:
       - mysql-docker_default

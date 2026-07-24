@@ -6,6 +6,9 @@ import { IncomingMessageBanner } from "./components/IncomingMessageBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import MainLayout from "./layouts/MainLayout";
 import ContentNavLayout from "./layouts/ContentNavLayout";
+import { SeoManager } from "./components/SeoManager";
+import { RouteScrollManager } from "./components/RouteScrollManager";
+import { SiteFooter } from "./components/SiteFooter";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const DetailPage = lazy(() => import("./pages/DetailPage"));
@@ -33,13 +36,16 @@ const AdminPage = lazy(() => import("./pages/AdminPage"));
 const UserProfilePage = lazy(() => import("./pages/UserProfilePage"));
 const UserFollowsPage = lazy(() => import("./pages/UserFollowsPage"));
 const AccountSettingsPage = lazy(() => import("./pages/AccountSettingsPage"));
+const MyInvitationsPage = lazy(() => import("./pages/MyInvitationsPage"));
 const OnlineSoupLobbyPage = lazy(() => import("./pages/OnlineSoupLobbyPage"));
 const OnlineSoupRoomPage = lazy(() => import("./pages/OnlineSoupRoomPage"));
 const OnlineSoupSelectPage = lazy(() => import("./pages/OnlineSoupSelectPage"));
 const CirclesPage = lazy(() => import("./pages/CirclesPage"));
 const CircleChatPage = lazy(() => import("./pages/CircleChatPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
+const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage"));
 const ProfileBackgroundsPage = lazy(() => import("./pages/ProfileBackgroundsPage"));
+const SiteContentPage = lazy(() => import("./pages/SiteContentPage"));
 const AchievementUnlockOverlay = lazy(() => import("./components/AchievementUnlockOverlay").then((module) => ({ default: module.AchievementUnlockOverlay })));
 const AuthModal = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.AuthModal })));
 const ExportPreview = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.ExportPreview })));
@@ -55,6 +61,8 @@ export default function App() {
 
   return (
     <div className="app-shell min-h-screen bg-page">
+      <RouteScrollManager />
+      <SeoManager />
       <ErrorBoundary>
         <Suspense fallback={<RouteFallback />}>
         <Routes>
@@ -75,8 +83,11 @@ export default function App() {
           <Route path="mine/cards" element={<CardCabinetPage />} />
           <Route path="mine/asset-draw-history" element={<AssetDrawHistoryPage />} />
           <Route path="mine/settings" element={<AccountSettingsPage />} />
+          <Route path="mine/settings/invitations" element={<MyInvitationsPage />} />
           <Route path="mine/settings/password" element={<ResetPasswordPage />} />
           <Route path="mine/settings/backgrounds" element={<ProfileBackgroundsPage />} />
+          <Route path="forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="reset-password" element={<ForgotPasswordPage />} />
           <Route path="online-soup" element={<OnlineSoupLobbyPage />} />
           <Route path="circles" element={<CirclesPage />} />
           <Route path="mine/store/:packId" element={<AssetPackPage />} />
@@ -105,10 +116,12 @@ export default function App() {
         {/* Focused chat / admin routes */}
         <Route path="messages/chat/:id" element={<ChatPage />} />
         <Route path="admin" element={<AdminPage />} />
+        <Route path="site/:slug" element={<SiteContentPage />} />
       </Routes>
         </Suspense>
       </ErrorBoundary>
 
+      <SiteFooter />
       <IncomingMessageBanner />
 
       {/* Global toast */}

@@ -3,20 +3,26 @@ import {
   Bot,
   BookmarkCheck,
   CalendarCheck2,
+  Camera,
   CheckCircle2,
   ChevronRight,
   CircleGauge,
   Crown,
+  Dices,
   Gift,
   Heart,
   HeartHandshake,
   ListChecks,
+  MailCheck,
+  Medal,
   MessageSquareHeart,
   MessageCircleMore,
+  UserRoundCheck,
   Shell,
   Sparkles,
   Star,
   Trophy,
+  Wallpaper,
   UsersRound,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -29,14 +35,16 @@ import { ListSkeleton } from "../components/Skeletons";
 import { LevelBadge } from "../components/LevelBadge";
 import { useApp } from "../context/AppContext";
 import { useShellBalance } from "../shared/useShellBalance";
-import type { ShellTask, ShellTaskCenter } from "../shared/types";
+import type { BeginnerTask, ShellTask, ShellTaskCenter } from "../shared/types";
 
 type TaskVisual = {
   icon: ComponentType<{ size?: number; className?: string }>;
   color: string;
 };
 
-const TASK_VISUALS: Record<ShellTask["type"], TaskVisual> = {
+type DisplayTask = ShellTask | BeginnerTask;
+
+const TASK_VISUALS: Record<DisplayTask["type"], TaskVisual> = {
   daily_login: { icon: CalendarCheck2, color: "bg-sky-50 text-sky-600" },
   publish_soup: { icon: BookOpenCheck, color: "bg-indigo-50 text-indigo-600" },
   like_soup: { icon: Heart, color: "bg-rose-50 text-rose-500" },
@@ -50,9 +58,20 @@ const TASK_VISUALS: Record<ShellTask["type"], TaskVisual> = {
   receive_soup_evaluation: { icon: MessageSquareHeart, color: "bg-purple-50 text-purple-600" },
   soup_ai_played: { icon: Bot, color: "bg-blue-50 text-blue-600" },
   soup_online_completed: { icon: Trophy, color: "bg-emerald-50 text-emerald-600" },
+  upload_avatar: { icon: Camera, color: "bg-cyan-50 text-cyan-600" },
+  complete_ten_draws: { icon: Dices, color: "bg-indigo-50 text-indigo-600" },
+  equip_badge: { icon: Medal, color: "bg-amber-50 text-amber-600" },
+  bind_email: { icon: MailCheck, color: "bg-emerald-50 text-emerald-600" },
+  change_profile_background: { icon: Wallpaper, color: "bg-fuchsia-50 text-fuchsia-600" },
+  invite_verified_email: { icon: UserRoundCheck, color: "bg-teal-50 text-teal-600" },
+  invite_shell_milestone: { icon: Gift, color: "bg-orange-50 text-orange-600" },
 };
 
-function TaskIcon({ task, size = 21 }: { task: ShellTask; size?: number }) {
+function taskTarget(task: DisplayTask) {
+  return "dailyLimit" in task ? task.dailyLimit : task.target;
+}
+
+function TaskIcon({ task, size = 21 }: { task: DisplayTask; size?: number }) {
   const visual = TASK_VISUALS[task.type];
   const Icon = task.completed ? CheckCircle2 : visual.icon;
   return (
@@ -65,8 +84,11 @@ function TaskIcon({ task, size = 21 }: { task: ShellTask; size?: number }) {
   );
 }
 
-function ProgressBar({ task }: { task: ShellTask }) {
-  const progress = Math.min(100, (task.progress / task.dailyLimit) * 100);
+function ProgressBar({ task }: { task: DisplayTask }) {
+  if ("repeatable" in task && task.repeatable) {
+    return <p className="text-xs font-bold text-primary">不限次数 · 已完成 {task.completedCount ?? 0} 次</p>;
+  }
+  const progress = Math.min(100, (task.progress / taskTarget(task)) * 100);
   return (
     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
       <div
@@ -81,6 +103,7 @@ export default function ShellTaskCenterPage() {
   const navigate = useNavigate();
   const { user, loadingUser, openAuth, showToast } = useApp();
   const [data, setData] = useState<ShellTaskCenter | null>(null);
+  const [activeTab, setActiveTab] = useState<"daily" | "beginner">("daily");
   const [loading, setLoading] = useState(true);
   const liveShellBalance = useShellBalance(user?.id);
 
@@ -115,6 +138,7 @@ export default function ShellTaskCenterPage() {
 
   const percentage = Math.min(100, Math.round((data.earnedToday / data.dailyLimit) * 100));
   const completedCount = data.tasks.filter((task) => task.completed).length;
+  const visibleTasks: DisplayTask[] = activeTab === "daily" ? data.tasks : data.beginnerTasks;
   const goToTransactions = () => navigate("/mine/shells/transactions", { state: { shellReturnTo: "/mine/tasks" } });
 
   return (
@@ -162,14 +186,43 @@ export default function ShellTaskCenterPage() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-line px-4 py-3.5 lg:px-6 lg:py-5">
-          <ListChecks size={20} className="text-primary" />
-          <div><h2 className="font-black text-ink lg:text-lg">每日任务</h2><p className="mt-0.5 hidden text-xs text-muted lg:block">完成后自动获得同等经验；经验不受每日贝壳获取上限影响，无需手动领取</p></div>
-          <span className="ml-auto text-xs text-muted">北京时间 00:00 重置</span>
+        <div className="border-b border-line px-4 pt-3.5 lg:px-6 lg:pt-5">
+          <div className="flex items-center gap-2">
+            <ListChecks size={20} className="text-primary" />
+            <div>
+              <h2 className="font-black text-ink lg:text-lg">任务列表</h2>
+              <p className="mt-0.5 hidden text-xs text-muted lg:block">
+                {activeTab === "daily"
+                  ? "完成后自动获得同等经验；经验不受每日贝壳获取上限影响，无需手动领取"
+                  : "基础新手任务完成一次；邀请任务不限次数，奖励不占每日贝壳上限"}
+              </p>
+            </div>
+            <span className="ml-auto text-xs text-muted">{activeTab === "daily" ? "北京时间 00:00 重置" : "基础任务一次 · 邀请任务不限次"}</span>
+          </div>
+          <div className="mt-4 flex gap-1" role="tablist" aria-label="任务类型">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "daily"}
+              className={`rounded-t-xl px-4 py-2.5 text-sm font-black transition ${activeTab === "daily" ? "bg-blue-50 text-primary" : "text-muted hover:bg-slate-50 hover:text-ink"}`}
+              onClick={() => setActiveTab("daily")}
+            >
+              每日任务
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "beginner"}
+              className={`rounded-t-xl px-4 py-2.5 text-sm font-black transition ${activeTab === "beginner" ? "bg-blue-50 text-primary" : "text-muted hover:bg-slate-50 hover:text-ink"}`}
+              onClick={() => setActiveTab("beginner")}
+            >
+              新手任务
+            </button>
+          </div>
         </div>
 
         <div className="divide-y divide-line lg:hidden">
-          {data.tasks.map((task) => (
+          {visibleTasks.map((task) => (
             <article key={task.type} className="flex items-center gap-3 p-4">
               <TaskIcon task={task} />
               <div className="min-w-0 flex-1">
@@ -177,17 +230,21 @@ export default function ShellTaskCenterPage() {
                 <p className="mt-1 text-xs text-muted">{task.description}</p>
                 <div className="mt-2"><ProgressBar task={task} /></div>
               </div>
-              <div className="shrink-0 text-right"><p className="text-sm font-black text-ink">{task.progress}/{task.dailyLimit}</p><p className="mt-1 text-[11px] text-muted">实得 {task.actualReward} 贝壳</p><p className="text-[11px] text-violet-600">+{task.actualExperience} EXP</p></div>
+              <div className="shrink-0 text-right"><p className="text-sm font-black text-ink">{"repeatable" in task && task.repeatable ? `${task.completedCount ?? 0} 次` : `${task.progress}/${taskTarget(task)}`}</p><p className="mt-1 text-[11px] text-muted">实得 {task.actualReward} 贝壳</p><p className="text-[11px] text-violet-600">+{task.actualExperience} EXP</p></div>
             </article>
           ))}
         </div>
 
         <div className="hidden lg:block">
           <div className="grid grid-cols-[minmax(300px,1.7fr)_0.9fr_minmax(220px,1fr)_0.8fr_0.6fr] items-center gap-5 border-b border-line bg-slate-50/70 px-6 py-3 text-xs font-bold text-muted">
-            <span>任务内容</span><span>单次奖励</span><span>今日进度</span><span>今日实得</span><span className="text-right">状态</span>
+            <span>任务内容</span>
+            <span>单次奖励</span>
+            <span>{activeTab === "daily" ? "今日进度" : "进度"}</span>
+            <span>{activeTab === "daily" ? "今日实得" : "实得"}</span>
+            <span className="text-right">状态</span>
           </div>
           <div className="divide-y divide-line">
-            {data.tasks.map((task) => (
+            {visibleTasks.map((task) => (
               <article key={task.type} className="grid grid-cols-[minmax(300px,1.7fr)_0.9fr_minmax(220px,1fr)_0.8fr_0.6fr] items-center gap-5 px-6 py-4 transition hover:bg-slate-50/60">
                 <div className="flex min-w-0 items-center gap-3.5">
                   <TaskIcon task={task} size={20} />
@@ -195,12 +252,12 @@ export default function ShellTaskCenterPage() {
                 </div>
                 <span className="font-black text-amber-700">+{task.reward} <span className="text-xs font-bold text-muted">贝壳</span><span className="mt-1 block text-violet-700">+{task.experienceReward} <span className="text-xs text-muted">EXP</span></span></span>
                 <div>
-                  <div className="mb-2 flex items-center justify-between text-xs"><span className="font-bold text-ink">{task.progress} / {task.dailyLimit}</span><span className="text-muted">{Math.min(100, Math.round((task.progress / task.dailyLimit) * 100))}%</span></div>
+                  {!("repeatable" in task && task.repeatable) && <div className="mb-2 flex items-center justify-between text-xs"><span className="font-bold text-ink">{task.progress} / {taskTarget(task)}</span><span className="text-muted">{Math.min(100, Math.round((task.progress / taskTarget(task)) * 100))}%</span></div>}
                   <ProgressBar task={task} />
                 </div>
                 <span className="font-black text-ink">{task.actualReward} <span className="text-xs font-bold text-muted">贝壳</span><span className="mt-1 block text-violet-700">{task.actualExperience} <span className="text-xs text-muted">EXP</span></span></span>
                 <div className="text-right">
-                  <span className={`inline-flex rounded-full px-3 py-1.5 text-xs font-black ${task.completed ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>{task.completed ? "已完成" : "进行中"}</span>
+                  <span className={`inline-flex rounded-full px-3 py-1.5 text-xs font-black ${"repeatable" in task && task.repeatable ? "bg-orange-50 text-orange-700" : task.completed ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>{"repeatable" in task && task.repeatable ? "不限次" : task.completed ? "已完成" : "进行中"}</span>
                 </div>
               </article>
             ))}

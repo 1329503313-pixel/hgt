@@ -1,11 +1,13 @@
 import { FormEvent } from "react";
 import { X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Modal } from "./Modal";
 import { useApp } from "../context/AppContext";
 import { api, MeResponse } from "../api";
 
 export function AuthModal() {
-  const { authMode, closeAuth, switchAuthMode, authError, setAuthError, setUser, showToast, triggerRefresh } = useApp();
+  const { authMode, closeAuth, switchAuthMode, authError, setAuthError, setUser, triggerRefresh } = useApp();
+  const navigate = useNavigate();
 
   // authMode is already guaranteed not null by the parent calling this
 
@@ -18,7 +20,12 @@ export function AuthModal() {
       const data = await api<MeResponse>(path, { method: "POST", body: payload });
       const verified = await api<MeResponse>("/api/auth/me", { bypassCache: true, dedupe: false });
       if (!verified.user) throw new Error("登录状态未能保存，请刷新页面后重试");
-      setUser(verified.user ?? data.user);
+      if (!data.user || verified.user.id !== data.user.id) {
+        await api("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+        setUser(null);
+        throw new Error("登录账号校验不一致，旧会话已清除，请重新登录");
+      }
+      setUser(verified.user);
       setAuthError("");
       closeAuth();
       triggerRefresh();
@@ -37,6 +44,34 @@ export function AuthModal() {
         {authMode === "register" && <input className="field" name="nickname" placeholder="昵称（最多8字）" maxLength={8} required />}
         <input className="field" name="username" placeholder="账号" required />
         <input className="field" name="password" type="password" placeholder="密码" required />
+        {authMode === "register" && (
+          <div>
+            <input
+              className="field uppercase"
+              name="invitationCode"
+              placeholder="邀请码（选填，5位）"
+              maxLength={5}
+              autoComplete="off"
+              pattern="[A-Za-z0-9]{5}"
+              onInput={(event) => {
+                event.currentTarget.value = event.currentTarget.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+              }}
+            />
+            <p className="mt-1.5 text-xs text-muted">邀请码仅可在注册账号时填写，注册后不可补填或修改。</p>
+          </div>
+        )}
+        {authMode === "login" && (
+          <button
+            className="w-full text-right text-sm font-bold text-primary"
+            type="button"
+            onClick={() => {
+              closeAuth();
+              navigate("/forgot-password");
+            }}
+          >
+            忘记密码？
+          </button>
+        )}
         {authError && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-danger">{authError}</div>}
         <button className="btn btn-primary w-full">{authMode === "login" ? "登录" : "注册并登录"}</button>
         <button className="btn btn-secondary w-full" type="button" onClick={switchAuthMode}>

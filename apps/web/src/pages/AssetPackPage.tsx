@@ -54,13 +54,13 @@ export default function AssetPackPage() {
     finally { setDrawing(false); }
   }
 
-  if (loading || !data) return <section className="min-h-screen bg-page pt-[72px]"><PageTopBar title="卡包详情" backTo="/mine/store" /><div className="mx-auto max-w-6xl space-y-3 px-4"><ListSkeleton rows={6} /></div></section>;
+  if (loading || !data) return <section className="min-h-screen bg-page"><PageTopBar title="卡包详情" backTo="/mine/store" /><div className="mx-auto max-w-6xl space-y-3 px-4"><ListSkeleton rows={6} /></div></section>;
   const { pack } = data;
   const singleFree = pack.freeDrawsRemaining > 0;
   const modeCost = pendingMode === "ten" ? pack.tenPrice : singleFree ? 0 : pack.singlePrice;
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
+    <section className="min-h-screen bg-page">
       <PageTopBar title="卡包详情" backTo="/mine/store" />
       <div className="asset-pack-detail-layout mx-auto max-w-6xl space-y-4 px-4 pb-32 lg:space-y-0">
         <div className="overflow-hidden rounded-3xl bg-slate-950 text-white shadow-soft">

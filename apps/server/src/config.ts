@@ -27,6 +27,8 @@ export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: Number(process.env.PORT ?? 4000),
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
+  publicSiteUrl: process.env.PUBLIC_SITE_URL ?? process.env.WEB_ORIGIN ?? "http://localhost:5173",
+  cookieDomain: process.env.COOKIE_DOMAIN || undefined,
   cookieSecure: process.env.COOKIE_SECURE == null
     ? false
     : process.env.COOKIE_SECURE === "true" || process.env.COOKIE_SECURE === "1",
@@ -34,6 +36,22 @@ export const config = {
   adminDefaultPassword: process.env.ADMIN_DEFAULT_PASSWORD ?? "",
   runDatabaseMigrations: process.env.RUN_DB_MIGRATIONS !== "false",
   deepseekApiKey: readSecret("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_FILE"),
+  emailVerificationSecret:
+    readSecret("EMAIL_VERIFICATION_SECRET", "EMAIL_VERIFICATION_SECRET_FILE")
+    || process.env.JWT_SECRET
+    || process.env.SESSION_SECRET
+    || "dev-email-verification-secret-change-me",
+  smtp: {
+    host: process.env.SMTP_HOST ?? "",
+    port: Number(process.env.SMTP_PORT ?? 465),
+    secure: process.env.SMTP_SECURE == null
+      ? Number(process.env.SMTP_PORT ?? 465) === 465
+      : process.env.SMTP_SECURE === "true" || process.env.SMTP_SECURE === "1",
+    user: process.env.SMTP_USER ?? "",
+    password: readSecret("SMTP_PASSWORD", "SMTP_PASSWORD_FILE"),
+    from: process.env.SMTP_FROM ?? "",
+    replyTo: process.env.SMTP_REPLY_TO ?? ""
+  },
   db: {
     host: process.env.DB_HOST ?? "127.0.0.1",
     port: Number(process.env.DB_PORT ?? 3306),

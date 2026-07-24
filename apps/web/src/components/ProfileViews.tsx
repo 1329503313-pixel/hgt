@@ -52,13 +52,27 @@ export function ProfileHero({
   );
 }
 
-export function SoupCoverGrid({ soups, emptyHint, className = "" }: { soups: SoupSummary[]; emptyHint: string; className?: string }) {
+export function SoupCoverGrid({
+  soups,
+  emptyHint,
+  className = "",
+  returnTo
+}: {
+  soups: SoupSummary[];
+  emptyHint: string;
+  className?: string;
+  returnTo?: string;
+}) {
   const navigate = useNavigate();
   if (!soups.length) return <div className="py-16 text-center text-sm text-muted">{emptyHint}</div>;
   return (
     <div className={`grid grid-cols-2 gap-2 p-2 sm:gap-3 sm:p-3 ${className}`}>
       {soups.map((soup) => (
-        <button key={soup.id} className="group relative aspect-video overflow-hidden rounded-xl bg-slate-200 text-left" onClick={() => navigate(`/soup/${soup.id}`)}>
+        <button
+          key={soup.id}
+          className="group relative aspect-video overflow-hidden rounded-xl bg-slate-200 text-left"
+          onClick={() => navigate(`/soup/${soup.id}`, { state: returnTo ? { soupReturnTo: returnTo } : undefined })}
+        >
           <img
             className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
             src={soup.coverImage ?? defaultCoverUrl}

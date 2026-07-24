@@ -27,7 +27,8 @@ const router = Router();
 const HOST_ONLINE_SECONDS = 75;
 const HOST_OFFLINE_ROOM_EXPIRY_MINUTES = 30;
 const MESSAGE_PAGE_SIZE = 100;
-export const ONLINE_SOUP_PLAYER_CAPACITY = 8;
+export const ONLINE_SOUP_PARTICIPANT_CAPACITY = 11;
+export const ONLINE_SOUP_PLAYER_CAPACITY = ONLINE_SOUP_PARTICIPANT_CAPACITY - 1;
 const PLAYER_CAPACITY = ONLINE_SOUP_PLAYER_CAPACITY;
 const SPECTATOR_CAPACITY = 20;
 const answerValues = ["yes", "no", "both", "unknown", "irrelevant"] as const;
@@ -143,7 +144,7 @@ async function activeMember(roomId: string, userId: string, db: mysql.Pool | mys
 
 const lobbyChangingReasons = new Set([
   "room_created", "member_joined", "member_left", "room_closed",
-  "soup_selected", "round_started", "round_ended"
+  "member_kicked", "host_transferred", "soup_selected", "round_started", "round_ended"
 ]);
 
 function notifyLobby(reason: string) {
@@ -287,6 +288,7 @@ async function requireHost(req: any, res: any) {
 }
 
 function lobbyRoom(row: mysql.RowDataPacket) {
+  const playerCount = Number(row.player_count ?? 0);
   return {
     id: String(row.id),
     code: String(row.room_code),
@@ -295,7 +297,10 @@ function lobbyRoom(row: mysql.RowDataPacket) {
     status: String(row.status),
     host: { id: String(row.host_id), nickname: String(row.host_name) },
     soupTitle: row.soup_title ? String(row.soup_title) : null,
-    playerCount: Number(row.player_count ?? 0),
+    playerCount,
+    playerCapacity: PLAYER_CAPACITY,
+    participantCount: playerCount + 1,
+    participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY,
     hasPassword: row.room_type === "password",
     createdAt: iso(row.created_at)
   };
@@ -388,6 +393,8 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
     room: {
       id: String(room.id), code: String(room.room_code), name: String(room.name), type: String(room.room_type),
       status: String(room.status), hostOnline, playerCount: memberRows.filter((row) => row.member_role === "player").length,
+      playerCapacity: PLAYER_CAPACITY,
+      participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY,
       currentRoundId: room.current_round_id ? String(room.current_round_id) : null,
       soup: room.current_soup_id ? {
         id: String(room.current_soup_id), title: String(room.soup_title), type: String(room.soup_type),
@@ -488,6 +495,8 @@ router.get("/rooms/:roomId/invite-preview", async (req, res) => {
       playerCount: Number(counts.player_count ?? 0),
       spectatorCount: Number(counts.spectator_count ?? 0),
       playerCapacity: PLAYER_CAPACITY,
+      participantCount: Number(counts.player_count ?? 0) + 1,
+      participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY,
       spectatorCapacity: SPECTATOR_CAPACITY,
       hasPassword: room.room_type === "password"
     }
@@ -829,6 +838,125 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
   void notifyRoom(context.room.id, "member_left");
 });
 
+router.post("/rooms/:roomId/members/:userId/kick", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  if (req.params.userId === context.user.id) return fail(res, 400, "主持人不能将自己踢出房间");
+  const connection = await pool.getConnection();
+  let targetNickname = "";
+  try {
+    await connection.beginTransaction();
+    const [[room], [target]] = await Promise.all([
+      connection.query<mysql.RowDataPacket[]>(
+        "SELECT host_id, current_round_id FROM online_soup_rooms WHERE id = ? AND status <> 'closed' FOR UPDATE",
+        [context.room.id]
+      ).then(([rows]) => rows),
+      connection.query<mysql.RowDataPacket[]>(
+        `SELECT m.member_role, u.nickname
+         FROM online_soup_members m JOIN users u ON u.id = m.user_id
+         WHERE m.room_id = ? AND m.user_id = ? AND m.is_active = 1
+         LIMIT 1 FOR UPDATE`,
+        [context.room.id, req.params.userId]
+      ).then(([rows]) => rows)
+    ]);
+    if (!room || String(room.host_id) !== context.user.id) {
+      await connection.rollback();
+      return fail(res, 403, "仅当前主持人可以执行此操作");
+    }
+    if (!target) {
+      await connection.rollback();
+      return fail(res, 404, "该用户已不在房间");
+    }
+    if (String(target.member_role) === "host") {
+      await connection.rollback();
+      return fail(res, 400, "主持人不能将自己踢出房间");
+    }
+    targetNickname = String(target.nickname);
+    await connection.query(
+      "UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ? AND is_active = 1",
+      [context.room.id, req.params.userId]
+    );
+    await systemMessage(context.room.id, room.current_round_id ? String(room.current_round_id) : null, `${targetNickname} 被主持人移出房间`, connection);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+  res.json({ ok: true });
+  void notifyRoom(context.room.id, "member_kicked", { userId: req.params.userId, nickname: targetNickname });
+});
+
+router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  if (req.params.userId === context.user.id) return fail(res, 400, "你已经是房主");
+  const connection = await pool.getConnection();
+  let targetNickname = "";
+  let previousRole = "";
+  try {
+    await connection.beginTransaction();
+    const [[room], [target]] = await Promise.all([
+      connection.query<mysql.RowDataPacket[]>(
+        "SELECT host_id, current_round_id FROM online_soup_rooms WHERE id = ? AND status <> 'closed' FOR UPDATE",
+        [context.room.id]
+      ).then(([rows]) => rows),
+      connection.query<mysql.RowDataPacket[]>(
+        `SELECT m.member_role, u.nickname
+         FROM online_soup_members m JOIN users u ON u.id = m.user_id
+         WHERE m.room_id = ? AND m.user_id = ? AND m.is_active = 1
+         LIMIT 1 FOR UPDATE`,
+        [context.room.id, req.params.userId]
+      ).then(([rows]) => rows)
+    ]);
+    if (!room || String(room.host_id) !== context.user.id) {
+      await connection.rollback();
+      return fail(res, 403, "仅当前主持人可以执行此操作");
+    }
+    if (!target) {
+      await connection.rollback();
+      return fail(res, 404, "该用户已不在房间");
+    }
+    previousRole = String(target.member_role);
+    if (previousRole !== "player" && previousRole !== "spectator") {
+      await connection.rollback();
+      return fail(res, 409, "该用户当前不能接任房主");
+    }
+    targetNickname = String(target.nickname);
+    await connection.query(
+      "UPDATE online_soup_rooms SET host_id = ?, host_last_seen_at = NOW() WHERE id = ?",
+      [req.params.userId, context.room.id]
+    );
+    await connection.query(
+      "UPDATE online_soup_members SET member_role = ? WHERE room_id = ? AND user_id = ? AND is_active = 1",
+      [previousRole, context.room.id, context.user.id]
+    );
+    await connection.query(
+      "UPDATE online_soup_members SET member_role = 'host' WHERE room_id = ? AND user_id = ? AND is_active = 1",
+      [context.room.id, req.params.userId]
+    );
+    await systemMessage(
+      context.room.id,
+      room.current_round_id ? String(room.current_round_id) : null,
+      `${context.user.nickname} 将房主转让给 ${targetNickname}`,
+      connection
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+  res.json({ ok: true });
+  void notifyRoom(context.room.id, "host_transferred", {
+    previousHostId: context.user.id,
+    newHostId: req.params.userId,
+    previousRole
+  });
+});
+
 router.post("/rooms/:roomId/select-soup", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
@@ -1054,6 +1182,52 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
   res.json({ ok: true, ended }); void notifyRoom(context.room.id, ended ? "round_ended" : "bottom_published", { activitySequence, activityType: "progress" });
 });
 
+router.post("/rooms/:roomId/end-round", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  const connection = await pool.getConnection();
+  let roundId = "";
+  try {
+    await connection.beginTransaction();
+    const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT host_id, status, current_round_id FROM online_soup_rooms WHERE id = ? AND status <> 'closed' FOR UPDATE",
+      [context.room.id]
+    );
+    if (!room || String(room.host_id) !== context.user.id) {
+      await connection.rollback();
+      return fail(res, 403, "仅当前主持人可以关闭本轮");
+    }
+    if (String(room.status) !== "playing" || !room.current_round_id) {
+      await connection.rollback();
+      return fail(res, 409, "当前没有进行中的推理");
+    }
+    roundId = String(room.current_round_id);
+    const [roundResult] = await connection.query<mysql.ResultSetHeader>(
+      "UPDATE online_soup_rounds SET status = 'ended', ended_at = NOW() WHERE id = ? AND status = 'playing'",
+      [roundId]
+    );
+    if (roundResult.affectedRows !== 1) {
+      await connection.rollback();
+      return fail(res, 409, "本轮推理已经结束");
+    }
+    await connection.query(
+      "UPDATE online_soup_rooms SET status = 'ended' WHERE id = ? AND status = 'playing'",
+      [context.room.id]
+    );
+    await systemMessage(context.room.id, roundId, "主持人关闭了本轮推理", connection);
+    await settleOnlineSoupRound(connection, roundId);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+  const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, roundId);
+  res.json({ ok: true });
+  void notifyRoom(context.room.id, "round_ended", { activitySequence, activityType: "progress" });
+});
+
 router.post("/rooms/:roomId/close", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
@@ -1066,13 +1240,25 @@ router.get("/admin/rooms", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
   if (user.role !== "admin") return fail(res, 403, "需要管理员权限");
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT r.*, u.nickname AS host_name, u.username AS host_username, s.title AS soup_title,
-       SUM(CASE WHEN m.member_role = 'player' AND m.is_active = 1 THEN 1 ELSE 0 END) AS player_count
-     FROM online_soup_rooms r JOIN users u ON u.id = r.host_id LEFT JOIN soups s ON s.id = r.current_soup_id
-     LEFT JOIN online_soup_members m ON m.room_id = r.id GROUP BY r.id ORDER BY r.created_at DESC LIMIT 500`
-  );
-  res.json({ rooms: rows.map((row) => ({ ...lobbyRoom(row), hostUsername: String(row.host_username) })) });
+  const requestedLimit = Number(req.query.limit ?? 10);
+  const requestedOffset = Number(req.query.offset ?? 0);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, Math.trunc(requestedLimit))) : 10;
+  const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.trunc(requestedOffset)) : 0;
+  const [[totalRow], rows] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM online_soup_rooms").then(([items]) => items),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT r.*, u.nickname AS host_name, u.username AS host_username, s.title AS soup_title,
+         SUM(CASE WHEN m.member_role = 'player' AND m.is_active = 1 THEN 1 ELSE 0 END) AS player_count
+       FROM online_soup_rooms r JOIN users u ON u.id = r.host_id LEFT JOIN soups s ON s.id = r.current_soup_id
+       LEFT JOIN online_soup_members m ON m.room_id = r.id
+       GROUP BY r.id ORDER BY r.created_at DESC LIMIT ? OFFSET ?`,
+      [limit, offset]
+    ).then(([items]) => items)
+  ]);
+  res.json({
+    total: Number(totalRow?.total ?? 0),
+    rooms: rows.map((row) => ({ ...lobbyRoom(row), hostUsername: String(row.host_username) }))
+  });
 });
 
 router.get("/admin/rooms/:roomId", async (req, res) => {

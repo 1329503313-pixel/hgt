@@ -1,0 +1,4 @@
+ARG BASE_IMAGE=hgt:email-hardening-base
+FROM ${BASE_IMAGE}
+
+COPY mailer.js /app/server/dist/mailer.js

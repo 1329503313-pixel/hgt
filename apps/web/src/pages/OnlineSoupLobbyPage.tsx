@@ -139,7 +139,7 @@ export default function OnlineSoupLobbyPage() {
     if (!user) { openAuth(); return; }
     setPasswordRoom(room);
     setPassword("");
-    setJoinRole(room.playerCount >= 8 ? "spectator" : "player");
+    setJoinRole(room.playerCount >= room.playerCapacity ? "spectator" : "player");
   }
 
   async function joinRoom(room = passwordRoom) {
@@ -222,7 +222,7 @@ export default function OnlineSoupLobbyPage() {
                 <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{statusText[room.status]}</span></div>
               </div>
               <div className="online-soup-room-current"><span>当前海龟汤</span><strong title={room.soupTitle ?? "尚未选择海龟汤"}>{room.soupTitle ?? "尚未选择海龟汤"}</strong></div>
-              <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.playerCount}/8 位玩家</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>加入房间</button></div>
+              <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.participantCount}/{room.participantCapacity} 人</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>加入房间</button></div>
             </article>
           ))}
         </div>
@@ -243,7 +243,7 @@ export default function OnlineSoupLobbyPage() {
 
       {joinOpen && <Modal onClose={() => setJoinOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">通过房间号加入</h2><div className="flex gap-2"><input className="field flex-1 text-center text-lg tracking-[.3em]" inputMode="numeric" maxLength={6} value={roomCode} onChange={(e) => setRoomCode(e.target.value.replace(/\D/g, ""))} placeholder="6 位房间号" /><button className="btn btn-primary" onClick={lookupRoom}><Search size={17} /> 查找</button></div></div></Modal>}
 
-      {passwordRoom && <Modal onClose={() => setPasswordRoom(null)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">加入「{passwordRoom.name}」</h2><p className="mt-1 text-sm text-muted">#{passwordRoom.code} · 当前 {passwordRoom.playerCount}/8 名玩家</p></div>{passwordRoom.hasPassword && <input className="field w-full" type="password" maxLength={4} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="输入 4 位房间密码" />}<div className="grid grid-cols-2 gap-2"><button className={`btn ${joinRole === "player" ? "btn-primary" : "btn-secondary"}`} disabled={passwordRoom.playerCount >= 8} onClick={() => setJoinRole("player")}>作为玩家</button><button className={`btn ${joinRole === "spectator" ? "btn-primary" : "btn-secondary"}`} onClick={() => setJoinRole("spectator")}>作为旁观者</button></div><button className="btn btn-primary w-full" onClick={() => joinRoom()}>进入房间</button></div></Modal>}
+      {passwordRoom && <Modal onClose={() => setPasswordRoom(null)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">加入「{passwordRoom.name}」</h2><p className="mt-1 text-sm text-muted">#{passwordRoom.code} · 当前主持人和玩家 {passwordRoom.participantCount}/{passwordRoom.participantCapacity} 人</p></div>{passwordRoom.hasPassword && <input className="field w-full" type="password" maxLength={4} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="输入 4 位房间密码" />}<div className="grid grid-cols-2 gap-2"><button className={`btn ${joinRole === "player" ? "btn-primary" : "btn-secondary"}`} disabled={passwordRoom.playerCount >= passwordRoom.playerCapacity} onClick={() => setJoinRole("player")}>作为玩家</button><button className={`btn ${joinRole === "spectator" ? "btn-primary" : "btn-secondary"}`} onClick={() => setJoinRole("spectator")}>作为旁观者</button></div><button className="btn btn-primary w-full" onClick={() => joinRoom()}>进入房间</button></div></Modal>}
 
       {pendingInvite && <Modal onClose={cancelPendingInvite}>
         <div className="space-y-5">

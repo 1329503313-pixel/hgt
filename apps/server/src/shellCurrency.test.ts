@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BEGINNER_TASKS,
   beijingTaskDate,
   calculateTaskReward,
+  eligibleBeginnerTaskTypes,
   hasOtherEligibleOnlineSoupPlayer,
   isEligibleOnlineSoupDuration,
   SHELL_DAILY_LIMIT,
   SHELL_TASKS
 } from "./shellCurrency.js";
-import { experienceProgress, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
+import { calculateExperienceAdjustment, experienceProgress, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
+import { calculateInviteMilestoneDelta } from "./inviteRewards.js";
 
 test("等级门槛按累计经验计算并在 Lv40 封顶", () => {
   assert.equal(levelForExperience(0), 0);
@@ -32,6 +35,14 @@ test("等级进度按本级区间计算", () => {
     isMaxLevel: false
   });
   assert.equal(experienceProgress(MAX_EXPERIENCE).isMaxLevel, true);
+});
+
+test("管理员经验调整不能低于零或超过满级上限", () => {
+  assert.equal(calculateExperienceAdjustment(100, "add", 50), 150);
+  assert.equal(calculateExperienceAdjustment(100, "deduct", 40), 60);
+  assert.throws(() => calculateExperienceAdjustment(10, "deduct", 11), /EXPERIENCE_INSUFFICIENT/);
+  assert.throws(() => calculateExperienceAdjustment(MAX_EXPERIENCE, "add", 1), /EXPERIENCE_MAX_EXCEEDED/);
+  assert.throws(() => calculateExperienceAdjustment(10, "add", 0), /EXPERIENCE_AMOUNT_INVALID/);
 });
 
 test("每日任务理论奖励为138，实际日上限为60", () => {
@@ -84,4 +95,37 @@ test("每日任务奖励和次数符合产品规划", () => {
       { type: "soup_online_completed", reward: 10, dailyLimit: 2 }
     ]
   );
+});
+
+test("新手任务奖励与一次性任务清单符合产品规划", () => {
+  assert.deepEqual(
+    BEGINNER_TASKS.map(({ type, reward }) => ({ type, reward })),
+    [
+      { type: "upload_avatar", reward: 10 },
+      { type: "complete_ten_draws", reward: 10 },
+      { type: "equip_badge", reward: 10 },
+      { type: "bind_email", reward: 25 },
+      { type: "change_profile_background", reward: 10 }
+    ]
+  );
+  assert.equal(BEGINNER_TASKS.reduce((sum, task) => sum + task.reward, 0), 65);
+});
+
+test("累计抽卡必须达到10次才满足新手任务", () => {
+  const base = {
+    hasAvatar: false,
+    hasEquippedBadge: false,
+    hasVerifiedEmail: false,
+    hasProfileBackground: false
+  };
+  assert.equal(eligibleBeginnerTaskTypes({ ...base, completedDraws: 9 }).includes("complete_ten_draws"), false);
+  assert.equal(eligibleBeginnerTaskTypes({ ...base, completedDraws: 10 }).includes("complete_ten_draws"), true);
+});
+
+test("邀请用户贝壳成长奖励按每名用户累计且保留余数", () => {
+  assert.equal(calculateInviteMilestoneDelta(19, 0), 0);
+  assert.equal(calculateInviteMilestoneDelta(20, 0), 1);
+  assert.equal(calculateInviteMilestoneDelta(59, 1), 1);
+  assert.equal(calculateInviteMilestoneDelta(100, 2), 3);
+  assert.equal(calculateInviteMilestoneDelta(20, 1), 0);
 });

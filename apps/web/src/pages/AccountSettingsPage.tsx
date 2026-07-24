@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { ChevronRight, KeyRound } from "lucide-react";
+import { ChevronRight, KeyRound, TicketCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, AvatarResponse, NicknameResponse } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
@@ -8,6 +8,12 @@ import { useApp } from "../context/AppContext";
 import { removeSessionCache } from "../shared/sessionCache";
 import { CardSkeleton } from "../components/Skeletons";
 import { ProfileBackgroundEditor } from "../components/ProfileBackgroundEditor";
+import { EmailBindingCard } from "../components/EmailBindingCard";
+
+type InvitationSummary = {
+  inviteCode: string;
+  invitedCount: number;
+};
 
 export default function AccountSettingsPage() {
   const { user, loadingUser, openAuth, setUser, showToast } = useApp();
@@ -16,8 +22,18 @@ export default function AccountSettingsPage() {
   const [nickname, setNickname] = useState("");
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [nicknameSaving, setNicknameSaving] = useState(false);
+  const [invitationSummary, setInvitationSummary] = useState<InvitationSummary | null>(null);
 
   useEffect(() => { setNickname(user?.nickname ?? ""); }, [user?.nickname]);
+  useEffect(() => {
+    if (!user) {
+      setInvitationSummary(null);
+      return;
+    }
+    api<InvitationSummary>("/api/me/invitation-summary", { bypassCache: true })
+      .then(setInvitationSummary)
+      .catch(() => setInvitationSummary(null));
+  }, [user?.id]);
 
   async function uploadAvatar(file?: File) {
     if (!file || !user) return;
@@ -89,9 +105,23 @@ export default function AccountSettingsPage() {
 
         <ProfileBackgroundEditor userId={user.id} />
 
+        <EmailBindingCard />
+
         <button className="card flex w-full items-center gap-3 p-4 text-left" onClick={() => navigate("/mine/settings/password")}>
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-primary"><KeyRound size={20} /></span>
           <span className="min-w-0 flex-1"><span className="block text-sm font-black text-ink">重置密码</span><span className="mt-0.5 block text-xs text-muted">设置一个新的登录密码</span></span>
+          <ChevronRight className="text-muted" size={19} />
+        </button>
+
+        <button className="card flex w-full items-center gap-3 p-4 text-left" onClick={() => navigate("/mine/settings/invitations")}>
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-amber-50 text-amber-600"><TicketCheck size={20} /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-black text-ink">我的邀请码</span>
+            <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-mono text-base font-black tracking-[0.16em] text-primary">{invitationSummary?.inviteCode ?? "-----"}</span>
+              <span className="text-xs text-muted">已绑定 {invitationSummary?.invitedCount ?? 0} 人</span>
+            </span>
+          </span>
           <ChevronRight className="text-muted" size={19} />
         </button>
       </div>

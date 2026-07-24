@@ -21,6 +21,14 @@ export const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "excellentAuthor:epic": 150
 };
 
+// 抽卡订单只保留最近 10 条，徽章累计进度必须读取不会随历史清理丢失的持有卡牌总数。
+export const LEGENDARY_CARD_DRAW_COUNT_SQL = `
+  SELECT COALESCE(SUM(owned.total_obtained), 0) AS count
+  FROM user_asset_cards owned
+  INNER JOIN asset_cards card ON card.id = owned.card_id
+  WHERE owned.user_id = ? AND card.rarity = 'legend'
+`;
+
 export function calculateBadgeShellReward(
   achievementPoints: number,
   rewardEligible: boolean,

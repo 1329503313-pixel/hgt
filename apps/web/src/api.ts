@@ -24,6 +24,11 @@ type CacheEntry = { expiresAt: number; value: unknown };
 const responseCache = new Map<string, CacheEntry>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
 
+export function clearApiCache() {
+  responseCache.clear();
+  inFlightRequests.clear();
+}
+
 export class ApiError extends Error {
   status: number;
   code: string | null;
@@ -64,7 +69,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new ApiError(data.error ?? "请求失败", response.status, data.code);
     if (cacheKey && cacheTtlMs > 0) responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtlMs, value: data });
-    if (method !== "GET") responseCache.clear();
+    if (method !== "GET") clearApiCache();
     return data as T;
   })();
 
@@ -136,6 +141,10 @@ export type SpecialBadgeUnlock = {
 };
 export type BadgeUnlocksResponse = { unlocks: string[]; specialBadges: SpecialBadgeUnlock[]; stats: StatsResponse };
 export type PasswordResponse = { ok: boolean };
+export type EmailStatusResponse = {
+  configured: boolean;
+  email: { masked: string; verifiedAt: string } | null;
+};
 export type NicknameResponse = { ok: boolean; nickname: string };
 export type AvatarResponse = { ok: boolean; avatar: string | null };
 export type EvaluationsResponse = { evaluations: (Evaluation & { soupTitle: string })[]; total: number; hasMore: boolean };

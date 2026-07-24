@@ -1,6 +1,40 @@
+import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export type AdminPageSize = 10 | 20 | 50;
+export type AdminPaginationState = {
+  page: number;
+  pageSize: AdminPageSize;
+  total: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: AdminPageSize) => void;
+};
+
+export function useAdminPagination(total: number, initialPageSize: AdminPageSize = 10): AdminPaginationState {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(initialPageSize);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  return {
+    page,
+    pageSize,
+    total,
+    onPageChange: setPage,
+    onPageSizeChange: (nextPageSize) => {
+      setPageSize(nextPageSize);
+      setPage(1);
+    }
+  };
+}
+
+export function paginateAdminItems<T>(items: T[], pagination: Pick<AdminPaginationState, "page" | "pageSize">) {
+  const start = (pagination.page - 1) * pagination.pageSize;
+  return items.slice(start, start + pagination.pageSize);
+}
 
 export function AdminPagination({
   page,
@@ -8,13 +42,7 @@ export function AdminPagination({
   total,
   onPageChange,
   onPageSizeChange
-}: {
-  page: number;
-  pageSize: AdminPageSize;
-  total: number;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: AdminPageSize) => void;
-}) {
+}: AdminPaginationState) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (

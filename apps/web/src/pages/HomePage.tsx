@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Award, Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LogOut, MessageCircleQuestion, Plus, Search, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
+import { Award, Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LogOut, MessageCircleQuestion, Plus, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
 import type { PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
 import { useApp, soupDifficulties, soupTypes } from "../context/AppContext";
@@ -84,6 +84,9 @@ export default function HomePage() {
       params.set("offset", String(isDesktop ? (page - 1) * homePageSize : append ? offsetRef.current : 0));
       params.set("seed", randomSeedRef.current);
       params.set("includeTotal", isDesktop ? "1" : "0");
+      if (!filters.keyword && !filters.type && !filters.difficulty && filters.minRating === "all" && filters.bottomPublic === "all") {
+        params.set("homeFeatured", "1");
+      }
       const cacheKey = `hgt:home:v2:${user?.id ?? "guest"}:${params.toString()}`;
       const cached = append || bypassCache ? null : readSessionCache<HomeCacheData>(cacheKey, 45_000);
       if (cached) {
@@ -304,8 +307,10 @@ export default function HomePage() {
       <PageTopBar title="海龟汤" />
 
       <div ref={heroParallax.heroRef} className="home-desktop-hero" onPointerMove={heroParallax.onPointerMove} onPointerLeave={heroParallax.onPointerLeave}>
-        <img className="home-desktop-fixed-cover" src={desktopNavigationBannerUrl} alt="" aria-hidden="true" />
-        <div className="home-desktop-hero-shade" aria-hidden="true" />
+        <div className="home-desktop-hero-media" aria-hidden="true">
+          <img className="home-desktop-fixed-cover" src={desktopNavigationBannerUrl} alt="" />
+          <div className="home-desktop-hero-shade" />
+        </div>
         <div className="home-desktop-nav">
           <button type="button" className="home-desktop-brand" onClick={() => triggerRefresh()} aria-label="刷新首页">
             <img className="home-desktop-brand-mark" src="/favicon.svg" alt="" aria-hidden="true" />
@@ -336,6 +341,7 @@ export default function HomePage() {
                   </summary>
                   <div>
                     <button type="button" onClick={() => navigate("/mine")}><UserRound size={16} />个人中心</button>
+                    <button type="button" onClick={() => navigate("/mine/settings")}><Settings size={16} />账号设置</button>
                     <button type="button" onClick={() => navigate("/mine/achievements")}><Award size={16} />我的成就</button>
                     <button type="button" onClick={() => navigate("/mine/cards")}><GalleryVerticalEnd size={16} />收藏柜</button>
                     <button type="button" onClick={handleLogout}><LogOut size={16} />退出登录</button>
@@ -350,7 +356,7 @@ export default function HomePage() {
           </div>
         </div>
         <div className="home-desktop-hero-copy">
-          <span>汤汤解谜乐园·情景推理社区</span>
+          <span>汤汤解谜乐园</span>
           <strong>从一个问题开始，走向故事真正的结局</strong>
         </div>
         <div className="home-desktop-search-tools">

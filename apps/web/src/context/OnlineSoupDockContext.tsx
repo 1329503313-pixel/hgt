@@ -49,6 +49,8 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   const minimizedRoomIdRef = useRef<string | null>(null);
   const sessionRef = useRef<DockSession | null>(null);
   const modeRef = useRef<DockMode>("collapsed");
+  const refreshRequestStartedRef = useRef(0);
+  const refreshRequestAppliedRef = useRef(0);
 
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -63,9 +65,14 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
 
   const refreshSession = useCallback(async () => {
     if (!user || !minimizedRoomIdRef.current) return null;
+    const requestedRoomId = minimizedRoomIdRef.current;
+    const requestId = ++refreshRequestStartedRef.current;
     try {
       const data = await api<ActiveRoomResponse>("/api/online-soup/active-room", { bypassCache: true, dedupe: false });
-      if (!data.session || data.session.snapshot.room.id !== minimizedRoomIdRef.current) {
+      if (minimizedRoomIdRef.current !== requestedRoomId) return sessionRef.current;
+      if (requestId < refreshRequestAppliedRef.current) return sessionRef.current;
+      refreshRequestAppliedRef.current = requestId;
+      if (!data.session || data.session.snapshot.room.id !== requestedRoomId) {
         clearDock();
         return null;
       }
@@ -206,7 +213,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
           <button type="button" onClick={() => { showFullRoom(session.snapshot.room.id); navigate(`/online-soup/rooms/${session.snapshot.room.id}`); }} aria-label="返回完整房间" title="放大"><Maximize2 size={17} /></button>
           <button type="button" className="text-red-500" onClick={() => setConfirmLeave(true)} aria-label="退出房间" title="退出房间"><LogOut size={17} /></button>
         </header>
-        <MiniMessageList messages={session.snapshot.messages} />
+        <MiniMessageList messages={session.snapshot.messages} currentUserId={user?.id ?? ""} />
         {session.snapshot.me.role !== "spectator" && <div className="online-soup-mini-composer">
           {session.snapshot.me.role === "player" && <button
             type="button"
@@ -228,16 +235,16 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   </OnlineSoupDockContext.Provider>;
 }
 
-function MiniMessageList({ messages }: { messages: OnlineSoupMessage[] }) {
+function MiniMessageList({ messages, currentUserId }: { messages: OnlineSoupMessage[]; currentUserId: string }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "end" }); }, [messages]);
   return <div className="online-soup-mini-messages">
-    {messages.slice(-60).map((message) => <MiniMessage key={`${message.id}-${message.updatedAt}`} message={message} />)}
+    {messages.slice(-60).map((message) => <MiniMessage key={`${message.id}-${message.updatedAt}`} message={message} currentUserId={currentUserId} />)}
     <div ref={bottomRef} />
   </div>;
 }
 
-function MiniMessage({ message }: { message: OnlineSoupMessage }) {
+function MiniMessage({ message, currentUserId }: { message: OnlineSoupMessage; currentUserId: string }) {
   if (message.type === "system") return <p className="online-soup-mini-system">— {message.content} —</p>;
   if (message.type === "clue") return <article className="online-soup-mini-event is-clue"><strong>主持人线索</strong><p>{message.content}</p></article>;
   if (message.type === "supplemental_surface" || message.type === "bottom" || message.type === "manual") {
@@ -245,9 +252,24 @@ function MiniMessage({ message }: { message: OnlineSoupMessage }) {
     return <article className="online-soup-mini-event is-progress"><strong>{title}</strong><div dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></article>;
   }
   const question = message.type === "question";
-  return <article className={`online-soup-mini-message ${question ? "is-question" : ""}`}>
-    <div><strong>{message.senderName ?? "未知用户"}</strong>{question && <span>正式提问 #{message.questionNumber}</span>}<time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div>
-    <p>{message.type === "sticker" ? "[表情包]" : message.content}</p>
-    {question && <small>{message.answer ? `主持人回答：${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}` : "等待主持人回复"}</small>}
+  const host = message.type === "host" || message.senderIsHost;
+  const mine = message.senderId === currentUserId;
+  return <article className={`online-soup-mini-message ${mine ? "is-mine" : ""} ${question ? "is-question" : ""} ${host ? "is-host" : ""}`}>
+    <span className="online-soup-mini-avatar">
+      {message.senderAvatar
+        ? <img src={message.senderAvatar} alt="" />
+        : <span>{message.senderName?.slice(0, 1) ?? "?"}</span>}
+      {host && <span className="is-host-mark">主</span>}
+    </span>
+    <div className="online-soup-mini-message-body">
+      <div className="online-soup-mini-message-meta">
+        <strong>{message.senderName ?? "未知用户"}</strong>
+        {host && <span className="is-host-label">主持人</span>}
+        {question && <span>正式提问 #{message.questionNumber}</span>}
+      </div>
+      <div className="online-soup-mini-bubble"><p>{message.type === "sticker" ? "[表情包]" : message.content}</p></div>
+      {question && <small>{message.answer ? `主持人回答：${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}` : "等待主持人回复"}</small>}
+      <time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
+    </div>
   </article>;
 }

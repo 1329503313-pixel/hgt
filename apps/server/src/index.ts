@@ -16,18 +16,35 @@ import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgr
 import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
 import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
-import { levelForExperience } from "./levelSystem.js";
+import { calculateExperienceAdjustment, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
 import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
+import { generateInviteCode, INVITE_CODE_PATTERN, normalizeInviteCode } from "./inviteCodes.js";
+import {
+  runDailyInviteShellSettlement,
+  setInviteRewardProgressListener,
+  syncPendingInviteEmailRewards
+} from "./inviteRewards.js";
 import { registerDigitalAssetRoutes } from "./digitalAssets.js";
 import { registerBannerRoutes } from "./banners.js";
+import { registerSeoRoutes } from "./seo.js";
+import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
+import { registerEmailAuthRoutes } from "./emailAuth.js";
 import {
+  AUTH_COOKIE_NAME,
+  LEGACY_AUTH_COOKIE_NAME,
+  authTokenFromCookieHeader,
+  authTokenFromCookies
+} from "./authCookies.js";
+import {
+  LEGENDARY_CARD_DRAW_COUNT_SQL,
   SYSTEM_BADGE_ACHIEVEMENT_POINTS,
   badgeUnlockNotificationContent,
   calculateBadgeShellReward
 } from "./badgeRewards.js";
 import {
   adjustShellBalance,
+  awardBeginnerTask,
   bulkAdjustShellBalances,
   awardShellTask,
   beijingTaskDate,
@@ -39,6 +56,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import onlineSoupRouter, {
   cleanupOnlineSoupInactiveHostRooms,
   cleanupOnlineSoupStaleSeats,
+  ONLINE_SOUP_PARTICIPANT_CAPACITY,
   ONLINE_SOUP_PLAYER_CAPACITY,
   setOnlineSoupEventEmitter,
   setOnlineSoupLobbyEventEmitter,
@@ -82,7 +100,17 @@ function emitOnlineSoupSocketEvent(roomId: string, event: string, payload: unkno
   const clients = onlineSoupRoomSocketClients.get(roomId);
   if (!clients?.size) return;
   const message = JSON.stringify({ event, payload });
-  for (const client of clients) if (client.readyState === WebSocket.OPEN) client.send(message);
+  const details = payload as { reason?: unknown; userId?: unknown };
+  const kickedUserId = event === "online_soup_changed" && details.reason === "member_kicked"
+    ? String(details.userId ?? "")
+    : "";
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    client.send(message);
+    if (kickedUserId && String((client as any).onlineSoupUserId) === kickedUserId) {
+      client.close(4003, "removed from room");
+    }
+  }
 }
 
 function emitCircleSocketEvent(circleId: string, event: string, payload: unknown) {
@@ -214,13 +242,31 @@ const loginRateLimiter = createRateLimiter(15 * 60_000, 10, (req) => `login:${re
 const registerRateLimiter = createRateLimiter(60 * 60_000, 10, (req) => `register:${req.ip ?? "unknown"}`);
 const performanceRateLimiter = createRateLimiter(60_000, 120, (req) => `performance:${req.ip ?? "unknown"}`);
 
+const authCookieBaseOptions = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: config.cookieSecure,
+  path: "/"
+};
+
+function clearCookieVariants(res: Response, name: string) {
+  res.clearCookie(name, authCookieBaseOptions);
+  if (config.cookieDomain) {
+    res.clearCookie(name, { ...authCookieBaseOptions, domain: config.cookieDomain });
+  }
+}
+
+function clearAuthCookies(res: Response) {
+  clearCookieVariants(res, AUTH_COOKIE_NAME);
+  clearCookieVariants(res, LEGACY_AUTH_COOKIE_NAME);
+}
+
 function setAuthCookie(res: Response, token: string) {
-  res.cookie("hgt_token", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: config.cookieSecure,
+  clearAuthCookies(res);
+  res.cookie(AUTH_COOKIE_NAME, token, {
+    ...authCookieBaseOptions,
     maxAge: 1000 * 60 * 60 * 24 * 30,
-    path: "/"
+    domain: config.cookieDomain || undefined
   });
 }
 
@@ -254,7 +300,7 @@ function verifyToken(token: string): AuthClaims | null {
 // 从请求中提取签名声明；权限和用户状态必须从数据库实时读取。
 function extractAuthClaims(req: Request): AuthClaims | null {
   // 方式 1: Cookie 中的 JWT
-  const cookieToken = req.cookies?.hgt_token;
+  const cookieToken = authTokenFromCookies(req.cookies);
   if (cookieToken) return verifyToken(cookieToken);
 
   // 方式 2: Authorization 头 (Bearer)
@@ -297,6 +343,11 @@ app.use((_req, res, next) => {
 if (config.nodeEnv === "production") {
   const path = await import("node:path");
   const frontendDist = path.resolve(process.cwd(), "apps/web/dist");
+  const seoRoutes = registerSeoRoutes(app, {
+    frontendIndexPath: path.resolve(frontendDist, "index.html"),
+    pool,
+    siteUrl: config.publicSiteUrl
+  });
   app.use("/badges", express.static(path.resolve(frontendDist, "badges"), {
     index: false,
     maxAge: "1y",
@@ -330,8 +381,7 @@ if (config.nodeEnv === "production") {
   app.use(express.static(frontendDist, { index: false, maxAge: "1h" }));
   app.get("*", (_req, res, next) => {
     if (_req.path.startsWith("/api/")) return next();
-    res.setHeader("Cache-Control", "no-cache");
-    res.sendFile("index.html", { root: frontendDist });
+    seoRoutes.sendNoIndexAppHtml(_req, res);
   });
 }
 
@@ -1369,10 +1419,7 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
       [userId]
     ),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT COUNT(*) AS count
-       FROM asset_draw_results result
-       INNER JOIN asset_draw_orders draw_order ON draw_order.id = result.order_id
-       WHERE draw_order.user_id = ? AND draw_order.status = 'completed' AND result.rarity = 'legend'`,
+      LEGENDARY_CARD_DRAW_COUNT_SQL,
       [userId]
     ),
     pool.query<mysql.RowDataPacket[]>(
@@ -1716,6 +1763,7 @@ function queueActivityBadgeSync(userIds: string[]) {
 
 setBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 setShellBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
+setInviteRewardProgressListener((userId) => queueSystemBadgeSync([userId]));
 
 async function optimizeCoverImage(base64: string): Promise<{ full: string; thumbnail: string } | null> {
   try {
@@ -1745,12 +1793,17 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     .object({
       username: text.max(50),
       password: z.string().min(6).max(72),
-      nickname: text.max(8, "昵称不超过 8 个字符")
+      nickname: text.max(8, "昵称不超过 8 个字符"),
+      invitationCode: z.string().max(20).optional()
     })
     .safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "注册信息不完整");
 
   const { username, password, nickname } = parsed.data;
+  const invitationCode = normalizeInviteCode(parsed.data.invitationCode);
+  if (invitationCode && !INVITE_CODE_PATTERN.test(invitationCode)) {
+    return sendError(res, 400, "邀请码应为 5 位数字或大写字母");
+  }
   if (isAdminRelatedNickname(nickname)) return sendError(res, 400, "该昵称为管理员专用，请更换昵称");
   const [exists] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id FROM users WHERE username = ? LIMIT 1",
@@ -1760,12 +1813,60 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
 
   const id = nanoid();
   const hash = await bcrypt.hash(password, 10);
-  await pool.query("INSERT INTO users (id, username, password, nickname, role) VALUES (?, ?, ?, ?, 'user')", [
-    id,
-    username,
-    hash,
-    nickname
-  ]);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    let inviterId: string | null = null;
+    if (invitationCode) {
+      const [[inviter]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT id FROM users WHERE invite_code = ? LIMIT 1",
+        [invitationCode]
+      );
+      if (!inviter) {
+        await connection.rollback();
+        return sendError(res, 400, "邀请码不存在，请检查后重试");
+      }
+      inviterId = String(inviter.id);
+    }
+
+    let ownInviteCode = "";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      ownInviteCode = generateInviteCode();
+      const [codeRows] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT id FROM users WHERE invite_code = ? LIMIT 1",
+        [ownInviteCode]
+      );
+      if (!codeRows.length) break;
+      ownInviteCode = "";
+    }
+    if (!ownInviteCode) throw new Error("邀请码生成失败，请稍后重试");
+
+    await connection.query(
+      "INSERT INTO users (id, username, password, nickname, invite_code, role) VALUES (?, ?, ?, ?, ?, 'user')",
+      [id, username, hash, nickname, ownInviteCode]
+    );
+    if (inviterId) {
+      await connection.query(
+        "INSERT INTO user_invite_bindings (invitee_user_id, inviter_user_id, invite_code) VALUES (?, ?, ?)",
+        [id, inviterId, invitationCode]
+      );
+      await connection.query(
+        `INSERT INTO user_invite_reward_progress
+          (invitee_user_id, inviter_user_id, settled_through)
+         VALUES (?, ?, UTC_TIMESTAMP())`,
+        [id, inviterId]
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") {
+      return sendError(res, 409, "账号已存在，请更换账号");
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
   await recordLoginDay(id);
   queueActivityBadgeSync([id]);
 
@@ -1799,7 +1900,7 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
 });
 
 app.post("/api/auth/logout", (_req, res) => {
-  res.clearCookie("hgt_token", { httpOnly: true, sameSite: "lax", secure: config.cookieSecure, path: "/" });
+  clearAuthCookies(res);
   res.json({ ok: true });
 });
 
@@ -1819,8 +1920,19 @@ app.post("/api/auth/password", async (req, res) => {
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
   const nextTokenVersion = Number(row.token_version ?? 0) + 1;
   await pool.query("UPDATE users SET password = ?, token_version = ? WHERE id = ?", [hash, nextTokenVersion, user.id]);
+  await pool.query(
+    "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+    [user.id]
+  );
   setAuthCookie(res, signToken({ id: user.id, tokenVersion: nextTokenVersion }));
   res.json({ ok: true });
+});
+
+registerEmailAuthRoutes(app, {
+  pool,
+  requireAuth,
+  sendError,
+  createRateLimiter
 });
 
 app.post("/api/telemetry/performance", performanceRateLimiter, (req, res) => {
@@ -1884,11 +1996,75 @@ app.get("/api/media/soups/:id/cover", async (req, res) => {
 });
 
 app.get("/api/auth/me", async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.vary("Cookie");
+  res.vary("Authorization");
   const user = await currentUser(req);
   if (user) queueLoginDayRecord(user.id);
   if (!user) return res.json({ user: null });
   const { tokenVersion: _tokenVersion, ...publicUser } = user;
   res.json({ user: publicUser });
+});
+
+app.get("/api/me/invitation-summary", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT u.invite_code,
+      (SELECT COUNT(*) FROM user_invite_bindings binding WHERE binding.inviter_user_id = u.id) AS invited_count
+     FROM users u
+     WHERE u.id = ?
+     LIMIT 1`,
+    [user.id]
+  );
+  if (!row?.invite_code) return sendError(res, 500, "邀请码尚未生成，请稍后重试");
+  res.json({
+    inviteCode: String(row.invite_code),
+    invitedCount: Number(row.invited_count ?? 0)
+  });
+});
+
+app.get("/api/me/invited-users", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const limit = Math.min(50, Math.max(1, Math.floor(Number(req.query.limit ?? 20) || 20)));
+  const offset = Math.max(0, Math.floor(Number(req.query.offset ?? 0) || 0));
+  const [totalRows, rows] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      "SELECT COUNT(*) AS total FROM user_invite_bindings WHERE inviter_user_id = ?",
+      [user.id]
+    ).then(([result]) => result),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT invited.id, invited.nickname, invited.experience, invited.created_at,
+        invited.avatar IS NOT NULL AS has_avatar,
+        EXISTS(
+          SELECT 1 FROM user_identities identity_row
+          WHERE identity_row.user_id = invited.id
+            AND identity_row.identity_type = 'email'
+            AND identity_row.verified_at IS NOT NULL
+        ) AS email_bound
+       FROM user_invite_bindings binding
+       INNER JOIN users invited ON invited.id = binding.invitee_user_id
+       WHERE binding.inviter_user_id = ?
+       ORDER BY binding.created_at DESC, invited.id DESC
+       LIMIT ? OFFSET ?`,
+      [user.id, limit, offset]
+    ).then(([result]) => result)
+  ]);
+  res.json({
+    users: rows.map((row) => ({
+      id: String(row.id),
+      nickname: String(row.nickname),
+      avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
+      level: levelForExperience(row.experience),
+      emailBound: bool(row.email_bound),
+      registeredAt: new Date(row.created_at).toISOString()
+    })),
+    total: Number(totalRows[0]?.total ?? 0),
+    limit,
+    offset
+  });
 });
 
 app.get("/api/me/shells", async (req, res) => {
@@ -1979,6 +2155,7 @@ app.patch("/api/me/avatar", async (req, res) => {
   }
   await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
   storedAvatarCache.set(user.id, { expiresAt: Date.now() + 5 * 60_000, value: avatar });
+  if (avatar) await awardBeginnerTask(user.id, "upload_avatar");
 
   const token = signToken({ id: user.id, tokenVersion: user.tokenVersion });
   setAuthCookie(res, token);
@@ -2314,7 +2491,8 @@ const circleMessageSchema = z.object({
   stickerId: z.string().trim().min(1).max(64).optional(),
   roomInvite: roomInviteInputSchema.optional(),
   soupShare: soupShareInputSchema.optional(),
-  mentionedUserIds: z.array(z.string().trim().min(1).max(64)).max(10).optional()
+  mentionedUserIds: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+  replyToMessageId: z.string().trim().min(1).max(64).optional()
 }).superRefine((value, ctx) => {
   if (Number(Boolean(value.content)) + Number(Boolean(value.stickerId)) + Number(Boolean(value.roomInvite)) + Number(Boolean(value.soupShare)) !== 1) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "文字、表情、房间邀请和海龟汤分享必须且只能发送一种" });
@@ -2344,7 +2522,9 @@ async function onlineSoupRoomInvite(roomId: string, inviteToken: string) {
     soupTitle: room.soup_title ? String(room.soup_title) : null,
     status: String(room.status),
     playerCount: Number(room.player_count ?? 0),
-    playerCapacity: ONLINE_SOUP_PLAYER_CAPACITY
+    playerCapacity: ONLINE_SOUP_PLAYER_CAPACITY,
+    participantCount: Number(room.player_count ?? 0) + 1,
+    participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY
   };
 }
 
@@ -2411,6 +2591,7 @@ async function circleForMember(circleId: string, userId: string) {
 
 function circleMessagePayload(row: mysql.RowDataPacket) {
   const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : "text";
+  const replyType = row.reply_message_type === "sticker" ? "sticker" : row.reply_message_type === "room_invite" ? "room_invite" : row.reply_message_type === "soup_share" ? "soup_share" : "text";
   return {
     id: String(row.id),
     sequence: Number(row.message_sequence),
@@ -2430,6 +2611,18 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
     roomInvite: messageType === "room_invite" ? parseRoomInvite(row.content) : null,
     soupShare: messageType === "soup_share" ? parseSoupShare(row.content) : null,
     mentions: parseCircleMentions(row.mentions_json),
+    replyTo: row.reply_id ? {
+      id: String(row.reply_id),
+      sequence: Number(row.reply_sequence),
+      sender: row.reply_sender_id ? {
+        id: String(row.reply_sender_id),
+        nickname: String(row.reply_sender_nickname)
+      } : null,
+      content: String(row.reply_content ?? ""),
+      type: replyType,
+      stickerId: row.reply_sticker_id ? String(row.reply_sticker_id) : null,
+      stickerName: row.reply_sticker_id ? getSticker(String(row.reply_sticker_id))?.name ?? null : null
+    } : null,
     createdAt: new Date(row.created_at).toISOString()
   };
 }
@@ -2658,9 +2851,15 @@ app.get("/api/circles/:id/messages", async (req, res) => {
   params.push(limit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
-       u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
+       u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
+       reply.id AS reply_id, reply.message_sequence AS reply_sequence,
+       reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
+       reply.content AS reply_content, reply.message_type AS reply_message_type,
+       reply.sticker_id AS reply_sticker_id
      FROM circle_messages m
      LEFT JOIN users u ON u.id = m.sender_id
+     LEFT JOIN circle_messages reply ON reply.id = m.reply_to_message_id AND reply.circle_id = m.circle_id
+     LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
      WHERE m.circle_id = ? ${beforeClause}
      ORDER BY m.message_sequence DESC
      LIMIT ?`,
@@ -2691,6 +2890,13 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "玩汤房间邀请无效或房间已关闭");
   const soupShare = parsed.data.soupShare ? await sharedSoupCard(parsed.data.soupShare.soupId) : null;
   if (parsed.data.soupShare && !soupShare) return sendError(res, 400, "海龟汤不存在或暂不可分享");
+  if (parsed.data.replyToMessageId) {
+    const [[replyTarget]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM circle_messages WHERE id = ? AND circle_id = ? LIMIT 1",
+      [parsed.data.replyToMessageId, req.params.id]
+    );
+    if (!replyTarget) return sendError(res, 400, "被回复的消息不存在或不属于当前圈子");
+  }
   const mentionedUserIds = [...new Set(parsed.data.mentionedUserIds ?? [])].filter((id) => id !== user.id);
   let mentions: Array<{ userId: string; nickname: string }> = [];
   if (mentionedUserIds.length) {
@@ -2714,9 +2920,18 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   try {
     await connection.beginTransaction();
     await connection.query(
-      `INSERT INTO circle_messages (id, circle_id, sender_id, content, message_type, sticker_id, mentions_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, req.params.id, user.id, content, messageType, sticker?.id ?? null, mentions.length ? JSON.stringify(mentions) : null]
+      `INSERT INTO circle_messages (id, circle_id, sender_id, content, message_type, sticker_id, mentions_json, reply_to_message_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        req.params.id,
+        user.id,
+        content,
+        messageType,
+        sticker?.id ?? null,
+        mentions.length ? JSON.stringify(mentions) : null,
+        parsed.data.replyToMessageId ?? null
+      ]
     );
     for (const mention of mentions) {
       await connection.query(
@@ -2741,8 +2956,16 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   }
   const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
-       u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url
-     FROM circle_messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.id = ? LIMIT 1`,
+       u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
+       reply.id AS reply_id, reply.message_sequence AS reply_sequence,
+       reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
+       reply.content AS reply_content, reply.message_type AS reply_message_type,
+       reply.sticker_id AS reply_sticker_id
+     FROM circle_messages m
+     LEFT JOIN users u ON u.id = m.sender_id
+     LEFT JOIN circle_messages reply ON reply.id = m.reply_to_message_id AND reply.circle_id = m.circle_id
+     LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
+     WHERE m.id = ? LIMIT 1`,
     [id]
   );
   const message = circleMessagePayload(stored);
@@ -3335,6 +3558,7 @@ app.patch("/api/me/equipped-badge", async (req, res) => {
     "UPDATE users SET equipped_badge_key = ?, equipped_badge_icon_url = ? WHERE id = ?",
     [parsed.data.badgeKey, iconUrl, user.id]
   );
+  await awardBeginnerTask(user.id, "equip_badge");
   res.json({ equippedBadge: equippedBadge(parsed.data.badgeKey, iconUrl) });
 });
 
@@ -3351,13 +3575,24 @@ type AchievementRankingItem = {
   rank: number;
   id: string;
   nickname: string;
+  avatar: string | null;
   achievementPoints: number;
+};
+
+type LevelRankingItem = {
+  rank: number;
+  id: string;
+  nickname: string;
+  avatar: string | null;
+  level: number;
+  experience: number;
 };
 
 let rankingsCache: {
   expiresAt: number;
   hotSoups: HotSoupRankingItem[];
   achievementUsers: AchievementRankingItem[];
+  levelUsers: LevelRankingItem[];
 } | null = null;
 
 app.get("/api/rankings", async (req, res) => {
@@ -3382,7 +3617,8 @@ app.get("/api/rankings", async (req, res) => {
     );
 
     const [achievementRows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.created_at, ubu.badge_key, ubu.unlocked_at,
+      `SELECT u.id, u.nickname, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+         ubu.badge_key, ubu.unlocked_at,
          lb.achievement_points AS legendary_points
        FROM users u
        LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
@@ -3391,11 +3627,25 @@ app.get("/api/rankings", async (req, res) => {
        ORDER BY u.created_at ASC, ubu.unlocked_at ASC`
     );
 
-    const users = new Map<string, { id: string; nickname: string; achievementPoints: number; reachedAt: number; createdAt: number }>();
+    const [levelRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.nickname, u.experience, u.avatar IS NOT NULL AS has_avatar
+       FROM users u
+       WHERE u.role = 'user'
+       ORDER BY u.experience DESC, u.created_at ASC, u.id ASC`
+    );
+
+    const users = new Map<string, { id: string; nickname: string; avatar: string | null; achievementPoints: number; reachedAt: number; createdAt: number }>();
     for (const row of achievementRows) {
       const id = String(row.id);
       const createdAt = new Date(row.created_at).getTime();
-      const current = users.get(id) ?? { id, nickname: String(row.nickname), achievementPoints: 0, reachedAt: createdAt, createdAt };
+      const current = users.get(id) ?? {
+        id,
+        nickname: String(row.nickname),
+        avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
+        achievementPoints: 0,
+        reachedAt: createdAt,
+        createdAt
+      };
       if (row.badge_key) {
         const key = String(row.badge_key);
         const points = key.startsWith("legendary:")
@@ -3419,22 +3669,43 @@ app.get("/api/rankings", async (req, res) => {
     }));
     const achievementUsers = [...users.values()]
       .sort((a, b) => b.achievementPoints - a.achievementPoints || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-      .map((item, index) => ({ rank: index + 1, id: item.id, nickname: item.nickname, achievementPoints: item.achievementPoints }));
+      .map((item, index) => ({
+        rank: index + 1,
+        id: item.id,
+        nickname: item.nickname,
+        avatar: item.avatar,
+        achievementPoints: item.achievementPoints
+      }));
+    const levelUsers = levelRows.map((row, index) => {
+      const experience = Math.max(0, Math.floor(Number(row.experience) || 0));
+      return {
+        rank: index + 1,
+        id: String(row.id),
+        nickname: String(row.nickname),
+        avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
+        level: levelForExperience(experience),
+        experience
+      };
+    });
 
-    rankingsCache = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers };
+    rankingsCache = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers };
   }
 
   const topHotSoups = rankingsCache.hotSoups.slice(0, 10);
   const topAchievementUsers = rankingsCache.achievementUsers.slice(0, 10);
+  const topLevelUsers = rankingsCache.levelUsers.slice(0, 10);
   const ownHotSoup = rankingsCache.hotSoups.find((item) => item.creatorId === user.id) ?? null;
   const ownAchievementUser = rankingsCache.achievementUsers.find((item) => item.id === user.id) ?? null;
+  const ownLevelUser = rankingsCache.levelUsers.find((item) => item.id === user.id) ?? null;
   const toPublicHotSoup = ({ creatorId: _creatorId, ...item }: HotSoupRankingItem) => item;
 
   res.json({
     hotSoups: topHotSoups.map(toPublicHotSoup),
     hotSoupOwn: ownHotSoup && !topHotSoups.some((item) => item.id === ownHotSoup.id) ? toPublicHotSoup(ownHotSoup) : null,
     achievementUsers: topAchievementUsers,
-    achievementOwn: ownAchievementUser && !topAchievementUsers.some((item) => item.id === ownAchievementUser.id) ? ownAchievementUser : null
+    achievementOwn: ownAchievementUser && !topAchievementUsers.some((item) => item.id === ownAchievementUser.id) ? ownAchievementUser : null,
+    levelUsers: topLevelUsers,
+    levelOwn: ownLevelUser && !topLevelUsers.some((item) => item.id === ownLevelUser.id) ? ownLevelUser : null
   });
 });
 
@@ -3507,6 +3778,29 @@ app.get("/api/me/evaluations", async (req, res) => {
   res.json({ soups: rows.map(mapSoupSummary) });
 });
 
+let homeFeaturedSoupCache: { expiresAt: number; ids: string[] } | null = null;
+
+async function homeFeaturedSoupIds() {
+  if (homeFeaturedSoupCache && homeFeaturedSoupCache.expiresAt > Date.now()) {
+    return homeFeaturedSoupCache.ids;
+  }
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT s.id,
+       (COALESCE(e.comprehensive_score, 0) + 1) *
+         (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
+     FROM soups s
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
+     LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
+     WHERE s.is_surface_public = TRUE AND s.review_status = 'approved'
+     ORDER BY heat_value DESC, s.view_count DESC, COALESCE(e.evaluation_count, 0) DESC, s.created_at ASC
+     LIMIT 6`
+  );
+  const ids = rows.map((row) => String(row.id));
+  homeFeaturedSoupCache = { expiresAt: Date.now() + 60_000, ids };
+  return ids;
+}
+
 app.get("/api/soups", async (req, res) => {
   // 首页数据会因当前用户的点赞/收藏状态而不同，只允许浏览器私有短缓存。
   // 前端另有 30 秒内存缓存；这里主要覆盖刷新、返回导航和重复 GET。
@@ -3561,13 +3855,37 @@ app.get("/api/soups", async (req, res) => {
     params.push(Number(req.query.minRating));
   }
 
+  const useHomeFeaturedOrder =
+    req.query.homeFeatured === "1" &&
+    !req.query.keyword &&
+    !req.query.author &&
+    !req.query.type &&
+    !req.query.difficulty &&
+    !req.query.minRating &&
+    !req.query.bottomPublic &&
+    !req.query.reviewStatus &&
+    !req.query.order;
+  const featuredSoupIds = useHomeFeaturedOrder ? await homeFeaturedSoupIds() : [];
+
   const requestedLimit = Number(req.query.limit ?? 10);
   const requestedOffset = Number(req.query.offset ?? 0);
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(Math.floor(requestedLimit), 50)) : 10;
   const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0;
   const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RANDOM";
   const randomSeed = String(req.query.seed ?? new Date().toISOString().slice(0, 10)).slice(0, 32);
-  const orderClause = order === "RANDOM" ? "CRC32(CONCAT(s.id, ?))" : `s.created_at ${order}`;
+  const featuredCases = featuredSoupIds.map((_, index) => `WHEN ? THEN ${index}`).join(" ");
+  const featuredPlaceholders = featuredSoupIds.map(() => "?").join(", ");
+  const orderClause = featuredSoupIds.length > 0
+    ? `CASE s.id ${featuredCases} ELSE ${featuredSoupIds.length} END ASC,
+       CASE WHEN s.id IN (${featuredPlaceholders}) THEN 0 ELSE CRC32(CONCAT(s.id, ?)) END ASC`
+    : order === "RANDOM"
+      ? "CRC32(CONCAT(s.id, ?))"
+      : `s.created_at ${order}`;
+  const orderParams = featuredSoupIds.length > 0
+    ? [...featuredSoupIds, ...featuredSoupIds, randomSeed]
+    : order === "RANDOM"
+      ? [randomSeed]
+      : [];
 
   const summarySelect = (lightImages = false) => `
     SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail,
@@ -3613,7 +3931,8 @@ app.get("/api/soups", async (req, res) => {
       [
         ...(user ? [user.id, user.id] : []),
         ...params,
-        ...(order === "RANDOM" ? [randomSeed, randomSeed] : [])
+        ...orderParams,
+        ...orderParams
       ]
     );
     rows = pageRows;
@@ -3628,7 +3947,7 @@ app.get("/api/soups", async (req, res) => {
        HAVING ${having.join(" AND ")}
        ORDER BY ${orderClause}
        LIMIT ${limit + 1} OFFSET ${offset}`,
-      [...(user ? [user.id, user.id] : []), ...params, ...(order === "RANDOM" ? [randomSeed] : [])]
+      [...(user ? [user.id, user.id] : []), ...params, ...orderParams]
     );
     rows = filteredRows;
   }
@@ -3738,6 +4057,11 @@ app.post("/api/soups", async (req, res) => {
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
   if (soup.enableAiGame && !soup.keyFactsCustomized) {
     splitKeyFactsForSoup(id).catch(() => {});
+  }
+
+  // 百度收录：公开+审核通过 → 即时推送单条链接
+  if (review.decision === "approved" && soup.isSurfacePublic) {
+    pushSoupUrl(id, config.publicSiteUrl).catch(() => {});
   }
 });
 
@@ -5247,7 +5571,8 @@ app.get("/api/admin/users", async (req, res) => {
     likeCount: "like_count",
     favoriteCount: "favorite_count",
     shellBalance: "u.shell_balance",
-    achievementPoints: "achievement_points"
+    achievementPoints: "achievement_points",
+    experience: "u.experience"
   };
   const sortColumn = sortColumns[String(req.query.sortBy ?? "createdAt")] ?? sortColumns.createdAt;
   const sortOrder = req.query.sortOrder === "asc" ? "ASC" : "DESC";
@@ -5260,6 +5585,7 @@ app.get("/api/admin/users", async (req, res) => {
     : "";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at, u.shell_balance,
+      u.experience,
       EXISTS (
         SELECT 1 FROM user_login_days uld
         WHERE uld.user_id = u.id
@@ -5287,6 +5613,7 @@ app.get("/api/admin/users", async (req, res) => {
       isOnline: isUserOnline(row.id),
       lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
       shellBalance: Number(row.shell_balance ?? 0),
+      experience: Number(row.experience ?? 0),
       achievementPoints: Number(row.achievement_points ?? 0),
       loggedInToday: Boolean(row.logged_in_today),
       stats: {
@@ -5334,6 +5661,10 @@ app.post("/api/admin/users/:id/reset-password", async (req, res) => {
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码格式不正确");
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
   await pool.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [hash, req.params.id]);
+  await pool.query(
+    "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+    [req.params.id]
+  );
   res.json({ ok: true });
 });
 
@@ -5396,6 +5727,49 @@ app.post("/api/admin/users/:id/shell-adjustments", async (req, res) => {
     if (error instanceof Error && error.message === "SHELL_USER_NOT_FOUND") return sendError(res, 404, "用户不存在");
     if (error instanceof Error && error.message === "SHELL_INSUFFICIENT_BALANCE") return sendError(res, 409, "扣减数量不能超过当前贝壳余额");
     throw error;
+  }
+});
+
+app.post("/api/admin/users/:id/experience-adjustments", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const parsed = z.object({
+    operation: z.enum(["add", "deduct"]),
+    amount: z.number().int().positive().max(MAX_EXPERIENCE)
+  }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "请输入有效的经验整数数量");
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[userRow]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT experience FROM users WHERE id = ? FOR UPDATE",
+      [req.params.id]
+    );
+    if (!userRow) throw new Error("EXPERIENCE_USER_NOT_FOUND");
+    const currentExperience = Number(userRow.experience ?? 0);
+    const experience = calculateExperienceAdjustment(currentExperience, parsed.data.operation, parsed.data.amount);
+    const signedAmount = parsed.data.operation === "add" ? parsed.data.amount : -parsed.data.amount;
+    await connection.query("UPDATE users SET experience = ? WHERE id = ?", [experience, req.params.id]);
+    await connection.query(
+      `INSERT INTO user_experience_adjustments
+        (id, user_id, admin_id, amount, experience_after)
+       VALUES (?, ?, ?, ?, ?)`,
+      [nanoid(), req.params.id, admin.id, signedAmount, experience]
+    );
+    await connection.commit();
+    res.json({ experience, level: levelForExperience(experience) });
+  } catch (error) {
+    await connection.rollback();
+    if (error instanceof Error && error.message === "EXPERIENCE_USER_NOT_FOUND") return sendError(res, 404, "用户不存在");
+    if (error instanceof Error && error.message === "EXPERIENCE_INSUFFICIENT") return sendError(res, 409, "扣除数量不能超过用户当前经验");
+    if (error instanceof Error && error.message === "EXPERIENCE_MAX_EXCEEDED") return sendError(res, 409, `用户经验不能超过 ${MAX_EXPERIENCE.toLocaleString()}`);
+    if (error instanceof Error && ["EXPERIENCE_AMOUNT_INVALID", "EXPERIENCE_CURRENT_INVALID"].includes(error.message)) {
+      return sendError(res, 400, "经验数据无效");
+    }
+    throw error;
+  } finally {
+    connection.release();
   }
 });
 
@@ -5478,27 +5852,34 @@ const badgeOwnershipRefreshTimer = setInterval(() => {
   refreshBadgeOwnershipRates().catch((error) => console.error("Badge ownership rate refresh failed:", error));
 }, BADGE_OWNERSHIP_REFRESH_MS);
 badgeOwnershipRefreshTimer.unref();
+const settleInviteShellRewards = () => {
+  runDailyInviteShellSettlement().catch((error) => console.error("Invite shell settlement failed:", error));
+};
+syncPendingInviteEmailRewards().catch((error) => console.error("Invite email reward sync failed:", error));
+settleInviteShellRewards();
+const inviteShellSettlementTimer = setInterval(settleInviteShellRewards, 60 * 60_000);
+inviteShellSettlementTimer.unref();
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);
 });
 
-const onlineSoupWebSocketServer = new WebSocketServer({ noServer: true });
+// 百度收录：每日一次全量推送（启动 60s 后首次执行，之后每 24h 一次）
+const BAIDU_PUSH_INTERVAL = 24 * 60 * 60 * 1000;
+setTimeout(() => {
+  pushFullSiteToBaidu(pool, config.publicSiteUrl).catch(() => {});
+  setInterval(() => {
+    pushFullSiteToBaidu(pool, config.publicSiteUrl).catch(() => {});
+  }, BAIDU_PUSH_INTERVAL);
+}, 60_000);
 
-function cookieValue(header: string | undefined, name: string) {
-  if (!header) return null;
-  for (const item of header.split(";")) {
-    const [key, ...parts] = item.trim().split("=");
-    if (key === name) return decodeURIComponent(parts.join("="));
-  }
-  return null;
-}
+const onlineSoupWebSocketServer = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", async (request, socket, head) => {
   try {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (url.pathname === "/ws/circles") {
       const circleId = url.searchParams.get("circleId");
-      const token = cookieValue(request.headers.cookie, "hgt_token");
+      const token = authTokenFromCookieHeader(request.headers.cookie);
       const claims = token ? verifyToken(token) : null;
       if (!circleId || !claims) return socket.destroy();
       const [[user], [members]] = await Promise.all([
@@ -5525,7 +5906,7 @@ server.on("upgrade", async (request, socket, head) => {
     }
     if (url.pathname !== "/ws/online-soup") return socket.destroy();
     const roomId = url.searchParams.get("roomId");
-    const token = cookieValue(request.headers.cookie, "hgt_token");
+    const token = authTokenFromCookieHeader(request.headers.cookie);
     const claims = token ? verifyToken(token) : null;
     if (!roomId || !claims) return socket.destroy();
     const [[user], [members]] = await Promise.all([
@@ -5589,7 +5970,6 @@ onlineSoupWebSocketServer.on("connection", (socket) => {
   }
   const userId = String((socket as any).onlineSoupUserId);
   const roomId = String((socket as any).onlineSoupRoomId);
-  const isHost = Boolean((socket as any).onlineSoupIsHost);
   let lastPresencePersistedAt = Date.now();
   const clients = onlineSoupRoomSocketClients.get(roomId) ?? new Set<WebSocket>();
   clients.add(socket);
@@ -5597,7 +5977,7 @@ onlineSoupWebSocketServer.on("connection", (socket) => {
   registerPresenceConnection(userId);
   socket.send(JSON.stringify({ event: "connected", payload: { roomId } }));
   void pool.query("UPDATE online_soup_members SET last_seen_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
-  if (isHost) void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
+  void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
 
   socket.on("message", (raw) => {
     try {
@@ -5607,7 +5987,7 @@ onlineSoupWebSocketServer.on("connection", (socket) => {
       if (Date.now() - lastPresencePersistedAt < 60_000) return;
       lastPresencePersistedAt = Date.now();
       void pool.query("UPDATE online_soup_members SET last_seen_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
-      if (isHost) void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
+      void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
     } catch { /* Ignore malformed client frames. */ }
   });
   socket.on("close", () => {

@@ -42,7 +42,7 @@ export default function RequestsPage() {
   }
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
+    <section className="min-h-screen bg-page">
       <PageTopBar title="申请" backTo="/messages" />
       <div className="mx-auto max-w-4xl px-4 pb-10">
         <div className="overflow-hidden rounded-2xl bg-white shadow-soft">

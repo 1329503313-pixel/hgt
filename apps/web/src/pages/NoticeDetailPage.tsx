@@ -31,9 +31,9 @@ export default function NoticeDetailPage() {
   }, [id, user, loadingUser, showToast]);
 
   return (
-    <section className="min-h-screen bg-page pt-[72px]">
+    <section className="min-h-screen bg-page">
       <PageTopBar title="通知详情" backTo="/messages/notices" />
-      <div className="mx-auto max-w-4xl px-4 pb-10 pt-4">
+      <div className="mx-auto max-w-4xl px-4 pb-10">
         {loading ? <DetailSkeleton /> : notice ? (
           <article className="rounded-2xl bg-white px-5 py-6 shadow-soft sm:px-8 sm:py-8">
             <header className="border-b border-line pb-5 text-center">

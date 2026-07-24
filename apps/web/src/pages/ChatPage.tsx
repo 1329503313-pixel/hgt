@@ -213,7 +213,7 @@ export default function ChatPage() {
         </header>
 
         <div className="min-h-0 flex flex-1 lg:grid lg:grid-cols-[minmax(0,1fr)_280px]">
-          <div className="relative flex min-h-0 flex-col bg-page">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-page">
         <div
           ref={messagesRef}
           className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4 lg:px-8 lg:py-6"

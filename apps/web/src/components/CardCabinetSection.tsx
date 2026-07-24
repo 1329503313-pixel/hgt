@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown01, GalleryVerticalEnd, Gem, Layers3, Star, X } from "lucide-react";
+import { ArrowDown01, ChevronLeft, ChevronRight, GalleryVerticalEnd, Gem, Layers3, Star, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { CardCabinet, OwnedAssetCard } from "../shared/digitalAssets";
@@ -18,6 +18,19 @@ type CardDetailAnimation = {
   sourceRect: DOMRect;
   targetRect?: DOMRect;
 };
+
+function getCardGridColumnCount() {
+  if (window.matchMedia("(min-width: 768px)").matches) return 6;
+  if (window.matchMedia("(min-width: 640px)").matches) return 5;
+  return 3;
+}
+
+function paginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  if (currentPage <= 4) return [1, 2, 3, 4, 5, "ellipsis", totalPages];
+  if (currentPage >= totalPages - 3) return [1, "ellipsis", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages];
+}
 
 export function CardCabinetSection({
   userId,
@@ -41,9 +54,23 @@ export function CardCabinetSection({
   const [activePackId, setActivePackId] = useState("all");
   const [showcaseCollapsed, setShowcaseCollapsed] = useState(true);
   const [cardSort, setCardSort] = useState<"number" | "rarity">("number");
+  const [cardGridColumns, setCardGridColumns] = useState(getCardGridColumnCount);
+  const [cardPage, setCardPage] = useState(1);
 
   useEffect(() => {
     warmAssetImage(CARD_BACK_URL);
+  }, []);
+
+  useEffect(() => {
+    const phoneQuery = window.matchMedia("(min-width: 640px)");
+    const desktopQuery = window.matchMedia("(min-width: 768px)");
+    const updateColumnCount = () => setCardGridColumns(getCardGridColumnCount());
+    phoneQuery.addEventListener("change", updateColumnCount);
+    desktopQuery.addEventListener("change", updateColumnCount);
+    return () => {
+      phoneQuery.removeEventListener("change", updateColumnCount);
+      desktopQuery.removeEventListener("change", updateColumnCount);
+    };
   }, []);
 
   useEffect(() => {
@@ -77,7 +104,18 @@ export function CardCabinetSection({
     if (activePackId !== "all" && !packTabs.some((pack) => pack.id === activePackId)) setActivePackId("all");
   }, [activePackId, packTabs]);
 
-  const visibleCards = activePackId === "all" ? sortedCards : (packTabs.find((pack) => pack.id === activePackId)?.cards ?? []);
+  const filteredCards = activePackId === "all" ? sortedCards : (packTabs.find((pack) => pack.id === activePackId)?.cards ?? []);
+  const cardsPerPage = cardGridColumns * 3;
+  const cardPageCount = Math.max(1, Math.ceil(filteredCards.length / cardsPerPage));
+  const visibleCards = filteredCards.slice((cardPage - 1) * cardsPerPage, cardPage * cardsPerPage);
+
+  useEffect(() => {
+    setCardPage(1);
+  }, [activePackId, cardSort]);
+
+  useEffect(() => {
+    setCardPage((page) => Math.min(page, cardPageCount));
+  }, [cardPageCount]);
 
   function toggle(card: OwnedAssetCard, source?: HTMLElement) {
     if (!editing) { openDetail(card, source); return; }
@@ -177,6 +215,17 @@ export function CardCabinetSection({
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 md:grid-cols-6">
             {visibleCards.map((card) => <div key={card.id} className="min-w-0"><AssetCardVisual card={card} compactBadges className="asset-card-cabinet" selected={editing && selected.includes(card.id)} onClick={(event) => toggle(card, event.currentTarget)} /><div className="mt-2 flex items-center justify-between gap-1 text-[10px] font-bold"><span className="truncate text-muted">{ASSET_RARITY_LABELS[card.rarity]}</span><span className="text-ink">收藏值 {card.collectionValue}</span></div></div>)}
           </div>
+          {cardPageCount > 1 && (
+            <nav className="mt-5 flex flex-wrap items-center justify-center gap-1.5 border-t border-line pt-4" aria-label="收藏柜卡牌分页">
+              <button type="button" className="btn btn-secondary h-9 px-2.5 text-xs" disabled={cardPage <= 1} onClick={() => setCardPage((page) => Math.max(1, page - 1))}><ChevronLeft size={15} />上一页</button>
+              {paginationItems(cardPage, cardPageCount).map((item, index) => item === "ellipsis" ? (
+                <span key={`ellipsis-${index}`} className="grid h-9 w-7 place-items-center text-sm text-muted">…</span>
+              ) : (
+                <button type="button" key={item} className={`grid h-9 min-w-9 place-items-center rounded-lg px-2 text-sm font-bold ${item === cardPage ? "bg-primary text-white" : "border border-line bg-white text-ink"}`} aria-current={item === cardPage ? "page" : undefined} onClick={() => setCardPage(item)}>{item}</button>
+              ))}
+              <button type="button" className="btn btn-secondary h-9 px-2.5 text-xs" disabled={cardPage >= cardPageCount} onClick={() => setCardPage((page) => Math.min(cardPageCount, page + 1))}>下一页<ChevronRight size={15} /></button>
+            </nav>
+          )}
         </div>
       ))}
 

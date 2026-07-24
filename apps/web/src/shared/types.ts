@@ -179,6 +179,31 @@ export type ShellTask = {
   dailyMaximum: number;
 };
 
+export type BeginnerTaskType =
+  | "upload_avatar"
+  | "complete_ten_draws"
+  | "equip_badge"
+  | "bind_email"
+  | "change_profile_background"
+  | "invite_verified_email"
+  | "invite_shell_milestone";
+
+export type BeginnerTask = {
+  type: BeginnerTaskType;
+  name: string;
+  description: string;
+  reward: number;
+  progress: number;
+  target: number;
+  completed: boolean;
+  actualReward: number;
+  experienceReward: number;
+  actualExperience: number;
+  completedAt: string | null;
+  repeatable?: boolean;
+  completedCount?: number;
+};
+
 export type ShellTaskCenter = {
   balance: number;
   taskDate: string;
@@ -188,6 +213,7 @@ export type ShellTaskCenter = {
   theoreticalMaximum: number;
   levelProgress: import("./levelSystem").LevelProgress;
   tasks: ShellTask[];
+  beginnerTasks: BeginnerTask[];
 };
 
 export type ShellTransaction = {
@@ -218,6 +244,8 @@ export type OnlineSoupRoomInvite = {
   status: OnlineSoupRoomStatus;
   playerCount: number;
   playerCapacity: number;
+  participantCount?: number;
+  participantCapacity?: number;
 };
 
 export type SoupShare = Pick<SoupSummary, "id" | "title" | "author" | "type" | "difficulty" | "summary" | "coverImage" | "heatValue" | "averageTotal" | "likeCount" | "favoriteCount">;
@@ -289,6 +317,16 @@ export type CircleMember = PublicUser & {
   isOnline: boolean;
 };
 
+export type CircleMessageReply = {
+  id: string;
+  sequence: number;
+  sender: Pick<PublicUser, "id" | "nickname"> | null;
+  content: string;
+  type: "text" | "sticker" | "room_invite" | "soup_share";
+  stickerId: string | null;
+  stickerName?: string | null;
+};
+
 export type CircleMessage = {
   id: string;
   sequence: number;
@@ -304,6 +342,7 @@ export type CircleMessage = {
     userId: string;
     nickname: string;
   }>;
+  replyTo: CircleMessageReply | null;
   createdAt: string;
 };
 
@@ -322,6 +361,9 @@ export type OnlineSoupLobbyRoom = {
   host: { id: string; nickname: string };
   soupTitle: string | null;
   playerCount: number;
+  playerCapacity: number;
+  participantCount: number;
+  participantCapacity: number;
   hasPassword: boolean;
   createdAt: string;
 };
@@ -368,6 +410,8 @@ export type OnlineSoupSnapshot = {
     status: OnlineSoupRoomStatus;
     hostOnline: boolean;
     playerCount: number;
+    playerCapacity: number;
+    participantCapacity: number;
     currentRoundId: string | null;
     soup: {
       id: string;

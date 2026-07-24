@@ -78,6 +78,10 @@ export function IncomingMessageBanner() {
   const [decisionBusy, setDecisionBusy] = useState(false);
   const gestureRef = useRef({ pointerId: -1, startX: 0, startY: 0, x: 0, y: 0, moved: false, axis: "" as "" | "x" | "y" });
   useEffect(() => {
+    setCurrent(null);
+  }, [user?.id]);
+
+  useEffect(() => {
     locationRef.current = location.pathname;
     if (current && isSuppressed(location.pathname, current)) {
       setCurrent(null);

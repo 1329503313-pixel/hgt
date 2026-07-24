@@ -22,7 +22,7 @@ test("Banner 按桌面端和手机端输出不同画幅", async () => {
   const mobile = await optimizeBannerImage(value, "mobile");
   const desktopMeta = await sharp(Buffer.from(desktop!.split(",")[1], "base64")).metadata();
   const mobileMeta = await sharp(Buffer.from(mobile!.split(",")[1], "base64")).metadata();
-  assert.deepEqual([desktopMeta.width, desktopMeta.height], [1600, 800]);
+  assert.deepEqual([desktopMeta.width, desktopMeta.height], [2000, 800]);
   assert.deepEqual([mobileMeta.width, mobileMeta.height], [960, 540]);
 });
 
