@@ -5,7 +5,7 @@ import { randomInt } from "node:crypto";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { z } from "zod";
-import { absoluteAssetMediaPath, removeCardMotionFiles, sendAssetVideo, storeCardMotionVideo } from "./assetVideos.js";
+import { absoluteAssetMediaPath, finishCardMotionWebm, processCardMotionPrimary, removeCardMotionFiles, sendAssetVideo, stageCardMotionVideo } from "./assetVideos.js";
 import { pool } from "./db.js";
 import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCurrency.js";
 
@@ -25,10 +25,60 @@ type RouteDependencies = {
 };
 
 const assetMediaSourceCache = new Map<string, { expiresAt: number; image: unknown }>();
+const cardMotionJobs = new Map<string, Promise<void>>();
 
 function cacheAssetMedia(key: string, image: unknown) {
   assetMediaSourceCache.set(key, { expiresAt: Date.now() + 10 * 60_000, image });
   if (assetMediaSourceCache.size > 80) assetMediaSourceCache.delete(assetMediaSourceCache.keys().next().value!);
+}
+
+function queueCardMotionTranscode(
+  cardId: string,
+  staged: Awaited<ReturnType<typeof stageCardMotionVideo>>,
+  previousPaths: unknown[]
+) {
+  const jobKey = `${cardId}:${staged.version}`;
+  if (cardMotionJobs.has(jobKey)) return;
+  let job!: Promise<void>;
+  job = (async () => {
+    try {
+      const processed = await processCardMotionPrimary(staged);
+      const [result] = await pool.query<mysql.ResultSetHeader>(
+        `UPDATE asset_cards SET motion_mp4_path = ?, motion_webm_path = NULL, motion_poster_path = ?,
+          motion_version = ?, motion_processing_version = NULL, motion_status = 'ready', motion_error = NULL,
+          updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND motion_processing_version = ?`,
+        [processed.mp4Path, processed.posterPath, processed.version, cardId, processed.version]
+      );
+      if (result.affectedRows === 0) {
+        if (!processed.reused) await removeCardMotionFiles([processed.mp4Path, processed.posterPath]);
+        return;
+      }
+      if (previousPaths[0] !== processed.mp4Path) await removeCardMotionFiles(previousPaths);
+      try {
+        const webmPath = await finishCardMotionWebm(processed);
+        if (webmPath) {
+          await pool.query(
+            "UPDATE asset_cards SET motion_webm_path = ? WHERE id = ? AND motion_version = ?",
+            [webmPath, cardId, processed.version]
+          );
+        }
+      } catch (error) {
+        console.error(`optional card motion WebM transcode failed: ${cardId}`, error);
+      }
+    } catch (error) {
+      await pool.query(
+        `UPDATE asset_cards SET motion_processing_version = NULL, motion_status = 'failed', motion_error = ?
+         WHERE id = ? AND motion_processing_version = ?`,
+        ["视频转码失败，请检查素材格式", cardId, staged.version]
+      ).catch(() => undefined);
+      if (!staged.reused) await removeCardMotionFiles([staged.mp4Path, staged.posterPath]).catch(() => undefined);
+      console.error(`card motion transcode failed: ${cardId}`, error);
+    } finally {
+      if (cardMotionJobs.get(jobKey) === job) cardMotionJobs.delete(jobKey);
+    }
+  })();
+  cardMotionJobs.set(jobKey, job);
 }
 
 type Rarity = "normal" | "rare" | "epic" | "legend";
@@ -1229,32 +1279,62 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     res.json({ card: { ...cardPayload(row), packIds: packRows.map((item: mysql.RowDataPacket) => String(item.pack_id)) } });
   });
 
+  app.get("/api/admin/asset-cards/:id/motion/status", async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const [[card]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT motion_version, motion_processing_version, motion_status, motion_error
+       FROM asset_cards WHERE id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (!card) return sendError(res, 404, "卡片不存在");
+    const requestedVersion = String(req.query.version ?? "");
+    const ready = requestedVersion && card.motion_version === requestedVersion;
+    const processing = requestedVersion && card.motion_processing_version === requestedVersion;
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      status: ready ? "ready" : processing ? "processing" : String(card.motion_status ?? "idle"),
+      error: card.motion_error ? String(card.motion_error) : null
+    });
+  });
+
   app.put(
     "/api/admin/asset-cards/:id/motion",
     express.raw({ type: ["video/*", "application/octet-stream"], limit: "200mb" }),
     async (req, res) => {
       if (!(await requireAdmin(req, res))) return;
       const [[card]] = await pool.query<mysql.RowDataPacket[]>(
-        "SELECT id, rarity, motion_mp4_path, motion_webm_path, motion_poster_path FROM asset_cards WHERE id = ? LIMIT 1",
+        `SELECT id, rarity, motion_mp4_path, motion_webm_path, motion_poster_path
+         FROM asset_cards WHERE id = ? LIMIT 1`,
         [req.params.id]
       );
       if (!card) return sendError(res, 404, "卡片不存在");
       if (rarity(card.rarity) !== "legend") return sendError(res, 400, "仅传说卡支持动态卡面");
       if (!Buffer.isBuffer(req.body)) return sendError(res, 400, "视频文件无效");
-      let stored: Awaited<ReturnType<typeof storeCardMotionVideo>> | null = null;
+      let staged: Awaited<ReturnType<typeof stageCardMotionVideo>> | null = null;
       try {
-        stored = await storeCardMotionVideo(req.params.id, req.body, String(req.headers["content-type"] ?? "application/octet-stream"));
-        await pool.query(
-          `UPDATE asset_cards SET motion_mp4_path = ?, motion_webm_path = ?, motion_poster_path = ?,
-            motion_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [stored.mp4Path, stored.webmPath, stored.posterPath, stored.version, req.params.id]
-        );
-        if (card.motion_mp4_path !== stored.mp4Path) {
-          await removeCardMotionFiles([card.motion_mp4_path, card.motion_webm_path, card.motion_poster_path]);
+        staged = await stageCardMotionVideo(req.params.id, req.body, String(req.headers["content-type"] ?? "application/octet-stream"));
+        if (staged.reused) {
+          await pool.query(
+            `UPDATE asset_cards SET motion_mp4_path = ?, motion_webm_path = ?, motion_poster_path = ?,
+              motion_version = ?, motion_processing_version = NULL, motion_status = 'ready', motion_error = NULL,
+              updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [staged.mp4Path, staged.webmPath, staged.posterPath, staged.version, req.params.id]
+          );
+          return res.json({ ok: true, status: "ready", version: staged.version });
         }
-        res.json({ ok: true });
+        await pool.query(
+          `UPDATE asset_cards SET motion_processing_version = ?, motion_status = 'processing', motion_error = NULL
+           WHERE id = ?`,
+          [staged.version, req.params.id]
+        );
+        queueCardMotionTranscode(
+          req.params.id,
+          staged,
+          [card.motion_mp4_path, card.motion_webm_path, card.motion_poster_path]
+        );
+        return res.status(202).json({ ok: true, status: "processing", version: staged.version });
       } catch (error) {
-        if (stored && !stored.reused) await removeCardMotionFiles([stored.mp4Path, stored.webmPath, stored.posterPath]);
+        if (staged && !staged.reused) await removeCardMotionFiles([staged.mp4Path, staged.posterPath]);
         const message = error instanceof Error ? error.message : "";
         if (message === "ASSET_VIDEO_TYPE_INVALID") return sendError(res, 415, "仅支持 MP4、WebM、MOV 或 M4V 视频");
         if (message === "ASSET_VIDEO_SIZE_INVALID") return sendError(res, 413, "视频不能为空且不能超过 200MB");
@@ -1273,7 +1353,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (!card) return sendError(res, 404, "卡片不存在");
     await pool.query(
       `UPDATE asset_cards SET motion_mp4_path = NULL, motion_webm_path = NULL,
-        motion_poster_path = NULL, motion_version = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        motion_poster_path = NULL, motion_version = NULL, motion_processing_version = NULL,
+        motion_status = 'idle', motion_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [req.params.id]
     );
     await removeCardMotionFiles([card.motion_mp4_path, card.motion_webm_path, card.motion_poster_path]);

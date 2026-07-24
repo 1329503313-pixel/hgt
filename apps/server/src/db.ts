@@ -1082,6 +1082,9 @@ export async function initDatabase() {
       motion_webm_path VARCHAR(500) NULL,
       motion_poster_path VARCHAR(500) NULL,
       motion_version VARCHAR(64) NULL,
+      motion_processing_version VARCHAR(64) NULL,
+      motion_status ENUM('idle','processing','ready','failed') NOT NULL DEFAULT 'idle',
+      motion_error VARCHAR(255) NULL,
       story TEXT NULL,
       release_at DATETIME NULL,
       status ENUM('active','inactive') NOT NULL DEFAULT 'inactive',
@@ -1094,6 +1097,10 @@ export async function initDatabase() {
   await ensureColumn("asset_cards", "motion_webm_path", "motion_webm_path VARCHAR(500) NULL AFTER motion_mp4_path");
   await ensureColumn("asset_cards", "motion_poster_path", "motion_poster_path VARCHAR(500) NULL AFTER motion_webm_path");
   await ensureColumn("asset_cards", "motion_version", "motion_version VARCHAR(64) NULL AFTER motion_poster_path");
+  await ensureColumn("asset_cards", "motion_processing_version", "motion_processing_version VARCHAR(64) NULL AFTER motion_version");
+  await ensureColumn("asset_cards", "motion_status", "motion_status ENUM('idle','processing','ready','failed') NOT NULL DEFAULT 'idle' AFTER motion_processing_version");
+  await ensureColumn("asset_cards", "motion_error", "motion_error VARCHAR(255) NULL AFTER motion_status");
+  await pool.query("UPDATE asset_cards SET motion_status = 'ready' WHERE motion_mp4_path IS NOT NULL AND motion_status = 'idle'");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS asset_packs (

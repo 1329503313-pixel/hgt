@@ -18,12 +18,20 @@ const ALLOWED_VIDEO_TYPES = new Set([
 function run(command: string, args: string[]) {
   return new Promise<void>((resolvePromise, reject) => {
     const child = spawn(command, args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("FFmpeg processing timed out"));
+    }, 10 * 60_000);
     let errorOutput = "";
     child.stderr.on("data", (chunk) => {
       if (errorOutput.length < 12_000) errorOutput += String(chunk);
     });
-    child.once("error", (error) => reject(error));
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
     child.once("close", (code) => {
+      clearTimeout(timeout);
       if (code === 0) resolvePromise();
       else reject(new Error(errorOutput.trim() || `${command} exited with code ${code}`));
     });
@@ -41,7 +49,7 @@ export function absoluteAssetMediaPath(mediaPath: string) {
   return absolutePath;
 }
 
-export async function storeCardMotionVideo(cardId: string, source: Buffer, contentType: string) {
+export async function stageCardMotionVideo(cardId: string, source: Buffer, contentType: string) {
   if (!ALLOWED_VIDEO_TYPES.has(contentType)) throw new Error("ASSET_VIDEO_TYPE_INVALID");
   if (!source.length || source.length > CARD_VIDEO_MAX_BYTES) throw new Error("ASSET_VIDEO_SIZE_INVALID");
 
@@ -59,43 +67,73 @@ export async function storeCardMotionVideo(cardId: string, source: Buffer, conte
       reused: true,
       mp4Path: relativeMediaPath(mp4Path),
       webmPath: relativeMediaPath(webmPath),
-      posterPath: relativeMediaPath(posterPath)
+      posterPath: relativeMediaPath(posterPath),
+      sourcePath: null,
+      pendingMp4Path: null,
+      pendingPosterPath: null,
+      pendingWebmPath: null
     };
   } catch {
     // At least one rendition is missing, so rebuild the complete version set.
   }
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(sourcePath, source);
+  return {
+    version,
+    reused: false,
+    mp4Path: relativeMediaPath(mp4Path),
+    webmPath: null,
+    posterPath: relativeMediaPath(posterPath),
+    sourcePath,
+    pendingMp4Path: mp4Path,
+    pendingPosterPath: posterPath,
+    pendingWebmPath: webmPath
+  };
+}
 
+export async function processCardMotionPrimary(
+  stored: Awaited<ReturnType<typeof stageCardMotionVideo>>
+) {
+  if (stored.reused || !stored.sourcePath || !stored.pendingMp4Path || !stored.pendingPosterPath) return stored;
   const scale = "scale='min(1080,iw)':-2:flags=lanczos,fps=30";
   try {
-    await run(config.ffmpegPath, [
-      "-y", "-i", sourcePath, "-an", "-vf", scale,
-      "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-      "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
-      "-g", "60", "-keyint_min", "60", "-movflags", "+faststart", mp4Path
+    const primaryResults = await Promise.allSettled([
+      run(config.ffmpegPath, [
+        "-y", "-i", stored.sourcePath, "-an", "-vf", scale,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
+        "-g", "60", "-keyint_min", "60", "-movflags", "+faststart", stored.pendingMp4Path
+      ]),
+      run(config.ffmpegPath, [
+        "-y", "-i", stored.sourcePath, "-frames:v", "1",
+        "-vf", "scale='min(1080,iw)':-2:flags=lanczos", "-c:v", "libwebp", "-quality", "88", stored.pendingPosterPath
+      ])
     ]);
-    await run(config.ffmpegPath, [
-      "-y", "-i", sourcePath, "-an", "-vf", scale,
-      "-c:v", "libvpx-vp9", "-crf", "24", "-b:v", "0",
-      "-row-mt", "1", "-g", "60", webmPath
-    ]);
-    await run(config.ffmpegPath, [
-      "-y", "-i", sourcePath, "-frames:v", "1",
-      "-vf", "scale='min(1080,iw)':-2:flags=lanczos", "-c:v", "libwebp", "-quality", "88", posterPath
-    ]);
-    await rm(sourcePath, { force: true });
-    return {
-      version,
-      reused: false,
-      mp4Path: relativeMediaPath(mp4Path),
-      webmPath: relativeMediaPath(webmPath),
-      posterPath: relativeMediaPath(posterPath)
-    };
+    const primaryFailure = primaryResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (primaryFailure) throw primaryFailure.reason;
+    return stored;
   } catch (error) {
-    await rm(outputDirectory, { recursive: true, force: true });
+    await removeCardMotionFiles([stored.mp4Path, stored.posterPath]);
     if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("ASSET_VIDEO_TRANSCODER_UNAVAILABLE");
     throw new Error(`ASSET_VIDEO_TRANSCODE_FAILED:${error instanceof Error ? error.message : "unknown"}`);
+  }
+}
+
+export async function finishCardMotionWebm(
+  stored: Awaited<ReturnType<typeof stageCardMotionVideo>>
+) {
+  if (stored.reused || !stored.sourcePath || !stored.pendingWebmPath) return stored.webmPath;
+  try {
+    await run(config.ffmpegPath, [
+      "-y", "-i", stored.sourcePath, "-an",
+      "-vf", "scale='min(1080,iw)':-2:flags=lanczos,fps=30",
+      "-c:v", "libvpx-vp9", "-crf", "24", "-b:v", "0",
+      "-deadline", "good", "-cpu-used", "3", "-row-mt", "1", "-g", "60",
+      stored.pendingWebmPath
+    ]);
+    return relativeMediaPath(stored.pendingWebmPath);
+  } finally {
+    await rm(stored.sourcePath, { force: true });
   }
 }
 

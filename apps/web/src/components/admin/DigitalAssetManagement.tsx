@@ -125,6 +125,7 @@ export function DigitalAssetManagement() {
   const [configPack, setConfigPack] = useState<AdminPack | null>(null);
   const [probabilities, setProbabilities] = useState<Record<AssetRarity, string>>(blankProbabilities);
   const [saving, setSaving] = useState(false);
+  const [savingPhase, setSavingPhase] = useState("");
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [stats, setStats] = useState<AssetStats | null>(null);
@@ -241,7 +242,7 @@ export function DigitalAssetManagement() {
 
   async function saveCard() {
     if (cardForm.packIds.length === 0) { setMessage("卡牌必须至少绑定一个卡包"); return; }
-    setSaving(true); setMessage("");
+    setSaving(true); setSavingPhase("正在保存卡牌资料…"); setMessage("");
     try {
       const imageUrl = await normalizedImageData(cardForm.imageUrl);
       const { motionMp4Url: _motionMp4Url, motionWebmUrl: _motionWebmUrl, motionPosterUrl: _motionPosterUrl, ...cardValues } = cardForm;
@@ -250,17 +251,45 @@ export function DigitalAssetManagement() {
       const cardId = editingCardId ?? result.id;
       if (!cardId) throw new Error("卡牌保存成功，但未返回卡牌编号");
       if (motionFile) {
-        await api(`/api/admin/asset-cards/${cardId}/motion`, {
+        setSavingPhase("正在上传视频…");
+        const upload = await api<{ status: "ready" | "processing"; version: string }>(`/api/admin/asset-cards/${cardId}/motion`, {
           method: "PUT",
           headers: { "Content-Type": motionFile.type || "application/octet-stream" },
           body: motionFile
         });
+        if (upload.status === "processing") {
+          setMessage("视频已上传，正在后台生成动态卡面；可以继续管理其他卡牌。");
+          void (async () => {
+            for (let attempt = 0; attempt < 300; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+              try {
+                const status = await api<{ status: "idle" | "processing" | "ready" | "failed"; error: string | null }>(
+                  `/api/admin/asset-cards/${cardId}/motion/status?version=${encodeURIComponent(upload.version)}`,
+                  { bypassCache: true }
+                );
+                if (status.status === "ready") {
+                  setMessage("动态卡面处理完成。");
+                  await load();
+                  return;
+                }
+                if (status.status === "failed") {
+                  setMessage(status.error || "视频转码失败，请重新上传。");
+                  return;
+                }
+              } catch {
+                // A transient polling failure must not turn a successful upload into a failed save.
+              }
+            }
+            setMessage("视频仍在后台处理中，请稍后重新打开卡牌查看。");
+          })();
+        }
       } else if (removeMotion && editingCardId) {
+        setSavingPhase("正在删除动态卡面…");
         await api(`/api/admin/asset-cards/${cardId}/motion`, { method: "DELETE" });
       }
       setCardModal(false); await load();
     } catch (error) { setMessage((error as Error).message); }
-    finally { setSaving(false); }
+    finally { setSaving(false); setSavingPhase(""); }
   }
 
   async function openPack(pack?: AdminPack) {
@@ -561,7 +590,8 @@ export function DigitalAssetManagement() {
             <p className="mt-2 text-xs text-muted">绑定后自动参与对应品质的抽取；同品质存在多张卡牌时等概率抽取。</p>
           </fieldset>
         </div>
-        <button className="btn btn-primary mt-5 w-full" disabled={saving || !cardForm.imageUrl || !cardForm.cardNo || !cardForm.name || cardForm.packIds.length === 0} onClick={() => void saveCard()}><Save size={17} />{saving ? "压缩并保存中…" : "保存卡牌"}</button>
+        {savingPhase && <p className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-center text-sm font-bold text-primary">{savingPhase}</p>}
+        <button className="btn btn-primary mt-5 w-full" disabled={saving || !cardForm.imageUrl || !cardForm.cardNo || !cardForm.name || cardForm.packIds.length === 0} onClick={() => void saveCard()}><Save size={17} />{saving ? "处理中…" : "保存卡牌"}</button>
       </Modal>}
 
       {packModal && <Modal full onClose={() => setPackModal(false)}>
