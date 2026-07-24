@@ -30,9 +30,15 @@ services:
       - SMTP_FROM=${SMTP_FROM:?SMTP_FROM must be set}
       - SMTP_REPLY_TO=${SMTP_REPLY_TO:-}
       - RUN_DB_MIGRATIONS=${RUN_DB_MIGRATIONS:-true}
+      - ASSET_MEDIA_DIR=/app/data/asset-media
+    volumes:
+      - hgt_asset_media:/app/data/asset-media
     networks:
       - mysql-docker_default
 
 networks:
   mysql-docker_default:
     external: true
+
+volumes:
+  hgt_asset_media:

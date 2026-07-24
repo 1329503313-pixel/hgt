@@ -141,6 +141,9 @@ export type SocialProfile = PublicUser & {
   isFollowing: boolean;
   isSelf: boolean;
   profileBackgroundUrl: string | null;
+  profileBackgroundMotionMp4Url: string | null;
+  profileBackgroundMotionWebmUrl: string | null;
+  profileBackgroundCrop: { x: number; y: number; zoom: number };
 };
 
 export type SocialUser = PublicUser & {

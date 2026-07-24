@@ -32,7 +32,7 @@ RUN npx tsc -p apps/server/tsconfig.json
 # ============================================
 FROM node:24-alpine
 WORKDIR /app
-RUN apk add --no-cache vips-dev
+RUN apk add --no-cache vips-dev ffmpeg
 
 # 复制后端构建产物和依赖
 COPY --from=server-builder /app/apps/server/dist ./server/dist

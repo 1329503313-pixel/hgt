@@ -45,3 +45,14 @@ test("卡包抽取统计将数据库聚合值转换为前端数字", () => {
     recent7dDrawCount: 0
   });
 });
+
+test("卡包封面固定选择卡号最小的传说卡", () => {
+  const cards = [
+    { card_no: "010", rarity: "legend" },
+    { card_no: "2", rarity: "legend" },
+    { card_no: "001", rarity: "epic" },
+    { card_no: "003", rarity: "legend" }
+  ];
+  assert.equal(digitalAssetRules.lowestLegendCard(cards)?.card_no, "2");
+  assert.equal(digitalAssetRules.lowestLegendCard(cards.filter((card) => card.rarity !== "legend")), null);
+});

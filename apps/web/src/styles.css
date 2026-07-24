@@ -3690,6 +3690,13 @@ textarea {
   animation-play-state: paused;
 }
 .asset-card-legend.asset-card-in-view .asset-card-frame { animation-play-state: running; }
+.asset-card-motion-disabled.asset-card-legend .asset-card-image,
+.asset-card-motion-disabled.asset-card-legend .asset-card-frame,
+.asset-card-motion-disabled.asset-card-legend .asset-card-frame::after,
+.asset-card-motion-disabled.asset-card-legend .asset-card-rarity-text {
+  animation: none !important;
+  will-change: auto !important;
+}
 .asset-card-selected .asset-card-frame { outline: 3px solid #2563eb; outline-offset: 3px; }
 .asset-card-locked { filter: grayscale(1); opacity: 0.52; }
 

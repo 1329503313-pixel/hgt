@@ -41,6 +41,15 @@ export class ApiError extends Error {
   }
 }
 
+function isBodyInit(value: unknown): value is BodyInit {
+  return typeof value === "string"
+    || value instanceof FormData
+    || value instanceof Blob
+    || value instanceof URLSearchParams
+    || value instanceof ArrayBuffer
+    || ArrayBuffer.isView(value);
+}
+
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const { cacheTtlMs = 0, dedupe = true, bypassCache = false, ...fetchOptions } = options;
   const method = String(fetchOptions.method ?? "GET").toUpperCase();
@@ -55,14 +64,14 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 
   const request = (async () => {
     const headers = new Headers(fetchOptions.headers);
-    if (fetchOptions.body && !(fetchOptions.body instanceof FormData)) headers.set("Content-Type", "application/json");
+    if (fetchOptions.body && !isBodyInit(fetchOptions.body)) headers.set("Content-Type", "application/json");
     const response = await fetch(`${API_URL}${path}`, {
       ...fetchOptions,
       cache: bypassCache ? "no-store" : fetchOptions.cache,
       credentials: "include",
       headers,
       body:
-        fetchOptions.body && !(fetchOptions.body instanceof FormData) && typeof fetchOptions.body !== "string"
+        fetchOptions.body && !isBodyInit(fetchOptions.body)
           ? JSON.stringify(fetchOptions.body)
           : (fetchOptions.body as BodyInit | null | undefined)
     });

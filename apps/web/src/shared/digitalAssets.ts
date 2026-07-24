@@ -8,6 +8,9 @@ export type AssetCard = {
   rarity: AssetRarity;
   imageUrl: string;
   thumbnailUrl: string;
+  motionMp4Url?: string | null;
+  motionWebmUrl?: string | null;
+  motionPosterUrl?: string | null;
   story: string;
   releaseAt: string | null;
   status: string;
@@ -38,6 +41,7 @@ export type AssetPack = {
   id: string;
   name: string;
   coverUrl: string;
+  coverCard?: AssetCard | null;
   description: string;
   packStory: string;
   packType: AssetPackType;

@@ -4,6 +4,7 @@ import type { SocialProfile, SoupSummary } from "../shared/types";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
 import { LevelBadge } from "./LevelBadge";
 import { defaultCoverUrl } from "../shared/staticAssets";
+import { AssetMotionMedia } from "./AssetCardVisual";
 
 export function ProfileHero({
   profile,
@@ -24,10 +25,26 @@ export function ProfileHero({
   showBadge?: boolean;
   className?: string;
 }) {
+  const hasBackground = Boolean(profile.profileBackgroundUrl);
+  const backgroundCrop = profile.profileBackgroundCrop ?? { x: 50, y: 50, zoom: 1 };
   return (
     <div className={`profile-hero relative isolate overflow-hidden rounded-2xl bg-white shadow-soft ${className}`}>
-      {profile.profileBackgroundUrl && <img className="profile-hero-background absolute inset-x-0 top-0 z-0 h-[118px] w-full object-cover" src={profile.profileBackgroundUrl} alt="" />}
-      <div className={`profile-hero-main relative z-[1] h-[118px] px-4 pt-4 text-white ${profile.profileBackgroundUrl ? "bg-slate-950/30" : "profile-gradient"}`}>
+      {profile.profileBackgroundMotionMp4Url && profile.profileBackgroundUrl
+        ? <AssetMotionMedia
+            card={{
+              name: `${profile.nickname}的主页背景`,
+              imageUrl: profile.profileBackgroundUrl,
+              thumbnailUrl: profile.profileBackgroundUrl,
+              motionMp4Url: profile.profileBackgroundMotionMp4Url,
+              motionWebmUrl: profile.profileBackgroundMotionWebmUrl,
+              motionPosterUrl: profile.profileBackgroundUrl
+            }}
+            className="profile-hero-background absolute inset-x-0 top-0 z-0 h-[118px] w-full object-cover"
+            eager
+            style={{ objectPosition: `${backgroundCrop.x}% ${backgroundCrop.y}%`, transform: `scale(${backgroundCrop.zoom})`, transformOrigin: `${backgroundCrop.x}% ${backgroundCrop.y}%` }}
+          />
+        : profile.profileBackgroundUrl && <img className="profile-hero-background absolute inset-x-0 top-0 z-0 h-[118px] w-full object-cover" src={profile.profileBackgroundUrl} alt="" />}
+      <div className={`profile-hero-main relative z-[1] h-[118px] px-4 pt-4 text-white ${hasBackground ? "bg-slate-950/30" : "profile-gradient"}`}>
         <div className="profile-hero-identity flex items-center gap-3">
           <button className="profile-hero-avatar h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-white/90 bg-white/20 text-2xl font-black shadow-md" onClick={onAvatar} disabled={!onAvatar}>
             {profile.avatar ? <img className="h-full w-full object-cover" src={profile.avatar} alt="" /> : profile.nickname.slice(0, 1)}
@@ -43,7 +60,7 @@ export function ProfileHero({
           {actions && <div className="shrink-0">{actions}</div>}
         </div>
       </div>
-      <div className={`profile-hero-stats relative z-[1] grid grid-cols-3 divide-x divide-line px-2 py-3 ${profile.profileBackgroundUrl ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>
+      <div className={`profile-hero-stats relative z-[1] grid grid-cols-3 divide-x divide-line px-2 py-3 ${hasBackground ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>
         <div className="text-center"><p className="text-lg font-black text-ink">{profile.receivedLikeCount}</p><p className="text-xs text-muted">获赞</p></div>
         <button className="text-center" onClick={onFollowing}><p className="text-lg font-black text-ink">{profile.followingCount}</p><p className="text-xs text-muted">关注</p></button>
         <button className="text-center" onClick={onFollowers}><p className="text-lg font-black text-ink">{profile.followerCount}</p><p className="text-xs text-muted">粉丝</p></button>

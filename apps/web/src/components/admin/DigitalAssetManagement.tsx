@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Check, ImagePlus, Plus, Save, Search, Shell, Sparkles, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, ImagePlus, Plus, Save, Search, Shell, Sparkles, Trash2, Video, X } from "lucide-react";
 import { api } from "../../api";
 import { Modal } from "../Modal";
 import { AssetCardVisual } from "../AssetCardVisual";
@@ -10,7 +10,7 @@ import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
 
 type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[] };
 type AdminPack = {
-  id: string; name: string; coverUrl: string; description: string; packStory: string; packType: AssetPackType; packTypeLabel: string;
+  id: string; name: string; coverUrl: string; coverCard: AssetCard | null; description: string; packStory: string; packType: AssetPackType; packTypeLabel: string;
   singlePrice: number; tenPrice: number; dailyFreeDraws: number; saleStartAt: string | null; saleEndAt: string | null;
   enabled: boolean; status: string; sortOrder: number; probabilityNotice: string; probabilityTotal: number; configurationReady: boolean;
   rarityProbabilities: Record<AssetRarity, number>; cards: AssetCard[]; totalDrawCount: number; recent7dDrawCount: number;
@@ -19,8 +19,11 @@ type AssetStats = { cardCount: number; packCount: number; enabledPackCount: numb
 type DrawRecord = { id: string; orderId: string; drawIndex: number; drawMode: string; shellCost: number; usedFreeDraw: boolean; nickname: string; packName: string; cardNo: string; cardName: string; rarity: AssetRarity; pityType: string | null; starBefore: number | null; starAfter: number; firstObtained: boolean; starUpgraded: boolean; fullStarDuplicate: boolean; shellRefund: number; createdAt: string };
 type CardSort = "number-asc" | "number-desc" | "rarity-asc" | "rarity-desc";
 
-const blankCard = { cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "active", packIds: [] as string[] };
-const blankPack = { name: "", coverUrl: "", description: "", packStory: "", packType: "permanent" as AssetPackType, singlePrice: 10, tenPrice: 90, dailyFreeDraws: 0, saleStartAt: "", saleEndAt: "", sortOrder: 0 };
+const blankCard = {
+  cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "active", packIds: [] as string[],
+  motionMp4Url: null as string | null, motionWebmUrl: null as string | null, motionPosterUrl: null as string | null
+};
+const blankPack = { name: "", description: "", packStory: "", packType: "permanent" as AssetPackType, singlePrice: 10, tenPrice: 90, dailyFreeDraws: 0, saleStartAt: "", saleEndAt: "", sortOrder: 0 };
 const rarityKeys: AssetRarity[] = ["normal", "rare", "epic", "legend"];
 const rarityRank: Record<AssetRarity, number> = { normal: 0, rare: 1, epic: 2, legend: 3 };
 const blankProbabilities: Record<AssetRarity, string> = { normal: "", rare: "", epic: "", legend: "" };
@@ -110,6 +113,10 @@ export function DigitalAssetManagement() {
   const [cards, setCards] = useState<AdminCard[]>([]);
   const [packs, setPacks] = useState<AdminPack[]>([]);
   const [cardForm, setCardForm] = useState(blankCard);
+  const [motionFile, setMotionFile] = useState<File | null>(null);
+  const [removeMotion, setRemoveMotion] = useState(false);
+  const motionPreviewUrl = useMemo(() => motionFile ? URL.createObjectURL(motionFile) : null, [motionFile]);
+  useEffect(() => () => { if (motionPreviewUrl) URL.revokeObjectURL(motionPreviewUrl); }, [motionPreviewUrl]);
   const [packForm, setPackForm] = useState(blankPack);
   const [cardModal, setCardModal] = useState(false);
   const [packModal, setPackModal] = useState(false);
@@ -185,6 +192,8 @@ export function DigitalAssetManagement() {
         return new Date(candidate.createdAt ?? 0).getTime() >= new Date(latest.createdAt ?? 0).getTime() ? candidate : latest;
       }, null);
       setEditingCardId(null);
+      setMotionFile(null);
+      setRemoveMotion(false);
       setCardForm(latestCard ? {
         ...blankCard,
         cardNo: nextCardNo(latestCard.cardNo),
@@ -201,7 +210,13 @@ export function DigitalAssetManagement() {
     try {
       const data = await api<{ card: AssetCard & { packIds: string[] } }>(`/api/admin/asset-cards/${card.id}`, { bypassCache: true });
       setEditingCardId(card.id);
-      setCardForm({ cardNo: data.card.cardNo, name: data.card.name, rarity: data.card.rarity, imageUrl: data.card.imageUrl, story: data.card.story, status: data.card.status, packIds: data.card.packIds });
+      setMotionFile(null);
+      setRemoveMotion(false);
+      setCardForm({
+        cardNo: data.card.cardNo, name: data.card.name, rarity: data.card.rarity, imageUrl: data.card.imageUrl,
+        story: data.card.story, status: data.card.status, packIds: data.card.packIds,
+        motionMp4Url: data.card.motionMp4Url ?? null, motionWebmUrl: data.card.motionWebmUrl ?? null, motionPosterUrl: data.card.motionPosterUrl ?? null
+      });
     } catch (error) {
       setMessage((error as Error).message);
       return;
@@ -229,8 +244,20 @@ export function DigitalAssetManagement() {
     setSaving(true); setMessage("");
     try {
       const imageUrl = await normalizedImageData(cardForm.imageUrl);
-      const body = { ...cardForm, imageUrl, releaseAt: null };
-      await api(editingCardId ? `/api/admin/asset-cards/${editingCardId}` : "/api/admin/asset-cards", { method: editingCardId ? "PATCH" : "POST", body });
+      const { motionMp4Url: _motionMp4Url, motionWebmUrl: _motionWebmUrl, motionPosterUrl: _motionPosterUrl, ...cardValues } = cardForm;
+      const body = { ...cardValues, imageUrl, releaseAt: null };
+      const result = await api<{ id?: string }>(editingCardId ? `/api/admin/asset-cards/${editingCardId}` : "/api/admin/asset-cards", { method: editingCardId ? "PATCH" : "POST", body });
+      const cardId = editingCardId ?? result.id;
+      if (!cardId) throw new Error("卡牌保存成功，但未返回卡牌编号");
+      if (motionFile) {
+        await api(`/api/admin/asset-cards/${cardId}/motion`, {
+          method: "PUT",
+          headers: { "Content-Type": motionFile.type || "application/octet-stream" },
+          body: motionFile
+        });
+      } else if (removeMotion && editingCardId) {
+        await api(`/api/admin/asset-cards/${cardId}/motion`, { method: "DELETE" });
+      }
       setCardModal(false); await load();
     } catch (error) { setMessage((error as Error).message); }
     finally { setSaving(false); }
@@ -249,7 +276,7 @@ export function DigitalAssetManagement() {
       const data = await api<{ pack: AdminPack }>(`/api/admin/asset-packs/${pack.id}`, { bypassCache: true });
       const detail = data.pack;
       setEditingPackId(pack.id);
-      setPackForm({ name: detail.name, coverUrl: detail.coverUrl, description: detail.description, packStory: detail.packStory, packType: detail.packType, singlePrice: detail.singlePrice, tenPrice: detail.tenPrice, dailyFreeDraws: detail.dailyFreeDraws, saleStartAt: localDate(detail.saleStartAt), saleEndAt: localDate(detail.saleEndAt), sortOrder: detail.sortOrder });
+      setPackForm({ name: detail.name, description: detail.description, packStory: detail.packStory, packType: detail.packType, singlePrice: detail.singlePrice, tenPrice: detail.tenPrice, dailyFreeDraws: detail.dailyFreeDraws, saleStartAt: localDate(detail.saleStartAt), saleEndAt: localDate(detail.saleEndAt), sortOrder: detail.sortOrder });
     } catch (error) {
       setMessage((error as Error).message);
       return;
@@ -264,8 +291,7 @@ export function DigitalAssetManagement() {
     if (packForm.packType !== "permanent" && (!packForm.saleStartAt || !packForm.saleEndAt)) { setMessage("限定卡包和联名卡包必须设置起止时间"); return; }
     setSaving(true); setMessage("");
     try {
-      const coverUrl = await normalizedImageData(packForm.coverUrl);
-      const body = { ...packForm, coverUrl, saleStartAt: packForm.packType === "permanent" ? null : new Date(packForm.saleStartAt).toISOString(), saleEndAt: packForm.packType === "permanent" ? null : new Date(packForm.saleEndAt).toISOString(), enabled: false };
+      const body = { ...packForm, saleStartAt: packForm.packType === "permanent" ? null : new Date(packForm.saleStartAt).toISOString(), saleEndAt: packForm.packType === "permanent" ? null : new Date(packForm.saleEndAt).toISOString(), enabled: false };
       if (editingPackId) delete (body as Partial<typeof body>).enabled;
       await api(editingPackId ? `/api/admin/asset-packs/${editingPackId}` : "/api/admin/asset-packs", { method: editingPackId ? "PATCH" : "POST", body });
       setPackModal(false); await load();
@@ -432,7 +458,9 @@ export function DigitalAssetManagement() {
             <>
               {visiblePacks.map((pack) => (
                 <div key={pack.id} className="card grid gap-4 p-4 sm:grid-cols-[112px_minmax(0,1fr)_auto]">
-                  <img src={pack.coverUrl} alt="" className="h-36 w-28 rounded-xl object-cover" />
+                  {pack.coverCard
+                    ? <AssetCardVisual card={pack.coverCard} motion forceMotion className="h-36 w-28" />
+                    : <div className="grid h-36 w-28 place-items-center rounded-xl bg-slate-100 px-3 text-center text-xs font-bold text-muted">绑定传说卡后自动生成封面</div>}
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-black text-ink">{pack.name}</h3>
@@ -494,10 +522,27 @@ export function DigitalAssetManagement() {
       {cardModal && <Modal full onClose={() => setCardModal(false)}>
         <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingCardId ? "编辑卡牌" : "新增卡牌"}</h2><button className="grid h-10 w-10 place-items-center rounded-full bg-slate-100" onClick={() => setCardModal(false)}><X size={18} /></button></div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <div className="sm:row-span-5"><span className="text-sm font-bold text-ink">卡面素材</span><input id="asset-card-image" type="file" accept="image/*" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void fileData(file).then((imageUrl) => setCardForm((value) => ({ ...value, imageUrl }))).catch((error) => setMessage((error as Error).message)); }} />{cardForm.imageUrl ? <div className="relative mx-auto mt-4 w-full max-w-64"><AssetCardVisual card={{ id: "preview", cardNo: cardForm.cardNo || "000", name: cardForm.name || "卡牌预览", rarity: cardForm.rarity, imageUrl: cardForm.imageUrl, thumbnailUrl: cardForm.imageUrl, story: cardForm.story, releaseAt: null, status: cardForm.status }} animated className="pointer-events-none" /><label htmlFor="asset-card-image" className="absolute inset-0 cursor-pointer rounded-[15px]" aria-label="更换卡面素材" /></div> : <div className="relative mt-4 aspect-[5/7] w-full max-w-64 rounded-2xl border border-dashed border-line text-muted"><div className="grid h-full place-items-center"><div className="text-center"><ImagePlus className="mx-auto" size={36} /><span className="mt-2 block text-xs font-bold">点击上传卡面</span></div></div><label htmlFor="asset-card-image" className="absolute inset-0 cursor-pointer rounded-2xl" aria-label="上传卡面素材" /></div>}</div>
+          <div className="sm:row-span-5">
+            <span className="text-sm font-bold text-ink">卡面素材</span>
+            <input id="asset-card-image" type="file" accept="image/*" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void fileData(file).then((imageUrl) => setCardForm((value) => ({ ...value, imageUrl }))).catch((error) => setMessage((error as Error).message)); }} />
+            {cardForm.imageUrl ? <div className="relative mx-auto mt-4 w-full max-w-64"><AssetCardVisual card={{ id: "preview", cardNo: cardForm.cardNo || "000", name: cardForm.name || "卡牌预览", rarity: cardForm.rarity, imageUrl: cardForm.imageUrl, thumbnailUrl: cardForm.imageUrl, motionMp4Url: motionPreviewUrl || (removeMotion ? null : cardForm.motionMp4Url), motionWebmUrl: motionPreviewUrl ? null : removeMotion ? null : cardForm.motionWebmUrl, motionPosterUrl: removeMotion ? null : cardForm.motionPosterUrl, story: cardForm.story, releaseAt: null, status: cardForm.status }} animated motion forceMotion className="pointer-events-none" /><label htmlFor="asset-card-image" className="absolute inset-0 cursor-pointer rounded-[15px]" aria-label="更换卡面素材" /></div> : <div className="relative mt-4 aspect-[5/7] w-full max-w-64 rounded-2xl border border-dashed border-line text-muted"><div className="grid h-full place-items-center"><div className="text-center"><ImagePlus className="mx-auto" size={36} /><span className="mt-2 block text-xs font-bold">点击上传卡面</span></div></div><label htmlFor="asset-card-image" className="absolute inset-0 cursor-pointer rounded-2xl" aria-label="上传卡面素材" /></div>}
+            <div className="mt-4 rounded-xl border border-line bg-slate-50 p-3">
+              <div className="flex items-center gap-2"><Video size={17} className="text-violet-600" /><span className="text-sm font-black text-ink">动态完整卡面</span></div>
+              {cardForm.rarity === "legend" ? (
+                <>
+                  <input id="asset-card-motion" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-m4v" className="sr-only" onChange={(event) => { const file = event.target.files?.[0] ?? null; setMotionFile(file); if (file) setRemoveMotion(false); }} />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <label htmlFor="asset-card-motion" className="btn btn-secondary cursor-pointer px-3 text-xs">{motionFile || cardForm.motionMp4Url ? "更换视频" : "上传视频"}</label>
+                    {(motionFile || (!removeMotion && cardForm.motionMp4Url)) && <button type="button" className="btn btn-secondary px-3 text-xs text-red-600" onClick={() => { setMotionFile(null); setRemoveMotion(true); }}>删除动态卡面</button>}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted">{motionFile ? `${motionFile.name} · ${(motionFile.size / 1024 / 1024).toFixed(1)}MB` : removeMotion ? "保存后删除现有动态卡面" : cardForm.motionMp4Url ? "已配置动态卡面" : "支持 MP4、WebM、MOV、M4V，最大 200MB；保存时自动高质量转码。"}</p>
+                </>
+              ) : <p className="mt-2 text-xs leading-5 text-muted">仅传说品质卡牌支持上传动态效果。</p>}
+            </div>
+          </div>
           <label><span className="text-sm font-bold">卡片编号</span><input className="field mt-1" value={cardForm.cardNo} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => setCardForm({ ...cardForm, cardNo: e.target.value })} /></label>
           <label><span className="text-sm font-bold">名称</span><input className="field mt-1" value={cardForm.name} onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })} /></label>
-          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => setCardForm({ ...cardForm, rarity: e.target.value as AssetRarity })}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity }); if (rarity !== "legend") { setMotionFile(null); if (cardForm.motionMp4Url) setRemoveMotion(true); } }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label><span className="text-sm font-bold">状态</span><select className="field mt-1" value={cardForm.status} onChange={(e) => setCardForm({ ...cardForm, status: e.target.value })}><option value="inactive">停用</option><option value="active">启用</option></select></label>
           <label className="sm:col-span-2"><span className="text-sm font-bold">卡片故事</span><textarea className="field mt-1 min-h-32" value={cardForm.story} onChange={(e) => setCardForm({ ...cardForm, story: e.target.value })} /></label>
           <fieldset className="sm:col-span-2">
@@ -522,7 +567,7 @@ export function DigitalAssetManagement() {
       {packModal && <Modal full onClose={() => setPackModal(false)}>
         <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingPackId ? "编辑卡包" : "新增卡包"}</h2><button className="grid h-10 w-10 place-items-center rounded-full bg-slate-100" onClick={() => setPackModal(false)}><X size={18} /></button></div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label><span className="text-sm font-bold">卡包封面</span><input type="file" accept="image/*" className="mt-2 block w-full text-xs" onChange={(event) => { const file = event.target.files?.[0]; if (file) void fileData(file).then((coverUrl) => setPackForm((value) => ({ ...value, coverUrl }))).catch((error) => setMessage((error as Error).message)); }} />{packForm.coverUrl && <img src={packForm.coverUrl} alt="" className="mt-3 h-44 w-32 rounded-xl object-cover" />}</label>
+          <div className="rounded-xl border border-line bg-slate-50 p-4"><span className="text-sm font-bold">卡包封面</span><p className="mt-2 text-xs leading-5 text-muted">保存卡包后，系统自动选取卡号最小的启用传说卡作为封面；该卡存在动态卡面时商城自动播放。</p></div>
           <div className="space-y-4">
             <label className="block"><span className="text-sm font-bold">卡包名称</span><input className="field mt-1" value={packForm.name} onChange={(e) => setPackForm({ ...packForm, name: e.target.value })} /></label>
             <label className="block"><span className="text-sm font-bold">类型</span><select className="field mt-1" value={packForm.packType} onChange={(e) => { const packType = e.target.value as AssetPackType; setPackForm({ ...packForm, packType, ...(packType === "permanent" ? { saleStartAt: "", saleEndAt: "" } : {}) }); }}>{Object.entries(ASSET_PACK_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -538,7 +583,7 @@ export function DigitalAssetManagement() {
           <div className="sm:col-span-2"><span className="text-sm font-bold">卡包故事</span><p className="mt-1 text-xs text-muted">支持加粗、斜体、下划线和列表，最多 3000 字</p><PackStoryEditor value={packForm.packStory} onChange={(packStory) => setPackForm({ ...packForm, packStory })} /></div>
           <div className="sm:col-span-2 rounded-xl bg-blue-50 p-3 text-sm text-primary">概率公示由系统按实际配置自动生成：品质概率除以该品质启用卡牌数量，即为单张卡牌的实际概率。</div>
         </div>
-        <button className="btn btn-primary mt-5 w-full" disabled={saving || !packForm.coverUrl || !packForm.name || (packForm.packType !== "permanent" && (!packForm.saleStartAt || !packForm.saleEndAt))} onClick={() => void savePack()}><Save size={17} />{saving ? "压缩并保存中…" : "保存卡包"}</button>
+        <button className="btn btn-primary mt-5 w-full" disabled={saving || !packForm.name || (packForm.packType !== "permanent" && (!packForm.saleStartAt || !packForm.saleEndAt))} onClick={() => void savePack()}><Save size={17} />{saving ? "保存中…" : "保存卡包"}</button>
       </Modal>}
 
       {configPack && <Modal full onClose={() => setConfigPack(null)}>

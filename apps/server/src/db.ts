@@ -1078,6 +1078,10 @@ export async function initDatabase() {
       rarity ENUM('normal','rare','epic','legend') NOT NULL,
       image_url LONGTEXT NOT NULL,
       thumbnail_url LONGTEXT NULL,
+      motion_mp4_path VARCHAR(500) NULL,
+      motion_webm_path VARCHAR(500) NULL,
+      motion_poster_path VARCHAR(500) NULL,
+      motion_version VARCHAR(64) NULL,
       story TEXT NULL,
       release_at DATETIME NULL,
       status ENUM('active','inactive') NOT NULL DEFAULT 'inactive',
@@ -1086,6 +1090,10 @@ export async function initDatabase() {
       INDEX idx_asset_cards_status_no (status, card_no)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("asset_cards", "motion_mp4_path", "motion_mp4_path VARCHAR(500) NULL AFTER thumbnail_url");
+  await ensureColumn("asset_cards", "motion_webm_path", "motion_webm_path VARCHAR(500) NULL AFTER motion_mp4_path");
+  await ensureColumn("asset_cards", "motion_poster_path", "motion_poster_path VARCHAR(500) NULL AFTER motion_webm_path");
+  await ensureColumn("asset_cards", "motion_version", "motion_version VARCHAR(64) NULL AFTER motion_poster_path");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS asset_packs (

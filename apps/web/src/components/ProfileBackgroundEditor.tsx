@@ -130,7 +130,7 @@ export function ProfileBackgroundEditor({ userId, fullList = false }: { userId: 
     <div className="card p-4">
       <div className="flex items-start gap-3">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><ImageIcon size={20} /></span>
-        <div><h2 className="text-sm font-black text-ink">卡牌主页背景</h2><p className="mt-1 text-xs leading-5 text-muted">任意史诗或传说卡牌达到一星后解锁。只能选择已解锁卡牌，不支持自主上传。</p></div>
+        <div><h2 className="text-sm font-black text-ink">卡牌主页背景</h2><p className="mt-1 text-xs leading-5 text-muted">任意史诗或传说卡牌达到一星后解锁；二星传说卡配置动态卡面后，主页背景自动播放动态效果。</p></div>
       </div>
       {!data ? <div className="mt-4 h-24 animate-pulse rounded-xl bg-slate-100" /> : data.cards.length === 0 ? (
         <p className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-muted">暂无可用背景，将史诗或传说卡牌升至一星即可解锁。</p>

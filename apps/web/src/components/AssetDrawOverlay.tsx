@@ -16,9 +16,10 @@ export function AssetDrawOverlay({ order, onClose, onDrawAgain }: { order: Asset
   const waitingForLegend = started && !complete && current?.rarity === "legend";
 
   useEffect(() => {
+    if (started) return;
     const timer = window.setTimeout(() => { setStarted(true); setRevealed(1); }, 850);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [started]);
 
   useEffect(() => {
     if (!started || complete || waitingForLegend) return;
@@ -62,7 +63,7 @@ export function AssetDrawOverlay({ order, onClose, onDrawAgain }: { order: Asset
                     <img src="/card-back.webp?v=20260721" alt="" className="h-full w-full object-cover" decoding="async" draggable={false} />
                   </div>
                   <div className="asset-draw-flip-face asset-draw-flip-front">
-                    <AssetCardVisual card={current} animated />
+                    <AssetCardVisual card={current} animated motion />
                   </div>
                 </div>
                 {current.firstObtained && <NewCardBurst delayed />}
@@ -83,7 +84,7 @@ export function AssetDrawOverlay({ order, onClose, onDrawAgain }: { order: Asset
             <div className={`mx-auto grid gap-3 ${order.results.length === 1 ? "max-w-xs grid-cols-1" : "grid-cols-2 sm:grid-cols-5"}`}>
               {order.results.map((result) => (
                 <div key={result.drawIndex} className="relative min-w-0">
-                  <AssetCardVisual card={result} animated={result.rarity === "legend"} />
+                  <AssetCardVisual card={result} animated={result.rarity === "legend"} motion />
                   {result.firstObtained && <NewCardBurst />}
                   <p className="mt-2 truncate text-center text-[11px] font-bold text-cyan-100">
                     {result.firstObtained ? "NEW" : result.fullStarDuplicate ? `转化 +${result.shellRefund}` : result.starUpgraded ? `${result.starAfter}星` : "重复"}

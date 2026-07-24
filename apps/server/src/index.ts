@@ -2419,10 +2419,17 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const viewer = await requireAuth(req, res);
   if (!viewer) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, nickname, role, created_at, experience, equipped_badge_key, equipped_badge_icon_url,
-       avatar IS NOT NULL AS has_avatar, profile_background IS NOT NULL AS has_profile_background,
-       profile_background_updated_at
-     FROM users WHERE id = ? LIMIT 1`,
+    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.equipped_badge_key, u.equipped_badge_icon_url,
+       u.avatar IS NOT NULL AS has_avatar, u.profile_background IS NOT NULL AS has_profile_background,
+       u.profile_background_updated_at, u.profile_background_crop_x, u.profile_background_crop_y, u.profile_background_zoom,
+       c.id AS background_card_id, c.name AS background_card_name, c.rarity AS background_card_rarity,
+       c.motion_mp4_path AS background_motion_mp4_path, c.motion_webm_path AS background_motion_webm_path,
+       c.motion_poster_path AS background_motion_poster_path, c.motion_version AS background_motion_version,
+       uc.star_level AS background_card_star_level
+     FROM users u
+     LEFT JOIN asset_cards c ON c.id = u.profile_background_card_id
+     LEFT JOIN user_asset_cards uc ON uc.user_id = u.id AND uc.card_id = c.id
+     WHERE u.id = ? LIMIT 1`,
     [req.params.id]
   );
   const target = rows[0];
@@ -2469,6 +2476,13 @@ app.get("/api/users/:id/profile", async (req, res) => {
     soupPromise
   ]);
   const follow = followRows[0] ?? {};
+  const backgroundMotionEnabled = target.background_card_rarity === "legend"
+    && Number(target.background_card_star_level ?? 0) >= 2
+    && Boolean(target.background_motion_mp4_path);
+  const backgroundMotionVersion = encodeURIComponent(String(target.background_motion_version ?? 0));
+  const backgroundMotionBase = target.background_card_id
+    ? `/api/media/assets/cards/${encodeURIComponent(String(target.background_card_id))}/motion`
+    : "";
   res.json({
     profile: {
       ...withoutPrivateUsername(toUser(target)),
@@ -2477,7 +2491,14 @@ app.get("/api/users/:id/profile", async (req, res) => {
       followerCount: Number(follow.follower_count ?? 0),
       isFollowing: bool(follow.is_following),
       isSelf: viewer.id === req.params.id,
-      profileBackgroundUrl: profileBackgroundUrl(target.id, target.has_profile_background, target.profile_background_updated_at)
+      profileBackgroundUrl: profileBackgroundUrl(target.id, target.has_profile_background, target.profile_background_updated_at),
+      profileBackgroundMotionMp4Url: backgroundMotionEnabled ? `${backgroundMotionBase}/mp4?v=${backgroundMotionVersion}` : null,
+      profileBackgroundMotionWebmUrl: backgroundMotionEnabled && target.background_motion_webm_path ? `${backgroundMotionBase}/webm?v=${backgroundMotionVersion}` : null,
+      profileBackgroundCrop: {
+        x: Number(target.profile_background_crop_x ?? 50),
+        y: Number(target.profile_background_crop_y ?? 50),
+        zoom: Number(target.profile_background_zoom ?? 1)
+      }
     },
     soups: soupRows.map(mapSoupSummary)
   });

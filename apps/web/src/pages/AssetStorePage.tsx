@@ -6,13 +6,10 @@ import { PageTopBar } from "../components/PageTopBar";
 import { MineBackButton } from "../components/MineBackButton";
 import { ListSkeleton } from "../components/Skeletons";
 import { AssetPackStoryModal } from "../components/AssetPackStoryModal";
+import { AssetMotionMedia } from "../components/AssetCardVisual";
 import { useApp } from "../context/AppContext";
 import type { AssetPack } from "../shared/digitalAssets";
 import { warmAssetImage } from "../shared/digitalAssets";
-
-function fullPackCover(url: string) {
-  return url.replace("/thumbnail", "/cover");
-}
 
 function remainingText(endAt: string | null) {
   if (!endAt) return "长期上架";
@@ -42,7 +39,7 @@ export default function AssetStorePage() {
       void import("./AssetPackPage");
       for (const pack of data.packs.slice(0, 2)) {
         void prefetchApi(`/api/asset-store/packs/${pack.id}`, 60_000);
-        warmAssetImage(fullPackCover(pack.coverUrl));
+        warmAssetImage(pack.coverCard?.imageUrl);
       }
     };
     const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
@@ -57,7 +54,7 @@ export default function AssetStorePage() {
   function warmPack(pack: AssetPack) {
     void import("./AssetPackPage");
     void prefetchApi(`/api/asset-store/packs/${pack.id}`, 60_000);
-    warmAssetImage(fullPackCover(pack.coverUrl));
+    warmAssetImage(pack.coverCard?.imageUrl);
   }
 
   if (loadingUser || (user && loading)) return <section className="space-y-3"><PageTopBar title="商城" /><MineBackButton hideOnDesktop /><ListSkeleton rows={5} /></section>;
@@ -96,7 +93,9 @@ export default function AssetStorePage() {
           {group.packs.map((pack) => (
             <article key={pack.id} className="card block w-full overflow-hidden p-0 text-left" onPointerEnter={() => warmPack(pack)} onFocusCapture={() => warmPack(pack)} onTouchStart={() => warmPack(pack)}>
               <div className="grid h-full grid-cols-[112px_minmax(0,1fr)] sm:grid-cols-[180px_minmax(0,1fr)]">
-                <img src={pack.coverUrl} alt="" className="h-full min-h-44 w-full object-cover" loading="lazy" decoding="async" />
+                {pack.coverCard
+                  ? <AssetMotionMedia card={pack.coverCard} className="h-full min-h-44 w-full object-cover" />
+                  : <div className="grid min-h-44 place-items-center bg-slate-100 px-3 text-center text-xs font-bold text-muted">暂无传说封面卡</div>}
                 <div className="min-w-0 p-4">
                   <div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate text-lg font-black text-ink">{pack.name}</h3><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{pack.description}</p></div><span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-primary">{pack.packTypeLabel}</span></div>
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-muted"><span className="inline-flex items-center gap-1"><Clock3 size={13} />{remainingText(pack.saleEndAt)}</span><span>传说保底 {pack.pity.legend}/{pack.pity.legendLimit}</span></div>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, BookOpen, ShieldCheck, Shell } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { AssetCardVisual } from "../components/AssetCardVisual";
+import { AssetCardVisual, AssetMotionMedia } from "../components/AssetCardVisual";
 import { AssetDrawOverlay } from "../components/AssetDrawOverlay";
 import { AssetPackStoryModal } from "../components/AssetPackStoryModal";
 import { Modal } from "../components/Modal";
@@ -43,9 +43,11 @@ export default function AssetPackPage() {
 
   async function draw() {
     if (!pendingMode || drawing) return;
+    const mode = pendingMode;
+    setOrder(null);
     setDrawing(true);
     try {
-      const result = await api<{ order: AssetDrawOrder }>(`/api/asset-store/packs/${packId}/draw`, { method: "POST", body: { mode: pendingMode, requestId: requestId() } });
+      const result = await api<{ order: AssetDrawOrder }>(`/api/asset-store/packs/${packId}/draw`, { method: "POST", body: { mode, requestId: requestId() } });
       for (const card of result.order.results) warmAssetImage(card.thumbnailUrl || card.imageUrl);
       setPendingMode(null);
       setOrder(result.order);
@@ -64,7 +66,7 @@ export default function AssetPackPage() {
       <PageTopBar title="卡包详情" backTo="/mine/store" />
       <div className="asset-pack-detail-layout mx-auto max-w-6xl space-y-4 px-4 pb-32 lg:space-y-0">
         <div className="overflow-hidden rounded-3xl bg-slate-950 text-white shadow-soft">
-          <div className="relative h-72 sm:h-96"><img src={pack.coverUrl} alt={pack.name} className="h-full w-full object-cover opacity-75" fetchPriority="high" decoding="async" /><div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/15 to-transparent" /><div className="absolute inset-x-0 bottom-0 p-5"><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-black backdrop-blur">{pack.packTypeLabel}</span><h1 className="mt-3 text-3xl font-black">{pack.name}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">{pack.description}</p></div></div>
+          <div className="relative h-72 sm:h-96">{pack.coverCard ? <AssetMotionMedia card={pack.coverCard} className="h-full w-full object-cover opacity-75" eager /> : <div className="h-full w-full bg-slate-900" />}<div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/15 to-transparent" /><div className="absolute inset-x-0 bottom-0 p-5"><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-black backdrop-blur">{pack.packTypeLabel}</span><h1 className="mt-3 text-3xl font-black">{pack.name}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">{pack.description}</p></div></div>
           <div className="grid grid-cols-3 gap-px bg-white/10 text-center text-xs"><div className="bg-slate-950/80 p-3"><p className="text-slate-400">稀有保底</p><p className="mt-1 font-black">{pack.pity.rare}/{pack.pity.rareLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">史诗保底</p><p className="mt-1 font-black">{pack.pity.epic}/{pack.pity.epicLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">传说保底</p><p className="mt-1 font-black">{pack.pity.legend}/{pack.pity.legendLimit}</p></div></div>
         </div>
 
@@ -85,9 +87,9 @@ export default function AssetPackPage() {
       </div>
 
       {pendingMode && <Modal onClose={() => !drawing && setPendingMode(null)}>
-        <div className="text-center"><img src={pack.coverUrl} alt="" className="mx-auto h-40 w-28 rounded-2xl object-cover shadow-soft" /><h2 className="mt-4 text-lg font-black text-ink">{pendingMode === "ten" ? "进行十连抽" : "进行单抽"}</h2><p className="mt-2 text-sm text-muted">{modeCost === 0 ? "本次优先使用免费次数" : `将消耗 ${modeCost} 贝壳，当前余额 ${data.balance}`}</p><div className="mt-5 flex gap-3"><button className="btn btn-secondary flex-1" disabled={drawing} onClick={() => setPendingMode(null)}><ArrowLeft size={17} />取消</button><button className="btn btn-primary flex-1" disabled={drawing || data.balance < modeCost} onClick={() => void draw()}>{drawing ? "抽取中…" : data.balance < modeCost ? "贝壳不足" : "确认抽取"}</button></div></div>
+        <div className="text-center">{pack.coverCard && <AssetCardVisual card={pack.coverCard} motion forceMotion className="mx-auto w-28" />}<h2 className="mt-4 text-lg font-black text-ink">{pendingMode === "ten" ? "进行十连抽" : "进行单抽"}</h2><p className="mt-2 text-sm text-muted">{modeCost === 0 ? "本次优先使用免费次数" : `将消耗 ${modeCost} 贝壳，当前余额 ${data.balance}`}</p><div className="mt-5 flex gap-3"><button className="btn btn-secondary flex-1" disabled={drawing} onClick={() => setPendingMode(null)}><ArrowLeft size={17} />取消</button><button className="btn btn-primary flex-1" disabled={drawing || data.balance < modeCost} onClick={() => void draw()}>{drawing ? "抽取中…" : data.balance < modeCost ? "贝壳不足" : "确认抽取"}</button></div></div>
       </Modal>}
-      {order && <AssetDrawOverlay order={order} onClose={() => setOrder(null)} onDrawAgain={(mode) => { setOrder(null); setPendingMode(mode); }} />}
+      {order && <AssetDrawOverlay key={order.id} order={order} onClose={() => setOrder(null)} onDrawAgain={(mode) => { setOrder(null); setPendingMode(mode); }} />}
       {storyOpen && <AssetPackStoryModal pack={pack} onClose={() => setStoryOpen(false)} />}
     </section>
   );

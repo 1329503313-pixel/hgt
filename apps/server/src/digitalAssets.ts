@@ -1,9 +1,11 @@
-import type express from "express";
+import express from "express";
 import type mysql from "mysql2/promise";
+import { stat } from "node:fs/promises";
 import { randomInt } from "node:crypto";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { z } from "zod";
+import { absoluteAssetMediaPath, removeCardMotionFiles, sendAssetVideo, storeCardMotionVideo } from "./assetVideos.js";
 import { pool } from "./db.js";
 import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCurrency.js";
 
@@ -72,7 +74,6 @@ const cardSchema = z.object({
 
 const packSchemaObject = z.object({
   name: z.string().trim().min(1).max(120),
-  coverUrl: z.string().trim().min(1).max(8_000_000),
   description: z.string().trim().max(1000).optional().default(""),
   packStory: z.string().trim().max(20_000).refine((value) => richTextCharacterCount(value) <= 3000, "卡包故事不能超过3000字").optional().default(""),
   packType: z.enum(["permanent", "limited", "collaboration"]),
@@ -179,11 +180,18 @@ function cardMediaUrl(row: mysql.RowDataPacket, variant: "image" | "thumbnail") 
   return `/api/media/assets/cards/${encodeURIComponent(id)}/${variant}?v=${assetVersion(row.updated_at)}`;
 }
 
+function cardMotionMediaUrl(row: mysql.RowDataPacket, format: "mp4" | "webm" | "poster") {
+  const id = String(row.id ?? row.card_id);
+  const version = String(row.motion_version ?? assetVersion(row.updated_at));
+  return `/api/media/assets/cards/${encodeURIComponent(id)}/motion/${format}?v=${encodeURIComponent(version)}`;
+}
+
 function packMediaUrl(row: mysql.RowDataPacket, variant: "cover" | "thumbnail") {
   return `/api/media/assets/packs/${encodeURIComponent(String(row.id ?? row.pack_id))}/${variant}?v=${assetVersion(row.updated_at ?? row.pack_updated_at)}`;
 }
 
 function cardPayload(row: mysql.RowDataPacket, useMediaUrls = false) {
+  const hasMotion = rarity(row.rarity) === "legend" && Boolean(row.motion_mp4_path);
   return {
     id: String(row.id ?? row.card_id),
     cardNo: String(row.card_no),
@@ -191,10 +199,27 @@ function cardPayload(row: mysql.RowDataPacket, useMediaUrls = false) {
     rarity: rarity(row.rarity),
     imageUrl: useMediaUrls ? cardMediaUrl(row, "image") : String(row.image_url),
     thumbnailUrl: useMediaUrls ? cardMediaUrl(row, "thumbnail") : row.thumbnail_url ? String(row.thumbnail_url) : String(row.image_url),
+    motionMp4Url: hasMotion ? cardMotionMediaUrl(row, "mp4") : null,
+    motionWebmUrl: hasMotion && row.motion_webm_path ? cardMotionMediaUrl(row, "webm") : null,
+    motionPosterUrl: hasMotion && row.motion_poster_path ? cardMotionMediaUrl(row, "poster") : null,
     story: String(row.story ?? ""),
     releaseAt: iso(row.release_at),
     status: String(row.status ?? "active")
   };
+}
+
+function cardNumberOrder(left: { card_no: unknown }, right: { card_no: unknown }) {
+  return String(left.card_no).localeCompare(String(right.card_no), "zh-CN", { numeric: true, sensitivity: "base" });
+}
+
+function lowestLegendCard(cards: mysql.RowDataPacket[]): mysql.RowDataPacket | null;
+function lowestLegendCard<T extends { card_no: unknown; rarity: unknown }>(cards: T[]): T | null;
+function lowestLegendCard(cards: any[]): any {
+  return [...cards].filter((card) => rarity(card.rarity) === "legend").sort(cardNumberOrder)[0] ?? null;
+}
+
+function packCoverCard(configuration: Awaited<ReturnType<typeof packConfiguration>>) {
+  return lowestLegendCard(configuration.enabled);
 }
 
 function packPayload(row: mysql.RowDataPacket, mediaVariant?: "cover" | "thumbnail") {
@@ -290,6 +315,7 @@ async function packConfiguration(
   // opt into card stories; images are always served by dedicated media routes.
   const cardColumns = `c.id, c.card_no, c.name, c.rarity,
     '' AS image_url, '' AS thumbnail_url,
+    c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version,
     ${includeStory ? "c.story" : "NULL AS story"}, c.release_at, c.status, c.updated_at`;
   const [cards, probabilityRows] = await Promise.all([
     queryable.query<mysql.RowDataPacket[]>(
@@ -393,7 +419,8 @@ async function drawOrderPayload(orderId: string) {
       [orderId]
     ).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT r.*, c.card_no, c.name, '' AS story, c.updated_at
+      `SELECT r.*, c.card_no, c.name, '' AS story,
+        c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version, c.updated_at
        FROM asset_draw_results r INNER JOIN asset_cards c ON c.id = r.card_id
        WHERE r.order_id = ? ORDER BY r.draw_index ASC`,
       [orderId]
@@ -650,7 +677,9 @@ async function cabinetPayload(userId: string, compact = false) {
       `SELECT uc.user_id, uc.card_id, uc.star_level, uc.duplicate_progress, uc.total_obtained,
               uc.collection_value, uc.first_obtained_at, uc.last_obtained_at, uc.display_order,
               c.id, c.card_no, c.name, c.rarity,
-              '' AS image_url, '' AS thumbnail_url, c.story, c.release_at, c.status, c.updated_at
+              '' AS image_url, '' AS thumbnail_url,
+              c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version,
+              c.story, c.release_at, c.status, c.updated_at
        FROM user_asset_cards uc INNER JOIN asset_cards c ON c.id = uc.card_id
        WHERE uc.user_id = ? ${compact ? "AND uc.display_order IS NOT NULL ORDER BY uc.display_order ASC LIMIT 8" : "ORDER BY c.card_no ASC"}`,
       [userId]
@@ -730,6 +759,37 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     return sendStoredImage(req, res, card.image, req.params.variant === "thumbnail" ? 360 : 1200, "private, max-age=31536000, immutable");
   });
 
+  app.get("/api/media/assets/cards/:id/motion/:format", async (req, res) => {
+    if (!(await requireAuth(req, res))) return;
+    const columns = {
+      mp4: "motion_mp4_path",
+      webm: "motion_webm_path",
+      poster: "motion_poster_path"
+    } as const;
+    const format = req.params.format as keyof typeof columns;
+    if (!(format in columns)) return sendError(res, 404, "动态卡面不存在");
+    const [[card]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT rarity, ${columns[format]} AS media_path FROM asset_cards WHERE id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (!card || rarity(card.rarity) !== "legend" || !card.media_path) return sendError(res, 404, "动态卡面不存在");
+    try {
+      if (format === "poster") {
+        const absolutePath = absoluteAssetMediaPath(String(card.media_path));
+        await stat(absolutePath);
+        return res.sendFile(absolutePath, {
+          headers: {
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "Content-Type": "image/webp"
+          }
+        });
+      }
+      return await sendAssetVideo(req, res, String(card.media_path));
+    } catch {
+      return sendError(res, 404, "动态卡面不存在");
+    }
+  });
+
   app.get("/api/media/assets/packs/:id/:variant", async (req, res) => {
     if (!(await requireAuth(req, res))) return;
     if (req.params.variant !== "cover" && req.params.variant !== "thumbnail") return sendError(res, 404, "图片不存在");
@@ -766,10 +826,12 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const previews = await Promise.all(onSale.map(async (pack) => {
       const configuration = await packConfiguration(String(pack.id));
       const previewCards = configuration.enabled.slice(0, 3).map((card) => cardPayload(card, true));
+      const coverCard = packCoverCard(configuration);
       const type = packType(pack.pack_type);
       const pity = (pityByType.get(type) ?? {}) as mysql.RowDataPacket;
       return {
         ...packPayload(pack, "thumbnail"),
+        coverCard: coverCard ? cardPayload(coverCard, true) : null,
         freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - (usageByPack.get(String(pack.id)) ?? 0)),
         pity: {
           rare: Number(pity.rare_count ?? 0), epic: Number(pity.epic_count ?? 0), legend: Number(pity.legend_count ?? 0),
@@ -806,6 +868,10 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       balance: Number(userRow?.shell_balance ?? 0),
       pack: {
         ...packPayload(pack, "cover"),
+        coverCard: (() => {
+          const card = packCoverCard(configuration);
+          return card ? cardPayload(card, true) : null;
+        })(),
         probabilityNotice: probabilityDisclosure(configuration),
         freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - Number(usage?.used_count ?? 0)),
         pity: {
@@ -876,6 +942,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const [cards, [totalRow]] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(
         `SELECT c.id, c.card_no, c.name, c.rarity, c.updated_at,
+          c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version,
           uc.star_level
          FROM user_asset_cards uc INNER JOIN asset_cards c ON c.id = uc.card_id
          WHERE uc.user_id = ? AND uc.star_level >= 1 AND c.rarity IN ('epic', 'legend')
@@ -897,6 +964,9 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         name: String(card.name),
         rarity: rarity(card.rarity),
         thumbnailUrl: cardMediaUrl(card, "thumbnail"),
+        motionMp4Url: rarity(card.rarity) === "legend" && card.motion_mp4_path ? cardMotionMediaUrl(card, "mp4") : null,
+        motionWebmUrl: rarity(card.rarity) === "legend" && card.motion_webm_path ? cardMotionMediaUrl(card, "webm") : null,
+        motionPosterUrl: rarity(card.rarity) === "legend" && card.motion_poster_path ? cardMotionMediaUrl(card, "poster") : null,
         starLevel: Number(card.star_level)
       })),
       total: Number(totalRow?.total ?? 0),
@@ -1159,6 +1229,57 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     res.json({ card: { ...cardPayload(row), packIds: packRows.map((item: mysql.RowDataPacket) => String(item.pack_id)) } });
   });
 
+  app.put(
+    "/api/admin/asset-cards/:id/motion",
+    express.raw({ type: ["video/*", "application/octet-stream"], limit: "200mb" }),
+    async (req, res) => {
+      if (!(await requireAdmin(req, res))) return;
+      const [[card]] = await pool.query<mysql.RowDataPacket[]>(
+        "SELECT id, rarity, motion_mp4_path, motion_webm_path, motion_poster_path FROM asset_cards WHERE id = ? LIMIT 1",
+        [req.params.id]
+      );
+      if (!card) return sendError(res, 404, "卡片不存在");
+      if (rarity(card.rarity) !== "legend") return sendError(res, 400, "仅传说卡支持动态卡面");
+      if (!Buffer.isBuffer(req.body)) return sendError(res, 400, "视频文件无效");
+      let stored: Awaited<ReturnType<typeof storeCardMotionVideo>> | null = null;
+      try {
+        stored = await storeCardMotionVideo(req.params.id, req.body, String(req.headers["content-type"] ?? "application/octet-stream"));
+        await pool.query(
+          `UPDATE asset_cards SET motion_mp4_path = ?, motion_webm_path = ?, motion_poster_path = ?,
+            motion_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [stored.mp4Path, stored.webmPath, stored.posterPath, stored.version, req.params.id]
+        );
+        if (card.motion_mp4_path !== stored.mp4Path) {
+          await removeCardMotionFiles([card.motion_mp4_path, card.motion_webm_path, card.motion_poster_path]);
+        }
+        res.json({ ok: true });
+      } catch (error) {
+        if (stored && !stored.reused) await removeCardMotionFiles([stored.mp4Path, stored.webmPath, stored.posterPath]);
+        const message = error instanceof Error ? error.message : "";
+        if (message === "ASSET_VIDEO_TYPE_INVALID") return sendError(res, 415, "仅支持 MP4、WebM、MOV 或 M4V 视频");
+        if (message === "ASSET_VIDEO_SIZE_INVALID") return sendError(res, 413, "视频不能为空且不能超过 200MB");
+        if (message === "ASSET_VIDEO_TRANSCODER_UNAVAILABLE") return sendError(res, 503, "服务器未安装 FFmpeg，暂时无法处理视频");
+        return sendError(res, 422, "视频转码失败，请检查文件是否完整");
+      }
+    }
+  );
+
+  app.delete("/api/admin/asset-cards/:id/motion", async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const [[card]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT motion_mp4_path, motion_webm_path, motion_poster_path FROM asset_cards WHERE id = ? LIMIT 1",
+      [req.params.id]
+    );
+    if (!card) return sendError(res, 404, "卡片不存在");
+    await pool.query(
+      `UPDATE asset_cards SET motion_mp4_path = NULL, motion_webm_path = NULL,
+        motion_poster_path = NULL, motion_version = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [req.params.id]
+    );
+    await removeCardMotionFiles([card.motion_mp4_path, card.motion_webm_path, card.motion_poster_path]);
+    res.json({ ok: true });
+  });
+
   app.post("/api/admin/asset-cards", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     const parsed = cardSchema.safeParse(req.body);
@@ -1193,13 +1314,20 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (!parsed.success || !Object.keys(parsed.data).length) return sendError(res, 400, "卡片资料无效");
     const [[usage], currentRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM user_asset_cards WHERE card_id = ?", [req.params.id]).then(([rows]) => rows),
-      pool.query<mysql.RowDataPacket[]>("SELECT card_no, rarity FROM asset_cards WHERE id = ? LIMIT 1", [req.params.id]).then(([rows]) => rows)
+      pool.query<mysql.RowDataPacket[]>(
+        `SELECT card_no, rarity, motion_mp4_path, motion_webm_path, motion_poster_path
+         FROM asset_cards WHERE id = ? LIMIT 1`,
+        [req.params.id]
+      ).then(([rows]) => rows)
     ]);
     const current = currentRows[0];
     if (!current) return sendError(res, 404, "卡片不存在");
     const changesProtectedField = (parsed.data.rarity != null && parsed.data.rarity !== current.rarity)
       || (parsed.data.cardNo != null && parsed.data.cardNo !== current.card_no);
     if (Number(usage.count) > 0 && changesProtectedField) return sendError(res, 409, "已有用户获得的卡片不能修改编号或品质");
+    if (parsed.data.rarity && parsed.data.rarity !== "legend" && current.motion_mp4_path) {
+      return sendError(res, 409, "请先删除动态卡面，再将卡片品质改为非传说");
+    }
     const { packIds, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
     const changes: Record<string, unknown> = { ...parsedChanges };
     if (typeof changes.imageUrl === "string") {
@@ -1251,8 +1379,10 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     );
     const packs = await Promise.all(rows.map(async (row) => {
       const config = await packConfiguration(String(row.id));
+      const coverCard = packCoverCard(config);
       return {
         ...packPayload(row, "thumbnail"),
+        coverCard: coverCard ? cardPayload(coverCard, true) : null,
         ...packDrawStatistics(row as mysql.RowDataPacket & { total_draw_count?: unknown; recent_7d_draw_count?: unknown }),
         probabilityNotice: probabilityDisclosure(config),
         rarityProbabilities: config.rarityProbabilities,
@@ -1266,9 +1396,13 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
 
   app.get("/api/admin/asset-packs/:id", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
-    const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_packs WHERE id = ? LIMIT 1", [req.params.id]);
+    const [[row], configuration] = await Promise.all([
+      pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_packs WHERE id = ? LIMIT 1", [req.params.id]).then(([rows]) => rows),
+      packConfiguration(req.params.id)
+    ]);
     if (!row) return sendError(res, 404, "卡包不存在");
-    res.json({ pack: packPayload(row) });
+    const coverCard = packCoverCard(configuration);
+    res.json({ pack: { ...packPayload(row), coverCard: coverCard ? cardPayload(coverCard, true) : null } });
   });
 
   app.post("/api/admin/asset-packs", async (req, res) => {
@@ -1278,12 +1412,11 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (parsed.data.enabled) return sendError(res, 400, "新卡包需要先保存卡片和概率，再启用上架");
     const id = nanoid();
     const value = parsed.data;
-    const optimizedCover = await optimizedAssetImages(value.coverUrl, 1280, 480);
     await pool.query(
       `INSERT INTO asset_packs
         (id, name, cover_url, cover_thumbnail, description, pack_story, pack_type, single_price, ten_price, daily_free_draws, sale_start_at, sale_end_at, enabled, sort_order, probability_notice)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-      [id, value.name, optimizedCover.full, optimizedCover.thumbnail, value.description, value.packStory, value.packType, value.singlePrice, value.tenPrice, value.dailyFreeDraws, value.packType === "permanent" ? null : new Date(value.saleStartAt!), value.packType === "permanent" ? null : new Date(value.saleEndAt!), value.sortOrder, value.probabilityNotice]
+      [id, value.name, "", null, value.description, value.packStory, value.packType, value.singlePrice, value.tenPrice, value.dailyFreeDraws, value.packType === "permanent" ? null : new Date(value.saleStartAt!), value.packType === "permanent" ? null : new Date(value.saleEndAt!), value.sortOrder, value.probabilityNotice]
     );
     res.status(201).json({ id });
   });
@@ -1307,13 +1440,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const nextEnd = nextType === "permanent" ? null : parsed.data.saleEndAt === undefined ? iso(currentPack.sale_end_at) : parsed.data.saleEndAt;
     if (nextType !== "permanent" && (!nextStart || !nextEnd)) return sendError(res, 400, "限定卡包和联名卡包必须设置起止时间");
     if (nextStart && nextEnd && nextEnd <= nextStart) return sendError(res, 400, "下架时间必须晚于上架时间");
-    const columns: Record<string, string> = { name: "name", coverUrl: "cover_url", coverThumbnail: "cover_thumbnail", description: "description", packStory: "pack_story", packType: "pack_type", singlePrice: "single_price", tenPrice: "ten_price", dailyFreeDraws: "daily_free_draws", saleStartAt: "sale_start_at", saleEndAt: "sale_end_at", enabled: "enabled", sortOrder: "sort_order", probabilityNotice: "probability_notice" };
+    const columns: Record<string, string> = { name: "name", description: "description", packStory: "pack_story", packType: "pack_type", singlePrice: "single_price", tenPrice: "ten_price", dailyFreeDraws: "daily_free_draws", saleStartAt: "sale_start_at", saleEndAt: "sale_end_at", enabled: "enabled", sortOrder: "sort_order", probabilityNotice: "probability_notice" };
     const updateData: Record<string, unknown> = nextType === "permanent" ? { ...parsed.data, saleStartAt: null, saleEndAt: null } : { ...parsed.data };
-    if (parsed.data.coverUrl) {
-      const optimizedCover = await optimizedAssetImages(parsed.data.coverUrl, 1280, 480);
-      updateData.coverUrl = optimizedCover.full;
-      updateData.coverThumbnail = optimizedCover.thumbnail;
-    }
     const entries = Object.entries(updateData);
     await pool.query(`UPDATE asset_packs SET ${entries.map(([key]) => `${columns[key]} = ?`).join(", ")} WHERE id = ?`, [...entries.map(([key, value]) => key === "saleStartAt" || key === "saleEndAt" ? (value ? new Date(String(value)) : null) : typeof value === "boolean" ? (value ? 1 : 0) : value), req.params.id]);
     res.json({ ok: true });
@@ -1436,6 +1564,7 @@ export const digitalAssetRules = {
   starForTotal,
   duplicateProgress,
   nextStarRequirement,
+  lowestLegendCard,
   packDrawStatistics,
   pityTrigger,
   updatePity

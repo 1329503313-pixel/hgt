@@ -35,6 +35,8 @@ export const config = {
   sessionSecret: process.env.SESSION_SECRET ?? "dev-session-secret-change-me",
   adminDefaultPassword: process.env.ADMIN_DEFAULT_PASSWORD ?? "",
   runDatabaseMigrations: process.env.RUN_DB_MIGRATIONS !== "false",
+  assetMediaDir: resolve(process.env.ASSET_MEDIA_DIR || "data/asset-media"),
+  ffmpegPath: process.env.FFMPEG_PATH || "ffmpeg",
   deepseekApiKey: readSecret("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_FILE"),
   emailVerificationSecret:
     readSecret("EMAIL_VERIFICATION_SECRET", "EMAIL_VERIFICATION_SECRET_FILE")
