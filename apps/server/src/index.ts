@@ -245,7 +245,7 @@ function createRateLimiter(windowMs: number, maxRequests: number, keyFor: (req: 
   };
 }
 
-const loginRateLimiter = createRateLimiter(15 * 60_000, 10, (req) => `login:${req.ip ?? "unknown"}`);
+const loginRateLimiter = createRateLimiter(5 * 60_000, 20, (req) => `login:${req.ip ?? "unknown"}`);
 const registerRateLimiter = createRateLimiter(60 * 60_000, 10, (req) => `register:${req.ip ?? "unknown"}`);
 const performanceRateLimiter = createRateLimiter(60_000, 120, (req) => `performance:${req.ip ?? "unknown"}`);
 
