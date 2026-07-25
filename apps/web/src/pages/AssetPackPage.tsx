@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, BookOpen, ShieldCheck, Shell } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BookOpen, ShieldCheck, Shell } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { AssetCardVisual, AssetMotionMedia } from "../components/AssetCardVisual";
 import { AssetDrawOverlay } from "../components/AssetDrawOverlay";
 import { AssetPackStoryModal } from "../components/AssetPackStoryModal";
-import { Modal } from "../components/Modal";
 import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { useApp } from "../context/AppContext";
@@ -23,8 +22,8 @@ export default function AssetPackPage() {
   const { user, showToast } = useApp();
   const [data, setData] = useState<{ balance: number; pack: AssetPack } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pendingMode, setPendingMode] = useState<"single" | "ten" | null>(null);
   const [drawing, setDrawing] = useState(false);
+  const drawingRef = useRef(false);
   const [order, setOrder] = useState<AssetDrawOrder | null>(null);
   const [storyOpen, setStoryOpen] = useState(false);
 
@@ -41,25 +40,28 @@ export default function AssetPackPage() {
 
   useEffect(() => { warmAssetImage("/card-back.webp?v=20260721"); }, []);
 
-  async function draw() {
-    if (!pendingMode || drawing) return;
-    const mode = pendingMode;
+  async function draw(mode: "single" | "ten") {
+    if (drawingRef.current) return;
+    drawingRef.current = true;
     setOrder(null);
     setDrawing(true);
     try {
       const result = await api<{ order: AssetDrawOrder }>(`/api/asset-store/packs/${packId}/draw`, { method: "POST", body: { mode, requestId: requestId() } });
       for (const card of result.order.results) warmAssetImage(card.thumbnailUrl || card.imageUrl);
-      setPendingMode(null);
       setOrder(result.order);
       void load(true, false);
     } catch (error) { showToast((error as Error).message); }
-    finally { setDrawing(false); }
+    finally {
+      drawingRef.current = false;
+      setDrawing(false);
+    }
   }
 
   if (loading || !data) return <section className="min-h-screen bg-page"><PageTopBar title="卡包详情" backTo="/mine/store" /><div className="mx-auto max-w-6xl space-y-3 px-4"><ListSkeleton rows={6} /></div></section>;
   const { pack } = data;
   const singleFree = pack.freeDrawsRemaining > 0;
-  const modeCost = pendingMode === "ten" ? pack.tenPrice : singleFree ? 0 : pack.singlePrice;
+  const singleUnavailable = !singleFree && data.balance < pack.singlePrice;
+  const tenUnavailable = data.balance < pack.tenPrice;
 
   return (
     <section className="min-h-screen bg-page">
@@ -83,13 +85,10 @@ export default function AssetPackPage() {
       </div>
 
       <div className="site-footer-safe-bottom-0 fixed inset-x-0 z-30 border-t border-line bg-white/96 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-8px_24px_rgba(15,23,42,.08)] backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-center gap-2 sm:gap-3"><div className="hidden sm:block"><p className="text-xs text-muted">贝壳余额</p><p className="flex items-center gap-1 font-black text-ink"><Shell size={16} />{data.balance.toLocaleString()}</p></div><button className="btn btn-secondary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" onClick={() => setPendingMode("single")}><Shell size={17} />{singleFree ? `免费单抽 (${pack.freeDrawsRemaining})` : `单抽 ${pack.singlePrice}`}</button><button className="btn btn-primary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" onClick={() => setPendingMode("ten")}><Shell size={17} />十连 {pack.tenPrice}</button><button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-2 text-xs font-black text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] sm:max-w-52 sm:text-sm" onClick={() => setStoryOpen(true)}><BookOpen size={17} />卡包故事</button></div>
+        <div className="mx-auto flex max-w-6xl items-center justify-center gap-2 sm:gap-3"><div className="hidden sm:block"><p className="text-xs text-muted">贝壳余额</p><p className="flex items-center gap-1 font-black text-ink"><Shell size={16} />{data.balance.toLocaleString()}</p></div><button className="btn btn-secondary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || singleUnavailable} onClick={() => void draw("single")}><Shell size={17} />{drawing ? "抽取中…" : singleUnavailable ? "贝壳不足" : singleFree ? `免费单抽 (${pack.freeDrawsRemaining})` : `单抽 ${pack.singlePrice}`}</button><button className="btn btn-primary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || tenUnavailable} onClick={() => void draw("ten")}><Shell size={17} />{drawing ? "抽取中…" : tenUnavailable ? "贝壳不足" : `十连 ${pack.tenPrice}`}</button><button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-2 text-xs font-black text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] sm:max-w-52 sm:text-sm" onClick={() => setStoryOpen(true)}><BookOpen size={17} />卡包故事</button></div>
       </div>
 
-      {pendingMode && <Modal onClose={() => !drawing && setPendingMode(null)}>
-        <div className="text-center">{pack.coverCard && <AssetCardVisual card={pack.coverCard} motion forceMotion className="mx-auto w-28" />}<h2 className="mt-4 text-lg font-black text-ink">{pendingMode === "ten" ? "进行十连抽" : "进行单抽"}</h2><p className="mt-2 text-sm text-muted">{modeCost === 0 ? "本次优先使用免费次数" : `将消耗 ${modeCost} 贝壳，当前余额 ${data.balance}`}</p><div className="mt-5 flex gap-3"><button className="btn btn-secondary flex-1" disabled={drawing} onClick={() => setPendingMode(null)}><ArrowLeft size={17} />取消</button><button className="btn btn-primary flex-1" disabled={drawing || data.balance < modeCost} onClick={() => void draw()}>{drawing ? "抽取中…" : data.balance < modeCost ? "贝壳不足" : "确认抽取"}</button></div></div>
-      </Modal>}
-      {order && <AssetDrawOverlay key={order.id} order={order} onClose={() => setOrder(null)} onDrawAgain={(mode) => { setOrder(null); setPendingMode(mode); }} />}
+      {order && <AssetDrawOverlay key={order.id} order={order} onClose={() => setOrder(null)} onDrawAgain={(mode) => void draw(mode)} />}
       {storyOpen && <AssetPackStoryModal pack={pack} onClose={() => setStoryOpen(false)} />}
     </section>
   );

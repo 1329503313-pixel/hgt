@@ -3700,10 +3700,11 @@ app.get("/api/rankings", async (req, res) => {
          (COALESCE(e.comprehensive_score, 0) + 1) *
            (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
        FROM soups s
+       INNER JOIN users creator ON creator.id = s.creator_id
        LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
        LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
        LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
-       WHERE s.is_surface_public = TRUE AND s.review_status = 'approved'
+       WHERE s.is_surface_public = TRUE AND s.review_status = 'approved' AND creator.role <> 'super_admin'
        ORDER BY heat_value DESC, s.view_count DESC, evaluation_count DESC, s.created_at ASC`
     );
 
@@ -3714,14 +3715,14 @@ app.get("/api/rankings", async (req, res) => {
        FROM users u
        LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
        LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
-       WHERE u.role IN ('user', 'vip')
+       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        ORDER BY u.created_at ASC, ubu.unlocked_at ASC`
     );
 
     const [levelRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.nickname, u.experience, u.avatar IS NOT NULL AS has_avatar
        FROM users u
-       WHERE u.role IN ('user', 'vip')
+       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        ORDER BY u.experience DESC, u.created_at ASC, u.id ASC`
     );
 

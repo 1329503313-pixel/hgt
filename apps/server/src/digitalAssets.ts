@@ -1172,7 +1172,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         COALESCE(s.legendary_card_count, 0) AS legendary_card_count,
         COALESCE(s.score_reached_at, u.created_at) AS score_reached_at
        FROM users u LEFT JOIN user_asset_summaries s ON s.user_id = u.id
-       WHERE u.role IN ('user', 'vip')
+       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        ORDER BY total_collection_value DESC, score_reached_at ASC, u.created_at ASC, u.id ASC`
     );
     const allUsers = rows.map((row, index) => ({
