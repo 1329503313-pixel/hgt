@@ -32,15 +32,24 @@ export async function initDatabase() {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
-  // 先临时保留旧 admin 枚举值，再原位迁移为 super_admin。
-  // 角色不写入 JWT，已有登录态会在下一次读取用户资料时自动获得新角色，无需重新登录。
-  await pool.query(
-    "ALTER TABLE users MODIFY COLUMN role ENUM('admin','super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user'"
+  // 角色迁移: admin -> super_admin（仅执行一次，后续跳过以避免 ALTER TABLE 重建全表）
+  // MySQL 8 中 MODIFY COLUMN 修改 ENUM 触发 ALGORITHM=COPY，锁表导致认证中断
+  const [enumRows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'`,
+    [config.db.database]
   );
-  await pool.query("UPDATE users SET role = 'super_admin' WHERE role = 'admin'");
-  await pool.query(
-    "ALTER TABLE users MODIFY COLUMN role ENUM('super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user'"
-  );
+  const currentEnum = String(enumRows[0]?.COLUMN_TYPE ?? "");
+  if (currentEnum.includes("'admin'")) {
+    await pool.query(
+      "ALTER TABLE users MODIFY COLUMN role ENUM('admin','super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user'"
+    );
+    await pool.query("UPDATE users SET role = 'super_admin' WHERE role = 'admin'");
+    await pool.query(
+      "ALTER TABLE users MODIFY COLUMN role ENUM('super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user'"
+    );
+  }
+  // JWT 不含 role，已有登录态在下次读取用户资料时自动获得新角色，无需重新登录。
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_invite_bindings (
