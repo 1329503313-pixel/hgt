@@ -19,6 +19,7 @@ import { SoupShareModal } from "../components/SoupShareModal";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { Modal } from "../components/Modal";
 import { seoDescription, setDocumentSeo } from "../shared/seo";
+import { canAccessAdmin } from "../shared/roles";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -309,7 +310,7 @@ export default function DetailPage() {
                 <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate("/messages")} aria-label="消息">
                   <Bell size={20} />
                 </button>
-                {user.role === "admin" && (
+                {canAccessAdmin(user.role) && (
                   <button className="hidden h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={() => navigate("/admin")} aria-label="后台">
                     <Shield size={19} />
                   </button>

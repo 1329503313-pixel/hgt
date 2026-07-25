@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useMessageUnread } from "../shared/useMessageUnread";
 import { UnifiedBackButton } from "./UnifiedBackButton";
+import { canAccessAdmin } from "../shared/roles";
 
 export function PageTopBar({ title, titleContent, titleTo = "/", backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; backTo?: string; rightAction?: React.ReactNode }) {
   const { user } = useApp();
@@ -34,7 +35,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", backTo, rightAc
                   )}
                 </button>
               )}
-              {user.role === "admin" && (
+              {canAccessAdmin(user.role) && (
                 <button className="hidden h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={() => navigate("/admin")} aria-label="后台">
                   <Shield size={19} />
                 </button>

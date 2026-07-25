@@ -16,6 +16,12 @@ import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgr
 import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
 import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
+import {
+  canViewAllSoupContentRole,
+  isBackofficeAdminRole,
+  isSuperAdminRole,
+  normalizeUserRole
+} from "./roles.js";
 import { calculateExperienceAdjustment, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
 import { getSticker, stickerSeries } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
@@ -466,12 +472,12 @@ async function refreshEquippedSpecialBadgeMetadata() {
 
 async function refreshBadgeOwnershipRates() {
   const [[[totalRow]], [ownerRows]] = await Promise.all([
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM users WHERE role = 'user'"),
+    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM users WHERE role IN ('user', 'vip')"),
     pool.query<mysql.RowDataPacket[]>(
       `SELECT ubu.badge_key, COUNT(DISTINCT ubu.user_id) AS owner_count
        FROM user_badge_unlocks ubu
        INNER JOIN users u ON u.id = ubu.user_id
-       WHERE u.role = 'user'
+       WHERE u.role IN ('user', 'vip')
        GROUP BY ubu.badge_key`
     )
   ]);
@@ -762,8 +768,18 @@ async function requireAuth(req: express.Request, res: express.Response): Promise
 async function requireAdmin(req: express.Request, res: express.Response): Promise<AuthenticatedUser | null> {
   const user = await requireAuth(req, res);
   if (!user) return null;
-  if (user.role !== "admin") {
-    sendError(res, 403, "需要管理员权限");
+  if (!isSuperAdminRole(user.role)) {
+    sendError(res, 403, "需要超级管理员权限");
+    return null;
+  }
+  return user;
+}
+
+async function requireBackofficeAdmin(req: express.Request, res: express.Response): Promise<AuthenticatedUser | null> {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  if (!isBackofficeAdminRole(user.role)) {
+    sendError(res, 403, "需要后台管理员权限");
     return null;
   }
   return user;
@@ -809,7 +825,7 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
     username: row.username,
     nickname: row.nickname,
     avatar: avatarUrl(row.id, row.avatar, Boolean(row.has_avatar)),
-    role: row.role,
+    role: normalizeUserRole(row.role),
     createdAt: new Date(row.created_at).toISOString(),
     level: levelForExperience(row.experience),
     equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
@@ -1089,7 +1105,7 @@ async function findDuplicateSoup(input: SoupSimilarityInput, excludedId?: string
 async function canViewFull(soup: mysql.RowDataPacket, user: PublicUser | null) {
   if (bool(soup.is_bottom_public)) return true;
   if (!user) return false;
-  if (user.role === "admin" || user.id === soup.creator_id) return true;
+  if (canViewAllSoupContentRole(user.role) || user.id === soup.creator_id) return true;
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id FROM soup_access_grants WHERE soup_id = ? AND user_id = ? LIMIT 1",
@@ -1100,11 +1116,11 @@ async function canViewFull(soup: mysql.RowDataPacket, user: PublicUser | null) {
 
 function canSeeSoupSurface(soup: mysql.RowDataPacket, user: PublicUser | null) {
   if (String(soup.review_status ?? "approved") !== "approved") {
-    return Boolean(user && (user.role === "admin" || user.id === soup.creator_id));
+    return Boolean(user && (isBackofficeAdminRole(user.role) || user.id === soup.creator_id));
   }
   if (bool(soup.is_surface_public)) return true;
   if (!user) return false;
-  return user.role === "admin" || user.id === soup.creator_id;
+  return canViewAllSoupContentRole(user.role) || user.id === soup.creator_id;
 }
 
 async function notify(
@@ -1240,7 +1256,7 @@ async function grantBadge(options: Parameters<typeof grantBadgeWithConnection>[1
 }
 
 async function adminIds() {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin'");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'super_admin'");
   return rows.map((row) => String(row.id));
 }
 
@@ -2030,7 +2046,7 @@ app.get("/api/media/soups/:id/thumbnail", async (req, res) => {
   );
   if (!row) return sendError(res, 404, "作品不存在");
   const viewer = row.review_status === "approved" ? null : await currentUser(req);
-  if (row.review_status !== "approved" && viewer?.role !== "admin" && viewer?.id !== String(row.creator_id)) {
+  if (row.review_status !== "approved" && !isBackofficeAdminRole(viewer?.role) && viewer?.id !== String(row.creator_id)) {
     return sendError(res, 404, "作品不存在");
   }
   return sendStoredImage(req, res, row.cover_thumbnail, 480);
@@ -2043,7 +2059,7 @@ app.get("/api/media/soups/:id/cover", async (req, res) => {
   );
   if (!row) return sendError(res, 404, "作品不存在");
   const viewer = row.review_status === "approved" ? null : await currentUser(req);
-  if (row.review_status !== "approved" && viewer?.role !== "admin" && viewer?.id !== String(row.creator_id)) {
+  if (row.review_status !== "approved" && !isBackofficeAdminRole(viewer?.role) && viewer?.id !== String(row.creator_id)) {
     return sendError(res, 404, "作品不存在");
   }
   return sendStoredImage(req, res, row.cover_image, 1280);
@@ -2163,7 +2179,7 @@ app.patch("/api/me/nickname", async (req, res) => {
   if (!user) return;
   const parsed = z.object({ nickname: text.max(8, "昵称不超过 8 个字符") }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "昵称信息不正确");
-  if (user.role !== "admin" && isAdminRelatedNickname(parsed.data.nickname)) {
+  if (!isBackofficeAdminRole(user.role) && isAdminRelatedNickname(parsed.data.nickname)) {
     return sendError(res, 400, "该昵称为管理员专用，请更换昵称");
   }
 
@@ -2219,7 +2235,7 @@ app.patch("/api/me/avatar", async (req, res) => {
 app.get("/api/me/soup-publish-quota", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  if (user.role === "admin") return res.json({ allowed: true, publishedCount: 0, autoRejectCount: 0, remaining: null });
+  if (isSuperAdminRole(user.role)) return res.json({ allowed: true, publishedCount: 0, autoRejectCount: 0, remaining: null });
   const usage = await getSoupPublishUsage(user.id);
   const blockedByReview = usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT;
   const blockedByLimit = usage.publishedCount >= SOUP_DAILY_PUBLISH_LIMIT;
@@ -3301,8 +3317,8 @@ app.get("/api/messages/unread-counts", async (req, res) => {
   if (cachedCounts && cachedCounts.expiresAt > Date.now()) return res.json(cachedCounts.payload);
   const interactionTypes = ["soup_like", "soup_favorite", "soup_evaluation", "user_follow"];
   const placeholders = interactionTypes.map(() => "?").join(",");
-  const requestWhere = user.role === "admin" ? "" : "AND owner_id = ?";
-  const requestParams = user.role === "admin" ? [] : [user.id];
+  const requestWhere = isSuperAdminRole(user.role) ? "" : "AND owner_id = ?";
+  const requestParams = isSuperAdminRole(user.role) ? [] : [user.id];
   const [[notificationCounts], [requestCounts], [noticeCounts], [privateMessageCounts], [circleMessageCounts], [circleMentionCounts]] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
       `SELECT
@@ -3698,14 +3714,14 @@ app.get("/api/rankings", async (req, res) => {
        FROM users u
        LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
        LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
-       WHERE u.role = 'user'
+       WHERE u.role IN ('user', 'vip')
        ORDER BY u.created_at ASC, ubu.unlocked_at ASC`
     );
 
     const [levelRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.nickname, u.experience, u.avatar IS NOT NULL AS has_avatar
        FROM users u
-       WHERE u.role = 'user'
+       WHERE u.role IN ('user', 'vip')
        ORDER BY u.experience DESC, u.created_at ASC, u.id ASC`
     );
 
@@ -3886,16 +3902,16 @@ app.get("/api/soups", async (req, res) => {
   const userParams: unknown[] = [];
 
   const requestedReviewStatus = String(req.query.reviewStatus ?? "");
-  if (user?.role === "admin" && requestedReviewStatus === "all") {
+  if (isBackofficeAdminRole(user?.role) && requestedReviewStatus === "all") {
     // 管理后台可查看全部审核状态。
-  } else if (user?.role === "admin" && ["approved", "pending", "rejected"].includes(requestedReviewStatus)) {
+  } else if (isBackofficeAdminRole(user?.role) && ["approved", "pending", "rejected"].includes(requestedReviewStatus)) {
     where.push("s.review_status = ?");
     params.push(requestedReviewStatus);
   } else {
     where.push("s.review_status = 'approved'");
   }
 
-  if (!user || user.role !== "admin") {
+  if (!user || !canViewAllSoupContentRole(user.role)) {
     if (user) {
       where.push("(s.is_surface_public = TRUE OR s.creator_id = ?)");
       params.push(user.id);
@@ -4058,7 +4074,7 @@ app.post("/api/soups", async (req, res) => {
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const duplicate = await findDuplicateSoup(soup);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
-  const usage = user.role === "admin" ? null : await getSoupPublishUsage(user.id);
+  const usage = isSuperAdminRole(user.role) ? null : await getSoupPublishUsage(user.id);
   if (usage && usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT) {
     return sendError(res, 429, `今日自动审核未通过次数已达${SOUP_DAILY_AUTO_REJECT_LIMIT}次，请明天再试`);
   }
@@ -4067,7 +4083,7 @@ app.post("/api/soups", async (req, res) => {
   }
 
   let review;
-  if (user.role === "admin") {
+  if (isSuperAdminRole(user.role)) {
     review = { decision: "approved" as const, reason: null };
   } else {
     try {
@@ -4088,7 +4104,7 @@ app.post("/api/soups", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    if (user.role !== "admin") {
+    if (!isSuperAdminRole(user.role)) {
       await connection.query(
         "INSERT IGNORE INTO soup_publish_daily_usage (user_id, usage_date) VALUES (?, ?)",
         [user.id, usage!.date],
@@ -4208,7 +4224,7 @@ app.get("/api/soups/:id", async (req, res) => {
         ).then(([rows]) => rows)
       ])
     : [[], [], []];
-  const canEdit = Boolean(user && (user.role === "admin" || user.id === soup.creator_id));
+  const canEdit = Boolean(user && (isSuperAdminRole(user.role) || user.id === soup.creator_id));
 
   res.json({
     soup: {
@@ -4418,7 +4434,7 @@ app.put("/api/soups/:id", async (req, res) => {
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
-  if (user.role !== "admin" && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
+  if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
 
   const parsed = soupSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
@@ -4427,7 +4443,7 @@ app.put("/api/soups/:id", async (req, res) => {
   const duplicate = await findDuplicateSoup(next, req.params.id);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
   let review;
-  if (user.role === "admin") {
+  if (isSuperAdminRole(user.role)) {
     review = { decision: "approved" as const, reason: null };
   } else {
     try {
@@ -4512,7 +4528,7 @@ app.post("/api/soups/:id/reanalyze-keyfacts", async (req, res) => {
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
-  if (user.role !== "admin" && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
+  if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
 
   forceReanalyzeKeyFacts(req.params.id).catch(() => {});
   res.json({ ok: true });
@@ -4523,13 +4539,13 @@ app.delete("/api/soups/:id", async (req, res) => {
   if (!user) return;
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
-  if (user.role !== "admin" && user.id !== soup.creator_id) return sendError(res, 403, "没有删除权限");
+  if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有删除权限");
   await pool.query("DELETE FROM soups WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
 
 app.post("/api/admin/soups/:id/review", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireBackofficeAdmin(req, res);
   if (!admin) return;
   const parsed = z.object({
     decision: z.enum(["approved", "rejected"]),
@@ -4714,7 +4730,7 @@ app.delete("/api/evaluations/:id", async (req, res) => {
   ]);
   const evaluation = rows[0];
   if (!evaluation) return sendError(res, 404, "评价不存在");
-  if (user.role !== "admin" && user.id !== evaluation.reviewer_id) return sendError(res, 403, "没有删除权限");
+  if (!isBackofficeAdminRole(user.role) && user.id !== evaluation.reviewer_id) return sendError(res, 403, "没有删除权限");
   await pool.query("DELETE FROM evaluations WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -4764,7 +4780,7 @@ app.get("/api/access-requests", async (req, res) => {
   if (!user) return;
   const params: unknown[] = [];
   let where = "";
-  if (user.role !== "admin") {
+  if (!isSuperAdminRole(user.role)) {
     where = "WHERE vr.owner_id = ?";
     params.push(user.id);
   }
@@ -4817,7 +4833,7 @@ app.post("/api/access-requests/:id/decision", async (req, res) => {
   const request = rows[0];
   if (!request) return sendError(res, 404, "申请不存在");
   if (request.status !== "pending") return sendError(res, 409, "申请已处理");
-  if (user.role !== "admin" && user.id !== request.owner_id) return sendError(res, 403, "没有审批权限");
+  if (!isSuperAdminRole(user.role) && user.id !== request.owner_id) return sendError(res, 403, "没有审批权限");
 
   await pool.query(
     "UPDATE view_requests SET status = ?, handled_at = NOW(), handled_by = ? WHERE id = ?",
@@ -5147,7 +5163,7 @@ async function loadDashboardMetric(
 }
 
 app.get("/api/admin/dashboard", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const parsedRange = z.enum(["7d", "15d", "30d", "90d"]).safeParse(req.query.range ?? "30d");
   if (!parsedRange.success) return sendError(res, 400, "统计时间范围不正确");
   const range = parsedRange.data as DashboardRange;
@@ -5419,7 +5435,7 @@ app.patch("/api/admin/badges/:id/activity-conditions", async (req, res) => {
     [parsed.data.conditions.length > 0 ? JSON.stringify(parsed.data.conditions) : null, req.params.id]
   );
   if (parsed.data.conditions.length > 0) {
-    const [users] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'user'");
+    const [users] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role IN ('user', 'vip')");
     queueActivityBadgeSync(users.map((user) => String(user.id)));
   }
   res.json({ ok: true, conditions: parsed.data.conditions });
@@ -5505,7 +5521,7 @@ app.post("/api/me/feedback", async (req, res) => {
 });
 
 app.get("/api/admin/feedback", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const keyword = req.query.keyword ? String(req.query.keyword).trim().slice(0, 100) : "";
   const type = feedbackTypeSchema.safeParse(req.query.type).success ? String(req.query.type) : "all";
   const order = req.query.order === "asc" ? "ASC" : "DESC";
@@ -5538,7 +5554,7 @@ app.get("/api/admin/feedback", async (req, res) => {
 });
 
 app.get("/api/admin/feedback/:id", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT id, user_id, publisher_name, publisher_username, title, feedback_type, content, screenshot, created_at
      FROM user_feedback WHERE id = ? LIMIT 1`,
@@ -5682,7 +5698,7 @@ app.delete("/api/admin/notices/:id", async (req, res) => {
 });
 
 app.get("/api/admin/users", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
   const loggedToday = req.query.loggedToday === "yes" || req.query.loggedToday === "no"
     ? String(req.query.loggedToday)
@@ -5770,12 +5786,17 @@ app.get("/api/admin/users", async (req, res) => {
 app.patch("/api/admin/users/:id", async (req, res) => {
   const actor = await requireAdmin(req, res);
   if (!actor) return;
-  const parsed = z.object({ nickname: text.max(50), role: z.enum(["admin", "user"]) }).safeParse(req.body);
+  const parsed = z.object({
+    nickname: text.max(50),
+    role: z.enum(["super_admin", "backoffice_admin", "vip", "user"])
+  }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "用户信息不正确");
-  if (parsed.data.role === "user" && isAdminRelatedNickname(parsed.data.nickname)) {
-    return sendError(res, 400, "普通用户不能使用管理员相关昵称");
+  if (!isBackofficeAdminRole(parsed.data.role) && isAdminRelatedNickname(parsed.data.nickname)) {
+    return sendError(res, 400, "该角色不能使用管理员相关昵称");
   }
-  if (actor.id === req.params.id && parsed.data.role !== "admin") return sendError(res, 400, "不能取消自己的管理员权限");
+  if (actor.id === req.params.id && parsed.data.role !== "super_admin") {
+    return sendError(res, 400, "不能取消自己的超级管理员权限");
+  }
   const [targetRows] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
   if (!targetRows[0]) return sendError(res, 404, "用户不存在");
   const tokenVersionIncrement = targetRows[0].role === parsed.data.role ? 0 : 1;
@@ -5797,9 +5818,15 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 });
 
 app.post("/api/admin/users/:id/reset-password", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  const actor = await requireBackofficeAdmin(req, res);
+  if (!actor) return;
   const parsed = z.object({ newPassword: z.string().min(6, "新密码至少 6 位").max(72) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码格式不正确");
+  const [[target]] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!target) return sendError(res, 404, "用户不存在");
+  if (!isSuperAdminRole(actor.role) && isBackofficeAdminRole(target.role)) {
+    return sendError(res, 403, "后台管理员不能重置管理员密码");
+  }
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
   await pool.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [hash, req.params.id]);
   await pool.query(
@@ -5810,7 +5837,7 @@ app.post("/api/admin/users/:id/reset-password", async (req, res) => {
 });
 
 app.get("/api/admin/users/:id/shell-transactions", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const [[userRow]] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id, shell_balance FROM users WHERE id = ? LIMIT 1",
     [req.params.id]
@@ -5915,7 +5942,7 @@ app.post("/api/admin/users/:id/experience-adjustments", async (req, res) => {
 });
 
 app.get("/api/admin/evaluations", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const limit = Math.min(Number(req.query.limit ?? 20), 100);
   const offset = Number(req.query.offset ?? 0);
   const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";

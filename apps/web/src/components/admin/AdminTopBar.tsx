@@ -15,6 +15,8 @@ import {
   Users
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import type { UserRole } from "../../shared/types";
+import { isSuperAdminRole } from "../../shared/roles";
 
 export type AdminTab = "data" | "banners" | "users" | "soups" | "evaluations" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices" | "feedback";
 
@@ -32,6 +34,7 @@ const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "notices", label: "通知", icon: <Bell size={17} /> },
   { key: "feedback", label: "建议", icon: <MessageSquareText size={17} /> }
 ];
+const backofficeTabs = new Set<AdminTab>(["data", "users", "soups", "evaluations", "feedback"]);
 
 export function AdminTopBar() {
   const navigate = useNavigate();
@@ -57,16 +60,19 @@ export function AdminTopBar() {
 
 export function AdminSidebar({
   activeTab,
-  onTabChange
+  onTabChange,
+  role
 }: {
   activeTab: AdminTab;
   onTabChange: (tab: AdminTab) => void;
+  role: UserRole;
 }) {
+  const visibleTabs = isSuperAdminRole(role) ? tabs : tabs.filter((tab) => backofficeTabs.has(tab.key));
   return (
     <aside className="fixed inset-y-0 left-0 z-20 w-20 border-r border-line bg-white/95 pt-[65px] shadow-[8px_0_24px_rgba(17,24,39,0.04)] backdrop-blur sm:w-44">
       <nav className="h-full overflow-y-auto px-2 py-4 sm:px-3" aria-label="管理后台模块">
         <div className="space-y-1">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.key}
               type="button"

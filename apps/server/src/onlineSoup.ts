@@ -9,8 +9,9 @@ import { pool } from "./db.js";
 import { getSticker } from "./stickers.js";
 import { settleOnlineSoupRound } from "./shellCurrency.js";
 import { levelForExperience } from "./levelSystem.js";
+import { canViewAllSoupContentRole, isSuperAdminRole, type UserRole } from "./roles.js";
 
-type OnlineUser = { id: string; nickname: string; role: "admin" | "user" };
+type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
 type LobbyEventEmitter = (event: string, payload: unknown) => void;
 
@@ -273,7 +274,7 @@ async function requireMember(req: any, res: any) {
   const room = await roomById(req.params.roomId);
   if (!room || room.status === "closed") { fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED"); return null; }
   const member = await activeMember(room.id, user.id);
-  if (!member && user.role !== "admin") { fail(res, 403, "你尚未加入该房间", "NOT_MEMBER"); return null; }
+  if (!member && !isSuperAdminRole(user.role)) { fail(res, 403, "你尚未加入该房间", "NOT_MEMBER"); return null; }
   const isHost = room.host_id === user.id;
   await touch(room.id, user, isHost);
   if (isHost) room.host_last_seen_at = new Date();
@@ -601,8 +602,8 @@ router.get("/soups/eligible", async (req, res) => {
     params.push(user.id);
   } else {
     conditions.push("s.creator_id <> ?");
-    conditions.push("(s.is_bottom_public = 1 OR g.user_id IS NOT NULL OR ? = 'admin')");
-    params.push(user.id, user.role);
+    conditions.push("(s.is_bottom_public = 1 OR g.user_id IS NOT NULL OR ? = 1)");
+    params.push(user.id, canViewAllSoupContentRole(user.role) ? 1 : 0);
   }
   if (q) {
     conditions.push("(s.title LIKE ? OR s.author LIKE ?)");
@@ -965,8 +966,8 @@ router.post("/rooms/:roomId/select-soup", async (req, res) => {
   if (!parsed.success) return fail(res, 400, "请选择海龟汤");
   const [soups] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT s.id, s.title FROM soups s LEFT JOIN soup_access_grants g ON g.soup_id = s.id AND g.user_id = ?
-     WHERE s.id = ? AND s.review_status = 'approved' AND (s.creator_id = ? OR s.is_bottom_public = 1 OR g.user_id IS NOT NULL OR ? = 'admin') LIMIT 1`,
-    [context.user.id, parsed.data.soupId, context.user.id, context.user.role]
+     WHERE s.id = ? AND s.review_status = 'approved' AND (s.creator_id = ? OR s.is_bottom_public = 1 OR g.user_id IS NOT NULL OR ? = 1) LIMIT 1`,
+    [context.user.id, parsed.data.soupId, context.user.id, canViewAllSoupContentRole(context.user.role) ? 1 : 0]
   );
   if (!soups[0]) return fail(res, 403, "你尚未获得该海龟汤的汤底权限");
   const connection = await pool.getConnection();
@@ -1239,7 +1240,7 @@ router.post("/rooms/:roomId/close", async (req, res) => {
 router.get("/admin/rooms", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
-  if (user.role !== "admin") return fail(res, 403, "需要管理员权限");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
   const requestedLimit = Number(req.query.limit ?? 10);
   const requestedOffset = Number(req.query.offset ?? 0);
   const limit = Number.isFinite(requestedLimit) ? Math.min(50, Math.max(1, Math.trunc(requestedLimit))) : 10;
@@ -1264,7 +1265,7 @@ router.get("/admin/rooms", async (req, res) => {
 router.get("/admin/rooms/:roomId", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
-  if (user.role !== "admin") return fail(res, 403, "需要管理员权限");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
   const snapshot = await roomSnapshot(req.params.roomId, user);
   if (!snapshot) return fail(res, 404, "房间不存在");
   res.json(snapshot);

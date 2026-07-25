@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "user";
+export type UserRole = "super_admin" | "backoffice_admin" | "vip" | "user";
 export type RequestStatus = "pending" | "approved" | "rejected";
 export type BottomPublicFilter = "all" | "surface" | "bottom";
 export type RatingFilter = "all" | "2" | "3" | "4";

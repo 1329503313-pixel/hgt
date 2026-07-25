@@ -27,11 +27,20 @@ export async function initDatabase() {
       password VARCHAR(128) NOT NULL,
       nickname VARCHAR(50) NOT NULL,
       invite_code CHAR(5) NULL,
-      role ENUM('admin','user') NOT NULL DEFAULT 'user',
+      role ENUM('super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user',
       token_version INT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  // 先临时保留旧 admin 枚举值，再原位迁移为 super_admin。
+  // 角色不写入 JWT，已有登录态会在下一次读取用户资料时自动获得新角色，无需重新登录。
+  await pool.query(
+    "ALTER TABLE users MODIFY COLUMN role ENUM('admin','super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user'"
+  );
+  await pool.query("UPDATE users SET role = 'super_admin' WHERE role = 'admin'");
+  await pool.query(
+    "ALTER TABLE users MODIFY COLUMN role ENUM('super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user'"
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_invite_bindings (
@@ -1395,7 +1404,7 @@ async function seedAdmin() {
   const hash = await bcrypt.hash(config.adminDefaultPassword, 10);
   await pool.query(
     "INSERT INTO users (id, username, password, nickname, role) VALUES (?, ?, ?, ?, ?)",
-    ["admin", "admin", hash, "管理员", "admin"]
+    ["admin", "admin", hash, "超级管理员", "super_admin"]
   );
 }
 

@@ -128,7 +128,8 @@ export function AssetMotionMedia({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [nearViewport, setNearViewport] = useState(eager);
-  const [failed, setFailed] = useState(false);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const mediaSource = `${card.motionWebmUrl ?? ""}\n${card.motionMp4Url ?? ""}`;
   const reduceMotion = useMemo(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     []
@@ -165,14 +166,15 @@ export function AssetMotionMedia({
       document.removeEventListener("visibilitychange", visibility);
       video.pause();
     };
-  }, [reduceMotion]);
+  }, [mediaSource, reduceMotion]);
 
   const fallback = card.motionPosterUrl || card.thumbnailUrl || card.imageUrl;
-  if (failed || reduceMotion || !card.motionMp4Url) {
+  if (failedSource === mediaSource || reduceMotion || !card.motionMp4Url) {
     return <img src={fallback} alt="" className={className} style={style} loading={eager ? "eager" : "lazy"} decoding="async" draggable={false} />;
   }
   return (
     <video
+      key={mediaSource}
       ref={videoRef}
       className={className}
       style={style}
@@ -183,7 +185,7 @@ export function AssetMotionMedia({
       preload={nearViewport ? "auto" : "metadata"}
       poster={fallback}
       aria-label={`${card.name}动态卡面`}
-      onError={() => setFailed(true)}
+      onError={() => setFailedSource(mediaSource)}
     >
       {card.motionWebmUrl && <source src={card.motionWebmUrl} type="video/webm" />}
       <source src={card.motionMp4Url} type="video/mp4" />

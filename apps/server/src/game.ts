@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { createHash } from "crypto";
 import { pool } from "./db.js";
 import { awardShellTask } from "./shellCurrency.js";
+import { canViewAllSoupContentRole, type UserRole } from "./roles.js";
 
 import { config } from "./config.js";
 
@@ -70,7 +71,7 @@ function parseJson<T>(val: any): T {
   return val as T;
 }
 
-type GameUser = { id: string; role: "admin" | "user" };
+type GameUser = { id: string; role: UserRole };
 type GameSoupData = {
   surface: string;
   bottom: string;
@@ -499,7 +500,9 @@ async function ensureSoupKeyFacts(soupId: string, soupData: GameSoupData): Promi
 }
 
 function canPlaySoup(soup: GameSoupData, user: GameUser) {
-  return soup.reviewStatus === "approved" && soup.enableAiGame && (soup.isSurfacePublic || user.role === "admin" || soup.creatorId === user.id);
+  return soup.reviewStatus === "approved"
+    && soup.enableAiGame
+    && (soup.isSurfacePublic || canViewAllSoupContentRole(user.role) || soup.creatorId === user.id);
 }
 
 type TurnResult = Awaited<ReturnType<typeof callDeepSeek>>;

@@ -15,6 +15,7 @@ import { useMessageUnread } from "../shared/useMessageUnread";
 import { desktopNavigationBannerUrl } from "../shared/staticAssets";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
+import { canAccessAdmin } from "../shared/roles";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "total" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge">;
@@ -331,7 +332,7 @@ export default function HomePage() {
                   <Bell size={19} />
                   {unread > 0 && <span>{unread > 99 ? "99+" : unread}</span>}
                 </button>
-                {user.role === "admin" && (
+                {canAccessAdmin(user.role) && (
                   <button type="button" className="home-desktop-icon-button" onClick={() => navigate("/admin")} aria-label="后台"><Shield size={18} /></button>
                 )}
                 <details className="home-desktop-user-menu">

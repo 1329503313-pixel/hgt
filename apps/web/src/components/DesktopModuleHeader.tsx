@@ -22,6 +22,7 @@ import { desktopNavigationBannerUrl } from "../shared/staticAssets";
 import { useMessageUnread } from "../shared/useMessageUnread";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
+import { canAccessAdmin } from "../shared/roles";
 
 export type DesktopModuleKey = "online-soup" | "circles" | "rankings" | "store" | "tasks" | "mine" | "achievements" | "cards" | "messages";
 
@@ -91,7 +92,7 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
                 <Bell size={19} />
                 {unread > 0 && <span>{unread > 99 ? "99+" : unread}</span>}
               </button>
-              {user.role === "admin" && (
+              {canAccessAdmin(user.role) && (
                 <button type="button" className="home-desktop-icon-button" onClick={() => navigate("/admin")} aria-label="后台"><Shield size={18} /></button>
               )}
               <details className="home-desktop-user-menu">

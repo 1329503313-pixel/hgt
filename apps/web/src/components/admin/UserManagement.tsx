@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpDown, KeyRound, Search, Shell, Sparkles, Trash2, X } from "lucide-react";
-import type { PublicUser } from "../../shared/types";
+import type { PublicUser, UserRole } from "../../shared/types";
 import type { ShellTransaction } from "../../shared/types";
 import { api } from "../../api";
 import { Modal } from "../Modal";
@@ -12,6 +12,7 @@ import { useApp } from "../../context/AppContext";
 import type { ActivityBadgeCondition } from "../BadgeVisuals";
 import { ActivityConditionsEditor, newActivityCondition } from "./ActivityConditionsEditor";
 import { LevelBadge } from "../LevelBadge";
+import { USER_ROLE_LABELS } from "../../shared/roles";
 
 type AdminUser = PublicUser & {
   username: string;
@@ -48,7 +49,7 @@ const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "actions", label: "操作", width: "80px" }
 ];
 
-export function UserManagement() {
+export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const { showToast } = useApp();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
@@ -126,7 +127,7 @@ export function UserManagement() {
 
   const template = useMemo(() => gridTemplate(userColumns, visibleColumns), [visibleColumns]);
 
-  async function updateRole(item: AdminUser, role: "admin" | "user") {
+  async function updateRole(item: AdminUser, role: UserRole) {
     await api(`/api/admin/users/${item.id}`, { method: "PATCH", body: { nickname: item.nickname, role } });
     await loadUsers();
   }
@@ -280,7 +281,10 @@ export function UserManagement() {
           <h2 className="font-black text-ink">用户管理</h2>
           <div className="mt-1 text-sm text-muted">{total} 位用户</div>
         </div>
-        <div className="flex items-center gap-2"><button type="button" className="btn btn-primary h-10 px-3 text-xs whitespace-nowrap" onClick={() => { setBulkShellOpen(true); setBulkShellPreview(null); setBulkShellError(""); }}><Shell size={16} />发放/扣除贝壳</button><ColumnSelector columns={userColumns} visible={visibleColumns} onChange={setVisibleColumns} /></div>
+        <div className="flex items-center gap-2">
+          {isSuperAdmin && <button type="button" className="btn btn-primary h-10 px-3 text-xs whitespace-nowrap" onClick={() => { setBulkShellOpen(true); setBulkShellPreview(null); setBulkShellError(""); }}><Shell size={16} />发放/扣除贝壳</button>}
+          <ColumnSelector columns={userColumns} visible={visibleColumns} onChange={setVisibleColumns} />
+        </div>
       </div>
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
@@ -343,22 +347,28 @@ export function UserManagement() {
                   </div>
                 )}
                 {visibleColumns.has("role") && (
-                  <select className="field h-9 w-24 px-2 text-xs" value={user.role} onChange={(event) => updateRole(user, event.target.value as "admin" | "user")}>
-                    <option value="user">普通用户</option>
-                    <option value="admin">管理员</option>
-                  </select>
+                  isSuperAdmin ? (
+                    <select className="field h-9 w-28 px-2 text-xs" value={user.role} onChange={(event) => updateRole(user, event.target.value as UserRole)}>
+                      <option value="user">普通用户</option>
+                      <option value="vip">VIP</option>
+                      <option value="backoffice_admin">后台管理员</option>
+                      <option value="super_admin">超级管理员</option>
+                    </select>
+                  ) : <span className="text-xs font-bold text-ink">{USER_ROLE_LABELS[user.role]}</span>
                 )}
                 {visibleColumns.has("level") && (
                   <button
                     type="button"
-                    className="inline-flex flex-col items-center gap-1 rounded-lg px-2 py-1 font-black text-violet-700 transition hover:bg-violet-50"
+                    disabled={!isSuperAdmin}
+                    className={`inline-flex flex-col items-center gap-1 rounded-lg px-2 py-1 font-black text-violet-700 ${isSuperAdmin ? "transition hover:bg-violet-50" : "cursor-default"}`}
                     onClick={() => {
+                      if (!isSuperAdmin) return;
                       setExperienceUser(user);
                       setExperienceOperation(null);
                       setExperienceAmount("");
                       setExperienceError("");
                     }}
-                    aria-label={`调整 ${user.nickname} 的经验`}
+                    aria-label={isSuperAdmin ? `调整 ${user.nickname} 的经验` : `${user.nickname} 的经验`}
                   >
                     <LevelBadge level={user.level} />
                     <span className="text-[11px]">{user.experience.toLocaleString()} EXP</span>
@@ -373,8 +383,14 @@ export function UserManagement() {
                 {visibleColumns.has("evaluations") && <span>{user.stats.evaluationCount}</span>}
                 {visibleColumns.has("likes") && <span>{user.stats.likeCount}</span>}
                 {visibleColumns.has("favorites") && <span>{user.stats.favoriteCount}</span>}
-                {visibleColumns.has("password") && <button className="btn btn-secondary h-8 px-2 text-xs whitespace-nowrap" onClick={() => openResetPassword(user)}><KeyRound size={14} />重置</button>}
-                {visibleColumns.has("actions") && <button className="btn btn-danger h-8 px-2 text-xs whitespace-nowrap" onClick={() => deleteUser(user)}><Trash2 size={14} />删除</button>}
+                {visibleColumns.has("password") && (
+                  isSuperAdmin || (user.role !== "super_admin" && user.role !== "backoffice_admin")
+                    ? <button className="btn btn-secondary h-8 px-2 text-xs whitespace-nowrap" onClick={() => openResetPassword(user)}><KeyRound size={14} />重置</button>
+                    : <span className="text-xs text-muted">无权限</span>
+                )}
+                {visibleColumns.has("actions") && (isSuperAdmin
+                  ? <button className="btn btn-danger h-8 px-2 text-xs whitespace-nowrap" onClick={() => deleteUser(user)}><Trash2 size={14} />删除</button>
+                  : <span className="text-xs text-muted">—</span>)}
               </div>
             ))}
           </div>
@@ -390,7 +406,7 @@ export function UserManagement() {
         onPageSizeChange={(size) => { setPage(1); setPageSize(size); }}
       />
 
-      {bulkShellOpen && <Modal full onClose={closeBulkShell}>
+      {isSuperAdmin && bulkShellOpen && <Modal full onClose={closeBulkShell}>
         <div className="flex items-start justify-between gap-3 border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">批量发放/扣除贝壳</h2><p className="mt-1 text-sm text-muted">多个条件需同时满足，仅面向普通用户</p></div><button className="btn btn-secondary shrink-0 px-3" disabled={bulkShellBusy} onClick={closeBulkShell}><X size={17} />关闭</button></div>
         <div className="space-y-5 py-5">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -433,11 +449,11 @@ export function UserManagement() {
         <Modal onClose={() => { if (!shellAdjusting) { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellError(""); } }}>
           <div className="space-y-4">
             <div><h2 className="text-lg font-black text-ink">{shellUser.nickname}的贝壳明细</h2><p className="mt-1 flex items-center gap-1 text-sm font-bold text-primary"><Shell size={16} />当前余额：{shellUser.shellBalance.toLocaleString()}</p></div>
-            <div className="grid grid-cols-2 gap-2">
+            {isSuperAdmin && <div className="grid grid-cols-2 gap-2">
               <button className="btn btn-primary" onClick={() => { setShellOperation("add"); setShellError(""); }}>增加</button>
               <button className="btn btn-secondary text-red-600" onClick={() => { setShellOperation("deduct"); setShellError(""); }}>扣减</button>
-            </div>
-            {shellOperation && <form className="rounded-xl border border-line bg-slate-50 p-3" onSubmit={(event) => { event.preventDefault(); void adjustShells(); }}>
+            </div>}
+            {isSuperAdmin && shellOperation && <form className="rounded-xl border border-line bg-slate-50 p-3" onSubmit={(event) => { event.preventDefault(); void adjustShells(); }}>
               <label className="text-sm font-bold text-ink">{shellOperation === "add" ? "增加数量" : "扣减数量"}</label>
               <div className="mt-2 flex gap-2"><input className="field min-w-0 flex-1" type="number" min="1" step="1" autoFocus value={shellAmount} onChange={(event) => setShellAmount(event.target.value)} /><button className="btn btn-primary shrink-0" disabled={shellAdjusting}>{shellAdjusting ? "处理中…" : "确认"}</button></div>
             </form>}
@@ -454,7 +470,7 @@ export function UserManagement() {
         </Modal>
       )}
 
-      {experienceUser && (
+      {isSuperAdmin && experienceUser && (
         <Modal onClose={closeExperienceAdjustment}>
           <div className="space-y-4">
             <div className="flex items-start justify-between gap-3">

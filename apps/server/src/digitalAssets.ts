@@ -7,9 +7,10 @@ import sharp from "sharp";
 import { z } from "zod";
 import { absoluteAssetMediaPath, finishCardMotionWebm, processCardMotionPrimary, removeCardMotionFiles, sendAssetVideo, stageCardMotionVideo } from "./assetVideos.js";
 import { pool } from "./db.js";
+import type { UserRole } from "./roles.js";
 import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCurrency.js";
 
-type RouteUser = { id: string; role: "admin" | "user" | string };
+type RouteUser = { id: string; role: UserRole };
 type RouteDependencies = {
   requireAuth: (req: express.Request, res: express.Response) => Promise<RouteUser | null>;
   requireAdmin: (req: express.Request, res: express.Response) => Promise<RouteUser | null>;
@@ -1171,7 +1172,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         COALESCE(s.legendary_card_count, 0) AS legendary_card_count,
         COALESCE(s.score_reached_at, u.created_at) AS score_reached_at
        FROM users u LEFT JOIN user_asset_summaries s ON s.user_id = u.id
-       WHERE u.role = 'user'
+       WHERE u.role IN ('user', 'vip')
        ORDER BY total_collection_value DESC, score_reached_at ASC, u.created_at ASC, u.id ASC`
     );
     const allUsers = rows.map((row, index) => ({

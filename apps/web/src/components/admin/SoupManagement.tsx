@@ -22,7 +22,7 @@ const soupColumns: readonly AdminColumn<SoupColumn>[] = [
   { key: "actions", label: "操作", width: "260px" }
 ];
 
-export function SoupManagement() {
+export function SoupManagement({ canDelete }: { canDelete: boolean }) {
   const navigate = useNavigate();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -163,10 +163,12 @@ export function SoupManagement() {
                     <ExternalLink size={14} />
                     <span>查看</span>
                   </button>
-                  <button className="btn btn-danger h-8 w-[78px] flex-none px-2 text-xs whitespace-nowrap" onClick={() => handleDelete(s.id, s.title)} title="删除">
-                    <Trash2 size={14} />
-                    <span>删除</span>
-                  </button>
+                  {canDelete && (
+                    <button className="btn btn-danger h-8 w-[78px] flex-none px-2 text-xs whitespace-nowrap" onClick={() => handleDelete(s.id, s.title)} title="删除">
+                      <Trash2 size={14} />
+                      <span>删除</span>
+                    </button>
+                  )}
                 </div>}
               </div>
             ))}
