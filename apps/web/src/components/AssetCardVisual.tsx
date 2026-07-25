@@ -129,11 +129,23 @@ export function AssetMotionMedia({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [nearViewport, setNearViewport] = useState(eager);
   const [failedSource, setFailedSource] = useState<string | null>(null);
+  const [failedPoster, setFailedPoster] = useState<string | null>(null);
   const mediaSource = `${card.motionWebmUrl ?? ""}\n${card.motionMp4Url ?? ""}`;
   const reduceMotion = useMemo(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     []
   );
+
+  function isNearViewport(video: HTMLVideoElement) {
+    const rect = video.getBoundingClientRect();
+    return rect.bottom >= -320 && rect.top <= window.innerHeight + 320;
+  }
+
+  function playWhenVisible(video: HTMLVideoElement) {
+    if (document.visibilityState === "visible" && isNearViewport(video)) {
+      void video.play().catch(() => undefined);
+    }
+  }
 
   useEffect(() => {
     const video = videoRef.current;
@@ -148,7 +160,7 @@ export function AssetMotionMedia({
       if (!entry) return;
       if (entry.isIntersecting) {
         setNearViewport(true);
-        if (document.visibilityState === "visible") void video.play().catch(() => undefined);
+        playWhenVisible(video);
       } else {
         video.pause();
       }
@@ -156,9 +168,7 @@ export function AssetMotionMedia({
     observer.observe(video);
     const visibility = () => {
       if (document.visibilityState === "hidden") video.pause();
-      else if (video.getBoundingClientRect().bottom >= -320 && video.getBoundingClientRect().top <= window.innerHeight + 320) {
-        void video.play().catch(() => undefined);
-      }
+      else playWhenVisible(video);
     };
     document.addEventListener("visibilitychange", visibility);
     return () => {
@@ -168,9 +178,27 @@ export function AssetMotionMedia({
     };
   }, [mediaSource, reduceMotion]);
 
-  const fallback = card.motionPosterUrl || card.thumbnailUrl || card.imageUrl;
+  const staticFallback = card.thumbnailUrl || card.imageUrl;
+  const fallback = card.motionPosterUrl && failedPoster !== card.motionPosterUrl
+    ? card.motionPosterUrl
+    : staticFallback;
   if (failedSource === mediaSource || reduceMotion || !card.motionMp4Url) {
-    return <img src={fallback} alt="" className={className} style={style} loading={eager ? "eager" : "lazy"} decoding="async" draggable={false} />;
+    return (
+      <img
+        src={fallback}
+        alt=""
+        className={className}
+        style={style}
+        loading={eager ? "eager" : "lazy"}
+        decoding="async"
+        draggable={false}
+        onError={() => {
+          if (card.motionPosterUrl && fallback === card.motionPosterUrl) {
+            setFailedPoster(card.motionPosterUrl);
+          }
+        }}
+      />
+    );
   }
   return (
     <video
@@ -181,11 +209,12 @@ export function AssetMotionMedia({
       muted
       loop
       playsInline
-      autoPlay={eager}
+      autoPlay={eager || nearViewport}
       preload={nearViewport ? "auto" : "metadata"}
       poster={fallback}
       aria-label={`${card.name}动态卡面`}
       onError={() => setFailedSource(mediaSource)}
+      onCanPlay={(event) => playWhenVisible(event.currentTarget)}
     >
       {card.motionWebmUrl && <source src={card.motionWebmUrl} type="video/webm" />}
       <source src={card.motionMp4Url} type="video/mp4" />
