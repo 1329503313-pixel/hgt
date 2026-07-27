@@ -56,6 +56,7 @@ type RankingsResponse = {
 };
 
 type RankingTab = "soups" | "users" | "level" | "collection";
+type RankingPeriod = "7d" | "30d" | "all";
 
 function RankMark({ rank, className = "" }: { rank: number; className?: string }) {
   const style = rank === 1
@@ -75,13 +76,15 @@ export default function RankingsPage() {
   const requestedTab = (location.state as { tab?: string } | null)?.tab;
   const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "collection" ? requestedTab : "soups";
   const [tab, setTab] = useState<RankingTab>(initialTab);
+  const [period, setPeriod] = useState<RankingPeriod>("7d");
   const [data, setData] = useState<RankingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!user) return;
-    const cacheKey = `hgt:rankings:v5:${user.id}`;
+    let cancelled = false;
+    const cacheKey = `hgt:rankings:v6:${user.id}:${period}`;
     const cached = readSessionCache<RankingsResponse>(cacheKey, 2 * 60_000);
     if (cached) {
       setData(cached);
@@ -90,13 +93,20 @@ export default function RankingsPage() {
       setLoading(true);
     }
     Promise.all([
-      api<Omit<RankingsResponse, "collectionUsers" | "collectionOwn">>("/api/rankings"),
-      api<{ ranking: CollectionUserRank[]; own: CollectionUserRank | null }>("/api/asset-rankings", { bypassCache: true })
+      api<Omit<RankingsResponse, "collectionUsers" | "collectionOwn">>(`/api/rankings?period=${period}`, { bypassCache: true }),
+      api<{ ranking: CollectionUserRank[]; own: CollectionUserRank | null }>(`/api/asset-rankings?period=${period}`, { bypassCache: true })
     ])
-      .then(([base, collection]) => { const result = { ...base, collectionUsers: collection.ranking, collectionOwn: collection.own }; setData(result); setError(""); writeSessionCache(cacheKey, result); })
-      .catch((reason) => { if (!cached) setError(reason instanceof Error ? reason.message : "排行榜加载失败"); })
-      .finally(() => setLoading(false));
-  }, [user?.id]);
+      .then(([base, collection]) => {
+        if (cancelled) return;
+        const result = { ...base, collectionUsers: collection.ranking, collectionOwn: collection.own };
+        setData(result);
+        setError("");
+        writeSessionCache(cacheKey, result);
+      })
+      .catch((reason) => { if (!cancelled && !cached) setError(reason instanceof Error ? reason.message : "排行榜加载失败"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [period, user?.id]);
 
   if (loadingUser) return <section className="space-y-3"><PageTopBar title="排行榜" /><MineBackButton hideOnDesktop /><ListSkeleton rows={8} /></section>;
   if (!user) return (
@@ -106,6 +116,10 @@ export default function RankingsPage() {
       <div className="card p-6 text-center"><p className="text-sm text-muted">登录后可查看排行榜。</p><button className="btn btn-primary mt-4" onClick={openAuth}>登录</button></div>
     </section>
   );
+
+  const periodLabel = period === "7d" ? "7日" : period === "30d" ? "30日" : "永久";
+  const metricText = (value: number) => `${period === "all" || value < 0 ? "" : "+"}${value.toLocaleString()}`;
+  const metricTitle = (name: string) => period === "all" ? name : `${periodLabel}${name}增长`;
 
   const categoryCards: Array<{
     key: RankingTab;
@@ -124,7 +138,7 @@ export default function RankingsPage() {
       description: "发现全站讨论度最高的故事",
       icon: Flame,
       leader: data?.hotSoups[0]?.title ?? "等待上榜",
-      leaderValue: data?.hotSoups[0] ? `${data.hotSoups[0].heatValue.toLocaleString()} 热力` : "暂无数据",
+      leaderValue: data?.hotSoups[0] ? `${metricText(data.hotSoups[0].heatValue)} ${period === "all" ? "热力" : "热力增长"}` : "暂无数据",
       tone: "is-hot"
     },
     {
@@ -134,7 +148,7 @@ export default function RankingsPage() {
       description: "记录社区探索与创作里程碑",
       icon: Trophy,
       leader: data?.achievementUsers[0]?.nickname ?? "等待上榜",
-      leaderValue: data?.achievementUsers[0] ? `${data.achievementUsers[0].achievementPoints.toLocaleString()} 成就点` : "暂无数据",
+      leaderValue: data?.achievementUsers[0] ? `${metricText(data.achievementUsers[0].achievementPoints)} ${period === "all" ? "成就点" : "成就增长"}` : "暂无数据",
       tone: "is-achievement"
     },
     {
@@ -144,7 +158,7 @@ export default function RankingsPage() {
       description: "见证社区用户的成长历程",
       icon: TrendingUp,
       leader: data?.levelUsers[0]?.nickname ?? "等待上榜",
-      leaderValue: data?.levelUsers[0] ? `Lv${data.levelUsers[0].level} · ${data.levelUsers[0].experience.toLocaleString()} EXP` : "暂无数据",
+      leaderValue: data?.levelUsers[0] ? `Lv${data.levelUsers[0].level} · ${metricText(data.levelUsers[0].experience)} EXP` : "暂无数据",
       tone: "is-level"
     },
     {
@@ -154,7 +168,7 @@ export default function RankingsPage() {
       description: "展示最具价值的数字收藏",
       icon: GalleryVerticalEnd,
       leader: data?.collectionUsers[0]?.nickname ?? "等待上榜",
-      leaderValue: data?.collectionUsers[0] ? `${data.collectionUsers[0].totalCollectionValue.toLocaleString()} 收藏值` : "暂无数据",
+      leaderValue: data?.collectionUsers[0] ? `${metricText(data.collectionUsers[0].totalCollectionValue)} ${period === "all" ? "收藏值" : "收藏增长"}` : "暂无数据",
       tone: "is-collection"
     }
   ];
@@ -179,10 +193,28 @@ export default function RankingsPage() {
       <PageTopBar title="排行榜" />
       <MineBackButton hideOnDesktop />
 
+      <div className="card grid grid-cols-3 gap-1 p-1.5" aria-label="排行榜时间范围">
+        {([
+          ["7d", "7日排行榜"],
+          ["30d", "30日排行榜"],
+          ["all", "永久排行榜"]
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            className={`rounded-xl px-2 py-2.5 text-sm font-black transition ${period === value ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-50 hover:text-ink"}`}
+            onClick={() => setPeriod(value)}
+            aria-pressed={period === value}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="rankings-category-panel card p-2 lg:p-4">
         <div className="rankings-category-heading hidden lg:block">
           <p className="text-xs font-black tracking-[0.16em] text-primary">LEADERBOARDS</p>
-          <div className="mt-1 flex items-end justify-between gap-6"><h2 className="text-xl font-black text-ink">选择排行榜</h2><p className="text-sm text-muted">实时汇总全站公开数据，展示各榜单前 10 名</p></div>
+          <div className="mt-1 flex items-end justify-between gap-6"><h2 className="text-xl font-black text-ink">选择排行榜</h2><p className="text-sm text-muted">{period === "all" ? "展示累计总值" : `展示最近${periodLabel}内增长的数值`}，各榜单取前 10 名</p></div>
         </div>
         <div className="rankings-category-grid grid grid-cols-2 gap-2 lg:mt-4">
           {categoryCards.map((category) => { const Icon = category.icon; const selected = tab === category.key; return (
@@ -210,16 +242,16 @@ export default function RankingsPage() {
                     <RankMark rank={item.rank} />
                   </span>
                   <span className="min-w-0 flex-1"><strong>{item.name}</strong><small>{item.detail}</small></span>
-                  <span className="rankings-podium-value"><strong>{item.value.toLocaleString()}</strong><small>{item.suffix}</small></span>
+                  <span className="rankings-podium-value"><strong>{metricText(item.value)}</strong><small>{period === "all" ? item.suffix : `${item.suffix}增长`}</small></span>
                 </button>
               ))}
             </div>
           ) : <p className="py-10 text-center text-sm text-muted">暂无可展示数据</p>}
           <div className="rankings-rule-card">
             <Sparkles size={17} />
-            <div><strong>{activeCategory.label}统计口径</strong><p>{activeCategory.description}。{tab === "soups" ? "按平台热力值从高到低排列。" : tab === "collection" ? "同分时，先达到当前收藏值的用户优先。" : tab === "level" ? "按累计经验值从高到低排列，同经验值时注册更早的用户优先。" : "同分时，先达到当前成就点的用户优先。"}</p></div>
+            <div><strong>{periodLabel}{activeCategory.label}统计口径</strong><p>{period === "all" ? "按累计总值排列。" : `按最近${periodLabel}内的净增长值排列。`}{tab === "soups" ? "统计热力增长。" : tab === "collection" ? "统计收藏值增长。" : tab === "level" ? "统计经验增长。" : "统计成就点增长。"}</p></div>
           </div>
-          {ownRank && <div className="rankings-own-summary"><span>我的当前排名</span><strong>第 {ownRank.rank} 名</strong></div>}
+          {ownRank && <div className="rankings-own-summary"><span>我的{periodLabel}排名</span><strong>第 {ownRank.rank} 名</strong></div>}
         </aside>
 
       <div className="rankings-table-card card overflow-hidden">
@@ -227,20 +259,20 @@ export default function RankingsPage() {
           <span className={`grid h-10 w-10 place-items-center rounded-xl ${tab === "soups" ? "bg-orange-50 text-orange-500" : tab === "collection" ? "bg-indigo-50 text-indigo-600" : tab === "level" ? "bg-violet-50 text-violet-600" : "bg-amber-50 text-amber-500"}`}>
             {tab === "soups" ? <Flame size={22} /> : tab === "collection" ? <GalleryVerticalEnd size={22} /> : tab === "level" ? <TrendingUp size={22} /> : <Medal size={22} />}
           </span>
-          <div className="min-w-0"><p className="hidden text-[11px] font-black tracking-[0.14em] text-primary lg:block">FULL RANKING</p><h2 className="font-black text-ink lg:mt-0.5 lg:text-lg">{tab === "soups" ? "热门海龟汤 Top 10" : tab === "collection" ? "卡牌收藏值 Top 10" : tab === "level" ? "用户等级 Top 10" : "用户成就点 Top 10"}</h2><p className="mt-0.5 text-xs text-muted">{tab === "soups" ? "按平台热力值从高到低排列" : tab === "collection" ? "同分时，先达到当前收藏值的用户优先" : tab === "level" ? "按累计经验值从高到低排列" : "同分时，先达到当前成就点的用户优先"}</p></div>
+          <div className="min-w-0"><p className="hidden text-[11px] font-black tracking-[0.14em] text-primary lg:block">FULL RANKING</p><h2 className="font-black text-ink lg:mt-0.5 lg:text-lg">{periodLabel} · {tab === "soups" ? "热门海龟汤 Top 10" : tab === "collection" ? "卡牌收藏值 Top 10" : tab === "level" ? "用户等级 Top 10" : "用户成就点 Top 10"}</h2><p className="mt-0.5 text-xs text-muted">{period === "all" ? "按累计总值从高到低排列" : `按最近${periodLabel}内增长值从高到低排列`}</p></div>
         </div>
 
         {loading ? <ListSkeleton rows={8} /> : error ? <div className="p-10 text-center text-sm text-danger">{error}</div> : tab === "soups" ? (
           <div>
             <div className="grid grid-cols-[44px_minmax(0,1fr)_80px_80px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[60px_minmax(0,1fr)_140px_120px]">
-              <span>排名</span><span>汤名</span><span>作者</span><span className="text-right">热力值</span>
+              <span>排名</span><span>汤名</span><span>作者</span><span className="text-right">{metricTitle("热力")}</span>
             </div>
             {(data?.hotSoups ?? []).map((item) => (
               <button key={item.id} type="button" className="ranking-table-row grid w-full grid-cols-[44px_minmax(0,1fr)_80px_80px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-blue-50/50 sm:grid-cols-[60px_minmax(0,1fr)_140px_120px]" onClick={() => navigate(`/soup/${item.id}`)}>
                 <RankMark rank={item.rank} />
                 <span className="truncate text-sm font-bold text-ink">{item.title}</span>
                 <span className="truncate text-xs text-muted sm:text-sm">{item.author}</span>
-                <span className="text-right text-sm font-black text-orange-500">{item.heatValue.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-orange-500">{metricText(item.heatValue)}</span>
               </button>
             ))}
             {data?.hotSoupOwn && (
@@ -248,7 +280,7 @@ export default function RankingsPage() {
                 <RankMark rank={data.hotSoupOwn.rank} />
                 <span className="truncate text-sm font-bold text-ink">{data.hotSoupOwn.title}</span>
                 <span className="truncate text-xs text-muted sm:text-sm">{data.hotSoupOwn.author}</span>
-                <span className="text-right text-sm font-black text-orange-500">{data.hotSoupOwn.heatValue.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-orange-500">{metricText(data.hotSoupOwn.heatValue)}</span>
               </button>
             )}
             {data?.hotSoups.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无可排行的海龟汤</div>}
@@ -256,20 +288,20 @@ export default function RankingsPage() {
         ) : tab === "users" ? (
           <div>
             <div className="grid grid-cols-[60px_minmax(0,1fr)_100px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[80px_minmax(0,1fr)_160px]">
-              <span>排名</span><span>昵称</span><span className="text-right">成就点</span>
+              <span>排名</span><span>昵称</span><span className="text-right">{metricTitle("成就点")}</span>
             </div>
             {(data?.achievementUsers ?? []).map((item) => (
               <button key={item.id} className="ranking-table-row grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-blue-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
                 <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
-                <span className="text-right text-sm font-black text-amber-600">{item.achievementPoints.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-amber-600">{metricText(item.achievementPoints)}</span>
               </button>
             ))}
             {data?.achievementOwn && (
               <button className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-t-2 border-amber-200 bg-amber-50 px-3 py-3 text-left hover:bg-amber-100/70 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${data.achievementOwn!.id}`)}>
                 <RankMark rank={data.achievementOwn.rank} />
                 <span className="truncate text-sm font-bold text-ink">{data.achievementOwn.nickname}</span>
-                <span className="text-right text-sm font-black text-amber-600">{data.achievementOwn.achievementPoints.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-amber-600">{metricText(data.achievementOwn.achievementPoints)}</span>
               </button>
             )}
             {data?.achievementUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无用户成就点数据</div>}
@@ -277,14 +309,14 @@ export default function RankingsPage() {
         ) : tab === "level" ? (
           <div>
             <div className="grid grid-cols-[52px_minmax(0,1fr)_68px_92px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[80px_minmax(0,1fr)_110px_150px]">
-              <span>排名</span><span>昵称</span><span className="text-center">等级</span><span className="text-right">经验值</span>
+              <span>排名</span><span>昵称</span><span className="text-center">当前等级</span><span className="text-right">{metricTitle("经验")}</span>
             </div>
             {(data?.levelUsers ?? []).map((item) => (
               <button key={item.id} className="ranking-table-row grid w-full grid-cols-[52px_minmax(0,1fr)_68px_92px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-blue-50/50 sm:grid-cols-[80px_minmax(0,1fr)_110px_150px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
                 <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
                 <span className="flex justify-center"><LevelBadge level={item.level} /></span>
-                <span className="text-right text-sm font-black text-violet-600">{item.experience.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-violet-600">{metricText(item.experience)}</span>
               </button>
             ))}
             {data?.levelOwn && (
@@ -292,7 +324,7 @@ export default function RankingsPage() {
                 <RankMark rank={data.levelOwn.rank} />
                 <span className="truncate text-sm font-bold text-ink">{data.levelOwn.nickname}</span>
                 <span className="flex justify-center"><LevelBadge level={data.levelOwn.level} /></span>
-                <span className="text-right text-sm font-black text-violet-600">{data.levelOwn.experience.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-violet-600">{metricText(data.levelOwn.experience)}</span>
               </button>
             )}
             {data?.levelUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无用户等级数据</div>}
@@ -300,14 +332,14 @@ export default function RankingsPage() {
         ) : (
           <div>
             <div className="grid grid-cols-[48px_minmax(0,1fr)_72px_88px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[70px_minmax(0,1fr)_120px_140px]">
-              <span>排名</span><span>昵称</span><span className="text-right">卡片数</span><span className="text-right">收藏值</span>
+              <span>排名</span><span>昵称</span><span className="text-right">持有卡片</span><span className="text-right">{metricTitle("收藏值")}</span>
             </div>
             {(data?.collectionUsers ?? []).map((item) => (
               <button key={item.id} className="ranking-table-row grid w-full grid-cols-[48px_minmax(0,1fr)_72px_88px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-blue-50/50 sm:grid-cols-[70px_minmax(0,1fr)_120px_140px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
                 <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
                 <span className="text-right text-xs text-muted">{item.unlockedCardCount} 张</span>
-                <span className="text-right text-sm font-black text-indigo-600">{item.totalCollectionValue.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-indigo-600">{metricText(item.totalCollectionValue)}</span>
               </button>
             ))}
             {data?.collectionOwn && (
@@ -315,7 +347,7 @@ export default function RankingsPage() {
                 <RankMark rank={data.collectionOwn.rank} />
                 <span className="truncate text-sm font-bold text-ink">{data.collectionOwn.nickname}</span>
                 <span className="text-right text-xs text-muted">{data.collectionOwn.unlockedCardCount} 张</span>
-                <span className="text-right text-sm font-black text-indigo-600">{data.collectionOwn.totalCollectionValue.toLocaleString()}</span>
+                <span className="text-right text-sm font-black text-indigo-600">{metricText(data.collectionOwn.totalCollectionValue)}</span>
               </button>
             )}
             {data?.collectionUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">还没有用户获得卡片</div>}

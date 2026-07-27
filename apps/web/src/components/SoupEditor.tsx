@@ -82,7 +82,7 @@ function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () =
 }
 
 export function SoupEditor() {
-  const { user, soupForm: value, setSoupForm: setValue, editingSoupId, closeSoupEditor, showToast, checkBadgeUnlocks } = useApp();
+  const { user, soupForm: value, setSoupForm: setValue, editingSoupId, closeSoupEditor, showToast, triggerRefresh, checkBadgeUnlocks } = useApp();
   const navigate = useNavigate();
   const editing = Boolean(editingSoupId);
 
@@ -178,6 +178,7 @@ export function SoupEditor() {
     try {
       const result = await api<{ id?: string; reviewStatus?: "approved" | "pending" | "rejected" }>(path, { method, body: payload });
       if (user) void refreshMineContentCache(user.id, "published").catch(() => {});
+      if (editing) triggerRefresh();
       closeSoupEditor();
       if (result.reviewStatus === "pending") {
         showToast("您发布的海龟汤可能存在不当言论，目前正在由管理员进行审核");

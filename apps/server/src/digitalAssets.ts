@@ -693,6 +693,13 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
         [collectionDelta, unlockedDelta, legendaryDelta, collectionDelta, userId]
       );
     }
+    if (collectionDelta > 0) {
+      await connection.query(
+        `INSERT IGNORE INTO asset_collection_value_events (id, order_id, user_id, amount)
+         VALUES (?, ?, ?, ?)`,
+        [`draw:${orderId}`, orderId, userId, collectionDelta]
+      );
+    }
     if (totalRefund > 0) {
       balance += totalRefund;
       await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balance, userId]);
@@ -908,12 +915,12 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, type]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
-      pool.query<mysql.RowDataPacket[]>("SELECT card_id FROM user_asset_cards WHERE user_id = ?", [user.id]).then(([rows]) => rows)
+      pool.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ?", [user.id]).then(([rows]) => rows)
     ]);
     const pity = pityRows[0];
     const usage = usageRows[0];
     const userRow = userRows[0];
-    const ownedCardIds = new Set(ownedRows.map((row: mysql.RowDataPacket) => String(row.card_id)));
+    const ownedStarLevels = new Map(ownedRows.map((row: mysql.RowDataPacket) => [String(row.card_id), Number(row.star_level)]));
     res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
     res.json({
       balance: Number(userRow?.shell_balance ?? 0),
@@ -930,11 +937,15 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend
         },
         rarityProbabilities: configuration.rarityProbabilities,
-        cards: configuration.enabled.map((card) => ({
-          ...cardPayload({ ...card, story: "" }, true),
-          actualProbability: actualCardProbability(configuration, card),
-          owned: ownedCardIds.has(String(card.id))
-        }))
+        cards: configuration.enabled.map((card) => {
+          const starLevel = ownedStarLevels.get(String(card.id));
+          return {
+            ...cardPayload({ ...card, story: "" }, true),
+            actualProbability: actualCardProbability(configuration, card),
+            owned: starLevel != null,
+            ...(starLevel == null ? {} : { starLevel })
+          };
+        })
       }
     });
   });
@@ -948,7 +959,11 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       const order = await performDraw(user.id, req.params.id, parsed.data.mode, parsed.data.requestId);
       await syncBeginnerTasks(user.id);
       onBadgeProgress?.(user.id);
-      res.json({ order });
+      const [[balanceRow]] = await pool.query<mysql.RowDataPacket[]>(
+        "SELECT shell_balance FROM users WHERE id = ? LIMIT 1",
+        [user.id]
+      );
+      res.json({ order, balance: Number(balanceRow?.shell_balance ?? 0) });
     } catch (error) {
       const message = errorMessage(error);
       const status = message === "贝壳余额不足" ? 409 : message.includes("不存在") ? 404 : 400;
@@ -1165,21 +1180,43 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
   app.get("/api/asset-rankings", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-    const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.avatar IS NOT NULL AS has_avatar, u.created_at,
-        COALESCE(s.total_collection_value, 0) AS total_collection_value,
-        COALESCE(s.unlocked_card_count, 0) AS unlocked_card_count,
-        COALESCE(s.legendary_card_count, 0) AS legendary_card_count,
-        COALESCE(s.score_reached_at, u.created_at) AS score_reached_at
-       FROM users u LEFT JOIN user_asset_summaries s ON s.user_id = u.id
-       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
-       ORDER BY total_collection_value DESC, score_reached_at ASC, u.created_at ASC, u.id ASC`
-    );
-    const allUsers = rows.map((row, index) => ({
-      rank: index + 1, id: String(row.id), nickname: String(row.nickname), avatar: bool(row.has_avatar) ? `/api/media/users/${encodeURIComponent(String(row.id))}/avatar` : null,
-      totalCollectionValue: Number(row.total_collection_value), unlockedCardCount: Number(row.unlocked_card_count),
-      legendaryCardCount: Number(row.legendary_card_count)
-    }));
+    const period = req.query.period === "30d" || req.query.period === "all" ? req.query.period : "7d";
+    const cutoff = period === "all" ? null : new Date(Date.now() - (period === "7d" ? 7 : 30) * 24 * 60 * 60 * 1000);
+    const [rows, eventRows] = await Promise.all([
+      pool.query<mysql.RowDataPacket[]>(
+        `SELECT u.id, u.nickname, u.avatar IS NOT NULL AS has_avatar, u.created_at,
+          COALESCE(s.total_collection_value, 0) AS total_collection_value,
+          COALESCE(s.unlocked_card_count, 0) AS unlocked_card_count,
+          COALESCE(s.legendary_card_count, 0) AS legendary_card_count,
+          COALESCE(s.score_reached_at, u.created_at) AS score_reached_at
+         FROM users u LEFT JOIN user_asset_summaries s ON s.user_id = u.id
+         WHERE u.role IN ('user', 'vip', 'backoffice_admin')`
+      ).then(([items]) => items),
+      cutoff
+        ? pool.query<mysql.RowDataPacket[]>(
+            `SELECT user_id, SUM(amount) AS collection_gain
+             FROM asset_collection_value_events
+             WHERE created_at >= ? GROUP BY user_id`,
+            [cutoff]
+          ).then(([items]) => items)
+        : Promise.resolve([] as mysql.RowDataPacket[])
+    ]);
+    const periodValues = new Map(eventRows.map((row) => [String(row.user_id), Number(row.collection_gain ?? 0)]));
+    const allUsers = rows
+      .map((row) => ({
+        id: String(row.id),
+        nickname: String(row.nickname),
+        avatar: bool(row.has_avatar) ? `/api/media/users/${encodeURIComponent(String(row.id))}/avatar` : null,
+        totalCollectionValue: cutoff ? periodValues.get(String(row.id)) ?? 0 : Number(row.total_collection_value),
+        unlockedCardCount: Number(row.unlocked_card_count),
+        legendaryCardCount: Number(row.legendary_card_count),
+        reachedAt: new Date(row.score_reached_at).getTime(),
+        createdAt: new Date(row.created_at).getTime()
+      }))
+      .sort((a, b) => b.totalCollectionValue - a.totalCollectionValue
+        || (cutoff ? a.createdAt - b.createdAt : a.reachedAt - b.reachedAt)
+        || a.id.localeCompare(b.id))
+      .map(({ reachedAt: _reachedAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const ranking = allUsers.slice(0, 10);
     const own = allUsers.find((item) => item.id === user.id) ?? null;
     res.json({ ranking, own: own && !ranking.some((item) => item.id === own.id) ? own : null });

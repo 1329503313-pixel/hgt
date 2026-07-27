@@ -489,6 +489,7 @@ export async function initDatabase() {
       question_number INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      recalled_at DATETIME NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_online_message_sequence (message_sequence),
       INDEX idx_online_messages_room_time (room_id, created_at, id),
@@ -535,6 +536,11 @@ export async function initDatabase() {
     "online_soup_messages",
     "sticker_id",
     "sticker_id VARCHAR(64) NULL AFTER content"
+  );
+  await ensureColumn(
+    "online_soup_messages",
+    "recalled_at",
+    "recalled_at DATETIME NULL AFTER created_at"
   );
   await ensureIndex(
     "online_soup_messages",
@@ -915,6 +921,7 @@ export async function initDatabase() {
       sticker_id VARCHAR(64) NULL,
       read_at DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      recalled_at DATETIME NULL,
       INDEX idx_private_messages_conversation_time (conversation_id, created_at),
       INDEX idx_private_messages_unread (conversation_id, sender_id, read_at),
       CONSTRAINT fk_private_message_conversation FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
@@ -923,6 +930,7 @@ export async function initDatabase() {
   `);
   await ensureColumn("private_messages", "message_type", "message_type VARCHAR(16) NOT NULL DEFAULT 'text' AFTER content");
   await ensureColumn("private_messages", "sticker_id", "sticker_id VARCHAR(64) NULL AFTER message_type");
+  await ensureColumn("private_messages", "recalled_at", "recalled_at DATETIME NULL AFTER created_at");
   await ensureIndex("private_messages", "idx_private_messages_conversation_cursor", "conversation_id, created_at, id");
 
   await pool.query(`
@@ -964,6 +972,7 @@ export async function initDatabase() {
       mentions_json JSON NULL,
       reply_to_message_id VARCHAR(64) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      recalled_at DATETIME NULL,
       UNIQUE KEY uq_circle_message_sequence (message_sequence),
       INDEX idx_circle_messages_circle_sequence (circle_id, message_sequence),
       CONSTRAINT fk_circle_message_circle FOREIGN KEY (circle_id) REFERENCES circles(id) ON DELETE CASCADE,
@@ -985,6 +994,7 @@ export async function initDatabase() {
     "reply_to_message_id",
     "reply_to_message_id VARCHAR(64) NULL AFTER mentions_json"
   );
+  await ensureColumn("circle_messages", "recalled_at", "recalled_at DATETIME NULL AFTER created_at");
   await ensureIndex("circle_messages", "idx_circle_messages_reply", "reply_to_message_id");
 
   await pool.query(`
@@ -1270,6 +1280,55 @@ export async function initDatabase() {
       CONSTRAINT fk_asset_draw_result_order FOREIGN KEY (order_id) REFERENCES asset_draw_orders(id) ON DELETE CASCADE,
       CONSTRAINT fk_asset_draw_result_card FOREIGN KEY (card_id) REFERENCES asset_cards(id) ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_collection_value_events (
+      id VARCHAR(128) PRIMARY KEY,
+      order_id VARCHAR(64) NOT NULL UNIQUE,
+      user_id VARCHAR(64) NOT NULL,
+      amount INT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_asset_collection_events_user_time (user_id, created_at),
+      CONSTRAINT fk_asset_collection_event_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO asset_collection_value_events (id, order_id, user_id, amount, created_at)
+    SELECT CONCAT('draw:', o.id), o.id, o.user_id,
+      SUM(GREATEST(0,
+        CASE r.rarity
+          WHEN 'normal' THEN ELT(r.star_after + 1, 1, 2, 5, 15)
+          WHEN 'rare' THEN ELT(r.star_after + 1, 2, 5, 12, 35)
+          WHEN 'epic' THEN ELT(r.star_after + 1, 5, 12, 30, 100)
+          ELSE ELT(r.star_after + 1, 15, 40, 120, 360)
+        END
+        - CASE
+            WHEN r.star_before IS NULL THEN 0
+            WHEN r.rarity = 'normal' THEN ELT(r.star_before + 1, 1, 2, 5, 15)
+            WHEN r.rarity = 'rare' THEN ELT(r.star_before + 1, 2, 5, 12, 35)
+            WHEN r.rarity = 'epic' THEN ELT(r.star_before + 1, 5, 12, 30, 100)
+            ELSE ELT(r.star_before + 1, 15, 40, 120, 360)
+          END
+      )), COALESCE(o.completed_at, o.created_at)
+    FROM asset_draw_orders o
+    INNER JOIN asset_draw_results r ON r.order_id = o.id
+    WHERE o.status = 'completed'
+    GROUP BY o.id, o.user_id, o.completed_at, o.created_at
+    HAVING SUM(GREATEST(0,
+      CASE r.rarity
+        WHEN 'normal' THEN ELT(r.star_after + 1, 1, 2, 5, 15)
+        WHEN 'rare' THEN ELT(r.star_after + 1, 2, 5, 12, 35)
+        WHEN 'epic' THEN ELT(r.star_after + 1, 5, 12, 30, 100)
+        ELSE ELT(r.star_after + 1, 15, 40, 120, 360)
+      END
+      - CASE
+          WHEN r.star_before IS NULL THEN 0
+          WHEN r.rarity = 'normal' THEN ELT(r.star_before + 1, 1, 2, 5, 15)
+          WHEN r.rarity = 'rare' THEN ELT(r.star_before + 1, 2, 5, 12, 35)
+          WHEN r.rarity = 'epic' THEN ELT(r.star_before + 1, 5, 12, 30, 100)
+          ELSE ELT(r.star_before + 1, 15, 40, 120, 360)
+        END
+    )) > 0
   `);
 
   await seedAdmin();

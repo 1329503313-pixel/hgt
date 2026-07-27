@@ -256,7 +256,7 @@ export type SoupShare = Pick<SoupSummary, "id" | "title" | "author" | "type" | "
 export type ConversationItem = {
   id: string;
   otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean };
-  lastMessage: { content: string; type: "text" | "sticker" | "room_invite" | "soup_share"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; soupShare?: SoupShare | null; isMine: boolean; createdAt: string } | null;
+  lastMessage: { content: string; type: "text" | "sticker" | "room_invite" | "soup_share"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; soupShare?: SoupShare | null; isMine: boolean; createdAt: string; recalledAt: string | null } | null;
   unreadCount: number;
   updatedAt: string;
 };
@@ -273,6 +273,7 @@ export type PrivateMessageItem = {
   isMine: boolean;
   isRead: boolean;
   createdAt: string;
+  recalledAt: string | null;
 };
 
 export type StickerAsset = {
@@ -328,6 +329,7 @@ export type CircleMessageReply = {
   type: "text" | "sticker" | "room_invite" | "soup_share";
   stickerId: string | null;
   stickerName?: string | null;
+  recalledAt: string | null;
 };
 
 export type CircleMessage = {
@@ -347,6 +349,7 @@ export type CircleMessage = {
   }>;
   replyTo: CircleMessageReply | null;
   createdAt: string;
+  recalledAt: string | null;
 };
 
 export type CircleDetail = Omit<CircleSummary, "isJoined" | "latestMessage" | "unreadMention">;
@@ -368,6 +371,7 @@ export type OnlineSoupLobbyRoom = {
   participantCount: number;
   participantCapacity: number;
   hasPassword: boolean;
+  viewerRole: Exclude<OnlineSoupMemberRole, "admin"> | null;
   createdAt: string;
 };
 
@@ -402,6 +406,7 @@ export type OnlineSoupMessage = {
   answer: OnlineSoupAnswer | null;
   createdAt: string;
   updatedAt: string;
+  recalledAt: string | null;
 };
 
 export type OnlineSoupSnapshot = {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Star } from "lucide-react";
-import type { AssetCard, OwnedAssetCard } from "../shared/digitalAssets";
+import type { AssetCard, AssetDrawResult, OwnedAssetCard } from "../shared/digitalAssets";
 import { ASSET_RARITY_LABELS, warmAssetImage } from "../shared/digitalAssets";
 
 let legendVisibilityObserver: IntersectionObserver | null = null;
@@ -34,7 +34,7 @@ export function AssetCardVisual({
   ariaLabel,
   className = ""
 }: {
-  card: AssetCard | OwnedAssetCard;
+  card: AssetCard | OwnedAssetCard | AssetDrawResult;
   owned?: boolean;
   animated?: boolean;
   motion?: boolean;
@@ -48,9 +48,12 @@ export function AssetCardVisual({
   className?: string;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
-  const starLevel = "starLevel" in card ? card.starLevel : 0;
-  const drawStarLevel = "starAfter" in card && typeof card.starAfter === "number" ? card.starAfter : 0;
-  const motionAllowed = forceMotion || Math.max(starLevel, drawStarLevel) >= 2;
+  const displayedStarLevel = "starLevel" in card && typeof card.starLevel === "number"
+    ? card.starLevel
+    : "starAfter" in card && typeof card.starAfter === "number"
+      ? card.starAfter
+      : null;
+  const motionAllowed = forceMotion || (displayedStarLevel ?? 0) >= 2;
   const showMotion = motion
     && card.rarity === "legend"
     && Boolean(card.motionMp4Url)
@@ -91,7 +94,7 @@ export function AssetCardVisual({
       onPointerLeave={reset}
       onClick={onClick}
       style={card.rarity === "legend" ? ({ "--legend-breathe-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s` } as React.CSSProperties) : undefined}
-      aria-label={ariaLabel ?? `${card.name}，${ASSET_RARITY_LABELS[card.rarity]}${"starLevel" in card ? `，${starLevel}星` : ""}${owned === false ? "，未获得" : ""}`}
+      aria-label={ariaLabel ?? `${card.name}，${ASSET_RARITY_LABELS[card.rarity]}${displayedStarLevel != null ? `，${displayedStarLevel}星` : ""}${owned === false ? "，未获得" : ""}`}
     >
       <span className="asset-card-frame">
         {showMotion
@@ -101,9 +104,9 @@ export function AssetCardVisual({
         <span className="asset-card-rarity" aria-hidden="true"><span className="asset-card-rarity-text">{ASSET_RARITY_LABELS[card.rarity]}</span></span>
         <span className="asset-card-caption">
           <span className="min-w-0 flex-1">
-            {"starLevel" in card && (
-              <span className="asset-card-stars" aria-label={`${starLevel}星`}>
-                {[1, 2, 3].map((star) => <Star key={star} size={11} fill={star <= starLevel ? "currentColor" : "none"} className={star <= starLevel ? "text-amber-300" : "text-white/55"} />)}
+            {displayedStarLevel != null && (
+              <span className="asset-card-stars" aria-label={`${displayedStarLevel}星`}>
+                {[1, 2, 3].map((star) => <Star key={star} size={11} fill={star <= displayedStarLevel ? "currentColor" : "none"} className={star <= displayedStarLevel ? "text-amber-300" : "text-white/55"} />)}
               </span>
             )}
             <span className={`mt-0.5 block min-w-0 text-[11px] font-black sm:text-xs ${historyCompact ? "line-clamp-2 leading-tight" : "truncate"}`}>{card.name}</span>

@@ -137,6 +137,10 @@ export default function OnlineSoupLobbyPage() {
 
   function requestJoin(room: OnlineSoupLobbyRoom) {
     if (!user) { openAuth(); return; }
+    if (room.viewerRole) {
+      navigate(`/online-soup/rooms/${room.id}`);
+      return;
+    }
     setPasswordRoom(room);
     setPassword("");
     setJoinRole(room.playerCount >= room.playerCapacity ? "spectator" : "player");
@@ -222,7 +226,7 @@ export default function OnlineSoupLobbyPage() {
                 <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{statusText[room.status]}</span></div>
               </div>
               <div className="online-soup-room-current"><span>当前海龟汤</span><strong title={room.soupTitle ?? "尚未选择海龟汤"}>{room.soupTitle ?? "尚未选择海龟汤"}</strong></div>
-              <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.participantCount}/{room.participantCapacity} 人</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>加入房间</button></div>
+              <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.participantCount}/{room.participantCapacity} 人</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>{room.viewerRole ? "返回房间" : "加入房间"}</button></div>
             </article>
           ))}
         </div>

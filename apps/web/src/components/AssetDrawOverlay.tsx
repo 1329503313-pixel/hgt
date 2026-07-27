@@ -8,7 +8,7 @@ function NewCardBurst({ delayed = false }: { delayed?: boolean }) {
   return <img src="/new-card-burst.png?v=20260721-4" alt="新卡" className={`asset-card-new-burst ${delayed ? "asset-card-new-burst-delayed" : ""}`} draggable={false} />;
 }
 
-export function AssetDrawOverlay({ order, onClose, onDrawAgain }: { order: AssetDrawOrder; onClose: () => void; onDrawAgain: (mode: "single" | "ten") => void }) {
+export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { order: AssetDrawOrder; balance: number; onClose: () => void; onDrawAgain: (mode: "single" | "ten") => void }) {
   const [revealed, setRevealed] = useState(0);
   const [started, setStarted] = useState(false);
   const complete = revealed > order.results.length;
@@ -37,9 +37,14 @@ export function AssetDrawOverlay({ order, onClose, onDrawAgain }: { order: Asset
     <div className="fixed inset-0 z-[140] text-white" role="dialog" aria-modal="true" aria-label="抽卡结果">
       <div className={`absolute inset-0 overflow-y-auto bg-slate-950/95 px-4 pb-28 pt-[max(20px,env(safe-area-inset-top))] backdrop-blur-md ${waitingForLegend ? "cursor-pointer" : ""}`} onClick={continueAfterLegend}>
         <div className="mx-auto flex min-h-full max-w-5xl flex-col">
-        <div className="flex items-center justify-between gap-3">
-          <div><p className="text-xs font-bold tracking-[0.22em] text-cyan-200">{order.packName}</p><h2 className="mt-1 text-xl font-black">{complete ? "本次抽卡结果" : "正在开启卡包"}</h2></div>
-          <div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="w-full sm:w-auto"><p className="text-xs font-bold tracking-[0.22em] text-cyan-200">{order.packName}</p><h2 className="mt-1 text-xl font-black">{complete ? "本次抽卡结果" : "正在开启卡包"}</h2></div>
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <div className="mr-auto inline-flex min-h-10 items-center gap-2 rounded-full border border-cyan-200/25 bg-cyan-100/10 px-3.5 text-sm font-black text-cyan-50 sm:mr-0" aria-label={`当前贝壳余额 ${balance}`}>
+              <Shell size={17} className="text-cyan-200" />
+              <span className="hidden text-xs font-bold text-cyan-100/75 min-[380px]:inline">贝壳余额</span>
+              <span>{balance.toLocaleString()}</span>
+            </div>
             {!complete && <button className="inline-flex min-h-10 items-center gap-2 rounded-full border border-white/25 px-4 text-sm font-bold" onClick={(event) => { event.stopPropagation(); setStarted(true); setRevealed(order.results.length + 1); }}><FastForward size={17} />跳过动画</button>}
             <button className="grid h-10 w-10 place-items-center rounded-full border border-white/25" onClick={(event) => { event.stopPropagation(); onClose(); }} aria-label="关闭抽卡结果"><X size={20} /></button>
           </div>

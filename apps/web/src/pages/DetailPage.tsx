@@ -45,7 +45,7 @@ export default function DetailPage() {
   const onlineSoupOrigin = navigationOrigin;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
-  const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
+  const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, refreshKey, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,11 +78,11 @@ export default function DetailPage() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    api<SoupResponse>(`/api/soups/${id}`)
+    api<SoupResponse>(`/api/soups/${id}`, { bypassCache: true, dedupe: false })
       .then((data) => { setSoup(data.soup); setLoading(false); })
       .catch(() => { setLoading(false); });
     window.scrollTo(0, 0);
-  }, [id, user?.id]);
+  }, [id, user?.id, refreshKey]);
 
   useEffect(() => {
     if (!soup) return;

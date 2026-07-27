@@ -13,6 +13,7 @@ import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
+import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 
 type CircleState = {
   circle: Omit<CircleSummary, "isJoined" | "latestMessage">;
@@ -103,6 +104,7 @@ function CircleMessageText({ message, currentUserId }: { message: CircleMessage;
 }
 
 function messagePreview(message: CircleMessage | CircleMessageReply) {
+  if (message.recalledAt) return "[消息已撤回]";
   if (message.type === "sticker") return `[表情] ${message.stickerName ?? "表情"}`;
   if (message.type === "room_invite") return "[玩汤房间邀请]";
   if (message.type === "soup_share") return "[海龟汤分享]";
@@ -130,59 +132,6 @@ function ReplyQuote({ reply, mine, onLocate }: {
       </span>
       {messagePreview(reply)}
     </button>
-  );
-}
-
-function ReplyableMessageBubble({ onReply, wide = false, children }: {
-  onReply: () => void;
-  wide?: boolean;
-  children: React.ReactNode;
-}) {
-  const timerRef = useRef<number | null>(null);
-  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
-  const suppressClickRef = useRef(false);
-  const ignoreContextMenuUntilRef = useRef(0);
-  const cancelTimer = () => {
-    if (timerRef.current != null) window.clearTimeout(timerRef.current);
-    timerRef.current = null;
-  };
-  useEffect(() => () => cancelTimer(), []);
-  return (
-    <div
-      className={`circle-reply-trigger select-none ${wide ? "w-full" : "max-w-full"}`}
-      onPointerDown={(event) => {
-        if (event.button !== 0) return;
-        cancelTimer();
-        suppressClickRef.current = false;
-        pointerStartRef.current = { x: event.clientX, y: event.clientY };
-        timerRef.current = window.setTimeout(() => {
-          suppressClickRef.current = true;
-          ignoreContextMenuUntilRef.current = Date.now() + 800;
-          onReply();
-        }, 550);
-      }}
-      onPointerMove={(event) => {
-        const start = pointerStartRef.current;
-        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) cancelTimer();
-      }}
-      onPointerUp={cancelTimer}
-      onPointerCancel={cancelTimer}
-      onPointerLeave={cancelTimer}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        cancelTimer();
-        if (Date.now() >= ignoreContextMenuUntilRef.current) onReply();
-      }}
-      onClickCapture={(event) => {
-        if (!suppressClickRef.current) return;
-        event.preventDefault();
-        event.stopPropagation();
-        suppressClickRef.current = false;
-      }}
-      onDragStart={(event) => event.preventDefault()}
-    >
-      {children}
-    </div>
   );
 }
 
@@ -284,6 +233,17 @@ export default function CircleChatPage() {
             : [...current, { id: message.id, sequence: message.sequence }]);
         }
         void markRead();
+      } else if (event === "circle_message_recalled") {
+        const messageId = String(payload?.messageId ?? "");
+        const recalledAt = String(payload?.recalledAt ?? "");
+        if (!messageId || !recalledAt) return;
+        setMessages((current) => current.map((message) => message.id === messageId
+          ? { ...message, content: "", stickerId: null, roomInvite: null, soupShare: null, mentions: [], recalledAt }
+          : message.replyTo?.id === messageId
+            ? { ...message, replyTo: { ...message.replyTo, content: "", stickerId: null, recalledAt } }
+            : message));
+        setUnreadMentions((current) => current.filter((mention) => mention.id !== messageId));
+        setReplyingTo((current) => current?.id === messageId ? null : current);
       } else if (event === "circle_member_presence") {
         const userId = String(payload?.userId ?? "");
         const online = Boolean(payload?.online);
@@ -319,7 +279,19 @@ export default function CircleChatPage() {
         showToast("该圈子已被删除");
         navigate("/circles", { replace: true });
       }
-    }, setSocketConnected);
+    }, (connected) => {
+      setSocketConnected(connected);
+      if (!connected) return;
+      void api<MessagePage>(`/api/circles/${circleId}/messages?limit=100`, { bypassCache: true, dedupe: false })
+        .then((page) => {
+          setMessages((current) => {
+            const merged = new Map(current.map((message) => [message.id, message]));
+            for (const message of page.messages) merged.set(message.id, message);
+            return [...merged.values()].sort((left, right) => left.sequence - right.sequence);
+          });
+        })
+        .catch(() => undefined);
+    });
   }, [circleId, user?.id, Boolean(state)]);
 
   useLayoutEffect(() => {
@@ -441,6 +413,24 @@ export default function CircleChatPage() {
     setReplyingTo(message);
   }
 
+  async function recallMessage(message: CircleMessage) {
+    try {
+      const result = await api<{ messageId: string; recalledAt: string }>(
+        `/api/circles/${circleId}/messages/${message.id}/recall`,
+        { method: "PATCH" }
+      );
+      setMessages((current) => current.map((item) => item.id === result.messageId
+        ? { ...item, content: "", stickerId: null, roomInvite: null, soupShare: null, mentions: [], recalledAt: result.recalledAt }
+        : item.replyTo?.id === result.messageId
+          ? { ...item, replyTo: { ...item.replyTo, content: "", stickerId: null, recalledAt: result.recalledAt } }
+          : item));
+      setUnreadMentions((current) => current.filter((mention) => mention.id !== result.messageId));
+      setReplyingTo((current) => current?.id === result.messageId ? null : current);
+    } catch (error) {
+      showToast((error as Error).message);
+    }
+  }
+
   async function sendText(value: string, mentionedUserIds: string[]) {
     const content = value.trim();
     if (!content || sending) return false;
@@ -546,6 +536,15 @@ export default function CircleChatPage() {
             const mine = message.sender?.id === user?.id;
             const senderName = message.sender?.nickname ?? "已注销用户";
             const sticker = message.stickerId ? stickersById.get(message.stickerId) : null;
+            if (message.recalledAt) {
+              return <div id={`circle-message-${message.id}`} key={message.id} className="scroll-mt-24"><RecalledMessageNotice mine={mine} senderName={senderName} /></div>;
+            }
+            const messageActions = [
+              { label: "回复", onSelect: () => beginReply(message) },
+              ...(mine && canRecallMessage(message.createdAt, message.recalledAt)
+                ? [{ label: "撤回", tone: "danger" as const, availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => void recallMessage(message) }]
+                : [])
+            ];
             return (
               <div
                 id={`circle-message-${message.id}`}
@@ -574,9 +573,9 @@ export default function CircleChatPage() {
                     {message.sender && <LevelBadge level={message.sender.level} />}
                     <EquippedBadgeIcon badge={message.sender?.equippedBadge} className="h-4 w-4" animated={false} />
                   </div>
-                  <ReplyableMessageBubble
-                    wide={message.type === "soup_share" || message.type === "room_invite"}
-                    onReply={() => beginReply(message)}
+                  <MessageActionMenu
+                    actions={messageActions}
+                    className={message.type === "soup_share" || message.type === "room_invite" ? "w-full" : "max-w-full"}
                   >
                     {message.type === "room_invite" && message.roomInvite ? (
                       <div>
@@ -601,7 +600,7 @@ export default function CircleChatPage() {
                         {message.replyTo && <ReplyQuote reply={message.replyTo} mine={mine} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
                       </div>
                     )}
-                  </ReplyableMessageBubble>
+                  </MessageActionMenu>
                   <span className="mt-1 px-1 text-[10px] text-muted">{new Date(message.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
                 </div>
               </div>

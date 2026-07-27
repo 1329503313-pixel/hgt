@@ -46,8 +46,10 @@ export default function AssetPackPage() {
     setOrder(null);
     setDrawing(true);
     try {
-      const result = await api<{ order: AssetDrawOrder }>(`/api/asset-store/packs/${packId}/draw`, { method: "POST", body: { mode, requestId: requestId() } });
+      const result = await api<{ order: AssetDrawOrder; balance: number }>(`/api/asset-store/packs/${packId}/draw`, { method: "POST", body: { mode, requestId: requestId() } });
       for (const card of result.order.results) warmAssetImage(card.thumbnailUrl || card.imageUrl);
+      setData((current) => current ? { ...current, balance: result.balance } : current);
+      publishShellBalance(user?.id, result.balance);
       setOrder(result.order);
       void load(true, false);
     } catch (error) { showToast((error as Error).message); }
@@ -88,7 +90,7 @@ export default function AssetPackPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-center gap-2 sm:gap-3"><div className="hidden sm:block"><p className="text-xs text-muted">贝壳余额</p><p className="flex items-center gap-1 font-black text-ink"><Shell size={16} />{data.balance.toLocaleString()}</p></div><button className="btn btn-secondary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || singleUnavailable} onClick={() => void draw("single")}><Shell size={17} />{drawing ? "抽取中…" : singleUnavailable ? "贝壳不足" : singleFree ? `免费单抽 (${pack.freeDrawsRemaining})` : `单抽 ${pack.singlePrice}`}</button><button className="btn btn-primary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || tenUnavailable} onClick={() => void draw("ten")}><Shell size={17} />{drawing ? "抽取中…" : tenUnavailable ? "贝壳不足" : `十连 ${pack.tenPrice}`}</button><button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-2 text-xs font-black text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] sm:max-w-52 sm:text-sm" onClick={() => setStoryOpen(true)}><BookOpen size={17} />卡包故事</button></div>
       </div>
 
-      {order && <AssetDrawOverlay key={order.id} order={order} onClose={() => setOrder(null)} onDrawAgain={(mode) => void draw(mode)} />}
+      {order && <AssetDrawOverlay key={order.id} order={order} balance={data.balance} onClose={() => setOrder(null)} onDrawAgain={(mode) => void draw(mode)} />}
       {storyOpen && <AssetPackStoryModal pack={pack} onClose={() => setStoryOpen(false)} />}
     </section>
   );

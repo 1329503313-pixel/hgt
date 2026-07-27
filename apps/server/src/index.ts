@@ -55,6 +55,7 @@ import {
   bulkAdjustShellBalances,
   awardShellTask,
   beijingTaskDate,
+  isEligibleCircleTaskMessageType,
   setShellBadgeProgressListener,
   shellTaskCenter,
   shellTransactions
@@ -2681,6 +2682,8 @@ async function circleForMember(circleId: string, userId: string) {
 }
 
 function circleMessagePayload(row: mysql.RowDataPacket) {
+  const recalledAt = row.recalled_at ? new Date(row.recalled_at).toISOString() : null;
+  const replyRecalledAt = row.reply_recalled_at ? new Date(row.reply_recalled_at).toISOString() : null;
   const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : "text";
   const replyType = row.reply_message_type === "sticker" ? "sticker" : row.reply_message_type === "room_invite" ? "room_invite" : row.reply_message_type === "soup_share" ? "soup_share" : "text";
   return {
@@ -2695,13 +2698,13 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
       equippedBadge: equippedBadge(row.sender_badge_key, row.sender_badge_icon_url),
       isOnline: isUserOnline(row.sender_id)
     } : null,
-    content: String(row.content ?? ""),
+    content: recalledAt ? "" : String(row.content ?? ""),
     type: messageType,
     stickerId: row.sticker_id ? String(row.sticker_id) : null,
     stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
-    roomInvite: messageType === "room_invite" ? parseRoomInvite(row.content) : null,
-    soupShare: messageType === "soup_share" ? parseSoupShare(row.content) : null,
-    mentions: parseCircleMentions(row.mentions_json),
+    roomInvite: !recalledAt && messageType === "room_invite" ? parseRoomInvite(row.content) : null,
+    soupShare: !recalledAt && messageType === "soup_share" ? parseSoupShare(row.content) : null,
+    mentions: recalledAt ? [] : parseCircleMentions(row.mentions_json),
     replyTo: row.reply_id ? {
       id: String(row.reply_id),
       sequence: Number(row.reply_sequence),
@@ -2709,12 +2712,14 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
         id: String(row.reply_sender_id),
         nickname: String(row.reply_sender_nickname)
       } : null,
-      content: String(row.reply_content ?? ""),
+      content: replyRecalledAt ? "" : String(row.reply_content ?? ""),
       type: replyType,
       stickerId: row.reply_sticker_id ? String(row.reply_sticker_id) : null,
-      stickerName: row.reply_sticker_id ? getSticker(String(row.reply_sticker_id))?.name ?? null : null
+      stickerName: row.reply_sticker_id ? getSticker(String(row.reply_sticker_id))?.name ?? null : null,
+      recalledAt: replyRecalledAt
     } : null,
-    createdAt: new Date(row.created_at).toISOString()
+    createdAt: new Date(row.created_at).toISOString(),
+    recalledAt
   };
 }
 
@@ -2748,6 +2753,7 @@ app.get("/api/circles", async (req, res) => {
        END AS unread_count,
        latest.id AS latest_message_id, latest.content AS latest_content,
        latest.message_type AS latest_message_type, latest.sticker_id AS latest_sticker_id,
+       latest.recalled_at AS latest_recalled_at,
        latest.created_at AS latest_created_at, sender.nickname AS latest_sender_name,
        mention.id AS unread_mention_id, mention.content AS unread_mention_content
      FROM circles c
@@ -2800,7 +2806,9 @@ app.get("/api/circles", async (req, res) => {
       latestMessage: row.latest_message_id ? {
         id: String(row.latest_message_id),
         senderName: row.latest_sender_name ? String(row.latest_sender_name) : "已注销用户",
-        content: row.latest_message_type === "sticker"
+        content: row.latest_recalled_at
+          ? "消息已撤回"
+          : row.latest_message_type === "sticker"
           ? `[表情] ${getSticker(String(row.latest_sticker_id ?? ""))?.name ?? ""}`.trim()
           : row.latest_message_type === "room_invite"
             ? `[玩汤邀请] ${parseRoomInvite(row.latest_content)?.roomName ?? "加入房间"}`
@@ -2946,7 +2954,7 @@ app.get("/api/circles/:id/messages", async (req, res) => {
        reply.id AS reply_id, reply.message_sequence AS reply_sequence,
        reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
        reply.content AS reply_content, reply.message_type AS reply_message_type,
-       reply.sticker_id AS reply_sticker_id
+       reply.sticker_id AS reply_sticker_id, reply.recalled_at AS reply_recalled_at
      FROM circle_messages m
      LEFT JOIN users u ON u.id = m.sender_id
      LEFT JOIN circle_messages reply ON reply.id = m.reply_to_message_id AND reply.circle_id = m.circle_id
@@ -2966,6 +2974,61 @@ app.get("/api/circles/:id/messages", async (req, res) => {
   });
 });
 
+app.patch("/api/circles/:id/messages/:messageId/recall", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const circle = await circleForMember(req.params.id, user.id);
+  if (!circle) return sendError(res, 403, "请先加入圈子");
+  const [[message]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, sender_id, recalled_at,
+       created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
+     FROM circle_messages WHERE id = ? AND circle_id = ? LIMIT 1`,
+    [req.params.messageId, req.params.id]
+  );
+  if (!message) return sendError(res, 404, "消息不存在");
+  if (String(message.sender_id ?? "") !== user.id) return sendError(res, 403, "只能撤回自己的消息");
+  if (message.recalled_at) return sendError(res, 409, "消息已经撤回");
+  if (!bool(message.within_window)) return sendError(res, 409, "消息发送超过2分钟，无法撤回");
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [result] = await connection.query<mysql.ResultSetHeader>(
+      `UPDATE circle_messages
+       SET content = '', sticker_id = NULL, mentions_json = NULL, recalled_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND circle_id = ? AND sender_id = ? AND recalled_at IS NULL
+         AND created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE)`,
+      [req.params.messageId, req.params.id, user.id]
+    );
+    if (!result.affectedRows) {
+      await connection.rollback();
+      return sendError(res, 409, "消息已撤回或超过2分钟");
+    }
+    await connection.query("DELETE FROM circle_message_mentions WHERE message_id = ?", [req.params.messageId]);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  const recalledAt = new Date().toISOString();
+  emitCircleSocketEvent(req.params.id, "circle_message_recalled", {
+    circleId: req.params.id,
+    messageId: req.params.messageId,
+    senderId: user.id,
+    recalledAt
+  });
+  const [circleMembers] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT user_id FROM circle_members WHERE circle_id = ?",
+    [req.params.id]
+  );
+  for (const member of circleMembers) {
+    emitUserEvent(String(member.user_id), "circle_unread_changed", { circleId: req.params.id });
+    emitUnreadChanged(String(member.user_id), "circle_message_recalled");
+  }
+  res.json({ ok: true, messageId: req.params.messageId, recalledAt });
+});
+
 app.post("/api/circles/:id/messages", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
@@ -2983,10 +3046,10 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   if (parsed.data.soupShare && !soupShare) return sendError(res, 400, "海龟汤不存在或暂不可分享");
   if (parsed.data.replyToMessageId) {
     const [[replyTarget]] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT id FROM circle_messages WHERE id = ? AND circle_id = ? LIMIT 1",
+      "SELECT id FROM circle_messages WHERE id = ? AND circle_id = ? AND recalled_at IS NULL LIMIT 1",
       [parsed.data.replyToMessageId, req.params.id]
     );
-    if (!replyTarget) return sendError(res, 400, "被回复的消息不存在或不属于当前圈子");
+    if (!replyTarget) return sendError(res, 400, "被回复的消息不存在、已撤回或不属于当前圈子");
   }
   const mentionedUserIds = [...new Set(parsed.data.mentionedUserIds ?? [])].filter((id) => id !== user.id);
   let mentions: Array<{ userId: string; nickname: string }> = [];
@@ -3031,7 +3094,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
       );
     }
     await connection.query("UPDATE circles SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [req.params.id]);
-    if (messageType === "text") {
+    if (isEligibleCircleTaskMessageType(messageType)) {
       await awardShellTask(user.id, "speak_circle", `circle-message:${user.id}:${id}`, {
         relatedType: "circle_message",
         relatedId: id,
@@ -3051,7 +3114,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
        reply.id AS reply_id, reply.message_sequence AS reply_sequence,
        reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
        reply.content AS reply_content, reply.message_type AS reply_message_type,
-       reply.sticker_id AS reply_sticker_id
+       reply.sticker_id AS reply_sticker_id, reply.recalled_at AS reply_recalled_at
      FROM circle_messages m
      LEFT JOIN users u ON u.id = m.sender_id
      LEFT JOIN circle_messages reply ON reply.id = m.reply_to_message_id AND reply.circle_id = m.circle_id
@@ -3271,6 +3334,7 @@ app.get("/api/conversations", async (req, res) => {
        u.id AS other_id, u.nickname AS other_nickname, u.experience AS other_experience, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
        u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url,
        pm.content AS last_content, pm.message_type AS last_message_type, pm.sticker_id AS last_sticker_id,
+       pm.recalled_at AS last_recalled_at,
        pm.sender_id AS last_sender_id, pm.created_at AS message_created_at,
        (SELECT COUNT(*) FROM private_messages unread
         WHERE unread.conversation_id = c.id AND unread.sender_id <> ? AND unread.read_at IS NULL) AS unread_count
@@ -3296,14 +3360,15 @@ app.get("/api/conversations", async (req, res) => {
       isOnline: isUserOnline(row.other_id)
     },
     lastMessage: row.last_content == null ? null : {
-      content: String(row.last_content),
+      content: row.last_recalled_at ? "" : String(row.last_content),
       type: row.last_message_type === "sticker" ? "sticker" : row.last_message_type === "room_invite" ? "room_invite" : row.last_message_type === "soup_share" ? "soup_share" : "text",
       stickerId: row.last_sticker_id ? String(row.last_sticker_id) : null,
       stickerName: row.last_sticker_id ? getSticker(String(row.last_sticker_id))?.name ?? null : null,
-      roomInvite: row.last_message_type === "room_invite" ? parseRoomInvite(row.last_content) : null,
-      soupShare: row.last_message_type === "soup_share" ? parseSoupShare(row.last_content) : null,
+      roomInvite: !row.last_recalled_at && row.last_message_type === "room_invite" ? parseRoomInvite(row.last_content) : null,
+      soupShare: !row.last_recalled_at && row.last_message_type === "soup_share" ? parseSoupShare(row.last_content) : null,
       isMine: String(row.last_sender_id) === user.id,
-      createdAt: new Date(row.message_created_at).toISOString()
+      createdAt: new Date(row.message_created_at).toISOString(),
+      recalledAt: row.last_recalled_at ? new Date(row.last_recalled_at).toISOString() : null
     },
     unreadCount: Number(row.unread_count ?? 0),
     updatedAt: new Date(row.last_message_at).toISOString()
@@ -3416,7 +3481,7 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
   }
   params.push(limit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, sender_id, content, message_type, sticker_id, read_at, created_at
+    `SELECT id, sender_id, content, message_type, sticker_id, read_at, created_at, recalled_at
      FROM private_messages WHERE conversation_id = ? ${beforeClause}
      ORDER BY created_at DESC, id DESC
      LIMIT ?`,
@@ -3437,14 +3502,15 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
       }
     },
     messages: rows.map((row) => ({
-      id: String(row.id), senderId: String(row.sender_id), content: String(row.content),
+      id: String(row.id), senderId: String(row.sender_id), content: row.recalled_at ? "" : String(row.content),
       type: row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : "text",
       stickerId: row.sticker_id ? String(row.sticker_id) : null,
       stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
-      roomInvite: row.message_type === "room_invite" ? parseRoomInvite(row.content) : null,
-      soupShare: row.message_type === "soup_share" ? parseSoupShare(row.content) : null,
+      roomInvite: !row.recalled_at && row.message_type === "room_invite" ? parseRoomInvite(row.content) : null,
+      soupShare: !row.recalled_at && row.message_type === "soup_share" ? parseSoupShare(row.content) : null,
       isMine: String(row.sender_id) === user.id,
-      isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString()
+      isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString(),
+      recalledAt: row.recalled_at ? new Date(row.recalled_at).toISOString() : null
     })),
     hasMore,
     nextCursor: hasMore && rows[0] ? String(rows[0].id) : null
@@ -3462,6 +3528,38 @@ app.patch("/api/conversations/:id/read", async (req, res) => {
   );
   if (result.affectedRows > 0) emitUnreadChanged(user.id, "private_message_read");
   res.json({ ok: true, updated: result.affectedRows });
+});
+
+app.patch("/api/conversations/:id/messages/:messageId/recall", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const conversation = await conversationForUser(req.params.id, user.id);
+  if (!conversation) return sendError(res, 404, "会话不存在");
+  const [[message]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, sender_id, recalled_at,
+       created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
+     FROM private_messages WHERE id = ? AND conversation_id = ? LIMIT 1`,
+    [req.params.messageId, req.params.id]
+  );
+  if (!message) return sendError(res, 404, "消息不存在");
+  if (String(message.sender_id) !== user.id) return sendError(res, 403, "只能撤回自己的消息");
+  if (message.recalled_at) return sendError(res, 409, "消息已经撤回");
+  if (!bool(message.within_window)) return sendError(res, 409, "消息发送超过2分钟，无法撤回");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE private_messages
+     SET content = '', sticker_id = NULL, recalled_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND conversation_id = ? AND sender_id = ? AND recalled_at IS NULL
+       AND created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE)`,
+    [req.params.messageId, req.params.id, user.id]
+  );
+  if (!result.affectedRows) return sendError(res, 409, "消息已撤回或超过2分钟");
+  const recalledAt = new Date().toISOString();
+  const payload = { conversationId: req.params.id, messageId: req.params.messageId, senderId: user.id, recalledAt };
+  emitUserEvent(user.id, "private_message_recalled", payload);
+  emitUserEvent(String(conversation.other_id), "private_message_recalled", payload);
+  emitUnreadChanged(user.id, "private_message_recalled");
+  emitUnreadChanged(String(conversation.other_id), "private_message_recalled");
+  res.json({ ok: true, messageId: req.params.messageId, recalledAt });
 });
 
 app.post("/api/conversations/:id/messages", async (req, res) => {
@@ -3518,7 +3616,8 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     soupShare,
     isMine: true,
     isRead: false,
-    createdAt
+    createdAt,
+    recalledAt: null
   };
   emitUserEvent(String(conversation.other_id), "private_message", {
     conversationId: req.params.id,
@@ -3679,33 +3778,73 @@ type LevelRankingItem = {
   experience: number;
 };
 
-let rankingsCache: {
+type RankingPeriod = "7d" | "30d" | "all";
+
+type RankingsCacheEntry = {
   expiresAt: number;
   hotSoups: HotSoupRankingItem[];
   achievementUsers: AchievementRankingItem[];
   levelUsers: LevelRankingItem[];
-} | null = null;
+};
+
+const rankingsCache = new Map<RankingPeriod, RankingsCacheEntry>();
+
+function rankingPeriod(value: unknown): RankingPeriod {
+  return value === "30d" || value === "all" ? value : "7d";
+}
+
+function rankingCutoff(period: RankingPeriod) {
+  if (period === "all") return null;
+  return new Date(Date.now() - (period === "7d" ? 7 : 30) * 24 * 60 * 60 * 1000);
+}
+
+function heatFromParts(score: number, views: number, likes: number, favorites: number, evaluations: number) {
+  return Math.max(0, Math.round((score + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25) - 61));
+}
 
 app.get("/api/rankings", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  const period = rankingPeriod(req.query.period);
+  const cutoff = rankingCutoff(period);
+  let cached = rankingsCache.get(period);
 
-  if (!rankingsCache || rankingsCache.expiresAt <= Date.now()) {
+  if (!cached || cached.expiresAt <= Date.now()) {
     const [hotSoupRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT s.id, s.title, s.author, s.creator_id, s.view_count,
+         s.created_at,
          COALESCE(e.evaluation_count, 0) AS evaluation_count,
          COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
+         COALESCE(e.before_evaluation_count, 0) AS before_evaluation_count,
+         COALESCE(e.before_comprehensive_score, 0) AS before_comprehensive_score,
          COALESCE(l.like_count, 0) AS like_count,
+         COALESCE(l.before_like_count, 0) AS before_like_count,
          COALESCE(f.favorite_count, 0) AS favorite_count,
-         (COALESCE(e.comprehensive_score, 0) + 1) *
-           (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
+         COALESCE(f.before_favorite_count, 0) AS before_favorite_count,
+         COALESCE(v.period_view_count, 0) AS period_view_count
        FROM soups s
        INNER JOIN users creator ON creator.id = s.creator_id
-       LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
-       LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
-       LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
+       LEFT JOIN (
+         SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score,
+           SUM(created_at < ?) AS before_evaluation_count,
+           AVG(CASE WHEN created_at < ? THEN total END) AS before_comprehensive_score
+         FROM evaluations GROUP BY soup_id
+       ) e ON e.soup_id = s.id
+       LEFT JOIN (
+         SELECT soup_id, COUNT(*) AS like_count, SUM(created_at < ?) AS before_like_count
+         FROM soup_likes GROUP BY soup_id
+       ) l ON l.soup_id = s.id
+       LEFT JOIN (
+         SELECT soup_id, COUNT(*) AS favorite_count, SUM(created_at < ?) AS before_favorite_count
+         FROM soup_favorites GROUP BY soup_id
+       ) f ON f.soup_id = s.id
+       LEFT JOIN (
+         SELECT soup_id, SUM(viewed_at >= ?) AS period_view_count
+         FROM soup_views GROUP BY soup_id
+       ) v ON v.soup_id = s.id
        WHERE s.is_surface_public = TRUE AND s.review_status = 'approved' AND creator.role <> 'super_admin'
-       ORDER BY heat_value DESC, s.view_count DESC, evaluation_count DESC, s.created_at ASC`
+       ORDER BY s.created_at ASC`,
+      [cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
 
     const [achievementRows] = await pool.query<mysql.RowDataPacket[]>(
@@ -3720,10 +3859,36 @@ app.get("/api/rankings", async (req, res) => {
     );
 
     const [levelRows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.experience, u.avatar IS NOT NULL AS has_avatar
+      `SELECT u.id, u.nickname, u.experience, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+         COALESCE(task_gain.value, 0) + COALESCE(beginner_gain.value, 0)
+           + COALESCE(adjustment_gain.value, 0) + COALESCE(invite_email_gain.value, 0)
+           + COALESCE(invite_milestone_gain.value, 0) AS period_experience
        FROM users u
+       LEFT JOIN (
+         SELECT user_id, SUM(experience_reward) AS value FROM shell_task_events
+         WHERE created_at >= ? GROUP BY user_id
+       ) task_gain ON task_gain.user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, SUM(experience_reward) AS value FROM beginner_task_events
+         WHERE completed_at >= ? GROUP BY user_id
+       ) beginner_gain ON beginner_gain.user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, SUM(amount) AS value FROM user_experience_adjustments
+         WHERE created_at >= ? GROUP BY user_id
+       ) adjustment_gain ON adjustment_gain.user_id = u.id
+       LEFT JOIN (
+         SELECT inviter_user_id AS user_id, SUM(email_experience_reward) AS value
+         FROM user_invite_reward_progress
+         WHERE email_rewarded_at >= ? GROUP BY inviter_user_id
+       ) invite_email_gain ON invite_email_gain.user_id = u.id
+       LEFT JOIN (
+         SELECT user_id, SUM(amount) AS value FROM shell_transactions
+         WHERE transaction_type = 'invite_shell_milestone_reward' AND created_at >= ?
+         GROUP BY user_id
+       ) invite_milestone_gain ON invite_milestone_gain.user_id = u.id
        WHERE u.role IN ('user', 'vip', 'backoffice_admin')
-       ORDER BY u.experience DESC, u.created_at ASC, u.id ASC`
+       ORDER BY u.created_at ASC, u.id ASC`,
+      [cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
 
     const users = new Map<string, { id: string; nickname: string; avatar: string | null; achievementPoints: number; reachedAt: number; createdAt: number }>();
@@ -3738,7 +3903,7 @@ app.get("/api/rankings", async (req, res) => {
         reachedAt: createdAt,
         createdAt
       };
-      if (row.badge_key) {
+      if (row.badge_key && (!cutoff || new Date(row.unlocked_at).getTime() >= cutoff.getTime())) {
         const key = String(row.badge_key);
         const points = key.startsWith("legendary:")
           ? Number(row.legendary_points ?? 0)
@@ -3751,14 +3916,35 @@ app.get("/api/rankings", async (req, res) => {
       users.set(id, current);
     }
 
-    const hotSoups = hotSoupRows.map((row, index) => ({
-      rank: index + 1,
-      id: String(row.id),
-      title: String(row.title),
-      author: String(row.author),
-      heatValue: Math.round(Number(row.heat_value ?? 0)),
-      creatorId: String(row.creator_id)
-    }));
+    const hotSoups = hotSoupRows
+      .map((row) => {
+        const currentHeat = heatFromParts(
+          Number(row.comprehensive_score ?? 0),
+          Number(row.view_count ?? 0),
+          Number(row.like_count ?? 0),
+          Number(row.favorite_count ?? 0),
+          Number(row.evaluation_count ?? 0)
+        );
+        const beforeHeat = cutoff && new Date(row.created_at).getTime() < cutoff.getTime()
+          ? heatFromParts(
+              Number(row.before_comprehensive_score ?? 0),
+              Math.max(0, Number(row.view_count ?? 0) - Number(row.period_view_count ?? 0)),
+              Number(row.before_like_count ?? 0),
+              Number(row.before_favorite_count ?? 0),
+              Number(row.before_evaluation_count ?? 0)
+            )
+          : 0;
+        return {
+          id: String(row.id),
+          title: String(row.title),
+          author: String(row.author),
+          heatValue: cutoff ? currentHeat - beforeHeat : currentHeat,
+          creatorId: String(row.creator_id),
+          createdAt: new Date(row.created_at).getTime()
+        };
+      })
+      .sort((a, b) => b.heatValue - a.heatValue || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const achievementUsers = [...users.values()]
       .sort((a, b) => b.achievementPoints - a.achievementPoints || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
       .map((item, index) => ({
@@ -3768,27 +3954,30 @@ app.get("/api/rankings", async (req, res) => {
         avatar: item.avatar,
         achievementPoints: item.achievementPoints
       }));
-    const levelUsers = levelRows.map((row, index) => {
-      const experience = Math.max(0, Math.floor(Number(row.experience) || 0));
+    const levelUsers = levelRows.map((row) => {
+      const totalExperience = Math.max(0, Math.floor(Number(row.experience) || 0));
       return {
-        rank: index + 1,
         id: String(row.id),
         nickname: String(row.nickname),
         avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
-        level: levelForExperience(experience),
-        experience
+        level: levelForExperience(totalExperience),
+        experience: cutoff ? Math.floor(Number(row.period_experience) || 0) : totalExperience,
+        createdAt: new Date(row.created_at).getTime()
       };
-    });
+    })
+      .sort((a, b) => b.experience - a.experience || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
 
-    rankingsCache = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers };
+    cached = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers };
+    rankingsCache.set(period, cached);
   }
 
-  const topHotSoups = rankingsCache.hotSoups.slice(0, 10);
-  const topAchievementUsers = rankingsCache.achievementUsers.slice(0, 10);
-  const topLevelUsers = rankingsCache.levelUsers.slice(0, 10);
-  const ownHotSoup = rankingsCache.hotSoups.find((item) => item.creatorId === user.id) ?? null;
-  const ownAchievementUser = rankingsCache.achievementUsers.find((item) => item.id === user.id) ?? null;
-  const ownLevelUser = rankingsCache.levelUsers.find((item) => item.id === user.id) ?? null;
+  const topHotSoups = cached.hotSoups.slice(0, 10);
+  const topAchievementUsers = cached.achievementUsers.slice(0, 10);
+  const topLevelUsers = cached.levelUsers.slice(0, 10);
+  const ownHotSoup = cached.hotSoups.find((item) => item.creatorId === user.id) ?? null;
+  const ownAchievementUser = cached.achievementUsers.find((item) => item.id === user.id) ?? null;
+  const ownLevelUser = cached.levelUsers.find((item) => item.id === user.id) ?? null;
   const toPublicHotSoup = ({ creatorId: _creatorId, ...item }: HotSoupRankingItem) => item;
 
   res.json({

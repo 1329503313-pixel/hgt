@@ -303,11 +303,13 @@ function lobbyRoom(row: mysql.RowDataPacket) {
     participantCount: playerCount + 1,
     participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY,
     hasPassword: row.room_type === "password",
+    viewerRole: row.viewer_role ? String(row.viewer_role) : null,
     createdAt: iso(row.created_at)
   };
 }
 
 function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
+  const recalledAt = iso(row.recalled_at);
   return {
     id: String(row.id),
     sequence: String(row.message_sequence),
@@ -322,14 +324,15 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderLevel: levelForExperience(row.sender_experience),
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
     type: String(row.message_type),
-    content: String(row.content),
+    content: recalledAt ? "" : String(row.content),
     stickerId: row.sticker_id ? String(row.sticker_id) : null,
     senderIsHost: Boolean(row.sender_id && String(row.sender_id) === String(room.host_id)),
     contentIndex: row.content_index == null ? null : Number(row.content_index),
     questionNumber: row.question_number == null ? null : Number(row.question_number),
     answer: row.answer ? String(row.answer) : null,
     createdAt: iso(row.created_at),
-    updatedAt: iso(row.updated_at)
+    updatedAt: iso(row.updated_at),
+    recalledAt
   };
 }
 
@@ -428,15 +431,21 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   };
 }
 
-router.get("/rooms", async (_req, res) => {
+router.get("/rooms", async (req, res) => {
+  const user = userOf(req);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT r.*, u.nickname AS host_name, s.title AS soup_title,
+       (SELECT viewer_member.member_role
+        FROM online_soup_members viewer_member
+        WHERE viewer_member.room_id = r.id AND viewer_member.user_id = ? AND viewer_member.is_active = 1
+        LIMIT 1) AS viewer_role,
        SUM(CASE WHEN m.member_role = 'player' AND m.is_active = 1 THEN 1 ELSE 0 END) AS player_count
      FROM online_soup_rooms r JOIN users u ON u.id = r.host_id
      LEFT JOIN soups s ON s.id = r.current_soup_id
      LEFT JOIN online_soup_members m ON m.room_id = r.id
      WHERE r.status IN ('preparing','playing','ended')
-     GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 100`
+     GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 100`,
+    [user?.id ?? ""]
   );
   res.json({ rooms: rows.map(lobbyRoom) });
 });
@@ -468,11 +477,20 @@ router.get("/rooms/lookup/:code", async (req, res) => {
   if (!user) return fail(res, 401, "请先登录");
   const room = await roomByCode(String(req.params.code).trim());
   if (!room || room.status === "closed") return fail(res, 404, "未找到该房间");
-  const [[count]] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT COUNT(*) AS player_count FROM online_soup_members WHERE room_id = ? AND is_active = 1 AND member_role = 'player'",
-    [room.id]
-  );
-  res.json({ room: lobbyRoom({ ...room, player_count: count.player_count } as mysql.RowDataPacket) });
+  const [[[count]], existing] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      "SELECT COUNT(*) AS player_count FROM online_soup_members WHERE room_id = ? AND is_active = 1 AND member_role = 'player'",
+      [room.id]
+    ),
+    activeMember(room.id, user.id)
+  ]);
+  res.json({
+    room: lobbyRoom({
+      ...room,
+      player_count: count.player_count,
+      viewer_role: existing?.member_role ?? null
+    } as mysql.RowDataPacket)
+  });
 });
 
 router.get("/rooms/:roomId/invite-preview", async (req, res) => {
@@ -682,10 +700,10 @@ router.post("/rooms/:roomId/join", async (req, res) => {
     const room = rows[0];
     if (!room || room.status === "closed") { await connection.rollback(); return fail(res, 404, "房间不存在或已关闭"); }
     await releaseStaleSeats(String(room.id), connection);
-    if (room.host_id !== user.id && room.room_type === "password" && !(await bcrypt.compare(parsed.data.password, String(room.password_hash)))) {
+    const existing = await activeMember(room.id, user.id, connection);
+    if (!existing && room.host_id !== user.id && room.room_type === "password" && !(await bcrypt.compare(parsed.data.password, String(room.password_hash)))) {
       await connection.rollback(); return fail(res, 403, "房间密码错误");
     }
-    const existing = await activeMember(room.id, user.id, connection);
     if (!existing) {
       const [[count]] = await connection.query<mysql.RowDataPacket[]>(
         "SELECT COUNT(*) AS total FROM online_soup_members WHERE room_id = ? AND member_role = ? AND is_active = 1",
@@ -710,9 +728,10 @@ router.post("/rooms/:roomId/join", async (req, res) => {
       );
       await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection);
     }
+    const role = existing?.member_role ?? (room.host_id === user.id ? "host" : parsed.data.role);
     await connection.commit();
-    res.json({ roomId: String(room.id) });
-    void notifyRoom(String(room.id), "member_joined");
+    res.json({ roomId: String(room.id), role: String(role), joined: !existing });
+    if (!existing) void notifyRoom(String(room.id), "member_joined");
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
 });
 
@@ -763,7 +782,7 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
        m.sender_id, u.nickname AS sender_name, u.avatar IS NOT NULL AS sender_has_avatar
      FROM online_soup_messages m
      LEFT JOIN users u ON u.id = m.sender_id
-     WHERE m.round_id = ? AND m.message_type = 'question' ${afterClause}
+     WHERE m.round_id = ? AND m.message_type = 'question' AND m.recalled_at IS NULL ${afterClause}
      ORDER BY m.message_sequence ASC LIMIT ?`,
     params
   );
@@ -1045,13 +1064,83 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   void notifyRoom(context.room.id, "message", { activitySequence, activityType: parsed.data.type === "question" ? "progress" : "chat" });
 });
 
+router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  const connection = await pool.getConnection();
+  let recalledAt = "";
+  try {
+    await connection.beginTransaction();
+    const [[message]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, sender_id, message_type, answer, recalled_at,
+         created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
+       FROM online_soup_messages
+       WHERE id = ? AND room_id = ? LIMIT 1 FOR UPDATE`,
+      [req.params.messageId, context.room.id]
+    );
+    if (!message) {
+      await connection.rollback();
+      return fail(res, 404, "消息不存在");
+    }
+    if (String(message.sender_id ?? "") !== context.user.id) {
+      await connection.rollback();
+      return fail(res, 403, "只能撤回自己的发言");
+    }
+    if (!["discussion", "question", "host", "sticker"].includes(String(message.message_type))) {
+      await connection.rollback();
+      return fail(res, 409, "该消息类型不支持撤回");
+    }
+    if (message.recalled_at) {
+      await connection.rollback();
+      return fail(res, 409, "消息已经撤回");
+    }
+    if (!Boolean(message.within_window)) {
+      await connection.rollback();
+      return fail(res, 409, "消息发送超过2分钟，无法撤回");
+    }
+    if (message.message_type === "question" && message.answer != null) {
+      await connection.rollback();
+      return fail(res, 409, "主持人已回复该提问，无法撤回");
+    }
+    const [result] = await connection.query<mysql.ResultSetHeader>(
+      `UPDATE online_soup_messages
+       SET content = '', sticker_id = NULL, recalled_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND room_id = ? AND sender_id = ? AND recalled_at IS NULL
+         AND created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE)
+         AND (message_type <> 'question' OR answer IS NULL)`,
+      [req.params.messageId, context.room.id, context.user.id]
+    );
+    if (!result.affectedRows) {
+      await connection.rollback();
+      return fail(res, 409, "消息状态已变化，无法撤回");
+    }
+    const [[stored]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT recalled_at FROM online_soup_messages WHERE id = ? LIMIT 1",
+      [req.params.messageId]
+    );
+    recalledAt = iso(stored.recalled_at) ?? new Date().toISOString();
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  res.json({ ok: true, messageId: req.params.messageId, recalledAt });
+  void notifyRoom(context.room.id, "message_recalled", {
+    messageId: req.params.messageId,
+    senderId: context.user.id,
+    recalledAt
+  });
+});
+
 router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
   const parsed = z.object({ answer: z.enum(answerValues).nullable() }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "回答类型不正确");
   const [result] = await pool.query<mysql.ResultSetHeader>(
-    "UPDATE online_soup_messages SET answer = ? WHERE id = ? AND room_id = ? AND message_type = 'question'",
+    "UPDATE online_soup_messages SET answer = ? WHERE id = ? AND room_id = ? AND message_type = 'question' AND recalled_at IS NULL",
     [parsed.data.answer, req.params.messageId, context.room.id]
   );
   if (!result.affectedRows) return fail(res, 404, "提问不存在");

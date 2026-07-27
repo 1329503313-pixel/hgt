@@ -12,6 +12,7 @@ import { SoupShareCard } from "../components/SoupShareCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
+import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 
 type ChatResponse = {
   conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean } };
@@ -136,7 +137,8 @@ export default function ChatPage() {
       stickerId: null,
       isMine: true,
       isRead: false,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      recalledAt: null
     };
     shouldFollowBottomRef.current = true;
     setChat((current) => current ? { ...current, messages: [...current.messages, optimisticMessage] } : current);
@@ -178,6 +180,41 @@ export default function ChatPage() {
   const stickersById = useMemo(() => new Map(
     stickerSeries.flatMap((series) => series.stickers.map((sticker) => [sticker.id, sticker] as const))
   ), [stickerSeries]);
+
+  async function recallMessage(message: PrivateMessageItem) {
+    try {
+      const result = await api<{ messageId: string; recalledAt: string }>(
+        `/api/conversations/${id}/messages/${message.id}/recall`,
+        { method: "PATCH" }
+      );
+      setChat((current) => current ? {
+        ...current,
+        messages: current.messages.map((item) => item.id === result.messageId
+          ? { ...item, content: "", stickerId: null, roomInvite: null, soupShare: null, recalledAt: result.recalledAt }
+          : item)
+      } : current);
+    } catch (error) {
+      showToast((error as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    if (!user || !id) return;
+    return subscribeServerEvent("private_message_recalled", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { conversationId?: string; messageId?: string; recalledAt?: string };
+        if (payload.conversationId !== id || !payload.messageId || !payload.recalledAt) return;
+        setChat((current) => current ? {
+          ...current,
+          messages: current.messages.map((item) => item.id === payload.messageId
+            ? { ...item, content: "", stickerId: null, roomInvite: null, soupShare: null, recalledAt: payload.recalledAt! }
+            : item)
+        } : current);
+      } catch {
+        // Ignore malformed recall events.
+      }
+    });
+  }, [id, user?.id]);
 
   if (loadingUser || !chat) return <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5"><div className="lg:hidden"><PageTopBar title="私信" backTo="/messages" /></div><div className="mx-auto h-full max-w-3xl px-4 lg:max-w-[1180px] lg:rounded-[28px] lg:bg-white lg:p-6"><ListSkeleton rows={7} /></div></section>;
 
@@ -236,6 +273,12 @@ export default function ChatPage() {
           {chat.messages.map((message) => {
             const sender = message.isMine ? user : chat.conversation.otherUser;
             const sticker = message.stickerId ? stickersById.get(message.stickerId) : null;
+            if (message.recalledAt) {
+              return <RecalledMessageNotice key={message.id} mine={message.isMine} senderName={sender?.nickname} />;
+            }
+            const recallActions = message.isMine && !message.id.startsWith("pending-") && canRecallMessage(message.createdAt, message.recalledAt)
+              ? [{ label: "撤回", tone: "danger" as const, availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => void recallMessage(message) }]
+              : [];
             return (
             <div key={message.id} className={`chat-message-row flex items-start gap-2.5 ${message.isMine ? "flex-row-reverse" : "flex-row"}`}>
               <button
@@ -249,19 +292,21 @@ export default function ChatPage() {
                   : (sender?.nickname || "用").slice(0, 1)}
               </button>
               <div className={`flex max-w-[78%] flex-col ${message.type === "soup_share" ? "w-[78%]" : ""} ${message.isMine ? "items-end" : "items-start"}`}>
-                {message.type === "room_invite" && message.roomInvite ? (
-                  <OnlineSoupRoomInviteCard invite={message.roomInvite} />
-                ) : message.type === "soup_share" && message.soupShare ? (
-                  <SoupShareCard soup={message.soupShare} />
-                ) : message.type === "sticker" ? (
-                  sticker
-                    ? <img className="h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
-                    : <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-muted">表情已下架</span>
-                ) : (
-                  <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${message.isMine ? "rounded-br-md bg-primary text-white" : "rounded-bl-md bg-white text-ink shadow-sm"}`}>
-                    <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                  </div>
-                )}
+                <MessageActionMenu actions={recallActions} className={message.type === "soup_share" ? "w-full" : "max-w-full"}>
+                  {message.type === "room_invite" && message.roomInvite ? (
+                    <OnlineSoupRoomInviteCard invite={message.roomInvite} />
+                  ) : message.type === "soup_share" && message.soupShare ? (
+                    <SoupShareCard soup={message.soupShare} />
+                  ) : message.type === "sticker" ? (
+                    sticker
+                      ? <img className="h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
+                      : <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-muted">表情已下架</span>
+                  ) : (
+                    <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${message.isMine ? "rounded-br-md bg-primary text-white" : "rounded-bl-md bg-white text-ink shadow-sm"}`}>
+                      <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                    </div>
+                  )}
+                </MessageActionMenu>
                 <p className="mt-1 px-1 text-[10px] text-muted">{new Date(message.createdAt).toLocaleString("zh-CN", { hour12: false })}</p>
               </div>
             </div>

@@ -6,6 +6,7 @@ import {
   calculateTaskReward,
   eligibleBeginnerTaskTypes,
   hasOtherEligibleOnlineSoupPlayer,
+  isEligibleCircleTaskMessageType,
   isEligibleOnlineSoupDuration,
   SHELL_DAILY_LIMIT,
   SHELL_TASKS
@@ -68,6 +69,13 @@ test("玩汤时长必须严格大于5分钟", () => {
   assert.equal(isEligibleOnlineSoupDuration(start, new Date("2026-07-20T00:04:59.999Z")), false);
   assert.equal(isEligibleOnlineSoupDuration(start, new Date("2026-07-20T00:05:00.000Z")), false);
   assert.equal(isEligibleOnlineSoupDuration(start, new Date("2026-07-20T00:05:00.001Z")), true);
+});
+
+test("圈子发言任务统计文字和表情包，不统计分享消息", () => {
+  assert.equal(isEligibleCircleTaskMessageType("text"), true);
+  assert.equal(isEligibleCircleTaskMessageType("sticker"), true);
+  assert.equal(isEligibleCircleTaskMessageType("room_invite"), false);
+  assert.equal(isEligibleCircleTaskMessageType("soup_share"), false);
 });
 
 test("作品完整玩汤奖励必须有作者之外的有效玩家", () => {

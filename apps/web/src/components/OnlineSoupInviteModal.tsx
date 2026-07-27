@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { CircleEllipsis, MessageCircle, Share2, Soup, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CircleEllipsis, MessageCircle, Share2, Users } from "lucide-react";
 import { api } from "../api";
 import { Modal } from "./Modal";
 import { useApp } from "../context/AppContext";
@@ -15,10 +15,172 @@ type Props = {
 
 type Target = { kind: "circle" | "friend"; id: string; name: string };
 
+const INVITE_POSTER_WIDTH = 520;
+const INVITE_POSTER_HEIGHT = 720;
+
+function roundedRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.arcTo(x + width, y, x + width, y + height, safeRadius);
+  context.arcTo(x + width, y + height, x, y + height, safeRadius);
+  context.arcTo(x, y + height, x, y, safeRadius);
+  context.arcTo(x, y, x + width, y, safeRadius);
+  context.closePath();
+}
+
+function loadImage(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("二维码加载失败"));
+    image.src = source;
+  });
+}
+
+function splitPosterTitle(context: CanvasRenderingContext2D, title: string, maxWidth: number) {
+  const characters = Array.from(title.trim() || "在线玩汤房间");
+  const lines: string[] = [];
+  let current = "";
+
+  for (const character of characters) {
+    const candidate = current + character;
+    if (current && context.measureText(candidate).width > maxWidth) {
+      lines.push(current);
+      current = character;
+      if (lines.length === 2) break;
+    } else {
+      current = candidate;
+    }
+  }
+  if (lines.length < 2 && current) lines.push(current);
+
+  const consumedLength = lines.join("").length;
+  if (consumedLength < characters.length && lines.length) {
+    let lastLine = lines[lines.length - 1];
+    while (lastLine && context.measureText(`${lastLine}…`).width > maxWidth) {
+      lastLine = Array.from(lastLine).slice(0, -1).join("");
+    }
+    lines[lines.length - 1] = `${lastLine}…`;
+  }
+  return lines.slice(0, 2);
+}
+
+async function createInvitePoster(roomName: string, roomCode: string, qrCode: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = INVITE_POSTER_WIDTH;
+  canvas.height = INVITE_POSTER_HEIGHT;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前浏览器无法生成邀请图片");
+
+  context.save();
+  roundedRect(context, 0, 0, INVITE_POSTER_WIDTH, INVITE_POSTER_HEIGHT, 48);
+  context.clip();
+  context.fillStyle = "#eaf2ff";
+  context.fillRect(0, 0, INVITE_POSTER_WIDTH, INVITE_POSTER_HEIGHT);
+  context.fillStyle = "rgba(91, 141, 239, 0.2)";
+  context.beginPath();
+  context.arc(480, -22, 176, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "rgba(123, 214, 197, 0.2)";
+  context.beginPath();
+  context.arc(40, 730, 176, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+
+  context.save();
+  context.shadowColor = "rgba(30, 64, 120, 0.16)";
+  context.shadowBlur = 38;
+  context.shadowOffsetY = 14;
+  roundedRect(context, 24, 24, 472, 672, 40);
+  context.fillStyle = "rgba(255, 255, 255, 0.94)";
+  context.fill();
+  context.restore();
+
+  const uiFont = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+
+  context.fillStyle = "#3970d4";
+  context.beginPath();
+  context.arc(177, 100, 32, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = "#ffffff";
+  context.lineWidth = 5;
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(161, 103);
+  context.quadraticCurveTo(177, 116, 193, 103);
+  context.moveTo(164, 94);
+  context.lineTo(190, 94);
+  context.stroke();
+  context.lineWidth = 3;
+  for (const x of [168, 177, 186]) {
+    context.beginPath();
+    context.moveTo(x, 88);
+    context.quadraticCurveTo(x - 4, 83, x, 78);
+    context.stroke();
+  }
+
+  context.fillStyle = "#3970d4";
+  context.font = `900 27px ${uiFont}`;
+  context.fillText("在线玩汤", 292, 100);
+  context.fillStyle = "#6b7c99";
+  context.font = `700 20px ${uiFont}`;
+  context.fillText("好友邀请你加入房间", 260, 151);
+
+  context.fillStyle = "#102a56";
+  context.font = `900 40px ${uiFont}`;
+  const titleLines = splitPosterTitle(context, roomName, 400);
+  const firstTitleY = titleLines.length > 1 ? 197 : 218;
+  titleLines.forEach((line, index) => context.fillText(line, 260, firstTitleY + index * 43));
+
+  roundedRect(context, 118, 268, 284, 68, 34);
+  context.fillStyle = "#edf4ff";
+  context.fill();
+  context.font = `700 20px ${uiFont}`;
+  context.fillStyle = "#71819d";
+  context.fillText("房间号", 180, 302);
+  context.font = `900 34px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
+  context.fillStyle = "#3970d4";
+  context.fillText(roomCode, 303, 302);
+
+  context.save();
+  context.shadowColor = "rgba(25, 55, 105, 0.12)";
+  context.shadowBlur = 24;
+  context.shadowOffsetY = 10;
+  roundedRect(context, 136, 358, 248, 248, 32);
+  context.fillStyle = "#ffffff";
+  context.fill();
+  context.restore();
+
+  const qrImage = await loadImage(qrCode);
+  context.drawImage(qrImage, 150, 372, 220, 220);
+  context.fillStyle = "#102a56";
+  context.font = `900 24px ${uiFont}`;
+  context.fillText("微信扫码，一起推理", 260, 650);
+
+  return canvas.toDataURL("image/png");
+}
+
+function dataUrlToPngFile(dataUrl: string, fileName: string) {
+  const base64 = dataUrl.split(",", 2)[1];
+  if (!base64) throw new Error("邀请图片生成失败");
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new File([bytes], fileName, { type: "image/png" });
+}
+
 export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, showToast }: Props) {
   const { user } = useApp();
-  const posterRef = useRef<HTMLDivElement>(null);
-  const [inviteUrl, setInviteUrl] = useState("");
   const [inviteToken, setInviteToken] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [posterDataUrl, setPosterDataUrl] = useState("");
@@ -45,7 +207,6 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
         });
         if (!cancelled) {
           setInviteToken(token);
-          setInviteUrl(url);
           setQrCode(dataUrl);
         }
       })
@@ -54,26 +215,18 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
     return () => { cancelled = true; };
   }, [roomId, showToast]);
 
-  async function renderPoster() {
-    if (!posterRef.current || !qrCode) throw new Error("邀请海报尚未准备完成");
-    await document.fonts?.ready;
-    const { toPng } = await import("html-to-image");
-    return toPng(posterRef.current, { pixelRatio: 2, cacheBust: true, backgroundColor: "#EAF2FF" });
-  }
-
   useEffect(() => {
     if (!qrCode) return;
     let cancelled = false;
     const frame = window.requestAnimationFrame(() => {
-      void renderPoster().then(async (dataUrl) => {
-        const blob = await (await fetch(dataUrl)).blob();
+      void document.fonts?.ready.then(() => createInvitePoster(roomName, roomCode, qrCode)).then((dataUrl) => {
         if (cancelled) return;
         setPosterDataUrl(dataUrl);
-        setPosterFile(new File([blob], `玩汤邀请-${roomCode}.png`, { type: "image/png" }));
+        setPosterFile(dataUrlToPngFile(dataUrl, `玩汤邀请-${roomCode}.png`));
       }).catch((error) => { if (!cancelled) showToast(error instanceof Error ? error.message : "邀请图片生成失败"); });
     });
     return () => { cancelled = true; window.cancelAnimationFrame(frame); };
-  }, [qrCode, roomCode, showToast]);
+  }, [qrCode, roomCode, roomName, showToast]);
 
   function shareToWechat() {
     if (sharing || !posterFile || !posterDataUrl) return;
@@ -151,23 +304,9 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
           <p className="mt-1 text-sm text-muted">分享到微信、圈子或已关注的好友</p>
         </div>
         <div className="overflow-hidden rounded-2xl bg-slate-100 py-2">
-          <div ref={posterRef} data-invite-poster className="relative mx-auto h-[360px] w-full max-w-[260px] overflow-hidden rounded-[24px] bg-[#eaf2ff] p-3 text-[#102a56]">
-            <div className="absolute -right-16 -top-20 h-44 w-44 rounded-full bg-[#5b8def]/20" />
-            <div className="absolute -bottom-20 -left-16 h-44 w-44 rounded-full bg-[#7bd6c5]/20" />
-            <div className="relative flex h-full flex-col items-center rounded-[20px] border border-white/80 bg-white/90 p-4 text-center shadow-[0_14px_38px_rgba(30,64,120,0.16)]">
-              <div className="flex h-8 items-center justify-center gap-2 text-xs font-black tracking-[.1em] text-[#3970d4]"><span className="grid h-8 w-8 place-items-center rounded-full bg-[#3970d4] text-white"><Soup size={17} /></span>在线玩汤</div>
-              <p className="mt-2 text-[10px] font-bold tracking-[.14em] text-[#6b7c99]">好友邀请你加入房间</p>
-              <h3 className="mt-1 line-clamp-2 flex min-h-[40px] w-full items-center justify-center text-[20px] font-black leading-[1.12] text-[#102a56]">{roomName}</h3>
-              <div className="mt-2 inline-flex min-h-[34px] items-center justify-center gap-2 rounded-full bg-[#edf4ff] px-4 py-1.5">
-                <span className="text-[10px] font-bold tracking-[.08em] text-[#71819d]">房间号</span>
-                <span className="font-mono text-[17px] font-black tracking-[.14em] text-[#3970d4]">{roomCode}</span>
-              </div>
-              <div className="mt-3 grid h-[118px] w-[118px] place-items-center rounded-2xl bg-white shadow-[0_8px_20px_rgba(25,55,105,0.12)]">
-                {qrCode ? <img className="h-[108px] w-[108px] rounded-xl p-1" src={qrCode} alt="房间邀请二维码" /> : <div className="grid h-[108px] w-[108px] place-items-center rounded-xl bg-slate-100 text-xs font-bold text-muted">{preparing ? "二维码生成中…" : "生成失败"}</div>}
-              </div>
-              <p className="mt-3 text-xs font-black tracking-[.04em] text-[#102a56]">微信扫码，一起推理</p>
-            </div>
-          </div>
+          {posterDataUrl
+            ? <img className="mx-auto h-[360px] w-[260px] rounded-[24px]" src={posterDataUrl} alt={`${roomName}玩汤房间邀请海报`} />
+            : <div className="mx-auto grid h-[360px] w-[260px] place-items-center rounded-[24px] bg-[#eaf2ff] text-sm font-bold text-muted">{preparing || qrCode ? "邀请图片生成中…" : "邀请图片生成失败"}</div>}
         </div>
 
         <div className="grid grid-cols-3 gap-2">

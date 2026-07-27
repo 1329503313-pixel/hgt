@@ -63,7 +63,7 @@ export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
   { type: "like_soup", name: "点赞海龟汤", description: "点赞不同的海龟汤", reward: 2, dailyLimit: 3 },
   { type: "favorite_soup", name: "收藏海龟汤", description: "收藏不同的海龟汤", reward: 2, dailyLimit: 3 },
   { type: "publish_evaluation", name: "发表评论", description: "首次发布评分或评论", reward: 3, dailyLimit: 1, consumeBeyondDailyLimit: true },
-  { type: "speak_circle", name: "圈子发言", description: "在任意圈子发送一条文字消息", reward: 2, dailyLimit: 3 },
+  { type: "speak_circle", name: "圈子发言", description: "在任意圈子发送文字或表情包", reward: 2, dailyLimit: 3 },
   { type: "join_online_soup", name: "完整参与玩汤", description: "满足完整参与条件并完成一轮", reward: 5, dailyLimit: 2 },
   { type: "host_online_soup", name: "完整主持玩汤", description: "满足完整主持条件并完成一轮", reward: 10, dailyLimit: 1 },
   { type: "receive_soup_like", name: "作品获得点赞", description: "其他用户首次点赞你发布的作品", reward: 2, dailyLimit: 3, consumeBeyondDailyLimit: true },
@@ -95,6 +95,10 @@ export function beijingTaskDate(now = new Date()) {
 
 export function calculateTaskReward(earnedToday: number, nominalReward: number) {
   return Math.max(0, Math.min(nominalReward, SHELL_DAILY_LIMIT - earnedToday));
+}
+
+export function isEligibleCircleTaskMessageType(messageType: string) {
+  return messageType === "text" || messageType === "sticker";
 }
 
 export function isEligibleOnlineSoupDuration(startedAt: Date, endedAt: Date) {

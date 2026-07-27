@@ -116,7 +116,7 @@ export default function MessagesPage() {
                     <LevelBadge level={conversation.otherUser.level} />
                     <EquippedBadgeIcon badge={conversation.otherUser.equippedBadge} className="h-4 w-4" animated={false} />
                   </span>
-                  <span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? `${conversation.lastMessage.isMine ? "我：" : ""}${privateMessagePreview(conversation.lastMessage)}` : "开始聊天吧"}</span>
+                  <span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? conversation.lastMessage.recalledAt ? `${conversation.lastMessage.isMine ? "你" : "对方"}撤回了一条消息` : `${conversation.lastMessage.isMine ? "我：" : ""}${privateMessagePreview(conversation.lastMessage)}` : "开始聊天吧"}</span>
                 </span>
                 <span className="shrink-0 text-xs text-muted">{new Date(conversation.lastMessage?.createdAt ?? conversation.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>
               </button>

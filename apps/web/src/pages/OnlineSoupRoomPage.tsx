@@ -8,6 +8,7 @@ import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
 import { OnlineSoupInviteModal } from "../components/OnlineSoupInviteModal";
 import { StickerKeyboard } from "../components/StickerKeyboard";
+import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 import { useApp } from "../context/AppContext";
 import { useOnlineSoupDock } from "../context/OnlineSoupDockContext";
 import { sanitizeHtml } from "../sanitizeHtml";
@@ -326,6 +327,16 @@ export default function OnlineSoupRoomPage() {
       void loadNewMessages();
       return;
     }
+    if (reason === "message_recalled" && typeof payload.messageId === "string" && typeof payload.recalledAt === "string") {
+      setSnapshot((current) => current ? {
+        ...current,
+        messages: current.messages.map((message) => message.id === payload.messageId
+          ? { ...message, content: "", stickerId: null, recalledAt: payload.recalledAt as string }
+          : message)
+      } : current);
+      setProgressQuestions((current) => current.filter((question) => question.id !== payload.messageId));
+      return;
+    }
     if (reason === "answer_changed" && typeof payload.messageId === "string") {
       const nextAnswer = typeof payload.answer === "string" ? payload.answer as OnlineSoupAnswer : null;
       setSnapshot((current) => current ? {
@@ -342,7 +353,7 @@ export default function OnlineSoupRoomPage() {
     void load(true);
   }, (connected) => {
     setSocketConnected(connected);
-    if (connected) void loadNewMessages();
+    if (connected) void load(true);
   }), [disarmExitGuard, roomId, load, loadNewMessages, loadState, navigate, showToast, user?.id]);
   useEffect(() => {
     const reconcile = () => {
@@ -459,6 +470,24 @@ export default function OnlineSoupRoomPage() {
         messages: current.messages.map((item) => item.id === message.id ? { ...item, answer: nextAnswer } : item)
       } : current);
     } catch (error) { showToast(error instanceof Error ? error.message : "回答失败"); }
+  }
+
+  async function recallMessage(message: OnlineSoupMessage) {
+    try {
+      const result = await api<{ messageId: string; recalledAt: string }>(
+        `/api/online-soup/rooms/${roomId}/messages/${message.id}/recall`,
+        { method: "PATCH" }
+      );
+      setSnapshot((current) => current ? {
+        ...current,
+        messages: current.messages.map((item) => item.id === result.messageId
+          ? { ...item, content: "", stickerId: null, recalledAt: result.recalledAt }
+          : item)
+      } : current);
+      setProgressQuestions((current) => current.filter((question) => question.id !== result.messageId));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "撤回失败");
+    }
   }
 
   async function hostAction(path: string, body?: object) {
@@ -749,7 +778,7 @@ export default function OnlineSoupRoomPage() {
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">讨论、正式提问、主持人回复和线索会实时同步</p></div>
           <div ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4" onScroll={updateMessagesScrollPosition}>
             {snapshot.messagesHasMore && <button className="mx-auto block rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-blue-50 disabled:opacity-50" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
-            {snapshot.messages.map((message) => <MessageItem key={message.id} message={message} currentUserId={user?.id ?? ""} isHost={isHost} onAnswer={answer} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />)}
+            {snapshot.messages.map((message) => <MessageItem key={message.id} message={message} currentUserId={user?.id ?? ""} isHost={isHost} onAnswer={answer} onRecall={recallMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />)}
             <div ref={bottomRef} />
           </div>
           {canDiscuss && <div className="shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
@@ -868,7 +897,9 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
   return <button className={`group relative grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-full border px-1 text-center text-[12px] font-black leading-[1.25] ring-1 ring-white/80 transition duration-200 hover:-translate-y-1 hover:scale-[1.03] active:translate-y-0 active:scale-95 ${tones[tone]}`} onClick={onClick} aria-label={label} title={label}><span className="pointer-events-none absolute inset-1 rounded-full border border-white/80" /><span className="pointer-events-none absolute inset-0 grid place-items-center opacity-[0.12] transition duration-200 group-hover:scale-110 group-hover:opacity-[0.18]">{icon}</span><span className="relative drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]">{lines.map((line) => <span className="block" key={line}>{line}</span>)}</span></button>;
 }
 
-const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, onAnswer, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
+const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, onAnswer, onRecall, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRecall: (message: OnlineSoupMessage) => void; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
+  const mine = message.senderId === currentUserId;
+  if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "system") return <div className="py-1 text-center text-xs font-bold text-muted">— {message.content} —</div>;
   if (message.type === "clue") return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-amber-800"><Lightbulb size={16} /> 主持人线索</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></div>;
   if (message.type === "supplemental_surface") return <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Soup size={16} /> 补充汤面 {(message.contentIndex ?? 0) + 1}</div><div className="content-block mt-2 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></div>;
@@ -877,7 +908,10 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
   const sticker = message.stickerId ? stickers.get(message.stickerId) : null;
   const question = message.type === "question";
   const host = message.type === "host" || message.senderIsHost;
-  const mine = message.senderId === currentUserId;
+  const canRecall = mine
+    && ["discussion", "question", "host", "sticker"].includes(message.type)
+    && (!question || message.answer == null)
+    && canRecallMessage(message.createdAt, message.recalledAt);
   const bubbleTone = host
     ? "border-amber-500 bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-[0_7px_18px_rgba(245,158,11,0.2)]"
     : question
@@ -907,13 +941,18 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
           {host && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700"><Crown size={11} />主持人</span>}
           {question && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-black text-violet-700"><MessageCircle size={11} />正式提问 #{message.questionNumber}</span>}
         </div>
-        <div className={`max-w-full rounded-2xl border px-3.5 py-2.5 text-sm leading-6 ${mine ? "rounded-br-md" : "rounded-bl-md"} ${bubbleTone}`}>
-          {message.type === "sticker"
-            ? sticker
-              ? <img className="h-28 w-28 object-contain sm:h-32 sm:w-32" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
-              : <span className={`inline-block rounded-xl px-3 py-2 text-sm ${host ? "bg-white/20 text-white" : "bg-slate-100 text-muted"}`}>表情已下架</span>
-            : <p className="whitespace-pre-wrap break-words">{message.content}</p>}
-        </div>
+        <MessageActionMenu
+          actions={canRecall ? [{ label: "撤回", tone: "danger", availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => onRecall(message) }] : []}
+          className="max-w-full"
+        >
+          <div className={`max-w-full rounded-2xl border px-3.5 py-2.5 text-sm leading-6 ${mine ? "rounded-br-md" : "rounded-bl-md"} ${bubbleTone}`}>
+            {message.type === "sticker"
+              ? sticker
+                ? <img className="h-28 w-28 object-contain sm:h-32 sm:w-32" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
+                : <span className={`inline-block rounded-xl px-3 py-2 text-sm ${host ? "bg-white/20 text-white" : "bg-slate-100 text-muted"}`}>表情已下架</span>
+              : <p className="whitespace-pre-wrap break-words">{message.content}</p>}
+          </div>
+        </MessageActionMenu>
         {question && (
           <div className={`mt-2 max-w-full rounded-xl border border-violet-200 bg-violet-50 px-2.5 py-2 ${mine ? "text-right" : "text-left"}`}>
             {isHost ? (
