@@ -3,8 +3,9 @@ import type mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { pool } from "./db.js";
-import { optimizeGiftIcon } from "./giftImages.js";
+import { optimizeGiftIconBuffer } from "./giftImages.js";
 import { canonicalConversationUserIds } from "./conversations.js";
+import { storeMediaBuffer } from "./ossStorage.js";
 import type { PublicUser } from "./types.js";
 
 type AuthenticatedUser = PublicUser & { tokenVersion: number };
@@ -131,6 +132,18 @@ function adminGift(row: mysql.RowDataPacket) {
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
   };
+}
+
+async function storeGiftIcon(value: string, giftId: string) {
+  const optimized = await optimizeGiftIconBuffer(value);
+  if (!optimized) return null;
+  return storeMediaBuffer(optimized, {
+    category: "gifts",
+    entityId: giftId,
+    variant: "icon",
+    contentType: "image/webp",
+    extension: "webp"
+  });
 }
 
 export function parseGiftMessage(value: unknown): GiftMessage | null {
@@ -520,9 +533,9 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     if (!parsed.success || !parsed.data.iconImage) {
       return sendError(res, 400, parsed.success ? "请上传礼物图标" : parsed.error.issues[0]?.message || "礼物参数不正确");
     }
-    const optimizedIcon = await optimizeGiftIcon(parsed.data.iconImage);
-    if (!optimizedIcon) return sendError(res, 400, "礼物图标无效，请上传 5MB 以内的 PNG、JPG、WebP 或 GIF");
     const id = nanoid();
+    const optimizedIcon = await storeGiftIcon(parsed.data.iconImage, id);
+    if (!optimizedIcon) return sendError(res, 400, "礼物图标无效，请上传 5MB 以内的 PNG、JPG、WebP 或 GIF");
     const value = parsed.data;
     await pool.query(
       `INSERT INTO gifts
@@ -552,7 +565,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     if (Number(current.sent_count) > 0) return sendError(res, 409, "已赠送过的礼物不可编辑，只能下架");
     let optimizedIcon = String(current.icon_image);
     if (parsed.data.iconImage) {
-      const nextIcon = await optimizeGiftIcon(parsed.data.iconImage);
+      const nextIcon = await storeGiftIcon(parsed.data.iconImage, req.params.id);
       if (!nextIcon) return sendError(res, 400, "礼物图标无效，请上传 5MB 以内的 PNG、JPG、WebP 或 GIF");
       optimizedIcon = nextIcon;
     }

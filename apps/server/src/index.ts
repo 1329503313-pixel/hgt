@@ -38,6 +38,7 @@ import { canonicalConversationUserIds, conversationOtherUserIdentity } from "./c
 import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
+import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
 import {
   AUTH_COOKIE_NAME,
   LEGACY_AUTH_COOKIE_NAME,
@@ -557,7 +558,11 @@ const excellentAuthorApplicationSchema = z.object({
 const adminNoticeSchema = z.object({
   title: text.max(200),
   author: text.max(100),
-  content: z.string().trim().min(1, "正文不能为空").max(5_000_000, "正文内容过大"),
+  content: z.string()
+    .trim()
+    .min(1, "正文不能为空")
+    .max(5_000_000, "正文内容过大")
+    .refine((value) => !/<img\b[^>]*\bsrc\s*=\s*["']data:image\//i.test(value), "正文图片必须先上传"),
   validDays: z.coerce.number().int().min(0).max(3650),
   validHours: z.coerce.number().int().min(0).max(23)
 }).refine((value) => value.validDays > 0 || value.validHours > 0, {
@@ -612,7 +617,9 @@ function sendError(res: express.Response, status: number, message: string) {
 function avatarUrl(userId: unknown, stored: unknown, hasAvatar = false) {
   if (!stored && !hasAvatar) return null;
   const value = stored ? String(stored) : "";
-  return value && !value.startsWith("data:image/") ? value : `/api/media/users/${encodeURIComponent(String(userId))}/avatar`;
+  return value && !value.startsWith("data:image/")
+    ? publicOssUrl(value)
+    : `/api/media/users/${encodeURIComponent(String(userId))}/avatar`;
 }
 
 function profileBackgroundUrl(userId: unknown, hasBackground: unknown, updatedAt: unknown) {
@@ -626,13 +633,13 @@ function soupImageUrl(soupId: unknown, stored: unknown, variant: "thumbnail" | "
   const value = stored ? String(stored) : "";
   return !value || value.startsWith("data:image/")
     ? `/api/media/soups/${encodeURIComponent(String(soupId))}/${variant}`
-    : value;
+    : publicOssUrl(value);
 }
 
 function circleAvatarUrl(circleId: unknown, stored: unknown, updatedAt?: unknown, hasStored = false) {
   if (!stored && !hasStored) return "/turtle-avatar.png?v=5272-20260716";
   const value = stored ? String(stored) : "";
-  if (value && !value.startsWith("data:image/")) return value;
+  if (value && !value.startsWith("data:image/")) return publicOssUrl(value);
   const version = value ? createHash("sha1").update(value).digest("hex").slice(0, 16) : new Date(updatedAt as string | number | Date).getTime();
   return `/api/media/circles/${encodeURIComponent(String(circleId))}/avatar?v=${encodeURIComponent(String(version))}`;
 }
@@ -654,7 +661,10 @@ async function sendStoredImage(
 ) {
   if (!value) return sendError(res, 404, "图片不存在");
   const stored = String(value);
-  if (!stored.startsWith("data:image/")) return res.redirect(302, stored);
+  if (!stored.startsWith("data:image/")) {
+    const url = publicOssUrl(stored);
+    return url ? res.redirect(302, url) : sendError(res, 404, "图片不存在");
+  }
   const decoded = decodeDataImage(stored);
   if (!decoded) return sendError(res, 415, "图片格式不受支持");
 
@@ -680,7 +690,7 @@ async function sendStoredImage(
   return res.send(output);
 }
 
-async function optimizeCircleAvatar(base64: string): Promise<string | null> {
+async function optimizeCircleAvatar(base64: string, circleId: string): Promise<string | null> {
   const decoded = decodeDataImage(base64);
   if (!decoded || decoded.buffer.length > 6 * 1024 * 1024) return null;
   try {
@@ -689,13 +699,19 @@ async function optimizeCircleAvatar(base64: string): Promise<string | null> {
       .resize({ width: 320, height: 320, fit: "cover", withoutEnlargement: true })
       .webp({ quality: 80, effort: 4 })
       .toBuffer();
-    return `data:image/webp;base64,${output.toString("base64")}`;
+    return await storeMediaBuffer(output, {
+      category: "circles",
+      entityId: circleId,
+      variant: "avatar",
+      contentType: "image/webp",
+      extension: "webp"
+    });
   } catch {
     return null;
   }
 }
 
-async function optimizeFeedbackScreenshot(base64: string): Promise<string | null> {
+async function optimizeFeedbackScreenshot(base64: string, feedbackId: string): Promise<string | null> {
   const decoded = decodeDataImage(base64);
   if (!decoded || decoded.buffer.length > 5 * 1024 * 1024) return null;
   try {
@@ -705,7 +721,13 @@ async function optimizeFeedbackScreenshot(base64: string): Promise<string | null
       .webp({ quality: 80, effort: 4 })
       .toBuffer();
     if (output.length > 2 * 1024 * 1024) return null;
-    return `data:image/webp;base64,${output.toString("base64")}`;
+    return await storeMediaBuffer(output, {
+      category: "feedback",
+      entityId: feedbackId,
+      variant: "screenshot",
+      contentType: "image/webp",
+      extension: "webp"
+    });
   } catch {
     return null;
   }
@@ -1838,17 +1860,30 @@ setBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 setShellBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 setInviteRewardProgressListener((userId) => queueSystemBadgeSync([userId]));
 
-async function optimizeCoverImage(base64: string): Promise<{ full: string; thumbnail: string } | null> {
+async function optimizeCoverImage(base64: string, soupId: string): Promise<{ full: string; thumbnail: string } | null> {
   try {
     const buf = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
     const [full, thumbnail] = await Promise.all([
       sharp(buf).rotate().resize({ width: 1600, height: 900, fit: "cover", position: "centre" }).webp({ quality: 82, effort: 4 }).toBuffer(),
       sharp(buf).rotate().resize({ width: 480, height: 270, fit: "cover", position: "centre" }).webp({ quality: 76, effort: 4 }).toBuffer()
     ]);
-    return {
-      full: `data:image/webp;base64,${full.toString("base64")}`,
-      thumbnail: `data:image/webp;base64,${thumbnail.toString("base64")}`
-    };
+    const [storedFull, storedThumbnail] = await Promise.all([
+      storeMediaBuffer(full, {
+        category: "soups",
+        entityId: soupId,
+        variant: "cover",
+        contentType: "image/webp",
+        extension: "webp"
+      }),
+      storeMediaBuffer(thumbnail, {
+        category: "soups",
+        entityId: soupId,
+        variant: "thumbnail",
+        contentType: "image/webp",
+        extension: "webp"
+      })
+    ]);
+    return { full: storedFull, thumbnail: storedThumbnail };
   } catch {
     return null;
   }
@@ -2224,7 +2259,13 @@ app.patch("/api/me/avatar", async (req, res) => {
       .resize({ width: 256, height: 256, fit: "cover", withoutEnlargement: true })
       .webp({ quality: 78, effort: 4 })
       .toBuffer();
-    avatar = `data:image/webp;base64,${optimized.toString("base64")}`;
+    avatar = await storeMediaBuffer(optimized, {
+      category: "users",
+      entityId: user.id,
+      variant: "avatar",
+      contentType: "image/webp",
+      extension: "webp"
+    });
   }
   await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [avatar, user.id]);
   storedAvatarCache.set(user.id, { expiresAt: Date.now() + 5 * 60_000, value: avatar });
@@ -3183,9 +3224,9 @@ app.post("/api/admin/circles", async (req, res) => {
   if (!admin) return;
   const parsed = circleAdminSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "圈子信息不正确");
-  const avatar = parsed.data.avatar ? await optimizeCircleAvatar(parsed.data.avatar) : null;
-  if (parsed.data.avatar && !avatar) return sendError(res, 400, "头像无法处理，请使用 JPG、PNG 或 WebP");
   const id = nanoid();
+  const avatar = parsed.data.avatar ? await optimizeCircleAvatar(parsed.data.avatar, id) : null;
+  if (parsed.data.avatar && !avatar) return sendError(res, 400, "头像无法处理，请使用 JPG、PNG 或 WebP");
   await pool.query(
     "INSERT INTO circles (id, name, avatar, created_by) VALUES (?, ?, ?, ?)",
     [id, parsed.data.name, avatar, admin.id]
@@ -3204,7 +3245,7 @@ app.put("/api/admin/circles/:id", async (req, res) => {
   if (parsed.data.avatar === null || parsed.data.avatar === "") {
     avatar = null;
   } else if (parsed.data.avatar && parsed.data.avatar !== existingAvatarUrl) {
-    avatar = await optimizeCircleAvatar(parsed.data.avatar);
+    avatar = await optimizeCircleAvatar(parsed.data.avatar, req.params.id);
     if (!avatar) return sendError(res, 400, "头像无法处理，请使用 JPG、PNG 或 WebP");
   }
   await pool.query(
@@ -4335,7 +4376,7 @@ app.post("/api/soups", async (req, res) => {
   }
 
   const author = soup.isOriginal ? soup.author : "佚名";
-  const optimizedCover = soup.coverImage ? await optimizeCoverImage(soup.coverImage) : null;
+  const optimizedCover = soup.coverImage ? await optimizeCoverImage(soup.coverImage, id) : null;
   if (soup.coverImage && !optimizedCover) return sendError(res, 400, "封面图片无法处理");
   const connection = await pool.getConnection();
   try {
@@ -4692,7 +4733,7 @@ app.put("/api/soups/:id", async (req, res) => {
   if (review.decision === "rejected") return sendError(res, 422, review.reason ?? "内容未通过自动审核");
   const author = next.isOriginal ? next.author : "佚名";
   const existingCoverSelected = next.coverImage.startsWith(`/api/media/soups/${req.params.id}/cover`);
-  const optimizedCover = next.coverImage && !existingCoverSelected ? await optimizeCoverImage(next.coverImage) : null;
+  const optimizedCover = next.coverImage && !existingCoverSelected ? await optimizeCoverImage(next.coverImage, req.params.id) : null;
   if (next.coverImage && !existingCoverSelected && !optimizedCover) return sendError(res, 400, "封面图片无法处理");
   const coverImage = existingCoverSelected ? soup.cover_image : (optimizedCover?.full ?? null);
   const thumbnail = existingCoverSelected ? soup.cover_thumbnail : (optimizedCover?.thumbnail ?? null);
@@ -5750,13 +5791,13 @@ app.post("/api/me/feedback", async (req, res) => {
   const parsed = userFeedbackSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "意见内容不正确");
 
+  const id = nanoid();
   let screenshot: string | null = null;
   if (parsed.data.screenshot) {
-    screenshot = await optimizeFeedbackScreenshot(parsed.data.screenshot);
+    screenshot = await optimizeFeedbackScreenshot(parsed.data.screenshot, id);
     if (!screenshot) return sendError(res, 400, "截图无效、格式不支持或压缩后仍超过 2MB");
   }
 
-  const id = nanoid();
   await pool.query(
     `INSERT INTO user_feedback
        (id, user_id, publisher_name, publisher_username, title, feedback_type, content, screenshot)
@@ -5809,6 +5850,32 @@ app.get("/api/admin/feedback/:id", async (req, res) => {
   if (!rows[0]) return sendError(res, 404, "建议不存在");
   res.json({ feedback: feedbackPayload(rows[0], true) });
 });
+
+app.post(
+  "/api/admin/notices/images",
+  express.raw({ type: ["image/png", "image/jpeg", "image/webp", "image/gif"], limit: "2mb" }),
+  async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) return sendError(res, 400, "图片文件无效");
+    try {
+      const output = await sharp(req.body)
+        .rotate()
+        .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+        .webp({ quality: 82, effort: 4 })
+        .toBuffer();
+      const stored = await storeMediaBuffer(output, {
+        category: "notices",
+        entityId: nanoid(),
+        variant: "content-image",
+        contentType: "image/webp",
+        extension: "webp"
+      });
+      res.status(201).json({ url: publicOssUrl(stored) });
+    } catch {
+      return sendError(res, 422, "图片处理失败，请使用 JPG、PNG、GIF 或 WebP");
+    }
+  }
+);
 
 app.get("/api/admin/notices", async (req, res) => {
   if (!(await requireAdmin(req, res))) return;

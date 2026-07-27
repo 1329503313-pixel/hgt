@@ -37,6 +37,14 @@ export const config = {
   runDatabaseMigrations: process.env.RUN_DB_MIGRATIONS !== "false",
   assetMediaDir: resolve(process.env.ASSET_MEDIA_DIR || "data/asset-media"),
   ffmpegPath: process.env.FFMPEG_PATH || "ffmpeg",
+  aliyunOss: {
+    endpoint: process.env.ALIYUN_OSS_ENDPOINT ?? "",
+    region: process.env.ALIYUN_OSS_REGION ?? "",
+    bucket: process.env.ALIYUN_OSS_BUCKET ?? "",
+    keyPrefix: process.env.ALIYUN_OSS_KEY_PREFIX ?? "",
+    accessKeyId: readSecret("ALIYUN_OSS_ACCESS_KEY_ID", "ALIYUN_OSS_ACCESS_KEY_ID_FILE"),
+    accessKeySecret: readSecret("ALIYUN_OSS_ACCESS_KEY_SECRET", "ALIYUN_OSS_ACCESS_KEY_SECRET_FILE")
+  },
   deepseekApiKey: readSecret("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_FILE"),
   emailVerificationSecret:
     readSecret("EMAIL_VERIFICATION_SECRET", "EMAIL_VERIFICATION_SECRET_FILE")

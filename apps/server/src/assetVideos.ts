@@ -1,10 +1,11 @@
 import type express from "express";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { config } from "./config.js";
+import { isOssRef, publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
 
 const CARD_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
 const ALLOWED_VIDEO_TYPES = new Set([
@@ -137,10 +138,49 @@ export async function finishCardMotionWebm(
   }
 }
 
+export async function uploadCardMotionPrimary(
+  cardId: string,
+  stored: Awaited<ReturnType<typeof stageCardMotionVideo>>
+) {
+  const [mp4, poster] = await Promise.all([
+    readFile(absoluteAssetMediaPath(stored.mp4Path)),
+    readFile(absoluteAssetMediaPath(stored.posterPath))
+  ]);
+  const [mp4Path, posterPath] = await Promise.all([
+    storeMediaBuffer(mp4, {
+      category: "assets/card-motion",
+      entityId: cardId,
+      variant: `${stored.version}/mp4`,
+      contentType: "video/mp4",
+      extension: "mp4"
+    }),
+    storeMediaBuffer(poster, {
+      category: "assets/card-motion",
+      entityId: cardId,
+      variant: `${stored.version}/poster`,
+      contentType: "image/webp",
+      extension: "webp"
+    })
+  ]);
+  return { mp4Path, posterPath, version: stored.version };
+}
+
+export async function uploadCardMotionWebm(cardId: string, version: string, mediaPath: string) {
+  const webm = await readFile(absoluteAssetMediaPath(mediaPath));
+  return storeMediaBuffer(webm, {
+    category: "assets/card-motion",
+    entityId: cardId,
+    variant: `${version}/webm`,
+    contentType: "video/webm",
+    extension: "webm"
+  });
+}
+
 export async function removeCardMotionFiles(mediaPaths: Array<unknown>) {
   const directories = new Set<string>();
   for (const value of mediaPaths) {
     if (!value) continue;
+    if (isOssRef(String(value))) continue;
     try {
       directories.add(dirname(absoluteAssetMediaPath(String(value))));
     } catch {
@@ -156,6 +196,12 @@ export async function sendAssetVideo(
   mediaPath: string,
   cacheControl = "private, max-age=31536000, immutable"
 ) {
+  if (isOssRef(mediaPath)) {
+    const url = publicOssUrl(mediaPath);
+    if (!url) throw new Error("OSS_REF_INVALID");
+    res.redirect(302, url);
+    return;
+  }
   const absolutePath = absoluteAssetMediaPath(mediaPath);
   const file = await stat(absolutePath);
   const contentType = extname(absolutePath).toLowerCase() === ".webm" ? "video/webm" : "video/mp4";

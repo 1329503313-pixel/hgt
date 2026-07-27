@@ -5,10 +5,20 @@ import { randomInt } from "node:crypto";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { z } from "zod";
-import { absoluteAssetMediaPath, finishCardMotionWebm, processCardMotionPrimary, removeCardMotionFiles, sendAssetVideo, stageCardMotionVideo } from "./assetVideos.js";
+import {
+  absoluteAssetMediaPath,
+  finishCardMotionWebm,
+  processCardMotionPrimary,
+  removeCardMotionFiles,
+  sendAssetVideo,
+  stageCardMotionVideo,
+  uploadCardMotionPrimary,
+  uploadCardMotionWebm
+} from "./assetVideos.js";
 import { pool } from "./db.js";
 import type { UserRole } from "./roles.js";
 import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCurrency.js";
+import { ossRefFromPublicUrl, publicOssUrl, readStoredMediaBuffer, storeMediaBuffer } from "./ossStorage.js";
 
 type RouteUser = { id: string; role: UserRole };
 type RouteDependencies = {
@@ -44,24 +54,26 @@ function queueCardMotionTranscode(
   job = (async () => {
     try {
       const processed = await processCardMotionPrimary(staged);
+      const uploaded = await uploadCardMotionPrimary(cardId, processed);
       const [result] = await pool.query<mysql.ResultSetHeader>(
         `UPDATE asset_cards SET motion_mp4_path = ?, motion_webm_path = NULL, motion_poster_path = ?,
           motion_version = ?, motion_processing_version = NULL, motion_status = 'ready', motion_error = NULL,
           updated_at = CURRENT_TIMESTAMP
          WHERE id = ? AND motion_processing_version = ?`,
-        [processed.mp4Path, processed.posterPath, processed.version, cardId, processed.version]
+        [uploaded.mp4Path, uploaded.posterPath, uploaded.version, cardId, uploaded.version]
       );
       if (result.affectedRows === 0) {
-        if (!processed.reused) await removeCardMotionFiles([processed.mp4Path, processed.posterPath]);
+        await removeCardMotionFiles([processed.mp4Path, processed.posterPath]);
         return;
       }
-      if (previousPaths[0] !== processed.mp4Path) await removeCardMotionFiles(previousPaths);
+      await removeCardMotionFiles(previousPaths);
       try {
         const webmPath = await finishCardMotionWebm(processed);
         if (webmPath) {
+          const uploadedWebmPath = await uploadCardMotionWebm(cardId, processed.version, webmPath);
           await pool.query(
             "UPDATE asset_cards SET motion_webm_path = ? WHERE id = ? AND motion_version = ?",
-            [webmPath, cardId, processed.version]
+            [uploadedWebmPath, cardId, processed.version]
           );
         }
       } catch (error) {
@@ -76,6 +88,7 @@ function queueCardMotionTranscode(
       if (!staged.reused) await removeCardMotionFiles([staged.mp4Path, staged.posterPath]).catch(() => undefined);
       console.error(`card motion transcode failed: ${cardId}`, error);
     } finally {
+      await removeCardMotionFiles([staged.mp4Path, staged.posterPath, staged.webmPath]).catch(() => undefined);
       if (cardMotionJobs.get(jobKey) === job) cardMotionJobs.delete(jobKey);
     }
   })();
@@ -183,18 +196,26 @@ function packType(value: unknown): PackType {
   return candidate in PACK_TYPE_LABELS ? candidate : "permanent";
 }
 
-async function optimizedAssetImages(value: string, fullWidth: number, thumbnailWidth: number) {
+async function optimizedAssetImages(value: string, entityId: string, fullWidth: number, thumbnailWidth: number) {
   const match = /^data:image\/(?:png|jpe?g|webp|gif);base64,([A-Za-z0-9+/=]+)$/i.exec(value);
-  if (!match) return { full: value, thumbnail: value };
+  if (!match) {
+    const stored = ossRefFromPublicUrl(value) ?? value;
+    return { full: stored, thumbnail: stored };
+  }
   const source = Buffer.from(match[1], "base64");
   const [full, thumbnail] = await Promise.all([
     sharp(source).rotate().resize({ width: fullWidth, height: fullWidth, fit: "inside", withoutEnlargement: true }).webp({ quality: 84, effort: 4 }).toBuffer(),
     sharp(source).rotate().resize({ width: thumbnailWidth, withoutEnlargement: true }).webp({ quality: 78, effort: 4 }).toBuffer()
   ]);
-  return {
-    full: `data:image/webp;base64,${full.toString("base64")}`,
-    thumbnail: `data:image/webp;base64,${thumbnail.toString("base64")}`
-  };
+  const [storedFull, storedThumbnail] = await Promise.all([
+    storeMediaBuffer(full, {
+      category: "assets/cards", entityId, variant: "image", contentType: "image/webp", extension: "webp"
+    }),
+    storeMediaBuffer(thumbnail, {
+      category: "assets/cards", entityId, variant: "thumbnail", contentType: "image/webp", extension: "webp"
+    })
+  ]);
+  return { full: storedFull, thumbnail: storedThumbnail };
 }
 
 function packStatus(row: mysql.RowDataPacket, now = Date.now()) {
@@ -248,8 +269,8 @@ function cardPayload(row: mysql.RowDataPacket, useMediaUrls = false) {
     cardNo: String(row.card_no),
     name: String(row.name),
     rarity: rarity(row.rarity),
-    imageUrl: useMediaUrls ? cardMediaUrl(row, "image") : String(row.image_url),
-    thumbnailUrl: useMediaUrls ? cardMediaUrl(row, "thumbnail") : row.thumbnail_url ? String(row.thumbnail_url) : String(row.image_url),
+    imageUrl: useMediaUrls ? cardMediaUrl(row, "image") : publicOssUrl(row.image_url) ?? "",
+    thumbnailUrl: useMediaUrls ? cardMediaUrl(row, "thumbnail") : publicOssUrl(row.thumbnail_url || row.image_url) ?? "",
     motionMp4Url: hasMotion ? cardMotionMediaUrl(row, "mp4") : null,
     motionWebmUrl: hasMotion && row.motion_webm_path ? cardMotionMediaUrl(row, "webm") : null,
     motionPosterUrl: hasMotion && row.motion_poster_path ? cardMotionMediaUrl(row, "poster") : null,
@@ -278,7 +299,7 @@ function packPayload(row: mysql.RowDataPacket, mediaVariant?: "cover" | "thumbna
   return {
     id: String(row.id),
     name: String(row.name),
-    coverUrl: mediaVariant ? packMediaUrl(row, mediaVariant) : String(row.cover_url),
+    coverUrl: mediaVariant ? packMediaUrl(row, mediaVariant) : publicOssUrl(row.cover_url) ?? "",
     description: String(row.description ?? ""),
     packStory: String(row.pack_story ?? ""),
     packType: type,
@@ -833,6 +854,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (!card || rarity(card.rarity) !== "legend" || !card.media_path) return sendError(res, 404, "动态卡面不存在");
     try {
       if (format === "poster") {
+        const publicUrl = publicOssUrl(card.media_path);
+        if (publicUrl && publicUrl !== String(card.media_path)) return res.redirect(302, publicUrl);
         const absolutePath = absoluteAssetMediaPath(String(card.media_path));
         await stat(absolutePath);
         return res.sendFile(absolutePath, {
@@ -1075,10 +1098,9 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       [user.id, parsed.data.cardId]
     );
     if (!card) return sendError(res, 403, "只能使用已达到一星的史诗或传说卡牌背景");
-    const match = /^data:image\/(?:png|jpe?g|webp|gif);base64,([A-Za-z0-9+/=]+)$/i.exec(String(card.image_url));
-    if (!match) return sendError(res, 422, "该卡牌原图暂时无法裁剪");
     try {
-      const rotated = await sharp(Buffer.from(match[1], "base64")).rotate().toBuffer({ resolveWithObject: true });
+      const source = await readStoredMediaBuffer(String(card.image_url));
+      const rotated = await sharp(source).rotate().toBuffer({ resolveWithObject: true });
       const sourceWidth = rotated.info.width;
       const sourceHeight = rotated.info.height;
       const targetRatio = 2.5;
@@ -1099,7 +1121,13 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         .resize(1200, 480, { fit: "cover" })
         .webp({ quality: 82, effort: 4 })
         .toBuffer();
-      const background = `data:image/webp;base64,${output.toString("base64")}`;
+      const background = await storeMediaBuffer(output, {
+        category: "users",
+        entityId: user.id,
+        variant: "profile-background",
+        contentType: "image/webp",
+        extension: "webp"
+      });
       await pool.query(
         `UPDATE users SET profile_background = ?, profile_background_card_id = ?,
           profile_background_crop_x = ?, profile_background_crop_y = ?, profile_background_zoom = ?,
@@ -1351,15 +1379,6 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       let staged: Awaited<ReturnType<typeof stageCardMotionVideo>> | null = null;
       try {
         staged = await stageCardMotionVideo(req.params.id, req.body, String(req.headers["content-type"] ?? "application/octet-stream"));
-        if (staged.reused) {
-          await pool.query(
-            `UPDATE asset_cards SET motion_mp4_path = ?, motion_webm_path = ?, motion_poster_path = ?,
-              motion_version = ?, motion_processing_version = NULL, motion_status = 'ready', motion_error = NULL,
-              updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [staged.mp4Path, staged.webmPath, staged.posterPath, staged.version, req.params.id]
-          );
-          return res.json({ ok: true, status: "ready", version: staged.version });
-        }
         await pool.query(
           `UPDATE asset_cards SET motion_processing_version = ?, motion_status = 'processing', motion_error = NULL
            WHERE id = ?`,
@@ -1405,7 +1424,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "卡片资料无效");
     const id = nanoid();
     const { packIds, thumbnailUrl: _thumbnailUrl, ...value } = parsed.data;
-    const optimizedImages = await optimizedAssetImages(value.imageUrl, 1200, 360);
+    const optimizedImages = await optimizedAssetImages(value.imageUrl, id, 1200, 360);
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -1450,7 +1469,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const { packIds, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
     const changes: Record<string, unknown> = { ...parsedChanges };
     if (typeof changes.imageUrl === "string") {
-      const optimizedImages = await optimizedAssetImages(String(changes.imageUrl), 1200, 360);
+      const optimizedImages = await optimizedAssetImages(String(changes.imageUrl), req.params.id, 1200, 360);
       changes.imageUrl = optimizedImages.full;
       changes.thumbnailUrl = optimizedImages.thumbnail;
     }

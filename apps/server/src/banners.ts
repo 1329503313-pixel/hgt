@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { pool } from "./db.js";
 import { optimizeBannerImage } from "./bannerImages.js";
+import { publicOssUrl, storeDataImage } from "./ossStorage.js";
 
 type RouteDependencies = {
   requireAdmin: (req: express.Request, res: express.Response) => Promise<unknown | null>;
@@ -61,8 +62,12 @@ function validLink(value: string | null | undefined) {
 
 function sendStoredImage(res: express.Response, value: unknown) {
   if (!value) return res.status(404).json({ error: "图片不存在" });
-  const match = /^data:(image\/(?:webp|png|jpeg));base64,(.+)$/i.exec(String(value));
-  if (!match) return res.status(415).json({ error: "图片格式不受支持" });
+  const stored = String(value);
+  const match = /^data:(image\/(?:webp|png|jpeg));base64,(.+)$/i.exec(stored);
+  if (!match) {
+    const url = publicOssUrl(stored);
+    return url ? res.redirect(302, url) : res.status(415).json({ error: "图片格式不受支持" });
+  }
   res.setHeader("Content-Type", match[1]);
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   return res.send(Buffer.from(match[2], "base64"));
@@ -129,12 +134,20 @@ export function registerBannerRoutes(app: express.Express, deps: RouteDependenci
     if (!parsed.data.mobileImage || !parsed.data.desktopImage) return sendError(res, 400, "请分别上传 PC 端和手机端 Banner 图片");
     const linkUrl = validLink(parsed.data.linkUrl);
     if (linkUrl === undefined) return sendError(res, 400, "跳转链接仅支持站内路径或 HTTP/HTTPS 地址");
-    const [mobileImage, desktopImage] = await Promise.all([
+    const id = nanoid();
+    const [optimizedMobile, optimizedDesktop] = await Promise.all([
       optimizeBannerImage(parsed.data.mobileImage, "mobile"),
       optimizeBannerImage(parsed.data.desktopImage, "desktop")
     ]);
-    if (!mobileImage || !desktopImage) return sendError(res, 400, "图片无法压缩到 300KB 以内，请使用 JPG、PNG 或 WebP");
-    const id = nanoid();
+    if (!optimizedMobile || !optimizedDesktop) return sendError(res, 400, "图片无法压缩到 300KB 以内，请使用 JPG、PNG 或 WebP");
+    const [mobileImage, desktopImage] = await Promise.all([
+      storeDataImage(optimizedMobile, {
+        category: "banners", entityId: id, variant: "mobile", contentType: "image/webp", extension: "webp"
+      }),
+      storeDataImage(optimizedDesktop, {
+        category: "banners", entityId: id, variant: "desktop", contentType: "image/webp", extension: "webp"
+      })
+    ]);
     await pool.query(
       "INSERT INTO home_banners (id, name, image_url, desktop_image_url, link_url, weight, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [id, parsed.data.name, mobileImage, desktopImage, linkUrl, parsed.data.weight, parsed.data.enabled ? 1 : 0]
@@ -153,12 +166,18 @@ export function registerBannerRoutes(app: express.Express, deps: RouteDependenci
     let mobileImage = existing.image_url as string | null;
     let desktopImage = existing.desktop_image_url as string | null;
     if (parsed.data.mobileImage && !parsed.data.mobileImage.startsWith("/api/banners/")) {
-      mobileImage = await optimizeBannerImage(parsed.data.mobileImage, "mobile");
-      if (!mobileImage) return sendError(res, 400, "手机端图片无法压缩到 300KB 以内");
+      const optimized = await optimizeBannerImage(parsed.data.mobileImage, "mobile");
+      if (!optimized) return sendError(res, 400, "手机端图片无法压缩到 300KB 以内");
+      mobileImage = await storeDataImage(optimized, {
+        category: "banners", entityId: req.params.id, variant: "mobile", contentType: "image/webp", extension: "webp"
+      });
     }
     if (parsed.data.desktopImage && !parsed.data.desktopImage.startsWith("/api/banners/")) {
-      desktopImage = await optimizeBannerImage(parsed.data.desktopImage, "desktop");
-      if (!desktopImage) return sendError(res, 400, "PC 端图片无法压缩到 300KB 以内");
+      const optimized = await optimizeBannerImage(parsed.data.desktopImage, "desktop");
+      if (!optimized) return sendError(res, 400, "PC 端图片无法压缩到 300KB 以内");
+      desktopImage = await storeDataImage(optimized, {
+        category: "banners", entityId: req.params.id, variant: "desktop", contentType: "image/webp", extension: "webp"
+      });
     }
     if (!mobileImage || !desktopImage) return sendError(res, 400, "请分别上传 PC 端和手机端 Banner 图片");
     await pool.query(

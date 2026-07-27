@@ -12,6 +12,7 @@
     "build": "cd apps/web && npx vite build",
     "build:vercel": "cd apps/web && npx vite build",
     "build:all": "npm run build -w packages/shared && npm run build -w apps/server && npm run build -w apps/web",
+    "media:migrate": "npm run media:migrate -w apps/server --",
     "check": "npm run check -w apps/server && npm run check -w apps/web",
     "test": "npm run test -w apps/server",
     "db:up": "docker compose up -d mysql",
