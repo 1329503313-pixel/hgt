@@ -9,6 +9,7 @@ import {
   MessageSquare,
   MessageSquareText,
   PackageOpen,
+  Gift,
   Radio,
   RefreshCw,
   Soup,
@@ -18,7 +19,7 @@ import { useNavigate } from "react-router-dom";
 import type { UserRole } from "../../shared/types";
 import { isSuperAdminRole } from "../../shared/roles";
 
-export type AdminTab = "data" | "banners" | "users" | "soups" | "evaluations" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices" | "feedback";
+export type AdminTab = "data" | "banners" | "users" | "soups" | "evaluations" | "gifts" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices" | "feedback";
 
 const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "data", label: "数据", icon: <BarChart3 size={17} /> },
@@ -26,6 +27,7 @@ const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "users", label: "用户", icon: <Users size={17} /> },
   { key: "soups", label: "汤品", icon: <Soup size={17} /> },
   { key: "evaluations", label: "评价", icon: <MessageSquare size={17} /> },
+  { key: "gifts", label: "礼物", icon: <Gift size={17} /> },
   { key: "badges", label: "徽章", icon: <Award size={17} /> },
   { key: "approvals", label: "审批", icon: <ClipboardCheck size={17} /> },
   { key: "online-soup", label: "玩汤", icon: <Radio size={17} /> },

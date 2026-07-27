@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Crown, Flame, GalleryVerticalEnd, Medal, Sparkles, TrendingUp, Trophy } from "lucide-react";
+import { Crown, Flame, GalleryVerticalEnd, Heart, Medal, Sparkles, TrendingUp, Trophy } from "lucide-react";
 import { api } from "../api";
 import { LevelBadge } from "../components/LevelBadge";
 import { PageTopBar } from "../components/PageTopBar";
@@ -44,6 +44,14 @@ type LevelUserRank = {
   experience: number;
 };
 
+type CharmUserRank = {
+  rank: number;
+  id: string;
+  nickname: string;
+  avatar: string | null;
+  charmValue: number;
+};
+
 type RankingsResponse = {
   hotSoups: HotSoupRank[];
   hotSoupOwn: HotSoupRank | null;
@@ -51,11 +59,14 @@ type RankingsResponse = {
   achievementOwn: AchievementUserRank | null;
   levelUsers: LevelUserRank[];
   levelOwn: LevelUserRank | null;
+  charmUsers: CharmUserRank[];
+  charmOwn: CharmUserRank | null;
   collectionUsers: CollectionUserRank[];
   collectionOwn: CollectionUserRank | null;
 };
 
-type RankingTab = "soups" | "users" | "level" | "collection";
+type RankingTab = "soups" | "users" | "level" | "charm" | "collection";
+type RankingGroup = "content" | "user";
 type RankingPeriod = "7d" | "30d" | "all";
 
 function RankMark({ rank, className = "" }: { rank: number; className?: string }) {
@@ -74,7 +85,7 @@ export default function RankingsPage() {
   const location = useLocation();
   const { user, loadingUser, openAuth } = useApp();
   const requestedTab = (location.state as { tab?: string } | null)?.tab;
-  const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "collection" ? requestedTab : "soups";
+  const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "charm" || requestedTab === "collection" ? requestedTab : "soups";
   const [tab, setTab] = useState<RankingTab>(initialTab);
   const [period, setPeriod] = useState<RankingPeriod>("7d");
   const [data, setData] = useState<RankingsResponse | null>(null);
@@ -84,7 +95,7 @@ export default function RankingsPage() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    const cacheKey = `hgt:rankings:v6:${user.id}:${period}`;
+    const cacheKey = `hgt:rankings:v7:${user.id}:${period}`;
     const cached = readSessionCache<RankingsResponse>(cacheKey, 2 * 60_000);
     if (cached) {
       setData(cached);
@@ -121,71 +132,84 @@ export default function RankingsPage() {
   const metricText = (value: number) => `${period === "all" || value < 0 ? "" : "+"}${value.toLocaleString()}`;
   const metricTitle = (name: string) => period === "all" ? name : `${periodLabel}${name}增长`;
 
-  const categoryCards: Array<{
+  const rankingOptions: Array<{
     key: RankingTab;
+    group: RankingGroup;
     label: string;
     shortLabel: string;
     description: string;
     icon: typeof Flame;
-    leader: string;
-    leaderValue: string;
     tone: string;
   }> = [
     {
       key: "soups",
+      group: "content",
       label: "热门海龟汤",
-      shortLabel: "热门榜",
+      shortLabel: "热门",
       description: "发现全站讨论度最高的故事",
       icon: Flame,
-      leader: data?.hotSoups[0]?.title ?? "等待上榜",
-      leaderValue: data?.hotSoups[0] ? `${metricText(data.hotSoups[0].heatValue)} ${period === "all" ? "热力" : "热力增长"}` : "暂无数据",
       tone: "is-hot"
     },
     {
       key: "users",
+      group: "user",
       label: "用户成就榜",
-      shortLabel: "成就榜",
+      shortLabel: "成就",
       description: "记录社区探索与创作里程碑",
       icon: Trophy,
-      leader: data?.achievementUsers[0]?.nickname ?? "等待上榜",
-      leaderValue: data?.achievementUsers[0] ? `${metricText(data.achievementUsers[0].achievementPoints)} ${period === "all" ? "成就点" : "成就增长"}` : "暂无数据",
       tone: "is-achievement"
     },
     {
       key: "level",
+      group: "user",
       label: "用户等级榜",
-      shortLabel: "等级榜",
+      shortLabel: "等级",
       description: "见证社区用户的成长历程",
       icon: TrendingUp,
-      leader: data?.levelUsers[0]?.nickname ?? "等待上榜",
-      leaderValue: data?.levelUsers[0] ? `Lv${data.levelUsers[0].level} · ${metricText(data.levelUsers[0].experience)} EXP` : "暂无数据",
       tone: "is-level"
     },
     {
       key: "collection",
+      group: "user",
       label: "卡牌收藏榜",
-      shortLabel: "收藏榜",
+      shortLabel: "收藏",
       description: "展示最具价值的数字收藏",
       icon: GalleryVerticalEnd,
-      leader: data?.collectionUsers[0]?.nickname ?? "等待上榜",
-      leaderValue: data?.collectionUsers[0] ? `${metricText(data.collectionUsers[0].totalCollectionValue)} ${period === "all" ? "收藏值" : "收藏增长"}` : "暂无数据",
       tone: "is-collection"
+    },
+    {
+      key: "charm",
+      group: "user",
+      label: "用户魅力榜",
+      shortLabel: "魅力",
+      description: "记录用户收到礼物积累的魅力",
+      icon: Heart,
+      tone: "is-charm"
     }
   ];
 
-  const activeCategory = categoryCards.find((item) => item.key === tab)!;
+  const activeCategory = rankingOptions.find((item) => item.key === tab)!;
+  const activeGroup = activeCategory.group;
+  const visibleRankingOptions = rankingOptions.filter((item) => item.group === activeGroup);
   const podium = tab === "soups"
     ? (data?.hotSoups ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.title, detail: item.author, value: item.heatValue, suffix: "热力", avatar: null as string | null }))
     : tab === "users"
       ? (data?.achievementUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: "社区成就", value: item.achievementPoints, suffix: "成就点", avatar: item.avatar }))
       : tab === "level"
         ? (data?.levelUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: `Lv${item.level}`, value: item.experience, suffix: "经验值", avatar: item.avatar }))
-        : (data?.collectionUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: `${item.unlockedCardCount} 张卡牌`, value: item.totalCollectionValue, suffix: "收藏值", avatar: item.avatar }));
+        : tab === "charm"
+          ? (data?.charmUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: "礼物魅力", value: item.charmValue, suffix: "魅力值", avatar: item.avatar }))
+          : (data?.collectionUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: `${item.unlockedCardCount} 张卡牌`, value: item.totalCollectionValue, suffix: "收藏值", avatar: item.avatar }));
 
-  const ownRank = tab === "soups" ? data?.hotSoupOwn : tab === "users" ? data?.achievementOwn : tab === "level" ? data?.levelOwn : data?.collectionOwn;
+  const ownRank = tab === "soups" ? data?.hotSoupOwn : tab === "users" ? data?.achievementOwn : tab === "level" ? data?.levelOwn : tab === "charm" ? data?.charmOwn : data?.collectionOwn;
 
   function openPodiumItem(item: (typeof podium)[number]) {
     navigate(tab === "soups" ? `/soup/${item.id}` : `/users/${item.id}`);
+  }
+
+  function selectGroup(group: RankingGroup) {
+    if (group === activeGroup) return;
+    setTab(group === "content" ? "soups" : "users");
   }
 
   return (
@@ -193,37 +217,51 @@ export default function RankingsPage() {
       <PageTopBar title="排行榜" />
       <MineBackButton hideOnDesktop />
 
-      <div className="card grid grid-cols-3 gap-1 p-1.5" aria-label="排行榜时间范围">
-        {([
-          ["7d", "7日排行榜"],
-          ["30d", "30日排行榜"],
-          ["all", "永久排行榜"]
-        ] as const).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={`rounded-xl px-2 py-2.5 text-sm font-black transition ${period === value ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-50 hover:text-ink"}`}
-            onClick={() => setPeriod(value)}
-            aria-pressed={period === value}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="rankings-category-panel card p-2 lg:p-4">
-        <div className="rankings-category-heading hidden lg:block">
-          <p className="text-xs font-black tracking-[0.16em] text-primary">LEADERBOARDS</p>
-          <div className="mt-1 flex items-end justify-between gap-6"><h2 className="text-xl font-black text-ink">选择排行榜</h2><p className="text-sm text-muted">{period === "all" ? "展示累计总值" : `展示最近${periodLabel}内增长的数值`}，各榜单取前 10 名</p></div>
+      <div className="rankings-filter-panel card">
+        <div className="rankings-filter-heading">
+          <div>
+            <p className="hidden text-xs font-black tracking-[0.16em] text-primary lg:block">LEADERBOARDS</p>
+            <h2 className="font-black text-ink lg:mt-1 lg:text-xl">选择排行榜</h2>
+          </div>
+          <p>{period === "all" ? "展示累计总值" : `展示最近${periodLabel}内增长的数值`}，各榜单取前 10 名</p>
         </div>
-        <div className="rankings-category-grid grid grid-cols-2 gap-2 lg:mt-4">
-          {categoryCards.map((category) => { const Icon = category.icon; const selected = tab === category.key; return (
-            <button key={category.key} type="button" className={`rankings-category-card ${category.tone} ${selected ? "is-active" : ""}`} onClick={() => setTab(category.key)} aria-pressed={selected}>
-              <span className="rankings-category-icon"><Icon size={20} /></span>
-              <span className="rankings-category-copy"><strong className="hidden lg:block">{category.label}</strong><strong className="lg:hidden">{category.shortLabel}</strong><small>{category.description}</small></span>
-              <span className="rankings-category-leader"><small>当前第 1 名</small><strong>{category.leader}</strong><span>{category.leaderValue}</span></span>
-            </button>
-          ); })}
+
+        <div className="rankings-filter-grid">
+          <div className="rankings-filter-group">
+            <span className="rankings-filter-label">榜单对象</span>
+            <div className="rankings-segmented" aria-label="排行榜对象">
+              <button type="button" className={activeGroup === "content" ? "is-active" : ""} onClick={() => selectGroup("content")} aria-pressed={activeGroup === "content"}>作品榜</button>
+              <button type="button" className={activeGroup === "user" ? "is-active" : ""} onClick={() => selectGroup("user")} aria-pressed={activeGroup === "user"}>用户榜</button>
+            </div>
+          </div>
+
+          <div className="rankings-filter-group rankings-metric-group">
+            <span className="rankings-filter-label">排行维度</span>
+            <div className="rankings-metric-options" aria-label="排行榜维度">
+              {visibleRankingOptions.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button key={option.key} type="button" className={`${option.tone} ${tab === option.key ? "is-active" : ""}`} onClick={() => setTab(option.key)} aria-pressed={tab === option.key}>
+                    <Icon size={16} />
+                    <span>{option.shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rankings-filter-group">
+            <span className="rankings-filter-label">统计周期</span>
+            <div className="rankings-segmented" aria-label="排行榜时间范围">
+              {([
+                ["7d", "7日"],
+                ["30d", "30日"],
+                ["all", "永久"]
+              ] as const).map(([value, label]) => (
+                <button key={value} type="button" className={period === value ? "is-active" : ""} onClick={() => setPeriod(value)} aria-pressed={period === value}>{label}</button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -249,17 +287,17 @@ export default function RankingsPage() {
           ) : <p className="py-10 text-center text-sm text-muted">暂无可展示数据</p>}
           <div className="rankings-rule-card">
             <Sparkles size={17} />
-            <div><strong>{periodLabel}{activeCategory.label}统计口径</strong><p>{period === "all" ? "按累计总值排列。" : `按最近${periodLabel}内的净增长值排列。`}{tab === "soups" ? "统计热力增长。" : tab === "collection" ? "统计收藏值增长。" : tab === "level" ? "统计经验增长。" : "统计成就点增长。"}</p></div>
+            <div><strong>{periodLabel}{activeCategory.label}统计口径</strong><p>{period === "all" ? "按累计总值排列。" : `按最近${periodLabel}内的净增长值排列。`}{tab === "soups" ? "统计热力增长。" : tab === "collection" ? "统计收藏值增长。" : tab === "level" ? "统计经验增长。" : tab === "charm" ? "统计收礼获得的魅力增长。" : "统计成就点增长。"}</p></div>
           </div>
           {ownRank && <div className="rankings-own-summary"><span>我的{periodLabel}排名</span><strong>第 {ownRank.rank} 名</strong></div>}
         </aside>
 
       <div className="rankings-table-card card overflow-hidden">
         <div className="flex items-center gap-3 border-b border-line px-4 py-4">
-          <span className={`grid h-10 w-10 place-items-center rounded-xl ${tab === "soups" ? "bg-orange-50 text-orange-500" : tab === "collection" ? "bg-indigo-50 text-indigo-600" : tab === "level" ? "bg-violet-50 text-violet-600" : "bg-amber-50 text-amber-500"}`}>
-            {tab === "soups" ? <Flame size={22} /> : tab === "collection" ? <GalleryVerticalEnd size={22} /> : tab === "level" ? <TrendingUp size={22} /> : <Medal size={22} />}
+          <span className={`grid h-10 w-10 place-items-center rounded-xl ${tab === "soups" ? "bg-orange-50 text-orange-500" : tab === "collection" ? "bg-indigo-50 text-indigo-600" : tab === "level" ? "bg-violet-50 text-violet-600" : tab === "charm" ? "bg-rose-50 text-rose-600" : "bg-amber-50 text-amber-500"}`}>
+            {tab === "soups" ? <Flame size={22} /> : tab === "collection" ? <GalleryVerticalEnd size={22} /> : tab === "level" ? <TrendingUp size={22} /> : tab === "charm" ? <Heart size={22} /> : <Medal size={22} />}
           </span>
-          <div className="min-w-0"><p className="hidden text-[11px] font-black tracking-[0.14em] text-primary lg:block">FULL RANKING</p><h2 className="font-black text-ink lg:mt-0.5 lg:text-lg">{periodLabel} · {tab === "soups" ? "热门海龟汤 Top 10" : tab === "collection" ? "卡牌收藏值 Top 10" : tab === "level" ? "用户等级 Top 10" : "用户成就点 Top 10"}</h2><p className="mt-0.5 text-xs text-muted">{period === "all" ? "按累计总值从高到低排列" : `按最近${periodLabel}内增长值从高到低排列`}</p></div>
+          <div className="min-w-0"><p className="hidden text-[11px] font-black tracking-[0.14em] text-primary lg:block">{activeGroup === "content" ? "CONTENT RANKING" : "USER RANKING"}</p><h2 className="font-black text-ink lg:mt-0.5 lg:text-lg">{periodLabel} · {activeCategory.label} Top 10</h2><p className="mt-0.5 text-xs text-muted">{activeCategory.description} · {period === "all" ? "按累计总值排列" : `按最近${periodLabel}内增长值排列`}</p></div>
         </div>
 
         {loading ? <ListSkeleton rows={8} /> : error ? <div className="p-10 text-center text-sm text-danger">{error}</div> : tab === "soups" ? (
@@ -328,6 +366,27 @@ export default function RankingsPage() {
               </button>
             )}
             {data?.levelUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无用户等级数据</div>}
+          </div>
+        ) : tab === "charm" ? (
+          <div>
+            <div className="grid grid-cols-[60px_minmax(0,1fr)_100px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[80px_minmax(0,1fr)_160px]">
+              <span>排名</span><span>昵称</span><span className="text-right">{metricTitle("魅力值")}</span>
+            </div>
+            {(data?.charmUsers ?? []).map((item) => (
+              <button key={item.id} className="ranking-table-row grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-rose-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
+                <RankMark rank={item.rank} />
+                <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
+                <span className="text-right text-sm font-black text-rose-600">{metricText(item.charmValue)}</span>
+              </button>
+            ))}
+            {data?.charmOwn && (
+              <button className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-t-2 border-rose-200 bg-rose-50 px-3 py-3 text-left hover:bg-rose-100/70 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${data.charmOwn!.id}`)}>
+                <RankMark rank={data.charmOwn.rank} />
+                <span className="truncate text-sm font-bold text-ink">{data.charmOwn.nickname}</span>
+                <span className="text-right text-sm font-black text-rose-600">{metricText(data.charmOwn.charmValue)}</span>
+              </button>
+            )}
+            {data?.charmUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无用户魅力值数据</div>}
           </div>
         ) : (
           <div>

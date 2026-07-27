@@ -15,6 +15,7 @@ import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import type { OnlineSoupAnswer, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
+import { GiftMessageCard } from "../components/GiftMessageCard";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -900,6 +901,7 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
 const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, onAnswer, onRecall, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRecall: (message: OnlineSoupMessage) => void; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
+  if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
   if (message.type === "system") return <div className="py-1 text-center text-xs font-bold text-muted">— {message.content} —</div>;
   if (message.type === "clue") return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-amber-800"><Lightbulb size={16} /> 主持人线索</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></div>;
   if (message.type === "supplemental_surface") return <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Soup size={16} /> 补充汤面 {(message.contentIndex ?? 0) + 1}</div><div className="content-block mt-2 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></div>;

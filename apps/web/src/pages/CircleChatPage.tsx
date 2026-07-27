@@ -12,6 +12,7 @@ import { LevelBadge } from "../components/LevelBadge";
 import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
+import { GiftMessageCard } from "../components/GiftMessageCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 
@@ -108,6 +109,7 @@ function messagePreview(message: CircleMessage | CircleMessageReply) {
   if (message.type === "sticker") return `[表情] ${message.stickerName ?? "表情"}`;
   if (message.type === "room_invite") return "[玩汤房间邀请]";
   if (message.type === "soup_share") return "[海龟汤分享]";
+  if (message.type === "gift") return `[礼物] ${message.gift?.giftName ?? "礼物"} ×${message.gift?.quantity ?? 1}`;
   return message.content.trim() || "[空消息]";
 }
 
@@ -541,7 +543,7 @@ export default function CircleChatPage() {
             }
             const messageActions = [
               { label: "回复", onSelect: () => beginReply(message) },
-              ...(mine && canRecallMessage(message.createdAt, message.recalledAt)
+              ...(message.type !== "gift" && mine && canRecallMessage(message.createdAt, message.recalledAt)
                 ? [{ label: "撤回", tone: "danger" as const, availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => void recallMessage(message) }]
                 : [])
             ];
@@ -567,7 +569,7 @@ export default function CircleChatPage() {
                 >
                   <Avatar avatar={message.sender?.avatar ?? null} nickname={senderName} online={Boolean(message.sender?.isOnline)} />
                 </MentionableAvatarButton>
-                <div className={`flex min-w-0 max-w-[78%] flex-col ${message.type === "soup_share" || message.type === "room_invite" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
+                <div className={`flex min-w-0 max-w-[78%] flex-col ${message.type === "soup_share" || message.type === "room_invite" || message.type === "gift" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
                   <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] text-muted ${mine ? "flex-row-reverse" : ""}`}>
                     <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>
                     {message.sender && <LevelBadge level={message.sender.level} />}
@@ -587,6 +589,8 @@ export default function CircleChatPage() {
                         <SoupShareCard soup={message.soupShare} />
                         {message.replyTo && <ReplyQuote reply={message.replyTo} mine={false} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
                       </div>
+                    ) : message.type === "gift" && message.gift ? (
+                      <GiftMessageCard gift={message.gift} />
                     ) : message.type === "sticker" ? (
                       <div className={mine ? "text-right" : "text-left"}>
                         {sticker

@@ -9,6 +9,7 @@ import { ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
+import { GiftMessageCard } from "../components/GiftMessageCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
@@ -34,6 +35,7 @@ export default function ChatPage() {
   const [showStickers, setShowStickers] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const messagesContentRef = useRef<HTMLDivElement>(null);
   const initialScrollDoneRef = useRef(false);
   const shouldFollowBottomRef = useRef(true);
   const loadingOlderRef = useRef(false);
@@ -93,6 +95,27 @@ export default function ChatPage() {
       setShowScrollBottom(false);
     }
   }, [chat?.messages.length, chat?.conversation.id]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    const content = messagesContentRef.current;
+    if (!container || !content || !chat) return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (loadingOlderRef.current || !shouldFollowBottomRef.current) return;
+        container.scrollTop = container.scrollHeight;
+        setShowScrollBottom(false);
+      });
+    });
+    observer.observe(content);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [chat?.conversation.id]);
+
   useEffect(() => {
     if (!user || !id) return;
     const onMessage = (event: MessageEvent<string>) => {
@@ -102,7 +125,6 @@ export default function ChatPage() {
         void loadMessages().catch(() => {});
         return;
       }
-      shouldFollowBottomRef.current = true;
       setChat((current) => current && !current.messages.some((item) => item.id === payload.message!.id)
         ? { ...current, messages: [...current.messages, payload.message!] }
         : current);
@@ -237,6 +259,7 @@ export default function ChatPage() {
           </span>
         )}
         titleTo={`/users/${chat.conversation.otherUser.id}`}
+        titleState={{ privateConversationId: id }}
         backTo="/messages"
       /></div>
       <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col lg:h-full lg:max-w-[1180px] lg:overflow-hidden lg:rounded-[28px] lg:border lg:border-line lg:bg-white lg:shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
@@ -246,7 +269,7 @@ export default function ChatPage() {
             <span className="relative grid h-12 w-12 shrink-0 place-items-center"><span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 font-black text-primary">{chat.conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt="" /> : chat.conversation.otherUser.nickname.slice(0, 1)}</span>{chat.conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}</span>
             <div className="min-w-0"><div className="flex items-center gap-2"><h1 className="truncate text-xl font-black text-ink">{chat.conversation.otherUser.nickname}</h1><LevelBadge level={chat.conversation.otherUser.level} /><EquippedBadgeIcon badge={chat.conversation.otherUser.equippedBadge} className="h-4 w-4" animated={false} /></div><p className={`mt-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "text-emerald-600" : "text-muted"}`}>{chat.conversation.otherUser.isOnline ? "在线 · 消息实时送达" : "离线 · 上线后可查看消息"}</p></div>
           </div>
-          <button className="btn btn-secondary" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`)}><UserRound size={17} />查看主页</button>
+          <button className="btn btn-secondary" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`, { state: { privateConversationId: id } })}><UserRound size={17} />查看主页</button>
         </header>
 
         <div className="min-h-0 flex flex-1 lg:grid lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -261,6 +284,7 @@ export default function ChatPage() {
             setShowScrollBottom(!nearBottom);
           }}
         >
+          <div ref={messagesContentRef} className="space-y-3">
           {chat.hasMore && (
             <button
               type="button"
@@ -276,7 +300,7 @@ export default function ChatPage() {
             if (message.recalledAt) {
               return <RecalledMessageNotice key={message.id} mine={message.isMine} senderName={sender?.nickname} />;
             }
-            const recallActions = message.isMine && !message.id.startsWith("pending-") && canRecallMessage(message.createdAt, message.recalledAt)
+            const recallActions = message.type !== "gift" && message.isMine && !message.id.startsWith("pending-") && canRecallMessage(message.createdAt, message.recalledAt)
               ? [{ label: "撤回", tone: "danger" as const, availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => void recallMessage(message) }]
               : [];
             return (
@@ -284,7 +308,7 @@ export default function ChatPage() {
               <button
                 type="button"
                 className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary"
-                onClick={() => navigate(message.isMine ? "/mine" : `/users/${chat.conversation.otherUser.id}`)}
+                onClick={() => navigate(message.isMine ? "/mine" : `/users/${chat.conversation.otherUser.id}`, { state: message.isMine ? undefined : { privateConversationId: id } })}
                 aria-label={`查看${sender?.nickname ?? "用户"}的个人主页`}
               >
                 {sender?.avatar
@@ -297,6 +321,8 @@ export default function ChatPage() {
                     <OnlineSoupRoomInviteCard invite={message.roomInvite} />
                   ) : message.type === "soup_share" && message.soupShare ? (
                     <SoupShareCard soup={message.soupShare} />
+                  ) : message.type === "gift" && message.gift ? (
+                    <GiftMessageCard gift={message.gift} />
                   ) : message.type === "sticker" ? (
                     sticker
                       ? <img className="h-36 w-36 object-contain sm:h-40 sm:w-40" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
@@ -312,6 +338,7 @@ export default function ChatPage() {
             </div>
           );})}
           {chat.messages.length === 0 && <p className="py-20 text-center text-sm text-muted">发送第一条消息吧</p>}
+          </div>
         </div>
         {showScrollBottom && !showStickers && (
           <button
@@ -343,7 +370,7 @@ export default function ChatPage() {
             <h2 className="mt-4 max-w-full truncate text-lg font-black text-ink">{chat.conversation.otherUser.nickname}</h2>
             <div className="mt-2 flex items-center gap-1.5"><LevelBadge level={chat.conversation.otherUser.level} /><EquippedBadgeIcon badge={chat.conversation.otherUser.equippedBadge} className="h-5 w-5" animated={false} /></div>
             <span className={`mt-3 rounded-full px-3 py-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{chat.conversation.otherUser.isOnline ? "当前在线" : "当前离线"}</span>
-            <div className="mt-6 w-full border-t border-line pt-5"><button className="btn btn-secondary w-full" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`)}><UserRound size={17} />查看个人主页</button></div>
+            <div className="mt-6 w-full border-t border-line pt-5"><button className="btn btn-secondary w-full" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`, { state: { privateConversationId: id } })}><UserRound size={17} />查看个人主页</button></div>
             <p className="mt-auto text-xs leading-5 text-muted">聊天记录仅你和对方可见。发送表情或文字后会自动滚动到最新消息。</p>
           </aside>
         </div>

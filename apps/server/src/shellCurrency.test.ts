@@ -13,6 +13,18 @@ import {
 } from "./shellCurrency.js";
 import { calculateExperienceAdjustment, experienceProgress, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
 import { calculateInviteMilestoneDelta } from "./inviteRewards.js";
+import { CURRENCY_DEFINITIONS, CURRENCY_TYPES, isCurrencyType } from "./currency.js";
+
+test("后端货币类型包含贝壳和明珠", () => {
+  assert.deepEqual(CURRENCY_TYPES, ["shell", "pearl"]);
+  assert.deepEqual(CURRENCY_DEFINITIONS.pearl, {
+    name: "明珠",
+    balanceColumn: "pearl_balance",
+    decimals: 0
+  });
+  assert.equal(isCurrencyType("pearl"), true);
+  assert.equal(isCurrencyType("unknown"), false);
+});
 
 test("等级门槛按累计经验计算并在 Lv40 封顶", () => {
   assert.equal(levelForExperience(0), 0);

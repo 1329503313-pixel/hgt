@@ -50,7 +50,7 @@ export function useShellBalance(userId: string | undefined) {
     const unsubscribe = subscribeServerEvent("unread_changed", (event) => {
       try {
         const payload = JSON.parse(event.data) as { source?: string };
-        if (payload.source === "badge_unlock" || payload.source === "shell_adjustment") loadBalance();
+        if (payload.source === "badge_unlock" || payload.source === "shell_adjustment" || payload.source === "gift_received") loadBalance();
       } catch {
         // A later event or remount will reconcile the balance.
       }

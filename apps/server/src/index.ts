@@ -33,6 +33,8 @@ import {
 } from "./inviteRewards.js";
 import { registerDigitalAssetRoutes } from "./digitalAssets.js";
 import { registerBannerRoutes } from "./banners.js";
+import { parseGiftMessage, registerGiftRoutes } from "./gifts.js";
+import { canonicalConversationUserIds, conversationOtherUserIdentity } from "./conversations.js";
 import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
@@ -2436,7 +2438,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const viewer = await requireAuth(req, res);
   if (!viewer) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.equipped_badge_key, u.equipped_badge_icon_url,
+    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.charm_value, u.equipped_badge_key, u.equipped_badge_icon_url,
        u.avatar IS NOT NULL AS has_avatar, u.profile_background IS NOT NULL AS has_profile_background,
        u.profile_background_updated_at, u.profile_background_crop_x, u.profile_background_crop_y, u.profile_background_zoom,
        c.id AS background_card_id, c.name AS background_card_name, c.rarity AS background_card_rarity,
@@ -2503,6 +2505,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   res.json({
     profile: {
       ...withoutPrivateUsername(toUser(target)),
+      charmValue: Number(target.charm_value ?? 0),
       receivedLikeCount: Number(likeRows[0]?.received_like_count ?? 0),
       followingCount: Number(follow.following_count ?? 0),
       followerCount: Number(follow.follower_count ?? 0),
@@ -2684,8 +2687,8 @@ async function circleForMember(circleId: string, userId: string) {
 function circleMessagePayload(row: mysql.RowDataPacket) {
   const recalledAt = row.recalled_at ? new Date(row.recalled_at).toISOString() : null;
   const replyRecalledAt = row.reply_recalled_at ? new Date(row.reply_recalled_at).toISOString() : null;
-  const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : "text";
-  const replyType = row.reply_message_type === "sticker" ? "sticker" : row.reply_message_type === "room_invite" ? "room_invite" : row.reply_message_type === "soup_share" ? "soup_share" : "text";
+  const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : row.message_type === "gift" ? "gift" : "text";
+  const replyType = row.reply_message_type === "sticker" ? "sticker" : row.reply_message_type === "room_invite" ? "room_invite" : row.reply_message_type === "soup_share" ? "soup_share" : row.reply_message_type === "gift" ? "gift" : "text";
   return {
     id: String(row.id),
     sequence: Number(row.message_sequence),
@@ -2704,6 +2707,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
     stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
     roomInvite: !recalledAt && messageType === "room_invite" ? parseRoomInvite(row.content) : null,
     soupShare: !recalledAt && messageType === "soup_share" ? parseSoupShare(row.content) : null,
+    gift: !recalledAt && messageType === "gift" ? parseGiftMessage(row.content) : null,
     mentions: recalledAt ? [] : parseCircleMentions(row.mentions_json),
     replyTo: row.reply_id ? {
       id: String(row.reply_id),
@@ -2716,6 +2720,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
       type: replyType,
       stickerId: row.reply_sticker_id ? String(row.reply_sticker_id) : null,
       stickerName: row.reply_sticker_id ? getSticker(String(row.reply_sticker_id))?.name ?? null : null,
+      gift: !replyRecalledAt && replyType === "gift" ? parseGiftMessage(row.reply_content) : null,
       recalledAt: replyRecalledAt
     } : null,
     createdAt: new Date(row.created_at).toISOString(),
@@ -2814,8 +2819,10 @@ app.get("/api/circles", async (req, res) => {
             ? `[玩汤邀请] ${parseRoomInvite(row.latest_content)?.roomName ?? "加入房间"}`
             : row.latest_message_type === "soup_share"
               ? `[海龟汤] ${parseSoupShare(row.latest_content)?.title ?? "查看分享"}`
+            : row.latest_message_type === "gift"
+              ? `[礼物] ${parseGiftMessage(row.latest_content)?.giftName ?? "收到礼物"} ×${parseGiftMessage(row.latest_content)?.quantity ?? 1}`
             : String(row.latest_content ?? ""),
-        type: row.latest_message_type === "sticker" ? "sticker" : row.latest_message_type === "room_invite" ? "room_invite" : row.latest_message_type === "soup_share" ? "soup_share" : "text",
+        type: row.latest_message_type === "sticker" ? "sticker" : row.latest_message_type === "room_invite" ? "room_invite" : row.latest_message_type === "soup_share" ? "soup_share" : row.latest_message_type === "gift" ? "gift" : "text",
         createdAt: new Date(row.latest_created_at).toISOString()
       } : null,
       createdAt: new Date(row.created_at).toISOString(),
@@ -2980,12 +2987,13 @@ app.patch("/api/circles/:id/messages/:messageId/recall", async (req, res) => {
   const circle = await circleForMember(req.params.id, user.id);
   if (!circle) return sendError(res, 403, "请先加入圈子");
   const [[message]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, sender_id, recalled_at,
+    `SELECT id, sender_id, message_type, recalled_at,
        created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
      FROM circle_messages WHERE id = ? AND circle_id = ? LIMIT 1`,
     [req.params.messageId, req.params.id]
   );
   if (!message) return sendError(res, 404, "消息不存在");
+  if (message.message_type === "gift") return sendError(res, 409, "礼物消息不可撤回");
   if (String(message.sender_id ?? "") !== user.id) return sendError(res, 403, "只能撤回自己的消息");
   if (message.recalled_at) return sendError(res, 409, "消息已经撤回");
   if (!bool(message.within_window)) return sendError(res, 409, "消息发送超过2分钟，无法撤回");
@@ -3301,7 +3309,7 @@ app.post("/api/conversations", async (req, res) => {
   if (!parsed.success || parsed.data.userId === user.id) return sendError(res, 400, "私信对象不正确");
   const [targetRows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id = ? LIMIT 1", [parsed.data.userId]);
   if (!targetRows[0]) return sendError(res, 404, "用户不存在");
-  const [userA, userB] = [user.id, parsed.data.userId].sort((a, b) => a.localeCompare(b));
+  const [userA, userB] = canonicalConversationUserIds(user.id, parsed.data.userId);
   const [existing] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id FROM conversations WHERE user_a_id = ? AND user_b_id = ? LIMIT 1",
     [userA, userB]
@@ -3352,20 +3360,19 @@ app.get("/api/conversations", async (req, res) => {
   res.json({ conversations: rows.map((row) => ({
     id: String(row.id),
     otherUser: {
-      id: String(row.other_id),
-      nickname: String(row.other_nickname),
-      level: levelForExperience(row.other_experience),
+      ...conversationOtherUserIdentity(row.other_id, row.other_nickname, row.other_experience),
       avatar: avatarUrl(row.other_id, row.other_avatar, bool(row.other_has_avatar)),
       equippedBadge: equippedBadge(row.other_badge_key, row.other_badge_icon_url),
       isOnline: isUserOnline(row.other_id)
     },
     lastMessage: row.last_content == null ? null : {
       content: row.last_recalled_at ? "" : String(row.last_content),
-      type: row.last_message_type === "sticker" ? "sticker" : row.last_message_type === "room_invite" ? "room_invite" : row.last_message_type === "soup_share" ? "soup_share" : "text",
+      type: row.last_message_type === "sticker" ? "sticker" : row.last_message_type === "room_invite" ? "room_invite" : row.last_message_type === "soup_share" ? "soup_share" : row.last_message_type === "gift" ? "gift" : "text",
       stickerId: row.last_sticker_id ? String(row.last_sticker_id) : null,
       stickerName: row.last_sticker_id ? getSticker(String(row.last_sticker_id))?.name ?? null : null,
       roomInvite: !row.last_recalled_at && row.last_message_type === "room_invite" ? parseRoomInvite(row.last_content) : null,
       soupShare: !row.last_recalled_at && row.last_message_type === "soup_share" ? parseSoupShare(row.last_content) : null,
+      gift: !row.last_recalled_at && row.last_message_type === "gift" ? parseGiftMessage(row.last_content) : null,
       isMine: String(row.last_sender_id) === user.id,
       createdAt: new Date(row.message_created_at).toISOString(),
       recalledAt: row.last_recalled_at ? new Date(row.last_recalled_at).toISOString() : null
@@ -3446,6 +3453,7 @@ app.get("/api/messages/unread-counts", async (req, res) => {
 async function conversationForUser(conversationId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
+       u.experience AS other_experience,
        u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url
      FROM conversations c
      INNER JOIN users u ON u.id = IF(c.user_a_id = ?, c.user_b_id, c.user_a_id)
@@ -3494,8 +3502,7 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
     conversation: {
       id: String(conversation.id),
       otherUser: {
-        id: String(conversation.other_id),
-        nickname: String(conversation.other_nickname),
+        ...conversationOtherUserIdentity(conversation.other_id, conversation.other_nickname, conversation.other_experience),
         avatar: avatarUrl(conversation.other_id, conversation.other_avatar, bool(conversation.other_has_avatar)),
         equippedBadge: equippedBadge(conversation.other_badge_key, conversation.other_badge_icon_url),
         isOnline: isUserOnline(conversation.other_id)
@@ -3503,11 +3510,12 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
     },
     messages: rows.map((row) => ({
       id: String(row.id), senderId: String(row.sender_id), content: row.recalled_at ? "" : String(row.content),
-      type: row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : "text",
+      type: row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : row.message_type === "gift" ? "gift" : "text",
       stickerId: row.sticker_id ? String(row.sticker_id) : null,
       stickerName: row.sticker_id ? getSticker(String(row.sticker_id))?.name ?? null : null,
       roomInvite: !row.recalled_at && row.message_type === "room_invite" ? parseRoomInvite(row.content) : null,
       soupShare: !row.recalled_at && row.message_type === "soup_share" ? parseSoupShare(row.content) : null,
+      gift: !row.recalled_at && row.message_type === "gift" ? parseGiftMessage(row.content) : null,
       isMine: String(row.sender_id) === user.id,
       isRead: Boolean(row.read_at), createdAt: new Date(row.created_at).toISOString(),
       recalledAt: row.recalled_at ? new Date(row.recalled_at).toISOString() : null
@@ -3536,12 +3544,13 @@ app.patch("/api/conversations/:id/messages/:messageId/recall", async (req, res) 
   const conversation = await conversationForUser(req.params.id, user.id);
   if (!conversation) return sendError(res, 404, "会话不存在");
   const [[message]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, sender_id, recalled_at,
+    `SELECT id, sender_id, message_type, recalled_at,
        created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
      FROM private_messages WHERE id = ? AND conversation_id = ? LIMIT 1`,
     [req.params.messageId, req.params.id]
   );
   if (!message) return sendError(res, 404, "消息不存在");
+  if (message.message_type === "gift") return sendError(res, 409, "礼物消息不可撤回");
   if (String(message.sender_id) !== user.id) return sendError(res, 403, "只能撤回自己的消息");
   if (message.recalled_at) return sendError(res, 409, "消息已经撤回");
   if (!bool(message.within_window)) return sendError(res, 409, "消息发送超过2分钟，无法撤回");
@@ -3778,6 +3787,14 @@ type LevelRankingItem = {
   experience: number;
 };
 
+type CharmRankingItem = {
+  rank: number;
+  id: string;
+  nickname: string;
+  avatar: string | null;
+  charmValue: number;
+};
+
 type RankingPeriod = "7d" | "30d" | "all";
 
 type RankingsCacheEntry = {
@@ -3785,6 +3802,7 @@ type RankingsCacheEntry = {
   hotSoups: HotSoupRankingItem[];
   achievementUsers: AchievementRankingItem[];
   levelUsers: LevelRankingItem[];
+  charmUsers: CharmRankingItem[];
 };
 
 const rankingsCache = new Map<RankingPeriod, RankingsCacheEntry>();
@@ -3891,6 +3909,17 @@ app.get("/api/rankings", async (req, res) => {
       [cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
 
+    const [charmRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.nickname, u.charm_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+         COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_charm
+       FROM users u
+       LEFT JOIN gift_sends gs ON gs.recipient_id = u.id
+       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
+       GROUP BY u.id, u.nickname, u.charm_value, u.created_at, has_avatar
+       ORDER BY u.created_at ASC, u.id ASC`,
+      [cutoff ?? new Date(0)]
+    );
+
     const users = new Map<string, { id: string; nickname: string; avatar: string | null; achievementPoints: number; reachedAt: number; createdAt: number }>();
     for (const row of achievementRows) {
       const id = String(row.id);
@@ -3967,17 +3996,29 @@ app.get("/api/rankings", async (req, res) => {
     })
       .sort((a, b) => b.experience - a.experience || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
       .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
+    const charmUsers = charmRows
+      .map((row) => ({
+        id: String(row.id),
+        nickname: String(row.nickname),
+        avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
+        charmValue: cutoff ? Math.floor(Number(row.period_charm) || 0) : Math.floor(Number(row.charm_value) || 0),
+        createdAt: new Date(row.created_at).getTime()
+      }))
+      .sort((a, b) => b.charmValue - a.charmValue || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
 
-    cached = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers };
+    cached = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers, charmUsers };
     rankingsCache.set(period, cached);
   }
 
   const topHotSoups = cached.hotSoups.slice(0, 10);
   const topAchievementUsers = cached.achievementUsers.slice(0, 10);
   const topLevelUsers = cached.levelUsers.slice(0, 10);
+  const topCharmUsers = cached.charmUsers.slice(0, 10);
   const ownHotSoup = cached.hotSoups.find((item) => item.creatorId === user.id) ?? null;
   const ownAchievementUser = cached.achievementUsers.find((item) => item.id === user.id) ?? null;
   const ownLevelUser = cached.levelUsers.find((item) => item.id === user.id) ?? null;
+  const ownCharmUser = cached.charmUsers.find((item) => item.id === user.id) ?? null;
   const toPublicHotSoup = ({ creatorId: _creatorId, ...item }: HotSoupRankingItem) => item;
 
   res.json({
@@ -3986,7 +4027,9 @@ app.get("/api/rankings", async (req, res) => {
     achievementUsers: topAchievementUsers,
     achievementOwn: ownAchievementUser && !topAchievementUsers.some((item) => item.id === ownAchievementUser.id) ? ownAchievementUser : null,
     levelUsers: topLevelUsers,
-    levelOwn: ownLevelUser && !topLevelUsers.some((item) => item.id === ownLevelUser.id) ? ownLevelUser : null
+    levelOwn: ownLevelUser && !topLevelUsers.some((item) => item.id === ownLevelUser.id) ? ownLevelUser : null,
+    charmUsers: topCharmUsers,
+    charmOwn: ownCharmUser && !topCharmUsers.some((item) => item.id === ownCharmUser.id) ? ownCharmUser : null
   });
 });
 
@@ -4129,6 +4172,8 @@ app.get("/api/soups", async (req, res) => {
   }
   if (req.query.bottomPublic === "surface") where.push("s.is_surface_public = TRUE");
   if (req.query.bottomPublic === "bottom") where.push("s.is_bottom_public = TRUE");
+  if (req.query.aiGame === "enabled") where.push("s.enable_ai_game = TRUE");
+  if (req.query.aiGame === "disabled") where.push("s.enable_ai_game = FALSE");
 
   const having: string[] = [];
   if (["2", "3", "4"].includes(String(req.query.minRating ?? ""))) {
@@ -4144,6 +4189,7 @@ app.get("/api/soups", async (req, res) => {
     !req.query.difficulty &&
     !req.query.minRating &&
     !req.query.bottomPublic &&
+    !req.query.aiGame &&
     !req.query.reviewStatus &&
     !req.query.order;
   const featuredSoupIds = useHomeFeaturedOrder ? await homeFeaturedSoupIds() : [];
@@ -5469,7 +5515,17 @@ app.get("/api/admin/dashboard", async (req, res) => {
       evaluations: Number(row?.evaluation_count ?? 0)
     };
   });
-  const activityDaily = trend.map(({ date }) => ({ date, users: activityByDate.get(date) ?? 0 }));
+  let usersCreatedAfterDay = 0;
+  const activityDaily = [...trend].reverse().map(({ date, users: newUsers }) => {
+    const activeUsers = activityByDate.get(date) ?? 0;
+    const totalUsersAtDayEnd = Math.max(0, userMetric.total - usersCreatedAfterDay);
+    usersCreatedAfterDay += newUsers;
+    return {
+      date,
+      users: activeUsers,
+      rate: totalUsersAtDayEnd > 0 ? Number((activeUsers / totalUsersAtDayEnd * 100).toFixed(1)) : null
+    };
+  }).reverse();
   const activity = activityRows[0] ?? {};
   const soupState = soupStateRows[0] ?? {};
   const evaluation = evaluationRows[0] ?? {};
@@ -6167,6 +6223,42 @@ app.get("/api/admin/evaluations", async (req, res) => {
   });
 });
 
+app.patch("/api/admin/evaluations/:id", async (req, res) => {
+  if (!(await requireBackofficeAdmin(req, res))) return;
+  const parsed = evaluationSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "评分必须在 1-5 之间，步长 0.5；维度评分必须在 0-5 之间");
+
+  const data = parsed.data;
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE evaluations
+     SET total = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?
+     WHERE id = ?`,
+    [
+      data.total,
+      data.writing,
+      data.logic,
+      data.share,
+      data.mechanism,
+      data.twist,
+      data.depth,
+      data.content || null,
+      req.params.id
+    ]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, "评价不存在");
+
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT e.*, s.title AS soup_title
+     FROM evaluations e
+     JOIN soups s ON s.id = e.soup_id
+     WHERE e.id = ?
+     LIMIT 1`,
+    [req.params.id]
+  );
+  dashboardCache.clear();
+  res.json({ evaluation: mapEvaluation(rows[0]) });
+});
+
 // ---------- AI 游戏路由 ----------
 app.use("/api/game", async (req, _res, next) => {
   (req as any).user = await currentUser(req);
@@ -6181,6 +6273,78 @@ app.use("/api/online-soup", async (req, _res, next) => {
 
 registerDigitalAssetRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, onBadgeProgress: (userId) => queueSystemBadgeSync([userId]) });
 registerBannerRoutes(app, { requireAdmin, sendError });
+registerGiftRoutes(app, {
+  requireAuth,
+  requireAdmin,
+  sendError,
+  sendStoredImage,
+  onPrivateGift: (recipientId, message) => {
+    emitUserEvent(recipientId, "private_message", {
+      conversationId: message.conversationId,
+      messageId: message.id,
+      senderId: message.senderId,
+      senderNickname: message.senderNickname,
+      senderAvatar: null,
+      content: message.content,
+      type: "gift",
+      stickerId: null,
+      stickerName: null,
+      roomInvite: null,
+      soupShare: null,
+      gift: message.gift,
+      createdAt: message.createdAt,
+      message: {
+        id: message.id,
+        senderId: message.senderId,
+        content: message.content,
+        type: "gift",
+        stickerId: null,
+        stickerName: null,
+        roomInvite: null,
+        soupShare: null,
+        gift: message.gift,
+        isMine: false,
+        isRead: false,
+        createdAt: message.createdAt,
+        recalledAt: null
+      }
+    });
+    emitUnreadChanged(recipientId, "gift_received");
+  },
+  onCircleGift: async (circleId, messageId, senderId) => {
+    const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+         u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
+         reply.id AS reply_id, reply.message_sequence AS reply_sequence,
+         reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
+         reply.content AS reply_content, reply.message_type AS reply_message_type,
+         reply.sticker_id AS reply_sticker_id, reply.recalled_at AS reply_recalled_at
+       FROM circle_messages m
+       LEFT JOIN users u ON u.id = m.sender_id
+       LEFT JOIN circle_messages reply ON reply.id = m.reply_to_message_id AND reply.circle_id = m.circle_id
+       LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
+       WHERE m.id = ? LIMIT 1`,
+      [messageId]
+    );
+    if (!stored) return;
+    emitCircleSocketEvent(circleId, "circle_message_created", {
+      circleId,
+      message: circleMessagePayload(stored)
+    });
+    const [members] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT user_id FROM circle_members WHERE circle_id = ? AND user_id <> ?",
+      [circleId, senderId]
+    );
+    for (const member of members) {
+      emitUserEvent(String(member.user_id), "circle_unread_changed", { circleId });
+      emitUnreadChanged(String(member.user_id), "circle_message");
+    }
+  },
+  onOnlineSoupGift: (roomId) => {
+    emitOnlineSoupSocketEvent(roomId, "online_soup_changed", { reason: "gift_message" });
+  },
+  onCharmChanged: () => rankingsCache.clear()
+});
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if ((err as { type?: string }).type === "entity.parse.failed") {

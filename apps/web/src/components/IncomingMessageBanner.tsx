@@ -5,7 +5,7 @@ import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { privateMessagePreview } from "../shared/messagePreview";
-import type { OnlineSoupRoomInvite, SoupShare } from "../shared/types";
+import type { GiftMessage, OnlineSoupRoomInvite, SoupShare } from "../shared/types";
 
 type PrivateMessagePayload = {
   conversationId: string;
@@ -14,10 +14,11 @@ type PrivateMessagePayload = {
   senderNickname?: string;
   senderAvatar?: string | null;
   content: string;
-  type?: "text" | "sticker" | "room_invite" | "soup_share";
+  type?: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
   stickerName?: string | null;
   roomInvite?: OnlineSoupRoomInvite | null;
   soupShare?: SoupShare | null;
+  gift?: GiftMessage | null;
 };
 
 type ViewRequestPayload = {
@@ -107,7 +108,7 @@ export function IncomingMessageBanner() {
         sourceName: payload.senderNickname || "新消息",
         sourceAvatar: payload.senderAvatar,
         title: "私信消息",
-        detail: privateMessagePreview({ content: payload.content, type: payload.type ?? "text", stickerName: payload.stickerName, roomInvite: payload.roomInvite, soupShare: payload.soupShare }),
+        detail: privateMessagePreview({ content: payload.content, type: payload.type ?? "text", stickerName: payload.stickerName, roomInvite: payload.roomInvite, soupShare: payload.soupShare, gift: payload.gift }),
         href: `/messages/chat/${payload.conversationId}`
       });
     };

@@ -10,6 +10,7 @@ import { getSticker } from "./stickers.js";
 import { settleOnlineSoupRound } from "./shellCurrency.js";
 import { levelForExperience } from "./levelSystem.js";
 import { canViewAllSoupContentRole, isSuperAdminRole, type UserRole } from "./roles.js";
+import { parseGiftMessage } from "./gifts.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -325,6 +326,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
     type: String(row.message_type),
     content: recalledAt ? "" : String(row.content),
+    gift: !recalledAt && row.message_type === "gift" ? parseGiftMessage(row.content) : null,
     stickerId: row.sticker_id ? String(row.sticker_id) : null,
     senderIsHost: Boolean(row.sender_id && String(row.sender_id) === String(room.host_id)),
     contentIndex: row.content_index == null ? null : Number(row.content_index),

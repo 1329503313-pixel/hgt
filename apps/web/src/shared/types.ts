@@ -135,6 +135,7 @@ export type AccountUser = PublicUser & {
 };
 
 export type SocialProfile = PublicUser & {
+  charmValue: number;
   receivedLikeCount: number;
   followingCount: number;
   followerCount: number;
@@ -253,10 +254,33 @@ export type OnlineSoupRoomInvite = {
 
 export type SoupShare = Pick<SoupSummary, "id" | "title" | "author" | "type" | "difficulty" | "summary" | "coverImage" | "heatValue" | "averageTotal" | "likeCount" | "favoriteCount">;
 
+export type GiftMessage = {
+  giftSendId: string;
+  giftId: string;
+  giftName: string;
+  iconUrl: string;
+  quantity: number;
+  sender: { id: string; nickname: string };
+  recipient: { id: string; nickname: string };
+  shellReward: number;
+  charmReward: number;
+  createdAt: string;
+};
+
+export type GiftCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  iconUrl: string;
+  costAmount: number;
+  rewardShell: number;
+  rewardCharm: number;
+};
+
 export type ConversationItem = {
   id: string;
   otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean };
-  lastMessage: { content: string; type: "text" | "sticker" | "room_invite" | "soup_share"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; soupShare?: SoupShare | null; isMine: boolean; createdAt: string; recalledAt: string | null } | null;
+  lastMessage: { content: string; type: "text" | "sticker" | "room_invite" | "soup_share" | "gift"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; soupShare?: SoupShare | null; gift?: GiftMessage | null; isMine: boolean; createdAt: string; recalledAt: string | null } | null;
   unreadCount: number;
   updatedAt: string;
 };
@@ -265,11 +289,12 @@ export type PrivateMessageItem = {
   id: string;
   senderId: string;
   content: string;
-  type: "text" | "sticker" | "room_invite" | "soup_share";
+  type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
   stickerId: string | null;
   stickerName?: string | null;
   roomInvite?: OnlineSoupRoomInvite | null;
   soupShare?: SoupShare | null;
+  gift?: GiftMessage | null;
   isMine: boolean;
   isRead: boolean;
   createdAt: string;
@@ -309,7 +334,7 @@ export type CircleSummary = {
     id: string;
     senderName: string;
     content: string;
-    type: "text" | "sticker" | "room_invite" | "soup_share";
+    type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
     createdAt: string;
   } | null;
   createdAt: string;
@@ -326,9 +351,10 @@ export type CircleMessageReply = {
   sequence: number;
   sender: Pick<PublicUser, "id" | "nickname"> | null;
   content: string;
-  type: "text" | "sticker" | "room_invite" | "soup_share";
+  type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
   stickerId: string | null;
   stickerName?: string | null;
+  gift?: GiftMessage | null;
   recalledAt: string | null;
 };
 
@@ -338,11 +364,12 @@ export type CircleMessage = {
   circleId: string;
   sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean }) | null;
   content: string;
-  type: "text" | "sticker" | "room_invite" | "soup_share";
+  type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
   stickerId: string | null;
   stickerName?: string | null;
   roomInvite?: OnlineSoupRoomInvite | null;
   soupShare?: SoupShare | null;
+  gift?: GiftMessage | null;
   mentions: Array<{
     userId: string;
     nickname: string;
@@ -397,8 +424,9 @@ export type OnlineSoupMessage = {
   senderAvatar: string | null;
   senderLevel: number;
   senderEquippedBadge: EquippedBadge | null;
-  type: "discussion" | "question" | "host" | "sticker" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system";
+  type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system";
   content: string;
+  gift?: GiftMessage | null;
   stickerId: string | null;
   senderIsHost: boolean;
   contentIndex: number | null;

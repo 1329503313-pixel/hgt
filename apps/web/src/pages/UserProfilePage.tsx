@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MessageCircle, UserCheck, UserPlus } from "lucide-react";
+import { Gift, MessageCircle, UserCheck, UserPlus } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -11,6 +11,8 @@ import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import { CardCabinetSection } from "../components/CardCabinetSection";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
+import { GiftDrawer, type GiftSource } from "../components/GiftDrawer";
+import { RecentGiftsSection } from "../components/RecentGiftsSection";
 
 type ProfileResponse = { profile: SocialProfile; soups: SoupSummary[] };
 const profileCacheKey = (viewerId: string, targetId: string) => `hgt:user-profile:${viewerId}:${targetId}`;
@@ -20,13 +22,15 @@ export default function UserProfilePage() {
   const { user, loadingUser, showToast } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
-  const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; circleId?: string } | null;
+  const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; circleId?: string; privateConversationId?: string } | null;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   const circleId = onlineSoupOrigin?.circleId ?? "";
   const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : circleId ? `/circles/${circleId}` : "/";
   useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
   const [profile, setProfile] = useState<SocialProfile | null>(null);
   const [soups, setSoups] = useState<SoupSummary[]>([]);
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [giftRefreshKey, setGiftRefreshKey] = useState(0);
 
   async function loadProfile(cacheKey: string) {
     const data = await api<ProfileResponse>(`/api/users/${id}/profile`);
@@ -64,23 +68,44 @@ export default function UserProfilePage() {
     } catch (error) { showToast((error as Error).message); }
   }
 
+  function handleGiftSent(recipientCharmValue: number) {
+    setGiftRefreshKey((value) => value + 1);
+    setProfile((current) => {
+      if (!current || !user) return current;
+      const next = { ...current, charmValue: recipientCharmValue };
+      writeSessionCache(profileCacheKey(user.id, id), { profile: next, soups } satisfies ProfileResponse);
+      return next;
+    });
+  }
+
+  const giftSource: GiftSource = onlineSoupRoomId
+    ? { type: "online_soup", id: onlineSoupRoomId }
+    : circleId
+      ? { type: "circle", id: circleId }
+      : onlineSoupOrigin?.privateConversationId
+        ? { type: "private", id: onlineSoupOrigin.privateConversationId }
+        : { type: "profile" };
+
   return (
     <section className="user-profile-page min-h-screen bg-page pt-[72px]">
       <PageTopBar title="用户主页" backTo={backTarget} />
       <div className="user-profile-content mx-auto max-w-3xl space-y-3 px-4 pb-10">
         <div className="user-profile-desktop-back hidden lg:flex"><UnifiedBackButton to={backTarget} /></div>
-        <ProfileHero profile={profile} onFollowing={() => navigate(`/users/${profile.id}/following`)} onFollowers={() => navigate(`/users/${profile.id}/followers`)} actions={!profile.isSelf ? (
+        <ProfileHero profile={profile} onFollowing={() => navigate(`/users/${profile.id}/following`)} onFollowers={() => navigate(`/users/${profile.id}/followers`)} onCharm={!profile.isSelf ? () => setGiftOpen(true) : undefined} actions={!profile.isSelf ? (
           <div className="flex gap-2">
+            <button className="grid h-10 w-10 place-items-center rounded-full border border-white/70 bg-white/20 text-white disabled:opacity-45" onClick={() => setGiftOpen(true)} disabled={!profile.isFollowing} title={profile.isFollowing ? "送礼物" : "关注后可送礼物"}><Gift size={19} /></button>
             <button className={`grid h-10 w-10 place-items-center rounded-full border border-white/70 ${profile.isFollowing ? "bg-white text-primary" : "bg-white/20 text-white"}`} onClick={() => void toggleFollow()} title={profile.isFollowing ? "取消关注" : "关注"}>{profile.isFollowing ? <UserCheck size={19} /> : <UserPlus size={19} />}</button>
             <button className="grid h-10 w-10 place-items-center rounded-full border border-white/70 bg-white/20 text-white disabled:opacity-45" onClick={() => void messageUser()} disabled={!profile.isFollowing} title={profile.isFollowing ? "私信" : "关注后可私信"}><MessageCircle size={19} /></button>
           </div>
         ) : undefined} />
         <div className="user-profile-collection"><CardCabinetSection userId={profile.id} compact onError={showToast} /></div>
+        <div className="user-profile-gifts"><RecentGiftsSection userId={profile.id} refreshKey={giftRefreshKey} onError={showToast} onSendGift={!profile.isSelf ? () => setGiftOpen(true) : undefined} canSendGift={profile.isFollowing} /></div>
         <div className="user-profile-soups overflow-hidden rounded-2xl bg-white shadow-soft">
           <div className="border-b border-line px-4 py-3 text-sm font-black text-ink">发布 {soups.length}</div>
-          <SoupCoverGrid soups={soups} emptyHint="还没有公开作品" />
+          <SoupCoverGrid soups={soups} emptyHint="还没有公开作品" className="lg:grid-cols-4 lg:gap-4 lg:p-4" />
         </div>
       </div>
+      <GiftDrawer open={giftOpen} recipient={{ id: profile.id, nickname: profile.nickname }} isFollowing={profile.isFollowing} source={giftSource} onClose={() => setGiftOpen(false)} onSent={(_, recipientCharmValue) => handleGiftSent(recipientCharmValue)} />
     </section>
   );
 }

@@ -20,7 +20,9 @@ import { canAccessAdmin } from "../shared/roles";
 type HomeCacheData = Pick<SoupsResponse, "soups" | "total" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge">;
 type UserSearchResponse = { users: SearchUser[]; total: number };
-const homePageSize = 10;
+const mobilePageSize = 10;
+const desktopFirstPageSize = 6;
+const desktopPageSize = 8;
 
 function paginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -63,12 +65,20 @@ export default function HomePage() {
     type: "",
     difficulty: "",
     minRating: "all",
-    bottomPublic: "all"
+    bottomPublic: "all",
+    aiGame: "all"
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
-  const activeFilterCount = [filters.type, filters.difficulty, filters.minRating !== "all", filters.bottomPublic !== "all"].filter(Boolean).length;
+  const activeFilterCount = [
+    filters.type,
+    filters.difficulty,
+    filters.minRating !== "all",
+    filters.bottomPublic !== "all",
+    filters.aiGame !== "all"
+  ].filter(Boolean).length;
   const isResultMode = Boolean(filters.keyword) || activeFilterCount > 0;
+  const firstDesktopPageSize = isResultMode ? desktopPageSize : desktopFirstPageSize;
 
   const submitSearch = () => setFilters((old) => ({ ...old, keyword: searchKeyword.trim() }));
 
@@ -81,11 +91,15 @@ export default function HomePage() {
       Object.entries(filters).forEach(([key, value]) => {
         if (value && value !== "all") params.set(key, value);
       });
-      params.set("limit", String(homePageSize));
-      params.set("offset", String(isDesktop ? (page - 1) * homePageSize : append ? offsetRef.current : 0));
+      const pageSize = isDesktop ? (page === 1 ? firstDesktopPageSize : desktopPageSize) : mobilePageSize;
+      const pageOffset = isDesktop
+        ? page === 1 ? 0 : firstDesktopPageSize + (page - 2) * desktopPageSize
+        : append ? offsetRef.current : 0;
+      params.set("limit", String(pageSize));
+      params.set("offset", String(pageOffset));
       params.set("seed", randomSeedRef.current);
       params.set("includeTotal", isDesktop ? "1" : "0");
-      if (!filters.keyword && !filters.type && !filters.difficulty && filters.minRating === "all" && filters.bottomPublic === "all") {
+      if (!filters.keyword && !filters.type && !filters.difficulty && filters.minRating === "all" && filters.bottomPublic === "all" && filters.aiGame === "all") {
         params.set("homeFeatured", "1");
       }
       const cacheKey = `hgt:home:v2:${user?.id ?? "guest"}:${params.toString()}`;
@@ -121,7 +135,7 @@ export default function HomePage() {
         setLoading(false);
       }
     },
-    [currentPage, filters, hasMore, isDesktop, user?.id]
+    [currentPage, filters, firstDesktopPageSize, hasMore, isDesktop, user?.id]
   );
 
   useEffect(() => {
@@ -173,7 +187,9 @@ export default function HomePage() {
   }, [filters.keyword]);
 
   const handleLoadMore = () => loadSoups(true);
-  const totalPages = Math.max(1, Math.ceil(total / homePageSize));
+  const totalPages = isDesktop
+    ? total <= firstDesktopPageSize ? 1 : 1 + Math.ceil((total - firstDesktopPageSize) / desktopPageSize)
+    : Math.max(1, Math.ceil(total / mobilePageSize));
 
   function changePage(page: number) {
     if (loading || page === currentPage || page < 1 || page > totalPages) return;
@@ -394,6 +410,14 @@ export default function HomePage() {
                   <option value="bottom">汤底公开</option>
                 </select>
               </label>
+              <label>
+                <span>AI 玩汤</span>
+                <select value={filters.aiGame} onChange={(event) => setFilters((old) => ({ ...old, aiGame: event.target.value }))}>
+                  <option value="all">全部</option>
+                  <option value="enabled">已开启</option>
+                  <option value="disabled">未开启</option>
+                </select>
+              </label>
             </div>
           )}
           <div className="home-desktop-search-box">
@@ -472,6 +496,14 @@ export default function HomePage() {
               <option value="all">全部</option>
               <option value="surface">汤面公开</option>
               <option value="bottom">汤底公开</option>
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>AI 玩汤</span>
+            <select className="field" value={filters.aiGame} onChange={(e) => setFilters((old) => ({ ...old, aiGame: e.target.value }))}>
+              <option value="all">全部</option>
+              <option value="enabled">已开启</option>
+              <option value="disabled">未开启</option>
             </select>
           </label>
       </div>
@@ -576,7 +608,7 @@ export default function HomePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4">
           <div className="w-full max-w-sm rounded-[20px] bg-white p-6 shadow-soft">
             <p className="text-base font-bold text-ink">导出汤名</p>
-            <p className="mt-2 text-sm text-muted">是否导出当前页面最新 10 条海龟汤列表？</p>
+            <p className="mt-2 text-sm text-muted">是否导出当前页面的海龟汤列表？</p>
             <div className="mt-5 flex gap-3">
               <button
                 className="btn btn-secondary flex-1"

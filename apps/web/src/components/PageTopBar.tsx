@@ -7,7 +7,7 @@ import { useMessageUnread } from "../shared/useMessageUnread";
 import { UnifiedBackButton } from "./UnifiedBackButton";
 import { canAccessAdmin } from "../shared/roles";
 
-export function PageTopBar({ title, titleContent, titleTo = "/", backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; backTo?: string; rightAction?: React.ReactNode }) {
+export function PageTopBar({ title, titleContent, titleTo = "/", titleState, backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; titleState?: Record<string, unknown>; backTo?: string; rightAction?: React.ReactNode }) {
   const { user } = useApp();
   const navigate = useNavigate();
   const unread = useMessageUnread(user?.id, Boolean(user && !backTo));
@@ -15,7 +15,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", backTo, rightAc
   return (
     <div className="top-nav-shell">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-        <button className="flex min-h-10 min-w-0 shrink-0 items-center text-left" type="button" onClick={() => navigate(titleTo)}>
+        <button className="flex min-h-10 min-w-0 shrink-0 items-center text-left" type="button" onClick={() => navigate(titleTo, { state: titleState })}>
           {titleContent ?? <h1 className="truncate py-0.5 text-[22px] font-black leading-[1.25] text-ink sm:text-[24px]">{title}</h1>}
         </button>
         <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">

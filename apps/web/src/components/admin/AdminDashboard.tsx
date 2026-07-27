@@ -33,7 +33,7 @@ type DashboardResponse = {
     today: number;
     last7Days: number;
     todayRate: number | null;
-    daily: Array<{ date: string; users: number }>;
+    daily: Array<{ date: string; users: number; rate: number | null }>;
   };
   soups: {
     byType: Array<{ name: string; count: number }>;
@@ -176,15 +176,27 @@ export function AdminDashboard() {
 
   const activityData = useMemo(() => ({
     labels: data?.userActivity.daily.map((item) => shortDate(item.date)) ?? [],
-    datasets: [{
-      label: "登录用户",
-      data: data?.userActivity.daily.map((item) => item.users) ?? [],
-      borderColor: "#2563EB",
-      backgroundColor: "rgba(37,99,235,.12)",
-      fill: true,
-      tension: 0.3,
-      pointRadius: 2
-    }]
+    datasets: [
+      {
+        label: "登录用户",
+        data: data?.userActivity.daily.map((item) => item.users) ?? [],
+        borderColor: "#2563EB",
+        backgroundColor: "rgba(37,99,235,.12)",
+        yAxisID: "y",
+        fill: true,
+        tension: 0.3,
+        pointRadius: 2
+      },
+      {
+        label: "活跃率",
+        data: data?.userActivity.daily.map((item) => item.rate) ?? [],
+        borderColor: "#F59E0B",
+        backgroundColor: "rgba(245,158,11,.12)",
+        yAxisID: "yRate",
+        tension: 0.3,
+        pointRadius: 2
+      }
+    ]
   }), [data]);
 
   const typeData = useMemo(() => ({
@@ -225,6 +237,34 @@ export function AdminDashboard() {
     scales: {
       x: { grid: { display: false }, ticks: { maxTicksLimit: range === "90d" ? 10 : 12 } },
       y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "rgba(148,163,184,.16)" } }
+    }
+  };
+  const activityLineOptions = {
+    ...lineOptions,
+    plugins: {
+      legend: { position: "top" as const, labels: { usePointStyle: true, boxWidth: 8 } },
+      tooltip: {
+        callbacks: {
+          label: (context: { dataset: { label?: string; yAxisID?: string }; parsed: { y: number | null } }) =>
+            `${context.dataset.label ?? ""}: ${context.parsed.y == null ? "—" : context.dataset.yAxisID === "yRate" ? `${context.parsed.y}%` : numberFormat.format(context.parsed.y)}`
+        }
+      }
+    },
+    scales: {
+      x: lineOptions.scales.x,
+      y: {
+        ...lineOptions.scales.y,
+        position: "left" as const,
+        title: { display: true, text: "登录用户数" }
+      },
+      yRate: {
+        beginAtZero: true,
+        max: 100,
+        position: "right" as const,
+        title: { display: true, text: "活跃率" },
+        ticks: { callback: (value: string | number) => `${value}%` },
+        grid: { drawOnChartArea: false }
+      }
     }
   };
 
@@ -281,13 +321,13 @@ export function AdminDashboard() {
       </ChartCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="用户登录活跃" description="登录用户指当天有登录或会话初始化记录的用户">
+        <ChartCard title="用户登录活跃" description="登录用户指当天有登录或会话初始化记录的用户；活跃率 = 当天登录用户数 ÷ 当日累计用户数">
           <div className="mb-4 grid grid-cols-3 gap-2">
             <div className="rounded-xl bg-blue-50 p-3"><Activity size={16} className="text-primary" /><strong className="mt-2 block text-xl text-ink">{numberFormat.format(data.userActivity.today)}</strong><span className="text-xs text-muted">今日登录</span></div>
             <div className="rounded-xl bg-teal-50 p-3"><CalendarDays size={16} className="text-teal-600" /><strong className="mt-2 block text-xl text-ink">{numberFormat.format(data.userActivity.last7Days)}</strong><span className="text-xs text-muted">近 7 天登录</span></div>
             <div className="rounded-xl bg-amber-50 p-3"><TrendingUp size={16} className="text-amber-600" /><strong className="mt-2 block text-xl text-ink">{data.userActivity.todayRate == null ? "—" : `${data.userActivity.todayRate}%`}</strong><span className="text-xs text-muted">今日活跃率</span></div>
           </div>
-          <div className="h-52"><Line data={activityData} options={{ ...lineOptions, plugins: { legend: { display: false } } }} /></div>
+          <div className="h-52"><Line data={activityData} options={activityLineOptions} /></div>
         </ChartCard>
 
         <ChartCard title="汤品类型分布" description="按当前存续汤品统计">

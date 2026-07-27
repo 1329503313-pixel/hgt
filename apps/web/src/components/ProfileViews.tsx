@@ -1,4 +1,4 @@
-import { Flame } from "lucide-react";
+import { Flame, Heart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { SocialProfile, SoupSummary } from "../shared/types";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
@@ -10,6 +10,7 @@ export function ProfileHero({
   profile,
   onFollowing,
   onFollowers,
+  onCharm,
   actions,
   meta,
   onAvatar,
@@ -19,6 +20,7 @@ export function ProfileHero({
   profile: SocialProfile;
   onFollowing: () => void;
   onFollowers: () => void;
+  onCharm?: () => void;
   actions?: React.ReactNode;
   meta?: React.ReactNode;
   onAvatar?: () => void;
@@ -60,7 +62,8 @@ export function ProfileHero({
           {actions && <div className="shrink-0">{actions}</div>}
         </div>
       </div>
-      <div className={`profile-hero-stats relative z-[1] grid grid-cols-3 divide-x divide-line px-2 py-3 ${hasBackground ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>
+      <div className={`profile-hero-stats relative z-[1] grid grid-cols-4 divide-x divide-line px-2 py-3 ${hasBackground ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>
+        <button className="text-center disabled:cursor-default" onClick={onCharm} disabled={!onCharm}><p className="inline-flex items-center gap-1 text-lg font-black text-rose-600"><Heart size={15} className="fill-rose-500" />{profile.charmValue ?? 0}</p><p className="text-xs text-muted">魅力</p></button>
         <div className="text-center"><p className="text-lg font-black text-ink">{profile.receivedLikeCount}</p><p className="text-xs text-muted">获赞</p></div>
         <button className="text-center" onClick={onFollowing}><p className="text-lg font-black text-ink">{profile.followingCount}</p><p className="text-xs text-muted">关注</p></button>
         <button className="text-center" onClick={onFollowers}><p className="text-lg font-black text-ink">{profile.followerCount}</p><p className="text-xs text-muted">粉丝</p></button>

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import sharp from "sharp";
 import { digitalAssetRules } from "./digitalAssets.js";
+import { GIFT_ICON_SIZE, optimizeGiftIcon } from "./giftImages.js";
 
 test("累计获得数量按1、4、9、19张自动升星", () => {
   assert.deepEqual([1, 3, 4, 8, 9, 18, 19, 20].map(digitalAssetRules.starForTotal), [0, 0, 1, 1, 2, 2, 3, 3]);
@@ -55,4 +57,21 @@ test("卡包封面固定选择卡号最小的传说卡", () => {
   ];
   assert.equal(digitalAssetRules.lowestLegendCard(cards)?.card_no, "2");
   assert.equal(digitalAssetRules.lowestLegendCard(cards.filter((card) => card.rarity !== "legend")), null);
+});
+
+test("礼物图标压缩为透明背景正方形 WebP", async () => {
+  const source = await sharp({
+    create: {
+      width: 320,
+      height: 160,
+      channels: 4,
+      background: { r: 255, g: 80, b: 120, alpha: 0.8 }
+    }
+  }).png().toBuffer();
+  const optimized = await optimizeGiftIcon(`data:image/png;base64,${source.toString("base64")}`);
+  assert.ok(optimized);
+  assert.match(optimized, /^data:image\/webp;base64,/);
+  const metadata = await sharp(Buffer.from(optimized.split(",")[1], "base64")).metadata();
+  assert.equal(metadata.width, GIFT_ICON_SIZE);
+  assert.equal(metadata.height, GIFT_ICON_SIZE);
 });

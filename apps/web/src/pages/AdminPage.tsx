@@ -15,6 +15,7 @@ import { CircleManagement } from "../components/admin/CircleManagement";
 import { DigitalAssetManagement } from "../components/admin/DigitalAssetManagement";
 import { BannerManagement } from "../components/admin/BannerManagement";
 import { FeedbackManagement } from "../components/admin/FeedbackManagement";
+import { GiftManagement } from "../components/admin/GiftManagement";
 import { canAccessAdmin, isSuperAdminRole } from "../shared/roles";
 
 export default function AdminPage() {
@@ -44,6 +45,7 @@ export default function AdminPage() {
           {activeTab === "users" && <UserManagement isSuperAdmin={isSuperAdmin} />}
           {activeTab === "soups" && <SoupManagement canDelete={isSuperAdmin} />}
           {activeTab === "evaluations" && <EvaluationManagement />}
+          {activeTab === "gifts" && isSuperAdmin && <GiftManagement />}
           {activeTab === "badges" && isSuperAdmin && <BadgeManagement />}
           {activeTab === "approvals" && isSuperAdmin && <ApprovalManagement />}
           {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}

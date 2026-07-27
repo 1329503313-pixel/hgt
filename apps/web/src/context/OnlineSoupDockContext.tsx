@@ -8,6 +8,7 @@ import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../c
 import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
 import type { OnlineSoupMessage, OnlineSoupSnapshot } from "../shared/types";
+import { GiftMessageCard } from "../components/GiftMessageCard";
 import { useApp } from "./AppContext";
 
 type DockSession = {
@@ -258,6 +259,7 @@ function MiniMessageList({ messages, currentUserId, onRecall }: { messages: Onli
 function MiniMessage({ message, currentUserId, onRecall }: { message: OnlineSoupMessage; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
+  if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
   if (message.type === "system") return <p className="online-soup-mini-system">— {message.content} —</p>;
   if (message.type === "clue") return <article className="online-soup-mini-event is-clue"><strong>主持人线索</strong><p>{message.content}</p></article>;
   if (message.type === "supplemental_surface" || message.type === "bottom" || message.type === "manual") {

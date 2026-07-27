@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { config } from "./config.js";
 import { BANNER_MAX_BYTES, optimizeBannerImage, storedBannerImageBytes } from "./bannerImages.js";
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
+import { canonicalConversationUserIds } from "./conversations.js";
 import { generateInviteCode } from "./inviteCodes.js";
 
 export const pool = mysql.createPool({
@@ -18,6 +19,68 @@ export const pool = mysql.createPool({
 });
 
 export const db = drizzle(pool);
+
+async function normalizeConversationPairs() {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, user_a_id, user_b_id, created_at, last_message_at
+       FROM conversations
+       ORDER BY created_at ASC, id ASC
+       FOR UPDATE`
+    );
+    const groups = new Map<string, mysql.RowDataPacket[]>();
+    for (const row of rows) {
+      const [userAId, userBId] = canonicalConversationUserIds(String(row.user_a_id), String(row.user_b_id));
+      const key = JSON.stringify([userAId, userBId]);
+      const group = groups.get(key) ?? [];
+      group.push(row);
+      groups.set(key, group);
+    }
+
+    let mergedCount = 0;
+    for (const [key, group] of groups) {
+      const [userAId, userBId] = JSON.parse(key) as [string, string];
+      group.sort((left, right) => {
+        const createdDifference = new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
+        return createdDifference || String(left.id).localeCompare(String(right.id), "en");
+      });
+      const keep = group[0];
+      const keepId = String(keep.id);
+      const createdAt = new Date(Math.min(...group.map((row) => new Date(row.created_at).getTime())));
+      const lastMessageAt = new Date(Math.max(...group.map((row) => new Date(row.last_message_at).getTime())));
+
+      for (const duplicate of group.slice(1)) {
+        const duplicateId = String(duplicate.id);
+        await connection.query(
+          "UPDATE private_messages SET conversation_id = ? WHERE conversation_id = ?",
+          [keepId, duplicateId]
+        );
+        await connection.query(
+          "UPDATE gift_sends SET source_id = ? WHERE source_type = 'private' AND source_id = ?",
+          [keepId, duplicateId]
+        );
+        await connection.query("DELETE FROM conversations WHERE id = ?", [duplicateId]);
+        mergedCount += 1;
+      }
+
+      await connection.query(
+        `UPDATE conversations
+         SET user_a_id = ?, user_b_id = ?, created_at = ?, last_message_at = ?
+         WHERE id = ?`,
+        [userAId, userBId, createdAt, lastMessageAt, keepId]
+      );
+    }
+    await connection.commit();
+    if (mergedCount > 0) console.info(`Merged ${mergedCount} duplicate private conversation(s).`);
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
 
 export async function initDatabase() {
   await pool.query(`
@@ -299,7 +362,9 @@ export async function initDatabase() {
   await ensureColumn("users", "equipped_badge_icon_url", "equipped_badge_icon_url VARCHAR(255) NULL AFTER equipped_badge_key");
   await ensureColumn("users", "last_login_at", "last_login_at DATETIME NULL AFTER badges_initialized");
   await ensureColumn("users", "shell_balance", "shell_balance INT UNSIGNED NOT NULL DEFAULT 0 AFTER last_login_at");
-  await ensureColumn("users", "experience", "experience BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER shell_balance");
+  await ensureColumn("users", "pearl_balance", "pearl_balance INT UNSIGNED NOT NULL DEFAULT 0 AFTER shell_balance");
+  await ensureColumn("users", "charm_value", "charm_value BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER pearl_balance");
+  await ensureColumn("users", "experience", "experience BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER charm_value");
   await ensureColumn("users", "profile_background", "profile_background LONGTEXT NULL AFTER avatar");
   await ensureColumn("users", "profile_background_card_id", "profile_background_card_id VARCHAR(64) NULL AFTER profile_background");
   await ensureColumn("users", "profile_background_crop_x", "profile_background_crop_x DECIMAL(6,3) NOT NULL DEFAULT 50 AFTER profile_background_card_id");
@@ -336,6 +401,23 @@ export async function initDatabase() {
       INDEX idx_shell_transactions_user_time (user_id, created_at, id),
       CONSTRAINT fk_shell_transaction_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       CONSTRAINT fk_shell_transaction_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pearl_transactions (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      transaction_type VARCHAR(40) NOT NULL,
+      amount BIGINT NOT NULL,
+      balance_after BIGINT UNSIGNED NOT NULL,
+      related_type VARCHAR(40) NULL,
+      related_id VARCHAR(64) NULL,
+      remark VARCHAR(200) NULL,
+      idempotency_key VARCHAR(191) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_pearl_transactions_idempotency (idempotency_key),
+      INDEX idx_pearl_transactions_user_time (user_id, created_at, id),
+      CONSTRAINT fk_pearl_transaction_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await pool.query(`
@@ -482,9 +564,10 @@ export async function initDatabase() {
       room_id VARCHAR(64) NOT NULL,
       round_id VARCHAR(64) NULL,
       sender_id VARCHAR(64) NULL,
-      message_type ENUM('discussion','question','host','sticker','clue','supplemental_surface','bottom','manual','system') NOT NULL,
+      message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system') NOT NULL,
       content TEXT NOT NULL,
       sticker_id VARCHAR(64) NULL,
+      gift_send_id VARCHAR(64) NULL,
       content_index INT UNSIGNED NULL,
       question_number INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
@@ -539,6 +622,11 @@ export async function initDatabase() {
   );
   await ensureColumn(
     "online_soup_messages",
+    "gift_send_id",
+    "gift_send_id VARCHAR(64) NULL AFTER sticker_id"
+  );
+  await ensureColumn(
+    "online_soup_messages",
     "recalled_at",
     "recalled_at DATETIME NULL AFTER created_at"
   );
@@ -551,6 +639,11 @@ export async function initDatabase() {
     "online_soup_messages",
     "idx_online_messages_round_type_sequence",
     "round_id, message_type, message_sequence"
+  );
+  await ensureIndex(
+    "online_soup_messages",
+    "idx_online_messages_gift_send",
+    "gift_send_id"
   );
   await ensureIndex(
     "online_soup_members",
@@ -571,9 +664,9 @@ export async function initDatabase() {
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_messages' AND COLUMN_NAME = 'message_type'`
   );
-  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'sticker'")) {
+  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'gift'")) {
     await pool.query(
-      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','clue','supplemental_surface','bottom','manual','system') NOT NULL"
+      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system') NOT NULL"
     );
   }
 
@@ -897,6 +990,56 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS gifts (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      description VARCHAR(500) NOT NULL DEFAULT '',
+      icon_image LONGTEXT NOT NULL,
+      payment_currency ENUM('shell','pearl') NOT NULL DEFAULT 'shell',
+      cost_amount INT UNSIGNED NOT NULL,
+      reward_shell INT UNSIGNED NOT NULL DEFAULT 0,
+      reward_pearl INT UNSIGNED NOT NULL DEFAULT 0,
+      reward_charm INT UNSIGNED NOT NULL DEFAULT 0,
+      status ENUM('active','inactive') NOT NULL DEFAULT 'inactive',
+      sort_order INT NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_gifts_status_sort (status, sort_order, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gift_sends (
+      id VARCHAR(64) PRIMARY KEY,
+      request_id VARCHAR(191) NOT NULL,
+      gift_id VARCHAR(64) NOT NULL,
+      sender_id VARCHAR(64) NOT NULL,
+      recipient_id VARCHAR(64) NOT NULL,
+      quantity SMALLINT UNSIGNED NOT NULL,
+      source_type ENUM('profile','private','circle','online_soup') NOT NULL,
+      source_id VARCHAR(64) NULL,
+      gift_name_snapshot VARCHAR(100) NOT NULL,
+      payment_currency ENUM('shell','pearl') NOT NULL,
+      unit_cost INT UNSIGNED NOT NULL,
+      total_cost BIGINT UNSIGNED NOT NULL,
+      unit_reward_shell INT UNSIGNED NOT NULL DEFAULT 0,
+      total_reward_shell BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      unit_reward_pearl INT UNSIGNED NOT NULL DEFAULT 0,
+      total_reward_pearl BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      unit_reward_charm INT UNSIGNED NOT NULL DEFAULT 0,
+      total_reward_charm BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_gift_sends_request (sender_id, request_id),
+      INDEX idx_gift_sends_recipient_time (recipient_id, created_at, id),
+      INDEX idx_gift_sends_sender_time (sender_id, created_at, id),
+      INDEX idx_gift_sends_gift (gift_id),
+      CONSTRAINT fk_gift_send_gift FOREIGN KEY (gift_id) REFERENCES gifts(id) ON DELETE RESTRICT,
+      CONSTRAINT fk_gift_send_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_gift_send_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS conversations (
       id VARCHAR(64) PRIMARY KEY,
       user_a_id VARCHAR(64) NOT NULL,
@@ -930,8 +1073,11 @@ export async function initDatabase() {
   `);
   await ensureColumn("private_messages", "message_type", "message_type VARCHAR(16) NOT NULL DEFAULT 'text' AFTER content");
   await ensureColumn("private_messages", "sticker_id", "sticker_id VARCHAR(64) NULL AFTER message_type");
+  await ensureColumn("private_messages", "gift_send_id", "gift_send_id VARCHAR(64) NULL AFTER sticker_id");
   await ensureColumn("private_messages", "recalled_at", "recalled_at DATETIME NULL AFTER created_at");
   await ensureIndex("private_messages", "idx_private_messages_conversation_cursor", "conversation_id, created_at, id");
+  await ensureIndex("private_messages", "idx_private_messages_gift_send", "gift_send_id");
+  await normalizeConversationPairs();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS circles (
@@ -967,8 +1113,9 @@ export async function initDatabase() {
       circle_id VARCHAR(64) NOT NULL,
       sender_id VARCHAR(64) NULL,
       content VARCHAR(1000) NOT NULL DEFAULT '',
-      message_type ENUM('text','sticker','room_invite','soup_share') NOT NULL DEFAULT 'text',
+      message_type ENUM('text','sticker','room_invite','soup_share','gift') NOT NULL DEFAULT 'text',
       sticker_id VARCHAR(64) NULL,
+      gift_send_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
       reply_to_message_id VARCHAR(64) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -983,12 +1130,13 @@ export async function initDatabase() {
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'circle_messages' AND COLUMN_NAME = 'message_type'`
   );
-  if (!String(circleMessageType?.COLUMN_TYPE ?? "").includes("'soup_share'")) {
+  if (!String(circleMessageType?.COLUMN_TYPE ?? "").includes("'gift'")) {
     await pool.query(
-      "ALTER TABLE circle_messages MODIFY COLUMN message_type ENUM('text','sticker','room_invite','soup_share') NOT NULL DEFAULT 'text'"
+      "ALTER TABLE circle_messages MODIFY COLUMN message_type ENUM('text','sticker','room_invite','soup_share','gift') NOT NULL DEFAULT 'text'"
     );
   }
   await ensureColumn("circle_messages", "mentions_json", "mentions_json JSON NULL AFTER sticker_id");
+  await ensureColumn("circle_messages", "gift_send_id", "gift_send_id VARCHAR(64) NULL AFTER sticker_id");
   await ensureColumn(
     "circle_messages",
     "reply_to_message_id",
@@ -996,6 +1144,7 @@ export async function initDatabase() {
   );
   await ensureColumn("circle_messages", "recalled_at", "recalled_at DATETIME NULL AFTER created_at");
   await ensureIndex("circle_messages", "idx_circle_messages_reply", "reply_to_message_id");
+  await ensureIndex("circle_messages", "idx_circle_messages_gift_send", "gift_send_id");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS circle_message_mentions (
