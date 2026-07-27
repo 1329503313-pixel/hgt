@@ -87,15 +87,14 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
     if (!file) return;
     if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) throw new Error("仅支持 JPG、PNG、GIF 或 WebP 图片");
     if (file.size > 2 * 1024 * 1024) throw new Error("单张图片不能超过 2MB");
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(new Error("图片读取失败"));
-      reader.readAsDataURL(file);
+    const uploaded = await api<{ url: string }>("/api/admin/notices/images", {
+      method: "POST",
+      headers: { "Content-Type": file.type },
+      body: file
     });
     editorRef.current?.focus();
     restoreSelection();
-    document.execCommand("insertImage", false, dataUrl);
+    document.execCommand("insertImage", false, uploaded.url);
     onChange(editorRef.current?.innerHTML ?? "");
     if (fileRef.current) fileRef.current.value = "";
   }

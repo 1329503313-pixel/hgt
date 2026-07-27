@@ -15,3 +15,4 @@ test_*.mjs
 *.tar.zip
 hgt.tar.gz
 apps/server/dist/
+.local-backups/
