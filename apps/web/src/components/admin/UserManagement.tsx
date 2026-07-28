@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, KeyRound, Search, Shell, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUpDown, Gem, Heart, KeyRound, Search, Shell, Sparkles, Trash2, X } from "lucide-react";
 import type { PublicUser, UserRole } from "../../shared/types";
 import type { ShellTransaction } from "../../shared/types";
 import { api } from "../../api";
@@ -20,6 +20,8 @@ type AdminUser = PublicUser & {
   isOnline: boolean;
   loggedInToday: boolean;
   shellBalance: number;
+  charmValue: number;
+  collectionValue: number;
   experience: number;
   achievementPoints: number;
   stats: { soupCount: number; evaluationCount: number; likeCount: number; favoriteCount: number };
@@ -27,9 +29,9 @@ type AdminUser = PublicUser & {
 
 type UsersResponseExt = { users: AdminUser[]; total: number };
 type TodayFilter = "all" | "yes" | "no";
-type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "achievementPoints" | "experience";
+type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "charmValue" | "collectionValue" | "achievementPoints" | "experience";
 type SortOrder = "asc" | "desc";
-type UserColumn = "user" | "role" | "level" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
+type UserColumn = "user" | "role" | "level" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "charmValue" | "collectionValue" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
 type BulkShellPreview = { matchedCount: number; eligibleCount: number; skippedCount: number };
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
@@ -40,6 +42,8 @@ const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "lastLoginAt", label: "最后登录时间", width: "160px" },
   { key: "loggedToday", label: "今日登录", width: "90px" },
   { key: "shells", label: "贝壳", width: "90px" },
+  { key: "charmValue", label: "魅力值", width: "90px" },
+  { key: "collectionValue", label: "收藏值", width: "90px" },
   { key: "achievementPoints", label: "成就点", width: "90px" },
   { key: "soups", label: "汤品", width: "70px" },
   { key: "evaluations", label: "评价", width: "70px" },
@@ -314,6 +318,8 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           <option value="likeCount">按点赞</option>
           <option value="favoriteCount">按收藏</option>
           <option value="shellBalance">按贝壳</option>
+          <option value="charmValue">按魅力值</option>
+          <option value="collectionValue">按收藏值</option>
           <option value="achievementPoints">按成就点</option>
           <option value="experience">按经验</option>
         </select>
@@ -328,7 +334,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1530px]">
+        <div className="min-w-[1710px]">
           <div className="mb-2 grid items-center justify-items-center gap-2 px-3 text-center text-xs font-bold text-muted" style={{ gridTemplateColumns: template }}>
             {userColumns.filter((column) => visibleColumns.has(column.key)).map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
@@ -378,6 +384,8 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                 {visibleColumns.has("lastLoginAt") && <span className={`text-xs font-bold ${user.isOnline ? "text-emerald-600" : "text-muted"}`}>{user.isOnline ? "在线" : user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "从未登录"}</span>}
                 {visibleColumns.has("loggedToday") && <span className={`rounded-full px-2 py-1 text-xs font-bold ${user.loggedInToday ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{user.loggedInToday ? "已登录" : "未登录"}</span>}
                 {visibleColumns.has("shells") && <button className="inline-flex items-center gap-1 font-black text-primary hover:underline" onClick={() => void loadShellDetail(user)}><Shell size={14} />{user.shellBalance}</button>}
+                {visibleColumns.has("charmValue") && <span className="inline-flex items-center gap-1 font-black text-rose-600"><Heart size={14} />{user.charmValue.toLocaleString()}</span>}
+                {visibleColumns.has("collectionValue") && <span className="inline-flex items-center gap-1 font-black text-violet-600"><Gem size={14} />{user.collectionValue.toLocaleString()}</span>}
                 {visibleColumns.has("achievementPoints") && <span className="font-black text-amber-600">{user.achievementPoints.toLocaleString()}</span>}
                 {visibleColumns.has("soups") && <span className="font-semibold text-ink">{user.stats.soupCount}</span>}
                 {visibleColumns.has("evaluations") && <span>{user.stats.evaluationCount}</span>}

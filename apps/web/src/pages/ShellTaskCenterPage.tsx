@@ -99,6 +99,16 @@ function ProgressBar({ task }: { task: DisplayTask }) {
   );
 }
 
+function GiftReward({ task, compact = false }: { task: DisplayTask; compact?: boolean }) {
+  if (!("giftReward" in task) || !task.giftReward) return null;
+  return (
+    <span className={`${compact ? "mt-1 flex" : "inline-flex"} items-center gap-1 font-black text-fuchsia-700`}>
+      <Gift size={compact ? 12 : 13} />
+      {task.giftReward.name} ×{task.giftReward.quantity}
+    </span>
+  );
+}
+
 export default function ShellTaskCenterPage() {
   const navigate = useNavigate();
   const { user, loadingUser, openAuth, showToast } = useApp();
@@ -226,7 +236,7 @@ export default function ShellTaskCenterPage() {
             <article key={task.type} className="flex items-center gap-3 p-4">
               <TaskIcon task={task} />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-ink">{task.name}</h3><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-700">+{task.reward} 贝壳</span><span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-700">+{task.experienceReward} EXP</span></div>
+                <div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-ink">{task.name}</h3><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-black text-amber-700">+{task.reward} 贝壳</span><span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-black text-violet-700">+{task.experienceReward} EXP</span>{!("target" in task) && task.giftReward && <span className="inline-flex items-center gap-1 rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-black text-fuchsia-700"><Gift size={12} />{task.giftReward.name} ×{task.giftReward.quantity}</span>}</div>
                 <p className="mt-1 text-xs text-muted">{task.description}</p>
                 <div className="mt-2"><ProgressBar task={task} /></div>
               </div>
@@ -250,7 +260,7 @@ export default function ShellTaskCenterPage() {
                   <TaskIcon task={task} size={20} />
                   <div className="min-w-0"><h3 className="font-black text-ink">{task.name}</h3><p className="mt-1 truncate text-xs text-muted">{task.description}</p></div>
                 </div>
-                <span className="font-black text-amber-700">+{task.reward} <span className="text-xs font-bold text-muted">贝壳</span><span className="mt-1 block text-violet-700">+{task.experienceReward} <span className="text-xs text-muted">EXP</span></span></span>
+                <span className="font-black text-amber-700">+{task.reward} <span className="text-xs font-bold text-muted">贝壳</span><span className="mt-1 block text-violet-700">+{task.experienceReward} <span className="text-xs text-muted">EXP</span></span><GiftReward task={task} compact /></span>
                 <div>
                   {!("repeatable" in task && task.repeatable) && <div className="mb-2 flex items-center justify-between text-xs"><span className="font-bold text-ink">{task.progress} / {taskTarget(task)}</span><span className="text-muted">{Math.min(100, Math.round((task.progress / taskTarget(task)) * 100))}%</span></div>}
                   <ProgressBar task={task} />

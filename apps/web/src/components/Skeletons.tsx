@@ -82,7 +82,7 @@ export function ProfileSkeleton() {
     <div className="space-y-3" aria-label="个人主页加载中">
       <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
         <div className="profile-gradient flex h-[118px] animate-pulse items-center gap-3 px-4"><Line className="h-16 w-16 rounded-full bg-white/40" /><span className="flex-1 space-y-3"><Line className="h-5 w-1/3 bg-white/40" /><Line className="h-3 w-1/2 bg-white/30" /></span></div>
-        <div className="grid grid-cols-3 gap-4 px-6 py-4"><Line className="h-8" /><Line className="h-8" /><Line className="h-8" /></div>
+        <div className="grid grid-cols-5 gap-3 px-4 py-4"><Line className="h-8" /><Line className="h-8" /><Line className="h-8" /><Line className="h-8" /><Line className="h-8" /></div>
       </div>
       <CardSkeleton rows={2} />
       <div className="overflow-hidden rounded-2xl bg-white shadow-soft"><div className="grid grid-cols-3 gap-5 border-b border-line p-4"><Line className="h-5" /><Line className="h-5" /><Line className="h-5" /></div><CoverGridSkeleton count={4} /></div>

@@ -11,13 +11,14 @@ import { Modal } from "../Modal";
 import { ScoreInput } from "../FormWidgets";
 
 type EvalRow = Evaluation & { soupTitle: string };
-type EvaluationColumn = "reviewer" | "total" | "soup" | "content" | "dimensions" | "createdAt" | "actions";
+type EvaluationColumn = "reviewer" | "total" | "soup" | "content" | "contentVisibility" | "dimensions" | "createdAt" | "actions";
 
 const evaluationColumns: readonly AdminColumn<EvaluationColumn>[] = [
   { key: "reviewer", label: "评价者", width: "130px" },
   { key: "total", label: "总分", width: "90px" },
   { key: "soup", label: "汤品", width: "minmax(180px, 1fr)" },
   { key: "content", label: "评价内容", width: "minmax(220px, 1.2fr)" },
+  { key: "contentVisibility", label: "文字状态", width: "100px" },
   { key: "dimensions", label: "维度评分", width: "260px" },
   { key: "createdAt", label: "评价时间", width: "110px" },
   { key: "actions", label: "操作", width: "170px" }
@@ -56,6 +57,7 @@ export function EvaluationManagement() {
   const [submittedKeyword, setSubmittedKeyword] = useState("");
   const [editing, setEditing] = useState<EvalRow | null>(null);
   const [editForm, setEditForm] = useState<EvalForm | null>(null);
+  const [editHidden, setEditHidden] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [visibleColumns, setVisibleColumns] = useState<Set<EvaluationColumn>>(() => new Set(evaluationColumns.map((column) => column.key)));
@@ -88,6 +90,7 @@ export function EvaluationManagement() {
   function openEditor(evaluation: EvalRow) {
     setEditing(evaluation);
     setEditForm(evaluationToForm(evaluation));
+    setEditHidden(evaluation.isContentHidden);
     setSaveError("");
   }
 
@@ -106,7 +109,7 @@ export function EvaluationManagement() {
     try {
       const result = await api<{ evaluation: EvalRow }>(`/api/admin/evaluations/${editing.id}`, {
         method: "PATCH",
-        body: editForm
+        body: { ...editForm, isContentHidden: editHidden }
       });
       setEvaluations((old) => old.map((item) => item.id === editing.id ? result.evaluation : item));
       setEditing(null);
@@ -146,7 +149,7 @@ export function EvaluationManagement() {
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1180px]">
+        <div className="min-w-[1280px]">
           <div className="mb-2 grid items-center justify-items-center gap-2 px-3 text-center text-xs font-bold text-muted" style={{ gridTemplateColumns: template }}>
             {evaluationColumns.filter((column) => visibleColumns.has(column.key)).map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
@@ -157,6 +160,7 @@ export function EvaluationManagement() {
                 {visibleColumns.has("total") && <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs font-bold text-primary"><Star className="fill-amber-400 text-amber-400" size={12} />{evaluation.total}</span>}
                 {visibleColumns.has("soup") && <button className="max-w-full truncate font-semibold text-ink hover:text-primary" onClick={() => navigate(`/soup/${evaluation.soupId}`)}>{evaluation.soupTitle || "查看汤品"}</button>}
                 {visibleColumns.has("content") && <p className="line-clamp-2 max-w-full text-xs text-muted">{evaluation.content || "—"}</p>}
+                {visibleColumns.has("contentVisibility") && <span className={`rounded-full px-2 py-1 text-xs font-bold ${evaluation.isContentHidden ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{evaluation.isContentHidden ? "隐藏" : "显示"}</span>}
                 {visibleColumns.has("dimensions") && (
                   <div className="flex flex-wrap justify-center gap-1 text-[11px] text-muted">
                     {dimensionLabels.map(({ key, label }) => evaluation[key] != null ? <span key={key} className="rounded bg-slate-100 px-1.5 py-0.5">{label} {evaluation[key]}</span> : null)}
@@ -207,6 +211,10 @@ export function EvaluationManagement() {
                 onChange={(event) => patchEditForm({ content: event.target.value })}
               />
               <span className="block text-right text-xs text-muted">剩余 {500 - editForm.content.length} 字</span>
+            </label>
+            <label className="flex items-center justify-between rounded-xl border border-line p-3">
+              <span><strong className="block text-sm text-ink">隐藏文字评论</strong><span className="text-xs text-muted">未获得该汤汤底权限的用户只能看到评分</span></span>
+              <input className="h-5 w-5 accent-blue-600" type="checkbox" checked={editHidden} onChange={(event) => setEditHidden(event.target.checked)} />
             </label>
             {saveError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{saveError}</p>}
             <button className="btn btn-primary w-full" disabled={saving}>{saving ? "保存中..." : "保存评价"}</button>

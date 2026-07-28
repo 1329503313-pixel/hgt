@@ -40,6 +40,7 @@ import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
 import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
+import { runRankingRewardScheduler } from "./rankingRewards.js";
 import {
   AUTH_COOKIE_NAME,
   LEGACY_AUTH_COOKIE_NAME,
@@ -61,6 +62,7 @@ import {
   beijingTaskDate,
   isEligibleCircleTaskMessageType,
   setShellBadgeProgressListener,
+  setTaskGiftNotificationListener,
   shellTaskCenter,
   shellTransactions
 } from "./shellCurrency.js";
@@ -954,7 +956,8 @@ function safeParseJson(value: unknown) {
   }
 }
 
-function mapEvaluation(row: mysql.RowDataPacket) {
+function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true) {
+  const isContentHidden = bool(row.is_content_hidden);
   return {
     id: row.id,
     soupId: row.soup_id,
@@ -971,7 +974,8 @@ function mapEvaluation(row: mysql.RowDataPacket) {
     mechanism: num(row.mechanism),
     twist: num(row.twist),
     depth: num(row.depth),
-    content: row.content ? String(row.content) : null,
+    content: isContentHidden && !canViewHiddenContent ? null : row.content ? String(row.content) : null,
+    isContentHidden,
     createdAt: new Date(row.created_at).toISOString()
   };
 }
@@ -1164,6 +1168,13 @@ async function notify(
   if (result.affectedRows > 0) emitUnreadChanged(userId, type);
 }
 
+async function recordAdminModuleEvent(moduleKey: "approvals" | "feedback") {
+  const [result] = await pool.query<mysql.ResultSetHeader>("INSERT INTO admin_module_events (module_key) VALUES (?)", [moduleKey]);
+  for (const adminId of await backofficeAdminIds()) {
+    emitUserEvent(adminId, "admin_module_unread", { moduleKey, eventId: Number(result.insertId) });
+  }
+}
+
 type BadgeGrantNotification = {
   type: string;
   title: string;
@@ -1283,6 +1294,11 @@ async function grantBadge(options: Parameters<typeof grantBadgeWithConnection>[1
 
 async function adminIds() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role = 'super_admin'");
+  return rows.map((row) => String(row.id));
+}
+
+async function backofficeAdminIds() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE role IN ('super_admin', 'backoffice_admin')");
   return rows.map((row) => String(row.id));
 }
 
@@ -1859,6 +1875,7 @@ function queueActivityBadgeSync(userIds: string[]) {
 
 setBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 setShellBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
+setTaskGiftNotificationListener((userId) => emitUnreadChanged(userId, "daily_task_gift_reward"));
 setInviteRewardProgressListener((userId) => queueSystemBadgeSync([userId]));
 
 async function optimizeCoverImage(base64: string, soupId: string): Promise<{ full: string; thumbnail: string } | null> {
@@ -2421,6 +2438,7 @@ app.post("/api/me/excellent-author-application", async (req, res) => {
       );
     }
     await connection.commit();
+    await recordAdminModuleEvent("approvals");
     await Promise.all((await adminIds()).map((adminId) =>
       notify(adminId, "excellent_author_application", "新的优秀作者认证申请", `${user.nickname} 提交了优秀作者认证申请`, id, user.id)
     ));
@@ -2480,7 +2498,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const viewer = await requireAuth(req, res);
   if (!viewer) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.charm_value, u.equipped_badge_key, u.equipped_badge_icon_url,
+    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.charm_value, u.generosity_value, u.equipped_badge_key, u.equipped_badge_icon_url,
        u.avatar IS NOT NULL AS has_avatar, u.profile_background IS NOT NULL AS has_profile_background,
        u.profile_background_updated_at, u.profile_background_crop_x, u.profile_background_crop_y, u.profile_background_zoom,
        c.id AS background_card_id, c.name AS background_card_name, c.rarity AS background_card_rarity,
@@ -2548,6 +2566,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
     profile: {
       ...withoutPrivateUsername(toUser(target)),
       charmValue: Number(target.charm_value ?? 0),
+      generosityValue: Number(target.generosity_value ?? 0),
       receivedLikeCount: Number(likeRows[0]?.received_like_count ?? 0),
       followingCount: Number(follow.following_count ?? 0),
       followerCount: Number(follow.follower_count ?? 0),
@@ -3220,6 +3239,96 @@ app.get("/api/admin/circles", async (req, res) => {
   });
 });
 
+app.get("/api/admin/circles/:id/messages", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [[circle]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM circles WHERE id = ? LIMIT 1", [req.params.id]);
+  if (!circle) return sendError(res, 404, "圈子不存在");
+  const before = String(req.query.before ?? "").trim();
+  const params: unknown[] = [req.params.id];
+  let beforeClause = "";
+  if (before) {
+    const [[cursor]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT message_sequence FROM circle_messages WHERE id = ? AND circle_id = ? LIMIT 1",
+      [before, req.params.id]
+    );
+    if (!cursor) return sendError(res, 400, "消息游标无效");
+    beforeClause = "AND m.message_sequence < ?";
+    params.push(cursor.message_sequence);
+  }
+  params.push(51);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+       u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
+       reply.id AS reply_id, reply.message_sequence AS reply_sequence,
+       reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
+       reply.content AS reply_content, reply.message_type AS reply_message_type,
+       reply.sticker_id AS reply_sticker_id, reply.recalled_at AS reply_recalled_at
+     FROM circle_messages m
+     LEFT JOIN users u ON u.id = m.sender_id
+     LEFT JOIN circle_messages reply ON reply.id = m.reply_to_message_id AND reply.circle_id = m.circle_id
+     LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
+     WHERE m.circle_id = ? ${beforeClause}
+     ORDER BY m.message_sequence DESC
+     LIMIT ?`,
+    params
+  );
+  const hasMore = rows.length > 50;
+  if (hasMore) rows.pop();
+  rows.reverse();
+  res.json({
+    messages: rows.map(circleMessagePayload),
+    hasMore,
+    nextCursor: hasMore && rows[0] ? String(rows[0].id) : null
+  });
+});
+
+app.patch("/api/admin/circles/:id/messages/:messageId/recall", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const [[message]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, sender_id, message_type, recalled_at FROM circle_messages WHERE id = ? AND circle_id = ? LIMIT 1",
+    [req.params.messageId, req.params.id]
+  );
+  if (!message) return sendError(res, 404, "消息不存在");
+  if (message.message_type === "gift") return sendError(res, 409, "礼物消息关联真实送礼流水，不可撤回");
+  if (message.recalled_at) return sendError(res, 409, "消息已经撤回");
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [result] = await connection.query<mysql.ResultSetHeader>(
+      `UPDATE circle_messages
+       SET content = '', sticker_id = NULL, mentions_json = NULL, recalled_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND circle_id = ? AND recalled_at IS NULL`,
+      [req.params.messageId, req.params.id]
+    );
+    if (!result.affectedRows) {
+      await connection.rollback();
+      return sendError(res, 409, "消息已经撤回");
+    }
+    await connection.query("DELETE FROM circle_message_mentions WHERE message_id = ?", [req.params.messageId]);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  const recalledAt = new Date().toISOString();
+  emitCircleSocketEvent(req.params.id, "circle_message_recalled", {
+    circleId: req.params.id,
+    messageId: req.params.messageId,
+    senderId: message.sender_id ? String(message.sender_id) : null,
+    recalledByAdminId: admin.id,
+    recalledAt
+  });
+  const [members] = await pool.query<mysql.RowDataPacket[]>("SELECT user_id FROM circle_members WHERE circle_id = ?", [req.params.id]);
+  for (const member of members) {
+    emitUserEvent(String(member.user_id), "circle_unread_changed", { circleId: req.params.id });
+    emitUnreadChanged(String(member.user_id), "circle_message_recalled");
+  }
+  res.json({ ok: true, messageId: req.params.messageId, recalledAt });
+});
+
 app.post("/api/admin/circles", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
@@ -3496,11 +3605,12 @@ async function conversationForUser(conversationId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
        u.experience AS other_experience,
-       u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url
+       u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url,
+       EXISTS(SELECT 1 FROM user_follows follow_state WHERE follow_state.follower_id = ? AND follow_state.following_id = u.id) AS is_following
      FROM conversations c
      INNER JOIN users u ON u.id = IF(c.user_a_id = ?, c.user_b_id, c.user_a_id)
      WHERE c.id = ? AND (c.user_a_id = ? OR c.user_b_id = ?) LIMIT 1`,
-    [userId, conversationId, userId, userId]
+    [userId, userId, conversationId, userId, userId]
   );
   return rows[0] ?? null;
 }
@@ -3547,7 +3657,8 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
         ...conversationOtherUserIdentity(conversation.other_id, conversation.other_nickname, conversation.other_experience),
         avatar: avatarUrl(conversation.other_id, conversation.other_avatar, bool(conversation.other_has_avatar)),
         equippedBadge: equippedBadge(conversation.other_badge_key, conversation.other_badge_icon_url),
-        isOnline: isUserOnline(conversation.other_id)
+        isOnline: isUserOnline(conversation.other_id),
+        isFollowing: bool(conversation.is_following)
       }
     },
     messages: rows.map((row) => ({
@@ -3837,6 +3948,14 @@ type CharmRankingItem = {
   charmValue: number;
 };
 
+type GenerosityRankingItem = {
+  rank: number;
+  id: string;
+  nickname: string;
+  avatar: string | null;
+  generosityValue: number;
+};
+
 type RankingPeriod = "7d" | "30d" | "all";
 
 type RankingsCacheEntry = {
@@ -3845,6 +3964,7 @@ type RankingsCacheEntry = {
   achievementUsers: AchievementRankingItem[];
   levelUsers: LevelRankingItem[];
   charmUsers: CharmRankingItem[];
+  generosityUsers: GenerosityRankingItem[];
 };
 
 const rankingsCache = new Map<RankingPeriod, RankingsCacheEntry>();
@@ -3962,6 +4082,17 @@ app.get("/api/rankings", async (req, res) => {
       [cutoff ?? new Date(0)]
     );
 
+    const [generosityRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.id, u.nickname, u.generosity_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+         COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_generosity
+       FROM users u
+       LEFT JOIN gift_sends gs ON gs.sender_id = u.id
+       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
+       GROUP BY u.id, u.nickname, u.generosity_value, u.created_at, has_avatar
+       ORDER BY u.created_at ASC, u.id ASC`,
+      [cutoff ?? new Date(0)]
+    );
+
     const users = new Map<string, { id: string; nickname: string; avatar: string | null; achievementPoints: number; reachedAt: number; createdAt: number }>();
     for (const row of achievementRows) {
       const id = String(row.id);
@@ -4048,8 +4179,20 @@ app.get("/api/rankings", async (req, res) => {
       }))
       .sort((a, b) => b.charmValue - a.charmValue || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
       .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
+    const generosityUsers = generosityRows
+      .map((row) => ({
+        id: String(row.id),
+        nickname: String(row.nickname),
+        avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
+        generosityValue: cutoff
+          ? Math.floor(Number(row.period_generosity) || 0)
+          : Math.floor(Number(row.generosity_value) || 0),
+        createdAt: new Date(row.created_at).getTime()
+      }))
+      .sort((a, b) => b.generosityValue - a.generosityValue || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
 
-    cached = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers, charmUsers };
+    cached = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers, charmUsers, generosityUsers };
     rankingsCache.set(period, cached);
   }
 
@@ -4057,10 +4200,12 @@ app.get("/api/rankings", async (req, res) => {
   const topAchievementUsers = cached.achievementUsers.slice(0, 10);
   const topLevelUsers = cached.levelUsers.slice(0, 10);
   const topCharmUsers = cached.charmUsers.slice(0, 10);
+  const topGenerosityUsers = cached.generosityUsers.slice(0, 10);
   const ownHotSoup = cached.hotSoups.find((item) => item.creatorId === user.id) ?? null;
   const ownAchievementUser = cached.achievementUsers.find((item) => item.id === user.id) ?? null;
   const ownLevelUser = cached.levelUsers.find((item) => item.id === user.id) ?? null;
   const ownCharmUser = cached.charmUsers.find((item) => item.id === user.id) ?? null;
+  const ownGenerosityUser = cached.generosityUsers.find((item) => item.id === user.id) ?? null;
   const toPublicHotSoup = ({ creatorId: _creatorId, ...item }: HotSoupRankingItem) => item;
 
   res.json({
@@ -4071,7 +4216,9 @@ app.get("/api/rankings", async (req, res) => {
     levelUsers: topLevelUsers,
     levelOwn: ownLevelUser && !topLevelUsers.some((item) => item.id === ownLevelUser.id) ? ownLevelUser : null,
     charmUsers: topCharmUsers,
-    charmOwn: ownCharmUser && !topCharmUsers.some((item) => item.id === ownCharmUser.id) ? ownCharmUser : null
+    charmOwn: ownCharmUser && !topCharmUsers.some((item) => item.id === ownCharmUser.id) ? ownCharmUser : null,
+    generosityUsers: topGenerosityUsers,
+    generosityOwn: ownGenerosityUser && !topGenerosityUsers.some((item) => item.id === ownGenerosityUser.id) ? ownGenerosityUser : null
   });
 });
 
@@ -4208,6 +4355,8 @@ app.get("/api/soups", async (req, res) => {
     where.push("s.type = ?");
     params.push(String(req.query.type));
   }
+  if (req.query.original === "yes") where.push("s.is_original = TRUE");
+  if (req.query.original === "no") where.push("s.is_original = FALSE");
   if (["简单", "普通", "困难", "地狱"].includes(String(req.query.difficulty ?? ""))) {
     where.push("s.difficulty = ?");
     params.push(String(req.query.difficulty));
@@ -4229,10 +4378,12 @@ app.get("/api/soups", async (req, res) => {
     !req.query.author &&
     !req.query.type &&
     !req.query.difficulty &&
+    !req.query.original &&
     !req.query.minRating &&
     !req.query.bottomPublic &&
     !req.query.aiGame &&
     !req.query.reviewStatus &&
+    !req.query.sortBy &&
     !req.query.order;
   const featuredSoupIds = useHomeFeaturedOrder ? await homeFeaturedSoupIds() : [];
 
@@ -4241,15 +4392,27 @@ app.get("/api/soups", async (req, res) => {
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(Math.floor(requestedLimit), 50)) : 10;
   const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0;
   const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RANDOM";
+  const sortBy = req.query.sortBy === "heat" ? "heat" : "createdAt";
   const randomSeed = String(req.query.seed ?? new Date().toISOString().slice(0, 10)).slice(0, 32);
   const featuredCases = featuredSoupIds.map((_, index) => `WHEN ? THEN ${index}`).join(" ");
   const featuredPlaceholders = featuredSoupIds.map(() => "?").join(", ");
+  const heatOrderExpression = `ROUND(
+    (COALESCE((SELECT AVG(heat_eval.total) FROM evaluations heat_eval WHERE heat_eval.soup_id = s.id), 0) + 1)
+    * (
+      s.view_count
+      + ((SELECT COUNT(*) FROM soup_likes heat_like WHERE heat_like.soup_id = s.id) + 1) * 15
+      + ((SELECT COUNT(*) FROM soup_favorites heat_favorite WHERE heat_favorite.soup_id = s.id) + 1) * 20
+      + ((SELECT COUNT(*) FROM evaluations heat_count WHERE heat_count.soup_id = s.id) + 1) * 25
+    ) - 60
+  )`;
   const orderClause = featuredSoupIds.length > 0
     ? `CASE s.id ${featuredCases} ELSE ${featuredSoupIds.length} END ASC,
        CASE WHEN s.id IN (${featuredPlaceholders}) THEN 0 ELSE CRC32(CONCAT(s.id, ?)) END ASC`
     : order === "RANDOM"
       ? "CRC32(CONCAT(s.id, ?))"
-      : `s.created_at ${order}`;
+      : sortBy === "heat"
+        ? `${heatOrderExpression} ${order}, s.created_at DESC`
+        : `s.created_at ${order}`;
   const orderParams = featuredSoupIds.length > 0
     ? [...featuredSoupIds, ...featuredSoupIds, randomSeed]
     : order === "RANDOM"
@@ -4444,6 +4607,7 @@ app.post("/api/soups", async (req, res) => {
     connection.release();
   }
   queueSystemBadgeSync([user.id]);
+  if (review.decision === "pending") await recordAdminModuleEvent("approvals");
   res.status(201).json({ id, reviewStatus: review.decision });
 
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
@@ -4544,7 +4708,7 @@ app.get("/api/soups/:id", async (req, res) => {
       isFavorited: favoriteRows.length > 0,
       isLiked: likeRows.length > 0,
       pendingRequestId: requestRows[0]?.id ?? null,
-      evaluations: evalRows.map(mapEvaluation)
+      evaluations: evalRows.map((row) => mapEvaluation(row, full))
     }
   });
 });
@@ -4812,6 +4976,7 @@ app.put("/api/soups/:id", async (req, res) => {
   } finally {
     connection.release();
   }
+  if (review.decision === "pending") await recordAdminModuleEvent("approvals");
   res.json({ ok: true, reviewStatus: review.decision });
 
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
@@ -5044,6 +5209,7 @@ app.post("/api/soups/:id/access-requests", async (req, res) => {
     "INSERT INTO view_requests (id, soup_id, requester_id, requester_name, owner_id) VALUES (?, ?, ?, ?, ?)",
     [id, req.params.id, user.id, user.nickname, soup.creator_id]
   );
+  await recordAdminModuleEvent("approvals");
 
   const recipients = new Set([soup.creator_id, ...(await adminIds())]);
   await Promise.all(
@@ -5069,7 +5235,7 @@ app.get("/api/access-requests", async (req, res) => {
   if (!user) return;
   const params: unknown[] = [];
   let where = "";
-  if (!isSuperAdminRole(user.role)) {
+  if (!isBackofficeAdminRole(user.role)) {
     where = "WHERE vr.owner_id = ?";
     params.push(user.id);
   }
@@ -5122,7 +5288,7 @@ app.post("/api/access-requests/:id/decision", async (req, res) => {
   const request = rows[0];
   if (!request) return sendError(res, 404, "申请不存在");
   if (request.status !== "pending") return sendError(res, 409, "申请已处理");
-  if (!isSuperAdminRole(user.role) && user.id !== request.owner_id) return sendError(res, 403, "没有审批权限");
+  if (!isBackofficeAdminRole(user.role) && user.id !== request.owner_id) return sendError(res, 403, "没有审批权限");
 
   await pool.query(
     "UPDATE view_requests SET status = ?, handled_at = NOW(), handled_by = ? WHERE id = ?",
@@ -5148,7 +5314,7 @@ app.post("/api/access-requests/:id/decision", async (req, res) => {
 });
 
 app.get("/api/admin/excellent-author-applications", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const requestedLimit = Number(req.query.limit);
   const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : 10;
   const offset = Math.max(0, Number(req.query.offset ?? 0));
@@ -5179,14 +5345,14 @@ app.get("/api/admin/excellent-author-applications", async (req, res) => {
 });
 
 app.get("/api/admin/excellent-author-applications/:id", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const application = await getExcellentAuthorApplicationDetail(req.params.id);
   if (!application) return sendError(res, 404, "优秀作者认证申请不存在");
   res.json({ application });
 });
 
 app.post("/api/admin/excellent-author-applications/:id/decision", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireBackofficeAdmin(req, res);
   if (!admin) return;
   const parsed = z.object({ decision: z.enum(["approved", "rejected"]) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "审批结果不正确");
@@ -5277,7 +5443,7 @@ app.get("/api/notifications", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT n.*,
       CASE
-           WHEN n.type IN ('badge_unlock', 'shell_adjustment', 'badge_history_backfill') THEN NULL
+           WHEN n.type IN ('badge_unlock', 'shell_adjustment', 'badge_history_backfill', 'daily_task_gift_reward', 'ranking_reward') THEN NULL
            WHEN n.type = 'view_request' OR n.type = 'view_request_result' THEN vr.soup_id
            ELSE n.related_id
        END AS soup_id
@@ -5297,6 +5463,10 @@ app.get("/api/notifications", async (req, res) => {
       relatedId: row.soup_id,
       link: row.type === "badge_unlock"
         ? "/mine/achievements"
+        : row.type === "daily_task_gift_reward"
+          ? "/mine/tasks"
+        : row.type === "ranking_reward"
+          ? "/rankings"
         : row.type === "shell_adjustment" || row.type === "badge_history_backfill"
           ? "/mine/shells/transactions"
         : row.type === "user_follow" && row.actor_id
@@ -5816,7 +5986,48 @@ app.post("/api/me/feedback", async (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, user.id, user.nickname, user.username, parsed.data.title, parsed.data.type, parsed.data.content, screenshot]
   );
+  await recordAdminModuleEvent("feedback");
   res.status(201).json({ id });
+});
+
+app.get("/api/admin/module-unread", async (req, res) => {
+  if (!(await requireBackofficeAdmin(req, res))) return;
+  const [eventRows, readRows] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      "SELECT module_key, MAX(id) AS newest_event_id FROM admin_module_events WHERE module_key IN ('approvals', 'feedback') GROUP BY module_key"
+    ).then(([rows]) => rows),
+    pool.query<mysql.RowDataPacket[]>(
+      "SELECT module_key, last_event_id FROM admin_module_reads WHERE module_key IN ('approvals', 'feedback')"
+    ).then(([rows]) => rows)
+  ]);
+  const events = new Map(eventRows.map((row) => [String(row.module_key), Number(row.newest_event_id ?? 0)]));
+  const reads = new Map(readRows.map((row) => [String(row.module_key), Number(row.last_event_id ?? 0)]));
+  res.setHeader("Cache-Control", "private, no-store, max-age=0");
+  res.json({
+    approvals: (events.get("approvals") ?? 0) > (reads.get("approvals") ?? 0),
+    feedback: (events.get("feedback") ?? 0) > (reads.get("feedback") ?? 0)
+  });
+});
+
+app.patch("/api/admin/module-unread/:module/read", async (req, res) => {
+  const admin = await requireBackofficeAdmin(req, res);
+  if (!admin) return;
+  const moduleKey = String(req.params.module);
+  if (moduleKey !== "approvals" && moduleKey !== "feedback") return sendError(res, 400, "后台模块不正确");
+  await pool.query(
+    `INSERT INTO admin_module_reads (module_key, last_read_at, last_event_id, updated_by)
+     SELECT ?, CURRENT_TIMESTAMP(6), COALESCE(MAX(id), 0), ?
+     FROM admin_module_events WHERE module_key = ?
+     ON DUPLICATE KEY UPDATE
+       last_read_at = CURRENT_TIMESTAMP(6),
+       last_event_id = VALUES(last_event_id),
+       updated_by = VALUES(updated_by)`,
+    [moduleKey, admin.id, moduleKey]
+  );
+  for (const adminId of await backofficeAdminIds()) {
+    emitUserEvent(adminId, "admin_module_read", { moduleKey });
+  }
+  res.json({ ok: true });
 });
 
 app.get("/api/admin/feedback", async (req, res) => {
@@ -6053,6 +6264,8 @@ app.get("/api/admin/users", async (req, res) => {
     likeCount: "like_count",
     favoriteCount: "favorite_count",
     shellBalance: "u.shell_balance",
+    charmValue: "u.charm_value",
+    collectionValue: "collection_value",
     achievementPoints: "achievement_points",
     experience: "u.experience"
   };
@@ -6067,7 +6280,7 @@ app.get("/api/admin/users", async (req, res) => {
     : "";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at, u.shell_balance,
-      u.experience,
+      u.experience, u.charm_value, COALESCE(uas.total_collection_value, 0) AS collection_value,
       EXISTS (
         SELECT 1 FROM user_login_days uld
         WHERE uld.user_id = u.id
@@ -6082,6 +6295,7 @@ app.get("/api/admin/users", async (req, res) => {
        LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
        WHERE ubu.user_id = u.id) AS achievement_points
      FROM users u
+     LEFT JOIN user_asset_summaries uas ON uas.user_id = u.id
      ${where}
      ORDER BY ${onlineOrderClause}${sortColumn} ${sortOrder}, u.created_at DESC
      LIMIT ? OFFSET ?`,
@@ -6095,6 +6309,8 @@ app.get("/api/admin/users", async (req, res) => {
       isOnline: isUserOnline(row.id),
       lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
       shellBalance: Number(row.shell_balance ?? 0),
+      charmValue: Number(row.charm_value ?? 0),
+      collectionValue: Number(row.collection_value ?? 0),
       experience: Number(row.experience ?? 0),
       achievementPoints: Number(row.achievement_points ?? 0),
       loggedInToday: Boolean(row.logged_in_today),
@@ -6296,7 +6512,7 @@ app.get("/api/admin/evaluations", async (req, res) => {
   const hasMore = rows.length > limit;
   if (hasMore) rows.pop();
   res.json({
-    evaluations: rows.map(mapEvaluation),
+    evaluations: rows.map((row) => mapEvaluation(row)),
     total: Number(totalRow.total),
     hasMore
   });
@@ -6304,13 +6520,13 @@ app.get("/api/admin/evaluations", async (req, res) => {
 
 app.patch("/api/admin/evaluations/:id", async (req, res) => {
   if (!(await requireBackofficeAdmin(req, res))) return;
-  const parsed = evaluationSchema.safeParse(req.body);
+  const parsed = evaluationSchema.extend({ isContentHidden: z.boolean().default(false) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "评分必须在 1-5 之间，步长 0.5；维度评分必须在 0-5 之间");
 
   const data = parsed.data;
   const [result] = await pool.query<mysql.ResultSetHeader>(
     `UPDATE evaluations
-     SET total = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?
+     SET total = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?, is_content_hidden = ?
      WHERE id = ?`,
     [
       data.total,
@@ -6321,6 +6537,7 @@ app.patch("/api/admin/evaluations/:id", async (req, res) => {
       data.twist,
       data.depth,
       data.content || null,
+      data.isContentHidden,
       req.params.id
     ]
   );
@@ -6460,6 +6677,20 @@ syncPendingInviteEmailRewards().catch((error) => console.error("Invite email rew
 settleInviteShellRewards();
 const inviteShellSettlementTimer = setInterval(settleInviteShellRewards, 60 * 60_000);
 inviteShellSettlementTimer.unref();
+const settleRankingRewards = () => {
+  runRankingRewardScheduler()
+    .then((userIds) => {
+      if (userIds.length > 0) {
+        rankingsCache.clear();
+        queueSystemBadgeSync(userIds);
+      }
+      userIds.forEach((userId) => emitUnreadChanged(userId, "ranking_reward"));
+    })
+    .catch((error) => console.error("Ranking reward settlement failed:", error));
+};
+settleRankingRewards();
+const rankingRewardSettlementTimer = setInterval(settleRankingRewards, 60_000);
+rankingRewardSettlementTimer.unref();
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);
 });

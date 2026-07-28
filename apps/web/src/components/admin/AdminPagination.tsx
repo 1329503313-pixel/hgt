@@ -42,14 +42,14 @@ export function AdminPagination({
   total,
   onPageChange,
   onPageSizeChange
-}: AdminPaginationState) {
+}: Omit<AdminPaginationState, "onPageSizeChange"> & { onPageSizeChange?: AdminPaginationState["onPageSizeChange"] }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t border-line pt-4 text-sm sm:flex-row">
       <div className="flex items-center gap-2 text-muted">
         <span>共 {total} 条</span>
-        <label className="flex items-center gap-2">
+        {onPageSizeChange && <label className="flex items-center gap-2">
           <span>每页</span>
           <select
             className="field h-9 w-20 px-2 text-sm"
@@ -62,7 +62,7 @@ export function AdminPagination({
             <option value={50}>50</option>
           </select>
           <span>条</span>
-        </label>
+        </label>}
       </div>
       <div className="flex items-center gap-2">
         <button className="btn btn-secondary h-9 px-3 text-xs" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>

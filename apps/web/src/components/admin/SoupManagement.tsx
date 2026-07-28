@@ -1,25 +1,27 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Trash2, ThumbsUp, Star, ExternalLink, ArrowUpDown, Check, X } from "lucide-react";
+import { Search, Trash2, ThumbsUp, Star, ExternalLink, ArrowUpDown, Flame } from "lucide-react";
 import type { SoupSummary } from "../../shared/types";
 import { api, SoupsResponse } from "../../api";
-import { soupTypes } from "../../context/AppContext";
+import { soupDifficulties, soupTypes } from "../../context/AppContext";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
 
-type SoupColumn = "title" | "review" | "original" | "likes" | "favorites" | "evaluations" | "creator" | "createdAt" | "actions";
+type SoupColumn = "title" | "review" | "original" | "difficulty" | "heat" | "likes" | "favorites" | "evaluations" | "creator" | "createdAt" | "actions";
 
 const soupColumns: readonly AdminColumn<SoupColumn>[] = [
   { key: "title", label: "标题", width: "minmax(180px, 1fr)" },
   { key: "review", label: "审核状态", width: "100px" },
   { key: "original", label: "原创", width: "70px" },
+  { key: "difficulty", label: "难度", width: "70px" },
+  { key: "heat", label: "热力值", width: "100px" },
   { key: "likes", label: "点赞", width: "70px" },
   { key: "favorites", label: "收藏", width: "70px" },
   { key: "evaluations", label: "评价", width: "70px" },
   { key: "creator", label: "创建者", width: "90px" },
   { key: "createdAt", label: "发布时间", width: "100px" },
-  { key: "actions", label: "操作", width: "260px" }
+  { key: "actions", label: "操作", width: "180px" }
 ];
 
 export function SoupManagement({ canDelete }: { canDelete: boolean }) {
@@ -35,7 +37,10 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
   const [submittedKeyword, setSubmittedKeyword] = useState("");
   const [submittedType, setSubmittedType] = useState("");
   const [order, setOrder] = useState<"desc" | "asc">("desc");
+  const [sortBy, setSortBy] = useState<"createdAt" | "heat">("createdAt");
   const [reviewFilter, setReviewFilter] = useState("all");
+  const [difficultyFilter, setDifficultyFilter] = useState("");
+  const [originalFilter, setOriginalFilter] = useState<"all" | "yes" | "no">("all");
   const [visibleColumns, setVisibleColumns] = useState<Set<SoupColumn>>(() => new Set(soupColumns.map((column) => column.key)));
   const template = useMemo(() => gridTemplate(soupColumns, visibleColumns), [visibleColumns]);
 
@@ -47,7 +52,10 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
         if (submittedKeyword) params.set("keyword", submittedKeyword);
         if (submittedType) params.set("type", submittedType);
         params.set("order", order);
+        params.set("sortBy", sortBy);
         params.set("reviewStatus", reviewFilter);
+        if (difficultyFilter) params.set("difficulty", difficultyFilter);
+        if (originalFilter !== "all") params.set("original", originalFilter);
         params.set("limit", String(pageSize));
         params.set("offset", String((page - 1) * pageSize));
         const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
@@ -57,7 +65,7 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
         setLoading(false);
       }
     },
-    [submittedKeyword, submittedType, reviewFilter, order, page, pageSize]
+    [submittedKeyword, submittedType, reviewFilter, difficultyFilter, originalFilter, sortBy, order, page, pageSize]
   );
 
   useEffect(() => {
@@ -77,13 +85,6 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
     setTotal((old) => Math.max(0, old - 1));
   }
 
-  async function handleReview(soup: SoupSummary, decision: "approved" | "rejected") {
-    const reason = decision === "rejected" ? (prompt("请输入审核未通过原因", soup.reviewReason || "内容存在不当表达") ?? "") : "";
-    if (decision === "rejected" && !reason.trim()) return;
-    await api(`/api/admin/soups/${soup.id}/review`, { method: "POST", body: { decision, reviewVersion: soup.reviewVersion, reason } });
-    await loadSoups();
-  }
-
   return (
     <div className="card p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -91,7 +92,7 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
         <ColumnSelector columns={soupColumns} visible={visibleColumns} onChange={setVisibleColumns} />
       </div>
 
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <div className="relative min-w-0 flex-1">
           <input
             className="field h-10 pl-4 pr-24"
@@ -115,13 +116,26 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
           <option value="rejected">未通过</option>
           <option value="all">全部状态</option>
         </select>
+        <select className="field h-10 sm:w-32" value={difficultyFilter} onChange={(e) => { setPage(1); setDifficultyFilter(e.target.value); }}>
+          <option value="">全部难度</option>
+          {soupDifficulties.map((difficulty) => <option key={difficulty} value={difficulty}>{difficulty}</option>)}
+        </select>
+        <select className="field h-10 sm:w-32" value={originalFilter} onChange={(e) => { setPage(1); setOriginalFilter(e.target.value as "all" | "yes" | "no"); }}>
+          <option value="all">全部来源</option>
+          <option value="yes">原创</option>
+          <option value="no">非原创</option>
+        </select>
+        <select className="field h-10 sm:w-36" value={sortBy} onChange={(e) => { setPage(1); setSortBy(e.target.value as "createdAt" | "heat"); }}>
+          <option value="createdAt">按发布时间排序</option>
+          <option value="heat">按热力值排序</option>
+        </select>
         <button
           className="btn btn-secondary h-10 px-3 text-xs whitespace-nowrap"
           onClick={() => { setPage(1); setOrder((o) => (o === "desc" ? "asc" : "desc")); }}
-          title={order === "desc" ? "发布时间：最新在前" : "发布时间：最早在前"}
+          title={order === "desc" ? "当前为倒序" : "当前为顺序"}
         >
           <ArrowUpDown size={15} />
-          {order === "desc" ? "最新在前" : "最早在前"}
+          {order === "desc" ? "倒序" : "顺序"}
         </button>
       </div>
 
@@ -149,16 +163,14 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
                 {visibleColumns.has("original") && <span className={`text-xs font-semibold ${s.isOriginal ? "text-emerald-600" : "text-muted"}`}>
                   {s.isOriginal ? "原创" : "非原创"}
                 </span>}
+                {visibleColumns.has("difficulty") && <span className="text-xs font-semibold text-orange-600">{s.difficulty}</span>}
+                {visibleColumns.has("heat") && <span className="inline-flex items-center justify-center gap-1 font-black text-red-500"><Flame className="fill-current" size={13} />{s.heatValue.toLocaleString()}</span>}
                 {visibleColumns.has("likes") && <span className="inline-flex items-center justify-center gap-1 text-muted"><ThumbsUp size={13} /> {s.likeCount}</span>}
                 {visibleColumns.has("favorites") && <span className="inline-flex items-center justify-center gap-1 text-muted"><Star size={13} /> {s.favoriteCount}</span>}
                 {visibleColumns.has("evaluations") && <span className="text-muted">{s.evaluationCount}</span>}
                 {visibleColumns.has("creator") && <span className="max-w-full truncate text-muted">{s.creatorName}</span>}
                 {visibleColumns.has("createdAt") && <span className="text-xs text-muted whitespace-nowrap">{new Date(s.createdAt).toLocaleDateString()}</span>}
                 {visibleColumns.has("actions") && <div className="flex items-center justify-center gap-2 whitespace-nowrap">
-                  {s.reviewStatus === "pending" && <>
-                    <button className="btn btn-primary h-8 px-2 text-xs" onClick={() => handleReview(s, "approved")}><Check size={14} />通过</button>
-                    <button className="btn btn-danger h-8 px-2 text-xs" onClick={() => handleReview(s, "rejected")}><X size={14} />驳回</button>
-                  </>}
                   <button className="btn btn-secondary h-8 w-[78px] flex-none px-2 text-xs whitespace-nowrap" onClick={() => navigate(`/soup/${s.id}`)} title="查看">
                     <ExternalLink size={14} />
                     <span>查看</span>

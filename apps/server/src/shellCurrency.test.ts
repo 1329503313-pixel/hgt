@@ -117,6 +117,20 @@ test("每日任务奖励和次数符合产品规划", () => {
   );
 });
 
+test("指定每日任务包含额外礼物奖励", () => {
+  assert.deepEqual(
+    SHELL_TASKS
+      .filter((task) => task.giftReward)
+      .map(({ type, giftReward }) => ({ type, giftReward })),
+    [
+      { type: "daily_login", giftReward: { name: "汤汤抱枕", quantity: 3 } },
+      { type: "publish_soup", giftReward: { name: "幸运贝壳", quantity: 1 } },
+      { type: "join_online_soup", giftReward: { name: "汤汤抱枕", quantity: 3 } },
+      { type: "host_online_soup", giftReward: { name: "幸运贝壳", quantity: 1 } }
+    ]
+  );
+});
+
 test("新手任务奖励与一次性任务清单符合产品规划", () => {
   assert.deepEqual(
     BEGINNER_TASKS.map(({ type, reward }) => ({ type, reward })),

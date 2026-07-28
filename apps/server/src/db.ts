@@ -261,6 +261,7 @@ export async function initDatabase() {
       twist DECIMAL(3,1) NULL,
       depth DECIMAL(3,1) NULL,
       content TEXT NULL,
+      is_content_hidden BOOLEAN NOT NULL DEFAULT FALSE,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_evaluation_user_soup (soup_id, reviewer_id),
@@ -355,6 +356,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "enable_ai_game", "enable_ai_game BOOLEAN NOT NULL DEFAULT FALSE AFTER is_bottom_public");
   await ensureColumn("soups", "is_sensitive", "is_sensitive BOOLEAN NOT NULL DEFAULT FALSE AFTER is_original");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
+  await ensureColumn("evaluations", "is_content_hidden", "is_content_hidden BOOLEAN NOT NULL DEFAULT FALSE AFTER content");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
   await ensureColumn("users", "invite_code", "invite_code CHAR(5) NULL AFTER nickname");
   await ensureColumn("users", "badges_initialized", "badges_initialized TINYINT(1) NOT NULL DEFAULT 0 AFTER avatar");
@@ -364,6 +366,7 @@ export async function initDatabase() {
   await ensureColumn("users", "shell_balance", "shell_balance INT UNSIGNED NOT NULL DEFAULT 0 AFTER last_login_at");
   await ensureColumn("users", "pearl_balance", "pearl_balance INT UNSIGNED NOT NULL DEFAULT 0 AFTER shell_balance");
   await ensureColumn("users", "charm_value", "charm_value BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER pearl_balance");
+  await ensureColumn("users", "generosity_value", "generosity_value BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER charm_value");
   await ensureColumn("users", "experience", "experience BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER charm_value");
   await ensureColumn("users", "profile_background", "profile_background LONGTEXT NULL AFTER avatar");
   await ensureColumn("users", "profile_background_card_id", "profile_background_card_id VARCHAR(64) NULL AFTER profile_background");
@@ -728,6 +731,30 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_module_reads (
+      module_key VARCHAR(32) PRIMARY KEY,
+      last_read_at DATETIME(6) NOT NULL,
+      last_event_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      updated_by VARCHAR(64) NULL,
+      updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+      CONSTRAINT fk_admin_module_reads_user FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn("admin_module_reads", "last_event_id", "last_event_id BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER last_read_at");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_module_events (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      module_key VARCHAR(32) NOT NULL,
+      created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+      INDEX idx_admin_module_events_module_id (module_key, id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(
+    `INSERT IGNORE INTO admin_module_reads (module_key, last_read_at)
+     VALUES ('approvals', CURRENT_TIMESTAMP(6)), ('feedback', CURRENT_TIMESTAMP(6))`
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS excellent_author_applications (
       id VARCHAR(64) PRIMARY KEY,
       applicant_id VARCHAR(64) NOT NULL,
@@ -1007,6 +1034,136 @@ export async function initDatabase() {
       INDEX idx_gifts_status_sort (status, sort_order, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS system_reward_gift_bindings (
+      reward_key VARCHAR(64) PRIMARY KEY,
+      gift_id VARCHAR(64) NOT NULL,
+      expected_name VARCHAR(100) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_system_reward_gift_bindings_gift (gift_id),
+      CONSTRAINT fk_system_reward_gift_binding_gift FOREIGN KEY (gift_id) REFERENCES gifts(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'daily:tangtang_pillow', id, '汤汤抱枕' FROM gifts
+    WHERE name = '汤汤抱枕' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'daily:lucky_shell', id, '幸运贝壳' FROM gifts
+    WHERE name = '幸运贝壳' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'ranking:mystery_key', id, '神秘钥匙' FROM gifts
+    WHERE name = '神秘钥匙' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'ranking:wisdom_crystal', id, '智慧水晶球' FROM gifts
+    WHERE name = '智慧水晶球' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'ranking:moon_boat', id, '月亮小船' FROM gifts
+    WHERE name = '月亮小船' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'ranking:deep_sea_pearl', id, '深海明珠' FROM gifts
+    WHERE name = '深海明珠' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_gift_inventory (
+      user_id VARCHAR(64) NOT NULL,
+      gift_id VARCHAR(64) NOT NULL,
+      quantity SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, gift_id),
+      INDEX idx_user_gift_inventory_gift (gift_id),
+      CONSTRAINT chk_user_gift_inventory_quantity CHECK (quantity <= 999),
+      CONSTRAINT fk_user_gift_inventory_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_gift_inventory_gift FOREIGN KEY (gift_id) REFERENCES gifts(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gift_inventory_transactions (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      gift_id VARCHAR(64) NOT NULL,
+      transaction_type VARCHAR(32) NOT NULL,
+      quantity_change INT NOT NULL,
+      balance_after SMALLINT UNSIGNED NOT NULL,
+      overflow_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+      overflow_shell BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      related_type VARCHAR(64) NULL,
+      related_id VARCHAR(64) NULL,
+      operator_id VARCHAR(64) NULL,
+      remark VARCHAR(255) NULL,
+      idempotency_key VARCHAR(191) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_gift_inventory_transactions_idempotency (idempotency_key),
+      INDEX idx_gift_inventory_transactions_user_time (user_id, created_at, id),
+      INDEX idx_gift_inventory_transactions_gift (gift_id),
+      CONSTRAINT fk_gift_inventory_transaction_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_gift_inventory_transaction_gift FOREIGN KEY (gift_id) REFERENCES gifts(id) ON DELETE CASCADE,
+      CONSTRAINT fk_gift_inventory_transaction_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn(
+    "gift_inventory_transactions",
+    "operator_id",
+    "operator_id VARCHAR(64) NULL AFTER related_id"
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ranking_reward_schedules (
+      period_type ENUM('weekly','monthly') PRIMARY KEY,
+      next_settlement_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_ranking_reward_schedules_due (next_settlement_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ranking_reward_settlements (
+      id VARCHAR(64) PRIMARY KEY,
+      period_type ENUM('weekly','monthly') NOT NULL,
+      period_start DATETIME NOT NULL,
+      period_end DATETIME NOT NULL,
+      status ENUM('processing','completed') NOT NULL DEFAULT 'processing',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME NULL,
+      UNIQUE KEY uq_ranking_reward_settlement_period (period_type, period_end),
+      INDEX idx_ranking_reward_settlements_time (period_end, period_type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ranking_reward_grants (
+      id VARCHAR(64) PRIMARY KEY,
+      settlement_id VARCHAR(64) NOT NULL,
+      board_type VARCHAR(24) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      rank_position TINYINT UNSIGNED NOT NULL,
+      metric_value BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      experience_reward INT UNSIGNED NOT NULL DEFAULT 0,
+      actual_experience_reward INT UNSIGNED NOT NULL DEFAULT 0,
+      shell_reward INT UNSIGNED NOT NULL DEFAULT 0,
+      actual_shell_reward INT UNSIGNED NOT NULL DEFAULT 0,
+      gift_id VARCHAR(64) NULL,
+      gift_name_snapshot VARCHAR(100) NULL,
+      gift_quantity SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_ranking_reward_grant_user_board (settlement_id, board_type, user_id),
+      INDEX idx_ranking_reward_grants_user_time (user_id, created_at, id),
+      CONSTRAINT fk_ranking_reward_grant_settlement FOREIGN KEY (settlement_id) REFERENCES ranking_reward_settlements(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ranking_reward_grant_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ranking_reward_grant_gift FOREIGN KEY (gift_id) REFERENCES gifts(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS gift_sends (
@@ -1022,6 +1179,8 @@ export async function initDatabase() {
       payment_currency ENUM('shell','pearl') NOT NULL,
       unit_cost INT UNSIGNED NOT NULL,
       total_cost BIGINT UNSIGNED NOT NULL,
+      inventory_quantity_used SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+      purchased_quantity SMALLINT UNSIGNED NOT NULL DEFAULT 0,
       unit_reward_shell INT UNSIGNED NOT NULL DEFAULT 0,
       total_reward_shell BIGINT UNSIGNED NOT NULL DEFAULT 0,
       unit_reward_pearl INT UNSIGNED NOT NULL DEFAULT 0,
@@ -1038,6 +1197,31 @@ export async function initDatabase() {
       CONSTRAINT fk_gift_send_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn(
+    "gift_sends",
+    "inventory_quantity_used",
+    "inventory_quantity_used SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER total_cost"
+  );
+  await ensureColumn(
+    "gift_sends",
+    "purchased_quantity",
+    "purchased_quantity SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER inventory_quantity_used"
+  );
+  await pool.query(
+    `UPDATE gift_sends
+     SET purchased_quantity = quantity
+     WHERE purchased_quantity = 0 AND inventory_quantity_used = 0`
+  );
+  // 慷慨值以实际送礼流水的魅力奖励快照为准，确保历史礼物改价后回填结果仍然准确。
+  await pool.query(
+    `UPDATE users u
+     LEFT JOIN (
+       SELECT sender_id, COALESCE(SUM(total_reward_charm), 0) AS generosity_value
+       FROM gift_sends
+       GROUP BY sender_id
+     ) sent ON sent.sender_id = u.id
+     SET u.generosity_value = COALESCE(sent.generosity_value, 0)`
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS conversations (

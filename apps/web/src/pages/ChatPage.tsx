@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, Send, Smile, UserRound } from "lucide-react";
+import { ArrowLeft, ChevronDown, Gift, Send, Smile, UserRound } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -14,9 +14,11 @@ import { StickerKeyboard } from "../components/StickerKeyboard";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
+import { GiftDrawer } from "../components/GiftDrawer";
+import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 
 type ChatResponse = {
-  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean } };
+  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean; isFollowing: boolean } };
   messages: PrivateMessageItem[];
   hasMore?: boolean;
   nextCursor?: string | null;
@@ -33,6 +35,7 @@ export default function ChatPage() {
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
   const [stickersLoading, setStickersLoading] = useState(true);
   const [showStickers, setShowStickers] = useState(false);
+  const [giftOpen, setGiftOpen] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
@@ -360,6 +363,10 @@ export default function ChatPage() {
           sending={sending}
           showStickers={showStickers}
           onToggleStickers={() => setShowStickers((current) => !current)}
+          onOpenGift={() => {
+            setShowStickers(false);
+            setGiftOpen(true);
+          }}
           onSend={send}
         />
         {showStickers && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setShowStickers(false)} onSend={sendSticker} className="shrink-0 border-t border-line px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3" />}
@@ -375,6 +382,18 @@ export default function ChatPage() {
           </aside>
         </div>
       </div>
+      <GiftDrawer
+        open={giftOpen}
+        recipient={{ id: chat.conversation.otherUser.id, nickname: chat.conversation.otherUser.nickname }}
+        isFollowing={chat.conversation.otherUser.isFollowing}
+        source={{ type: "private", id }}
+        onClose={() => setGiftOpen(false)}
+        onSent={() => {
+          setGiftOpen(false);
+          shouldFollowBottomRef.current = true;
+          void loadMessages().catch((error) => showToast((error as Error).message));
+        }}
+      />
     </section>
   );
 }
@@ -383,11 +402,13 @@ function ChatComposer({
   sending,
   showStickers,
   onToggleStickers,
+  onOpenGift,
   onSend
 }: {
   sending: boolean;
   showStickers: boolean;
   onToggleStickers: () => void;
+  onOpenGift: () => void;
   onSend: (value: string) => Promise<boolean>;
 }) {
   const [content, setContent] = useState("");
@@ -404,7 +425,7 @@ function ChatComposer({
 
   return (
     <form className={`relative z-20 shrink-0 border-t border-line bg-white/95 px-3 pt-3 backdrop-blur ${showStickers ? "pb-3" : "pb-[max(12px,env(safe-area-inset-bottom))]"}`} onSubmit={submit}>
-      <div className="mx-auto flex max-w-3xl items-end gap-2">
+      <div className="mx-auto flex max-w-3xl items-end gap-1">
         <textarea
           ref={inputRef}
           className="field h-11 max-h-28 min-h-11 flex-1 resize-none py-[10px] leading-[22px]"
@@ -421,8 +442,9 @@ function ChatComposer({
             }
           }}
         />
-        <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${showStickers ? "btn-primary" : "btn-secondary"}`} onClick={() => { if (!showStickers) inputRef.current?.blur(); onToggleStickers(); }} aria-label="打开表情包"><Smile size={24} /></button>
-        <button className="btn btn-primary h-11 w-11 shrink-0 p-0" disabled={!content.trim() || sending} aria-label="发送"><Send size={22} /></button>
+        <ChatComposerIconButton tone="gift" onClick={onOpenGift} aria-label="送礼物" title="送礼物"><Gift size={22} /></ChatComposerIconButton>
+        <ChatComposerIconButton tone={showStickers ? "active" : "neutral"} onClick={() => { if (!showStickers) inputRef.current?.blur(); onToggleStickers(); }} aria-label="打开表情包" title="表情包"><Smile size={23} /></ChatComposerIconButton>
+        <ChatComposerIconButton type="submit" tone="send" disabled={!content.trim() || sending} aria-label="发送" title="发送"><Send size={22} /></ChatComposerIconButton>
       </div>
     </form>
   );

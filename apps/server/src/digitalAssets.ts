@@ -1210,7 +1210,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (!user) return;
     const period = req.query.period === "30d" || req.query.period === "all" ? req.query.period : "7d";
     const cutoff = period === "all" ? null : new Date(Date.now() - (period === "7d" ? 7 : 30) * 24 * 60 * 60 * 1000);
-    const [rows, eventRows] = await Promise.all([
+    const [rows, eventRows, drawRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(
         `SELECT u.id, u.nickname, u.avatar IS NOT NULL AS has_avatar, u.created_at,
           COALESCE(s.total_collection_value, 0) AS total_collection_value,
@@ -1227,7 +1227,15 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
              WHERE created_at >= ? GROUP BY user_id`,
             [cutoff]
           ).then(([items]) => items)
-        : Promise.resolve([] as mysql.RowDataPacket[])
+        : Promise.resolve([] as mysql.RowDataPacket[]),
+      pool.query<mysql.RowDataPacket[]>(
+        `SELECT user_id, SUM(draw_count) AS draw_count,
+          MIN(COALESCE(completed_at, created_at)) AS first_draw_at
+         FROM asset_draw_orders
+         WHERE status = 'completed'${cutoff ? " AND COALESCE(completed_at, created_at) >= ?" : ""}
+         GROUP BY user_id`,
+        cutoff ? [cutoff] : []
+      ).then(([items]) => items)
     ]);
     const periodValues = new Map(eventRows.map((row) => [String(row.user_id), Number(row.collection_gain ?? 0)]));
     const allUsers = rows
@@ -1247,7 +1255,34 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       .map(({ reachedAt: _reachedAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const ranking = allUsers.slice(0, 10);
     const own = allUsers.find((item) => item.id === user.id) ?? null;
-    res.json({ ranking, own: own && !ranking.some((item) => item.id === own.id) ? own : null });
+    const userRowsById = new Map(rows.map((row) => [String(row.id), row]));
+    const allDrawUsers = drawRows
+      .map((row) => {
+        const account = userRowsById.get(String(row.user_id));
+        if (!account) return null;
+        return {
+          id: String(account.id),
+          nickname: String(account.nickname),
+          avatar: bool(account.has_avatar) ? `/api/media/users/${encodeURIComponent(String(account.id))}/avatar` : null,
+          drawCount: Number(row.draw_count ?? 0),
+          firstDrawAt: new Date(row.first_draw_at).getTime(),
+          createdAt: new Date(account.created_at).getTime()
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null && item.drawCount > 0)
+      .sort((a, b) => b.drawCount - a.drawCount
+        || a.firstDrawAt - b.firstDrawAt
+        || a.createdAt - b.createdAt
+        || a.id.localeCompare(b.id))
+      .map(({ firstDrawAt: _firstDrawAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
+    const drawRanking = allDrawUsers.slice(0, 10);
+    const drawOwn = allDrawUsers.find((item) => item.id === user.id) ?? null;
+    res.json({
+      ranking,
+      own: own && !ranking.some((item) => item.id === own.id) ? own : null,
+      drawRanking,
+      drawOwn: drawOwn && !drawRanking.some((item) => item.id === drawOwn.id) ? drawOwn : null
+    });
   });
 
   app.get("/api/admin/asset-stats", async (req, res) => {

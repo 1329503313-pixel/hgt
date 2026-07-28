@@ -53,6 +53,7 @@ export type Evaluation = {
     twist: number | null;
     depth: number | null;
     content: string | null;
+    isContentHidden: boolean;
     createdAt: string;
 };
 export type SoupDetail = SoupSummary & {

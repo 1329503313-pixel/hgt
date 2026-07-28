@@ -472,11 +472,11 @@ textarea {
 }
 
 .room-message-input {
-  height: 40px;
-  min-height: 40px !important;
+  height: 44px;
+  min-height: 44px !important;
   max-height: 100px;
-  padding-top: 9px;
-  padding-bottom: 9px;
+  padding-top: 11px;
+  padding-bottom: 11px;
   line-height: 20px;
 }
 
@@ -1378,7 +1378,18 @@ textarea {
 }
 
 .online-soup-mini-composer > button.is-question { background: #7c3aed; color: #fff; }
-.online-soup-mini-composer > button.is-send { display: grid; width: 38px; place-items: center; background: #2563eb; padding: 0; color: #fff; }
+.online-soup-mini-composer > button.is-send {
+  display: grid;
+  width: 38px;
+  place-items: center;
+  border-radius: 999px;
+  background: transparent;
+  padding: 0;
+  color: #2563eb;
+  transition: background-color 160ms ease, transform 160ms ease;
+}
+.online-soup-mini-composer > button.is-send:hover { background: #eff6ff; }
+.online-soup-mini-composer > button.is-send:active { transform: scale(0.9); }
 .online-soup-mini-composer > button:disabled { opacity: 0.45; }
 .online-soup-mini-composer textarea {
   min-width: 0;
@@ -2114,7 +2125,9 @@ textarea {
   .rankings-spotlight.is-achievement .rankings-podium-value strong { color: #c88b04 !important; }
   .rankings-spotlight.is-level .rankings-podium-value strong { color: #7c3aed !important; }
   .rankings-spotlight.is-collection .rankings-podium-value strong { color: #4f46e5 !important; }
+  .rankings-spotlight.is-draws .rankings-podium-value strong { color: #0891b2 !important; }
   .rankings-spotlight.is-charm .rankings-podium-value strong { color: #e11d48 !important; }
+  .rankings-spotlight.is-generosity .rankings-podium-value strong { color: #d97706 !important; }
 
   .rankings-rule-card {
     display: flex;

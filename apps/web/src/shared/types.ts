@@ -78,6 +78,7 @@ export type Evaluation = {
   twist: number | null;
   depth: number | null;
   content: string | null;
+  isContentHidden: boolean;
   createdAt: string;
 };
 
@@ -136,6 +137,7 @@ export type AccountUser = PublicUser & {
 
 export type SocialProfile = PublicUser & {
   charmValue: number;
+  generosityValue: number;
   receivedLikeCount: number;
   followingCount: number;
   followerCount: number;
@@ -181,6 +183,10 @@ export type ShellTask = {
   experienceReward: number;
   actualExperience: number;
   dailyMaximum: number;
+  giftReward?: {
+    name: "汤汤抱枕" | "幸运贝壳";
+    quantity: number;
+  };
 };
 
 export type BeginnerTaskType =
@@ -275,6 +281,7 @@ export type GiftCatalogItem = {
   costAmount: number;
   rewardShell: number;
   rewardCharm: number;
+  inventoryQuantity: number;
 };
 
 export type ConversationItem = {

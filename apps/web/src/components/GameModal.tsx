@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw, Menu } from "lucide-react";
+import { ChatComposerIconButton } from "./ChatComposerIconButton";
 import type { SoupDetail } from "../shared/types";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -315,13 +316,15 @@ export function GameModal({
             onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
             disabled={state.loading}
           />
-          <button
-            className="btn btn-primary shrink-0 px-4"
+          <ChatComposerIconButton
+            tone="send"
             onClick={handleSend}
             disabled={state.loading || !input.trim()}
+            aria-label="发送"
+            title="发送"
           >
-            <Send size={18} />
-          </button>
+            <Send size={22} />
+          </ChatComposerIconButton>
         </div>
         )}
       </div>

@@ -1,8 +1,10 @@
-import { Award, ChevronRight, Eye, Heart, MessageSquare, ShieldCheck, Star } from "lucide-react";
+import { Award, ChevronRight, Eye, Gift, Heart, MessageSquare, ShieldCheck, Star } from "lucide-react";
 import type { NotificationItem, ViewRequestItem } from "../shared/types";
 
 function notificationVisual(type: string) {
   if (type === "badge_unlock") return { icon: Award, className: "bg-amber-100 text-amber-600" };
+  if (type === "daily_task_gift_reward") return { icon: Gift, className: "bg-fuchsia-100 text-fuchsia-600" };
+  if (type === "ranking_reward") return { icon: Award, className: "bg-yellow-100 text-yellow-700" };
   if (type === "soup_like") return { icon: Heart, className: "bg-rose-100 text-rose-500" };
   if (type === "soup_favorite") return { icon: Star, className: "bg-orange-100 text-orange-500" };
   if (type === "soup_evaluation") return { icon: MessageSquare, className: "bg-emerald-100 text-emerald-600" };

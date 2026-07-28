@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ExternalLink, X } from "lucide-react";
+import { Check, ExternalLink, Flame, Search, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import type { ExcellentAuthorApplicationDetail, ExcellentAuthorApplicationItem, RequestStatus, ViewRequestItem } from "../../shared/types";
+import type { ExcellentAuthorApplicationDetail, ExcellentAuthorApplicationItem, RequestStatus, SoupSummary, ViewRequestItem } from "../../shared/types";
 import {
   api,
   type ExcellentAuthorApplicationDetailResponse,
   type ExcellentAuthorApplicationsResponse,
-  type RequestsResponse
+  type RequestsResponse,
+  type SoupsResponse
 } from "../../api";
 import { Modal } from "../Modal";
 import { SoupCard } from "../SoupCard";
@@ -15,7 +16,7 @@ import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
 
-type ApprovalTab = "bottom" | "excellent-author";
+type ApprovalTab = "soup-review" | "bottom" | "excellent-author";
 type BottomColumn = "applicationType" | "soup" | "requester" | "status" | "createdAt" | "handledAt" | "actions";
 
 const bottomColumns: readonly AdminColumn<BottomColumn>[] = [
@@ -39,15 +40,113 @@ function StatusPill({ status }: { status: RequestStatus }) {
 }
 
 export function ApprovalManagement() {
-  const [activeTab, setActiveTab] = useState<ApprovalTab>("bottom");
+  const [activeTab, setActiveTab] = useState<ApprovalTab>("soup-review");
 
   return (
     <div className="space-y-4">
       <div className="card flex flex-wrap gap-2 p-2">
+        <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "soup-review" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("soup-review")}>汤品审核</button>
         <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "bottom" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("bottom")}>申请汤底</button>
         <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "excellent-author" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("excellent-author")}>申请认证优秀作者</button>
       </div>
-      {activeTab === "bottom" ? <BottomApprovalList /> : <ExcellentAuthorApprovalList />}
+      {activeTab === "soup-review" ? <SoupReviewList /> : activeTab === "bottom" ? <BottomApprovalList /> : <ExcellentAuthorApprovalList />}
+    </div>
+  );
+}
+
+function SoupReviewList() {
+  const navigate = useNavigate();
+  const { showToast } = useApp();
+  const [soups, setSoups] = useState<SoupSummary[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(10);
+  const [status, setStatus] = useState<"pending" | "approved" | "rejected" | "all">("pending");
+  const [keyword, setKeyword] = useState("");
+  const [submittedKeyword, setSubmittedKeyword] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        reviewStatus: status,
+        sortBy: "createdAt",
+        order: "desc",
+        limit: String(pageSize),
+        offset: String((page - 1) * pageSize)
+      });
+      if (submittedKeyword) params.set("keyword", submittedKeyword);
+      const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
+      setSoups(data.soups);
+      setTotal(data.total);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, status, submittedKeyword]);
+
+  useEffect(() => { void load().catch((error) => showToast((error as Error).message)); }, [load, showToast]);
+
+  async function decide(soup: SoupSummary, decision: "approved" | "rejected") {
+    const reason = decision === "rejected"
+      ? (window.prompt("请输入审核未通过原因", soup.reviewReason || "内容存在不当表达") ?? "")
+      : "";
+    if (decision === "rejected" && !reason.trim()) return;
+    try {
+      await api(`/api/admin/soups/${soup.id}/review`, {
+        method: "POST",
+        body: { decision, reviewVersion: soup.reviewVersion, reason }
+      });
+      showToast(decision === "approved" ? "汤品审核已通过" : "汤品审核已驳回");
+      await load();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "审核失败");
+      await load();
+    }
+  }
+
+  return (
+    <div className="card p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="font-black text-ink">汤品审核</h2><p className="mt-1 text-sm text-muted">{total} 条记录</p></div>
+        <div className="flex flex-wrap gap-2">
+          <div className="relative min-w-64">
+            <input className="field h-10 pl-3 pr-10" placeholder="搜索标题、作者…" value={keyword} onChange={(event) => setKeyword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { setPage(1); setSubmittedKeyword(keyword.trim()); } }} />
+            <button className="absolute right-2 top-1/2 -translate-y-1/2 text-primary" onClick={() => { setPage(1); setSubmittedKeyword(keyword.trim()); }} aria-label="搜索"><Search size={18} /></button>
+          </div>
+          <select className="field h-10 w-36" value={status} onChange={(event) => { setPage(1); setStatus(event.target.value as typeof status); }}>
+            <option value="pending">待人工审核</option>
+            <option value="approved">已通过</option>
+            <option value="rejected">未通过</option>
+            <option value="all">全部状态</option>
+          </select>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <div className="min-w-[980px]">
+          <div className="mb-2 grid grid-cols-[minmax(220px,1fr)_100px_90px_100px_150px_260px] items-center justify-items-center gap-2 px-3 text-xs font-bold text-muted">
+            <span>汤品</span><span>创建者</span><span>难度</span><span>热力值</span><span>提交时间</span><span>操作</span>
+          </div>
+          <div className="space-y-1">
+            {soups.map((soup) => (
+              <div key={soup.id} className="grid grid-cols-[minmax(220px,1fr)_100px_90px_100px_150px_260px] items-center justify-items-center gap-2 rounded-lg border border-line p-3 text-center text-sm">
+                <div className="min-w-0 max-w-full"><button className="max-w-full truncate font-bold text-ink hover:text-primary" onClick={() => navigate(`/soup/${soup.id}`)}>{soup.title}</button><p className="mt-1 text-xs text-muted">{soup.reviewStatus === "pending" ? "待审核" : soup.reviewStatus === "approved" ? "已通过" : "未通过"}</p></div>
+                <span className="max-w-full truncate">{soup.creatorName}</span>
+                <span className="text-xs font-bold text-orange-600">{soup.difficulty}</span>
+                <span className="inline-flex items-center gap-1 font-black text-red-500"><Flame className="fill-current" size={13} />{soup.heatValue.toLocaleString()}</span>
+                <span className="text-xs text-muted">{new Date(soup.createdAt).toLocaleString()}</span>
+                <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                  <button className="btn btn-secondary h-8 px-2 text-xs" onClick={() => navigate(`/soup/${soup.id}`)}><ExternalLink size={14} />查看</button>
+                  {soup.reviewStatus === "pending" && <><button className="btn btn-primary h-8 px-2 text-xs" onClick={() => void decide(soup, "approved")}><Check size={14} />通过</button><button className="btn btn-danger h-8 px-2 text-xs" onClick={() => void decide(soup, "rejected")}><X size={14} />驳回</button></>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {loading && <ListSkeleton rows={6} />}
+      {!loading && soups.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无汤品审核记录</p>}
+      <AdminPagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size); }} />
     </div>
   );
 }

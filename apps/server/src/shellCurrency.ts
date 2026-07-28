@@ -2,12 +2,19 @@ import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
 import { experienceProgress, MAX_EXPERIENCE } from "./levelSystem.js";
+import { creditGiftInventory } from "./giftInventory.js";
 import { inviteRewardTaskStats } from "./inviteRewards.js";
+import { resolveRewardGift, type RewardGiftBindingKey } from "./rewardGiftBindings.js";
 
 let badgeProgressListener: ((userId: string) => void) | null = null;
+let taskGiftNotificationListener: ((userId: string) => void) | null = null;
 
 export function setShellBadgeProgressListener(listener: (userId: string) => void) {
   badgeProgressListener = listener;
+}
+
+export function setTaskGiftNotificationListener(listener: (userId: string) => void) {
+  taskGiftNotificationListener = listener;
 }
 
 function reportBadgeProgress(userIds: string | string[]) {
@@ -39,6 +46,10 @@ export type ShellTaskDefinition = {
   reward: number;
   dailyLimit: number;
   consumeBeyondDailyLimit?: boolean;
+  giftReward?: {
+    name: "汤汤抱枕" | "幸运贝壳";
+    quantity: number;
+  };
 };
 
 export type BeginnerTaskType =
@@ -58,14 +69,14 @@ export type BeginnerTaskDefinition = {
 };
 
 export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
-  { type: "daily_login", name: "每日登录", description: "当天首次进入应用", reward: 5, dailyLimit: 1 },
-  { type: "publish_soup", name: "发布海龟汤", description: "审核通过并公开展示", reward: 10, dailyLimit: 3, consumeBeyondDailyLimit: true },
+  { type: "daily_login", name: "每日登录", description: "当天首次进入应用", reward: 5, dailyLimit: 1, giftReward: { name: "汤汤抱枕", quantity: 3 } },
+  { type: "publish_soup", name: "发布海龟汤", description: "审核通过并公开展示", reward: 10, dailyLimit: 3, consumeBeyondDailyLimit: true, giftReward: { name: "幸运贝壳", quantity: 1 } },
   { type: "like_soup", name: "点赞海龟汤", description: "点赞不同的海龟汤", reward: 2, dailyLimit: 3 },
   { type: "favorite_soup", name: "收藏海龟汤", description: "收藏不同的海龟汤", reward: 2, dailyLimit: 3 },
   { type: "publish_evaluation", name: "发表评论", description: "首次发布评分或评论", reward: 3, dailyLimit: 1, consumeBeyondDailyLimit: true },
   { type: "speak_circle", name: "圈子发言", description: "在任意圈子发送文字或表情包", reward: 2, dailyLimit: 3 },
-  { type: "join_online_soup", name: "完整参与玩汤", description: "满足完整参与条件并完成一轮", reward: 5, dailyLimit: 2 },
-  { type: "host_online_soup", name: "完整主持玩汤", description: "满足完整主持条件并完成一轮", reward: 10, dailyLimit: 1 },
+  { type: "join_online_soup", name: "完整参与玩汤", description: "满足完整参与条件并完成一轮", reward: 5, dailyLimit: 2, giftReward: { name: "汤汤抱枕", quantity: 3 } },
+  { type: "host_online_soup", name: "完整主持玩汤", description: "满足完整主持条件并完成一轮", reward: 10, dailyLimit: 1, giftReward: { name: "幸运贝壳", quantity: 1 } },
   { type: "receive_soup_like", name: "作品获得点赞", description: "其他用户首次点赞你发布的作品", reward: 2, dailyLimit: 3, consumeBeyondDailyLimit: true },
   { type: "receive_soup_favorite", name: "作品获得收藏", description: "其他用户首次收藏你发布的作品", reward: 2, dailyLimit: 3, consumeBeyondDailyLimit: true },
   { type: "receive_soup_evaluation", name: "作品获得评论", description: "其他用户首次评论你发布的作品", reward: 5, dailyLimit: 3, consumeBeyondDailyLimit: true },
@@ -117,6 +128,14 @@ export type AwardTaskResult = {
   experienceReward: number;
   balance: number;
   dailyEarned: number;
+  giftReward: {
+    giftId: string;
+    name: string;
+    quantity: number;
+    creditedQuantity: number;
+    overflowQuantity: number;
+    overflowShell: number;
+  } | null;
 };
 
 async function awardTaskEventWithConnection(
@@ -148,7 +167,7 @@ async function awardTaskEventWithConnection(
   );
   const dailyEarned = Number(dailyRow?.earned ?? 0);
   if (existing) {
-    return { recorded: false, actualReward: Number(existing.actual_reward ?? 0), experienceReward: Number(existing.experience_reward ?? 0), balance, dailyEarned };
+    return { recorded: false, actualReward: Number(existing.actual_reward ?? 0), experienceReward: Number(existing.experience_reward ?? 0), balance, dailyEarned, giftReward: null };
   }
   const [[progressRow]] = await connection.query<mysql.RowDataPacket[]>(
     "SELECT COUNT(*) AS progress FROM shell_task_events WHERE user_id = ? AND task_date = ? AND task_type = ?",
@@ -162,19 +181,20 @@ async function awardTaskEventWithConnection(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
         [nanoid(), userId, taskDate, taskType, eventKey, relatedType, relatedId, definition.reward, now]
       );
-      return { recorded: true, actualReward: 0, experienceReward: 0, balance, dailyEarned };
+      return { recorded: true, actualReward: 0, experienceReward: 0, balance, dailyEarned, giftReward: null };
     }
-    return { recorded: false, actualReward: 0, experienceReward: 0, balance, dailyEarned };
+    return { recorded: false, actualReward: 0, experienceReward: 0, balance, dailyEarned, giftReward: null };
   }
 
   const actualReward = calculateTaskReward(dailyEarned, definition.reward);
   const experienceReward = Math.max(0, Math.min(definition.reward, MAX_EXPERIENCE - experience));
   const balanceAfter = balance + actualReward;
+  const taskEventId = nanoid();
   await connection.query(
     `INSERT INTO shell_task_events
       (id, user_id, task_date, task_type, event_key, related_type, related_id, nominal_reward, actual_reward, experience_reward, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [nanoid(), userId, taskDate, taskType, eventKey, relatedType, relatedId, definition.reward, actualReward, experienceReward, now]
+    [taskEventId, userId, taskDate, taskType, eventKey, relatedType, relatedId, definition.reward, actualReward, experienceReward, now]
   );
   if (experienceReward > 0) {
     await connection.query("UPDATE users SET experience = experience + ? WHERE id = ?", [experienceReward, userId]);
@@ -198,7 +218,48 @@ async function awardTaskEventWithConnection(
       ]
     );
   }
-  return { recorded: true, actualReward, experienceReward, balance: balanceAfter, dailyEarned: dailyEarned + actualReward };
+  let giftReward: AwardTaskResult["giftReward"] = null;
+  let finalBalance = balanceAfter;
+  if (definition.giftReward) {
+    const bindingKey: RewardGiftBindingKey = definition.giftReward.name === "汤汤抱枕"
+      ? "daily:tangtang_pillow"
+      : "daily:lucky_shell";
+    const boundGift = await resolveRewardGift(connection, bindingKey, definition.giftReward.name);
+    const giftId = boundGift.id;
+    const inventoryResult = await creditGiftInventory(connection, {
+      userId,
+      giftId,
+      quantity: definition.giftReward.quantity,
+      idempotencyKey: `task-gift:${taskEventId}`,
+      relatedType: "daily_task",
+      relatedId: taskEventId,
+      remark: `${definition.name}额外奖励：${definition.giftReward.name}×${definition.giftReward.quantity}`
+    });
+    finalBalance = inventoryResult.shellBalance;
+    const overflowText = inventoryResult.overflowQuantity > 0
+      ? `；其中 ${inventoryResult.overflowQuantity} 个超出库存上限，已折算为 ${inventoryResult.overflowShell} 贝壳`
+      : "";
+    await connection.query(
+      `INSERT INTO notifications (id, user_id, type, title, content, related_id, actor_id)
+       VALUES (?, ?, 'daily_task_gift_reward', '每日任务礼物奖励', ?, ?, ?)`,
+      [
+        nanoid(),
+        userId,
+        `完成“${definition.name}”任务，获得礼物“${definition.giftReward.name}”×${definition.giftReward.quantity}，已放入礼物库存${overflowText}。`,
+        taskEventId,
+        userId
+      ]
+    );
+    giftReward = {
+      giftId,
+      name: definition.giftReward.name,
+      quantity: definition.giftReward.quantity,
+      creditedQuantity: inventoryResult.creditedQuantity,
+      overflowQuantity: inventoryResult.overflowQuantity,
+      overflowShell: inventoryResult.overflowShell
+    };
+  }
+  return { recorded: true, actualReward, experienceReward, balance: finalBalance, dailyEarned: dailyEarned + actualReward, giftReward };
 }
 
 export async function awardShellTask(
@@ -223,6 +284,7 @@ export async function awardShellTask(
       options.now
     );
     if (result.recorded && result.actualReward > 0) reportBadgeProgress(userId);
+    if (result.recorded && result.giftReward) taskGiftNotificationListener?.(userId);
     return result;
   }
   const connection = await pool.getConnection();
@@ -239,6 +301,7 @@ export async function awardShellTask(
     );
     await connection.commit();
     if (result.recorded && result.actualReward > 0) reportBadgeProgress(userId);
+    if (result.recorded && result.giftReward) taskGiftNotificationListener?.(userId);
     return result;
   } catch (error) {
     await connection.rollback();
@@ -483,7 +546,8 @@ const TRANSACTION_LABELS: Record<string, string> = {
   pack_ten_draw: "卡包十连消费",
   duplicate_card_refund: "满星重复卡片返还",
   admin_add: "后台人工增加",
-  admin_deduct: "后台人工扣减"
+  admin_deduct: "后台人工扣减",
+  ranking_reward: "排行榜奖励"
 };
 
 export async function shellTransactions(userId: string, limit: number, offset: number) {
@@ -715,6 +779,7 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
     );
     if (result.recorded) awardedUsers.push(award.userId);
     if (result.recorded && result.actualReward > 0) reportBadgeProgress(award.userId);
+    if (result.recorded && result.giftReward) taskGiftNotificationListener?.(award.userId);
   }
   return { eligible: true, awardedUsers };
 }

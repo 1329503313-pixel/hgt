@@ -14,6 +14,7 @@ import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard
 import { SoupShareCard } from "../components/SoupShareCard";
 import { GiftMessageCard } from "../components/GiftMessageCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
+import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 
 type CircleState = {
@@ -817,7 +818,7 @@ function Composer({ members, currentUserId, mentionRequest, replyTo, sending, st
           </button>
         </div>
       )}
-      <div className="mx-auto flex max-w-3xl items-end gap-2">
+      <div className="mx-auto flex max-w-3xl items-end gap-1">
         <textarea
           ref={inputRef}
           className="field h-11 max-h-28 min-h-11 flex-1 resize-none py-[10px] leading-[22px]"
@@ -835,8 +836,8 @@ function Composer({ members, currentUserId, mentionRequest, replyTo, sending, st
           placeholder="输入消息"
           onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
         />
-        <button type="button" className={`btn h-11 w-11 shrink-0 p-0 ${stickersOpen ? "btn-primary" : "btn-secondary"}`} onClick={() => { if (!stickersOpen) inputRef.current?.blur(); onToggleStickers(); }} aria-label="表情包"><Smile size={23} /></button>
-        <button className="btn btn-primary h-11 w-11 shrink-0 p-0" disabled={!content.trim() || sending} aria-label="发送"><Send size={21} /></button>
+        <ChatComposerIconButton tone={stickersOpen ? "active" : "neutral"} onClick={() => { if (!stickersOpen) inputRef.current?.blur(); onToggleStickers(); }} aria-label="表情包" title="表情包"><Smile size={23} /></ChatComposerIconButton>
+        <ChatComposerIconButton type="submit" tone="send" disabled={!content.trim() || sending} aria-label="发送" title="发送"><Send size={22} /></ChatComposerIconButton>
       </div>
     </form>
   );

@@ -16,6 +16,7 @@ import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
 import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import type { OnlineSoupAnswer, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
 import { GiftMessageCard } from "../components/GiftMessageCard";
+import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -783,7 +784,7 @@ export default function OnlineSoupRoomPage() {
             <div ref={bottomRef} />
           </div>
           {canDiscuss && <div className="shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
-            <div className="flex items-end gap-1.5">
+            <div className="flex items-end gap-1">
               {!isHost && <div className="relative shrink-0">
                 {showQuestionModeGuide && <div className="question-mode-guide absolute bottom-[calc(100%+14px)] left-0 z-50 w-56 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
                   如需要提问，请点击此按钮变更为提问
@@ -791,7 +792,7 @@ export default function OnlineSoupRoomPage() {
                   <span className="absolute -bottom-1.5 left-6 h-3 w-3 rotate-45 bg-slate-900" aria-hidden="true" />
                 </div>}
                 <button
-                  className={`group relative flex h-10 w-[68px] items-center justify-center gap-1.5 overflow-hidden rounded-xl border text-white shadow-md ring-2 ring-offset-1 transition duration-200 hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-95 ${mode === "question" ? "border-violet-500 bg-gradient-to-br from-violet-500 to-fuchsia-600 ring-violet-200" : "border-blue-500 bg-gradient-to-br from-blue-500 to-cyan-500 ring-blue-200"}`}
+                  className={`group relative flex h-11 w-[68px] items-center justify-center gap-1.5 overflow-hidden rounded-xl border text-white shadow-md ring-2 ring-offset-1 transition duration-200 hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-95 ${mode === "question" ? "border-violet-500 bg-gradient-to-br from-violet-500 to-fuchsia-600 ring-violet-200" : "border-blue-500 bg-gradient-to-br from-blue-500 to-cyan-500 ring-blue-200"}`}
                   onClick={() => {
                     setShowQuestionModeGuide(false);
                     if (!canQuestion) {
@@ -808,8 +809,8 @@ export default function OnlineSoupRoomPage() {
                 </button>
               </div>}
               <textarea ref={messageInputRef} className="field room-message-input min-w-0 flex-1 resize-none" rows={1} maxLength={1000} value={content} onChange={(e) => setContent(e.target.value)} onFocus={() => setStickersOpen(false)} placeholder={isHost ? "主持人发言…" : mode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(); } }} />
-              <button className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition ${stickersOpen ? "border-amber-300 bg-amber-50 text-amber-700" : "border-line bg-white text-muted hover:bg-slate-50"}`} onClick={() => { if (!stickersOpen) messageInputRef.current?.blur(); setStickersOpen((open) => !open); setHostActionsOpen(false); }} aria-label="表情包" title="表情包"><Smile size={18} /></button>
-              <button className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary text-white shadow-sm transition hover:bg-blue-600 active:scale-95 disabled:opacity-50" disabled={sending || (mode === "question" && !canQuestion)} onClick={sendMessage} aria-label="发送" title="发送"><Send size={18} /></button>
+              <ChatComposerIconButton tone={stickersOpen ? "active" : "neutral"} onClick={() => { if (!stickersOpen) messageInputRef.current?.blur(); setStickersOpen((open) => !open); setHostActionsOpen(false); }} aria-label="表情包" title="表情包"><Smile size={23} /></ChatComposerIconButton>
+              <ChatComposerIconButton tone="send" disabled={sending || (mode === "question" && !canQuestion)} onClick={sendMessage} aria-label="发送" title="发送"><Send size={22} /></ChatComposerIconButton>
             </div>
             {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={sending} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="mt-3 border-t border-line pt-3" />}
           </div>}

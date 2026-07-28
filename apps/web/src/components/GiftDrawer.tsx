@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Minus, Shell, X } from "lucide-react";
+import { Minus, Shell, X } from "lucide-react";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import type { GiftCatalogItem, GiftMessage } from "../shared/types";
+import { removeSessionCache, removeSessionCachePrefix } from "../shared/sessionCache";
 import { publishShellBalance, useShellBalance } from "../shared/useShellBalance";
 
 export type GiftSource = {
@@ -25,7 +26,7 @@ export function GiftDrawer({
   isFollowing: boolean;
   source: GiftSource;
   onClose: () => void;
-  onSent?: (gift: GiftMessage, recipientCharmValue: number) => void;
+  onSent?: (gift: GiftMessage, recipientCharmValue: number, senderGenerosityValue: number) => void;
 }) {
   const { user, showToast } = useApp();
   const [gifts, setGifts] = useState<GiftCatalogItem[]>([]);
@@ -36,12 +37,18 @@ export function GiftDrawer({
   const shellBalance = useShellBalance(user?.id);
   const holdTimer = useRef<number | null>(null);
   const holdInterval = useRef<number | null>(null);
+  const holdTriggered = useRef(false);
 
   function stopHold() {
     if (holdTimer.current) window.clearTimeout(holdTimer.current);
     if (holdInterval.current) window.clearInterval(holdInterval.current);
     holdTimer.current = null;
     holdInterval.current = null;
+  }
+
+  function cancelHold() {
+    stopHold();
+    holdTriggered.current = false;
   }
 
   useEffect(() => () => stopHold(), []);
@@ -65,14 +72,24 @@ export function GiftDrawer({
   const selected = gifts.find((gift) => gift.id === selectedId) ?? null;
 
   function selectGift(id: string) {
-    if (selectedId === id) return;
+    if (holdTriggered.current) {
+      holdTriggered.current = false;
+      return;
+    }
+    if (selectedId === id) {
+      setQuantity((value) => Math.min(666, value + 1));
+      return;
+    }
     setSelectedId(id);
     setQuantity(1);
   }
 
   function startHold() {
     stopHold();
+    holdTriggered.current = false;
     holdTimer.current = window.setTimeout(() => {
+      holdTriggered.current = true;
+      setQuantity((value) => Math.min(666, value + 1));
       holdInterval.current = window.setInterval(() => setQuantity((value) => Math.min(666, value + 1)), 90);
     }, 420);
   }
@@ -86,13 +103,27 @@ export function GiftDrawer({
     setSending(true);
     try {
       const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const result = await api<{ gift: GiftMessage; shellBalance: number; recipientCharmValue: number }>(
+      const result = await api<{
+        gift: GiftMessage;
+        shellBalance: number;
+        recipientCharmValue: number;
+        senderGenerosityValue: number;
+        inventoryQuantity: number;
+      }>(
         `/api/users/${recipient.id}/gifts/send`,
         { method: "POST", body: { giftId: selected.id, quantity, requestId, source } }
       );
       publishShellBalance(user?.id, result.shellBalance);
+      setGifts((current) => current.map((gift) => gift.id === selected.id
+        ? { ...gift, inventoryQuantity: result.inventoryQuantity }
+        : gift));
+      if (user) {
+        removeSessionCache(`hgt:mine:profile:${user.id}`);
+        removeSessionCache(`hgt:user-profile:${user.id}:${user.id}`);
+        removeSessionCachePrefix(`hgt:rankings:`);
+      }
       showToast(`已送出 ${selected.name} ×${quantity}`);
-      onSent?.(result.gift, result.recipientCharmValue);
+      onSent?.(result.gift, result.recipientCharmValue, result.senderGenerosityValue);
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -123,8 +154,8 @@ export function GiftDrawer({
                     onClick={() => selectGift(gift.id)}
                     onPointerDown={() => selectedGift && startHold()}
                     onPointerUp={stopHold}
-                    onPointerCancel={stopHold}
-                    onPointerLeave={stopHold}
+                    onPointerCancel={cancelHold}
+                    onPointerLeave={cancelHold}
                   >
                     {selectedGift && <span className="absolute left-1 top-1 rounded-full bg-primary px-1.5 text-[10px] font-black text-white">{quantity}</span>}
                     {selectedGift && quantity > 1 && (
@@ -132,13 +163,23 @@ export function GiftDrawer({
                         role="button"
                         tabIndex={0}
                         className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-red-500 text-white"
+                        onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => { event.stopPropagation(); setQuantity((value) => Math.max(1, value - 1)); }}
                       ><Minus size={12} strokeWidth={3} /></span>
                     )}
-                    <img className="mx-auto h-12 w-12 object-contain" src={gift.iconUrl} alt={gift.name} loading="lazy" />
+                    <span className="relative mx-auto block h-12 w-12">
+                      <img className="h-12 w-12 object-contain" src={gift.iconUrl} alt={gift.name} loading="lazy" />
+                      {gift.inventoryQuantity > 0 && (
+                        <span
+                          className="absolute -bottom-0.5 -right-1 min-w-4 rounded-full bg-slate-900/85 px-1 py-0.5 text-center text-[9px] font-black leading-none text-white shadow-sm"
+                          aria-label={`拥有 ${gift.inventoryQuantity} 个`}
+                        >
+                          {gift.inventoryQuantity}
+                        </span>
+                      )}
+                    </span>
                     <p className="mt-1 truncate text-xs font-black text-ink">{gift.name}</p>
                     <p className="mt-0.5 inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700"><Shell size={10} />{gift.costAmount}</p>
-                    {selectedGift && <Check className="absolute bottom-1 right-1 text-primary" size={13} />}
                   </button>
                 );
               })}
@@ -155,7 +196,12 @@ export function GiftDrawer({
               <div className="min-w-0 flex-1 text-xs text-muted">
                 <p className="truncate">{selected.description || selected.name}</p>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-bold">
-                  <span className="text-amber-700">合计消耗 {(selected.costAmount * quantity).toLocaleString()} 贝壳</span>
+                  <span className="text-amber-700">
+                    贝壳补购 {(selected.costAmount * Math.max(0, quantity - selected.inventoryQuantity)).toLocaleString()}
+                  </span>
+                  {selected.inventoryQuantity > 0 && (
+                    <span>库存消耗 {Math.min(quantity, selected.inventoryQuantity).toLocaleString()} 个</span>
+                  )}
                   <span>贝壳余额 <strong className="text-ink">{shellBalance == null ? "—" : shellBalance.toLocaleString()}</strong></span>
                 </p>
               </div>

@@ -36,7 +36,7 @@ const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "notices", label: "通知", icon: <Bell size={17} /> },
   { key: "feedback", label: "建议", icon: <MessageSquareText size={17} /> }
 ];
-const backofficeTabs = new Set<AdminTab>(["data", "users", "soups", "evaluations", "feedback"]);
+const backofficeTabs = new Set<AdminTab>(["data", "users", "soups", "evaluations", "approvals", "feedback"]);
 
 export function AdminTopBar() {
   const navigate = useNavigate();
@@ -63,11 +63,13 @@ export function AdminTopBar() {
 export function AdminSidebar({
   activeTab,
   onTabChange,
-  role
+  role,
+  unread
 }: {
   activeTab: AdminTab;
   onTabChange: (tab: AdminTab) => void;
   role: UserRole;
+  unread?: Partial<Record<AdminTab, boolean>>;
 }) {
   const visibleTabs = isSuperAdminRole(role) ? tabs : tabs.filter((tab) => backofficeTabs.has(tab.key));
   return (
@@ -87,7 +89,7 @@ export function AdminSidebar({
               aria-current={activeTab === tab.key ? "page" : undefined}
             >
               <span className="shrink-0">{tab.icon}</span>
-              <span>{tab.label}</span>
+              <span className="inline-flex items-center gap-1.5">{tab.label}{unread?.[tab.key] && <span className="h-2 w-2 shrink-0 rounded-full bg-red-500 ring-2 ring-white" aria-label="有新消息" />}</span>
             </button>
           ))}
         </div>

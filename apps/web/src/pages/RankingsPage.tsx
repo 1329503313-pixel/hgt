@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Crown, Flame, GalleryVerticalEnd, Heart, Medal, Sparkles, TrendingUp, Trophy } from "lucide-react";
+import { Crown, Dices, Flame, GalleryVerticalEnd, Gift, Heart, Medal, Sparkles, TrendingUp, Trophy } from "lucide-react";
 import { api } from "../api";
 import { LevelBadge } from "../components/LevelBadge";
 import { PageTopBar } from "../components/PageTopBar";
@@ -35,6 +35,14 @@ type CollectionUserRank = {
   legendaryCardCount: number;
 };
 
+type DrawUserRank = {
+  rank: number;
+  id: string;
+  nickname: string;
+  avatar: string | null;
+  drawCount: number;
+};
+
 type LevelUserRank = {
   rank: number;
   id: string;
@@ -52,6 +60,14 @@ type CharmUserRank = {
   charmValue: number;
 };
 
+type GenerosityUserRank = {
+  rank: number;
+  id: string;
+  nickname: string;
+  avatar: string | null;
+  generosityValue: number;
+};
+
 type RankingsResponse = {
   hotSoups: HotSoupRank[];
   hotSoupOwn: HotSoupRank | null;
@@ -61,11 +77,15 @@ type RankingsResponse = {
   levelOwn: LevelUserRank | null;
   charmUsers: CharmUserRank[];
   charmOwn: CharmUserRank | null;
+  generosityUsers: GenerosityUserRank[];
+  generosityOwn: GenerosityUserRank | null;
   collectionUsers: CollectionUserRank[];
   collectionOwn: CollectionUserRank | null;
+  drawUsers: DrawUserRank[];
+  drawOwn: DrawUserRank | null;
 };
 
-type RankingTab = "soups" | "users" | "level" | "charm" | "collection";
+type RankingTab = "soups" | "users" | "level" | "charm" | "generosity" | "collection" | "draws";
 type RankingGroup = "content" | "user";
 type RankingPeriod = "7d" | "30d" | "all";
 
@@ -85,7 +105,7 @@ export default function RankingsPage() {
   const location = useLocation();
   const { user, loadingUser, openAuth } = useApp();
   const requestedTab = (location.state as { tab?: string } | null)?.tab;
-  const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "charm" || requestedTab === "collection" ? requestedTab : "soups";
+  const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "charm" || requestedTab === "generosity" || requestedTab === "collection" || requestedTab === "draws" ? requestedTab : "soups";
   const [tab, setTab] = useState<RankingTab>(initialTab);
   const [period, setPeriod] = useState<RankingPeriod>("7d");
   const [data, setData] = useState<RankingsResponse | null>(null);
@@ -95,7 +115,7 @@ export default function RankingsPage() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    const cacheKey = `hgt:rankings:v7:${user.id}:${period}`;
+    const cacheKey = `hgt:rankings:v9:${user.id}:${period}`;
     const cached = readSessionCache<RankingsResponse>(cacheKey, 2 * 60_000);
     if (cached) {
       setData(cached);
@@ -104,12 +124,23 @@ export default function RankingsPage() {
       setLoading(true);
     }
     Promise.all([
-      api<Omit<RankingsResponse, "collectionUsers" | "collectionOwn">>(`/api/rankings?period=${period}`, { bypassCache: true }),
-      api<{ ranking: CollectionUserRank[]; own: CollectionUserRank | null }>(`/api/asset-rankings?period=${period}`, { bypassCache: true })
+      api<Omit<RankingsResponse, "collectionUsers" | "collectionOwn" | "drawUsers" | "drawOwn">>(`/api/rankings?period=${period}`, { bypassCache: true }),
+      api<{
+        ranking: CollectionUserRank[];
+        own: CollectionUserRank | null;
+        drawRanking: DrawUserRank[];
+        drawOwn: DrawUserRank | null;
+      }>(`/api/asset-rankings?period=${period}`, { bypassCache: true })
     ])
-      .then(([base, collection]) => {
+      .then(([base, assets]) => {
         if (cancelled) return;
-        const result = { ...base, collectionUsers: collection.ranking, collectionOwn: collection.own };
+        const result = {
+          ...base,
+          collectionUsers: assets.ranking,
+          collectionOwn: assets.own,
+          drawUsers: assets.drawRanking,
+          drawOwn: assets.drawOwn
+        };
         setData(result);
         setError("");
         writeSessionCache(cacheKey, result);
@@ -178,6 +209,15 @@ export default function RankingsPage() {
       tone: "is-collection"
     },
     {
+      key: "draws",
+      group: "user",
+      label: "抽卡榜",
+      shortLabel: "抽卡",
+      description: "看看谁抽出了最多卡牌",
+      icon: Dices,
+      tone: "is-draws"
+    },
+    {
       key: "charm",
       group: "user",
       label: "用户魅力榜",
@@ -185,6 +225,15 @@ export default function RankingsPage() {
       description: "记录用户收到礼物积累的魅力",
       icon: Heart,
       tone: "is-charm"
+    },
+    {
+      key: "generosity",
+      group: "user",
+      label: "用户慷慨榜",
+      shortLabel: "慷慨",
+      description: "记录用户送出礼物贡献的魅力价值",
+      icon: Gift,
+      tone: "is-generosity"
     }
   ];
 
@@ -199,9 +248,13 @@ export default function RankingsPage() {
         ? (data?.levelUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: `Lv${item.level}`, value: item.experience, suffix: "经验值", avatar: item.avatar }))
         : tab === "charm"
           ? (data?.charmUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: "礼物魅力", value: item.charmValue, suffix: "魅力值", avatar: item.avatar }))
-          : (data?.collectionUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: `${item.unlockedCardCount} 张卡牌`, value: item.totalCollectionValue, suffix: "收藏值", avatar: item.avatar }));
+          : tab === "generosity"
+            ? (data?.generosityUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: "送礼贡献", value: item.generosityValue, suffix: "慷慨值", avatar: item.avatar }))
+            : tab === "collection"
+              ? (data?.collectionUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: `${item.unlockedCardCount} 张卡牌`, value: item.totalCollectionValue, suffix: "收藏值", avatar: item.avatar }))
+              : (data?.drawUsers ?? []).slice(0, 3).map((item) => ({ id: item.id, rank: item.rank, name: item.nickname, detail: "成功抽卡", value: item.drawCount, suffix: "抽卡数", avatar: item.avatar }));
 
-  const ownRank = tab === "soups" ? data?.hotSoupOwn : tab === "users" ? data?.achievementOwn : tab === "level" ? data?.levelOwn : tab === "charm" ? data?.charmOwn : data?.collectionOwn;
+  const ownRank = tab === "soups" ? data?.hotSoupOwn : tab === "users" ? data?.achievementOwn : tab === "level" ? data?.levelOwn : tab === "charm" ? data?.charmOwn : tab === "generosity" ? data?.generosityOwn : tab === "collection" ? data?.collectionOwn : data?.drawOwn;
 
   function openPodiumItem(item: (typeof podium)[number]) {
     navigate(tab === "soups" ? `/soup/${item.id}` : `/users/${item.id}`);
@@ -211,6 +264,20 @@ export default function RankingsPage() {
     if (group === activeGroup) return;
     setTab(group === "content" ? "soups" : "users");
   }
+
+  const rankingRewardSummary = (() => {
+    if (activeGroup !== "user") return null;
+    if (period === "all") return "永久榜不参与定时奖励";
+    const currencyBoard = tab === "users" || tab === "collection" || tab === "draws";
+    if (currencyBoard) {
+      return period === "7d"
+        ? "周一 00:00 结算：第1名 200 EXP＋100 贝壳；第2–3名 120 EXP＋80 贝壳；第4–5名 80 EXP＋50 贝壳；第6–10名 50 EXP＋30 贝壳"
+        : "每月首日 00:00 结算：第1名 1000 EXP＋500 贝壳；第2–3名 600 EXP＋400 贝壳；第4–5名 400 EXP＋250 贝壳；第6–10名 250 EXP＋150 贝壳";
+    }
+    return period === "7d"
+      ? "周一 00:00 结算：第1名 月亮小船×1；第2–3名 智慧水晶球×2；第4–5名 神秘钥匙×3；第6–10名 神秘钥匙×2"
+      : "每月首日 00:00 结算：第1名 深海明珠×2；第2–3名 深海明珠×1；第4–5名 月亮小船×2；第6–10名 月亮小船×1";
+  })();
 
   return (
     <section className="rankings-page space-y-3 lg:space-y-5">
@@ -287,18 +354,19 @@ export default function RankingsPage() {
           ) : <p className="py-10 text-center text-sm text-muted">暂无可展示数据</p>}
           <div className="rankings-rule-card">
             <Sparkles size={17} />
-            <div><strong>{periodLabel}{activeCategory.label}统计口径</strong><p>{period === "all" ? "按累计总值排列。" : `按最近${periodLabel}内的净增长值排列。`}{tab === "soups" ? "统计热力增长。" : tab === "collection" ? "统计收藏值增长。" : tab === "level" ? "统计经验增长。" : tab === "charm" ? "统计收礼获得的魅力增长。" : "统计成就点增长。"}</p></div>
+            <div><strong>{periodLabel}{activeCategory.label}统计口径</strong><p>{tab === "draws" ? `按${period === "all" ? "累计" : `最近${periodLabel}内`}成功抽出的卡牌张数排列，单抽计 1、十连计 10。` : <>{period === "all" ? "按累计总值排列。" : `按最近${periodLabel}内的净增长值排列。`}{tab === "soups" ? "统计热力增长。" : tab === "collection" ? "统计收藏值增长。" : tab === "level" ? "统计经验增长。" : tab === "charm" ? "统计收礼获得的魅力增长。" : tab === "generosity" ? "统计送礼贡献的魅力价值。" : "统计成就点增长。"}</>}</p></div>
           </div>
           {ownRank && <div className="rankings-own-summary"><span>我的{periodLabel}排名</span><strong>第 {ownRank.rank} 名</strong></div>}
         </aside>
 
       <div className="rankings-table-card card overflow-hidden">
         <div className="flex items-center gap-3 border-b border-line px-4 py-4">
-          <span className={`grid h-10 w-10 place-items-center rounded-xl ${tab === "soups" ? "bg-orange-50 text-orange-500" : tab === "collection" ? "bg-indigo-50 text-indigo-600" : tab === "level" ? "bg-violet-50 text-violet-600" : tab === "charm" ? "bg-rose-50 text-rose-600" : "bg-amber-50 text-amber-500"}`}>
-            {tab === "soups" ? <Flame size={22} /> : tab === "collection" ? <GalleryVerticalEnd size={22} /> : tab === "level" ? <TrendingUp size={22} /> : tab === "charm" ? <Heart size={22} /> : <Medal size={22} />}
+          <span className={`grid h-10 w-10 place-items-center rounded-xl ${tab === "soups" ? "bg-orange-50 text-orange-500" : tab === "collection" ? "bg-indigo-50 text-indigo-600" : tab === "draws" ? "bg-cyan-50 text-cyan-600" : tab === "level" ? "bg-violet-50 text-violet-600" : tab === "charm" ? "bg-rose-50 text-rose-600" : tab === "generosity" ? "bg-amber-50 text-amber-600" : "bg-amber-50 text-amber-500"}`}>
+            {tab === "soups" ? <Flame size={22} /> : tab === "collection" ? <GalleryVerticalEnd size={22} /> : tab === "draws" ? <Dices size={22} /> : tab === "level" ? <TrendingUp size={22} /> : tab === "charm" ? <Heart size={22} /> : tab === "generosity" ? <Gift size={22} /> : <Medal size={22} />}
           </span>
           <div className="min-w-0"><p className="hidden text-[11px] font-black tracking-[0.14em] text-primary lg:block">{activeGroup === "content" ? "CONTENT RANKING" : "USER RANKING"}</p><h2 className="font-black text-ink lg:mt-0.5 lg:text-lg">{periodLabel} · {activeCategory.label} Top 10</h2><p className="mt-0.5 text-xs text-muted">{activeCategory.description} · {period === "all" ? "按累计总值排列" : `按最近${periodLabel}内增长值排列`}</p></div>
         </div>
+        {rankingRewardSummary && <div className="border-b border-amber-100 bg-amber-50/70 px-4 py-2 text-xs font-bold leading-5 text-amber-800"><Gift className="mr-1 inline" size={13} />排行榜奖励：{rankingRewardSummary}</div>}
 
         {loading ? <ListSkeleton rows={8} /> : error ? <div className="p-10 text-center text-sm text-danger">{error}</div> : tab === "soups" ? (
           <div>
@@ -388,7 +456,28 @@ export default function RankingsPage() {
             )}
             {data?.charmUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无用户魅力值数据</div>}
           </div>
-        ) : (
+        ) : tab === "generosity" ? (
+          <div>
+            <div className="grid grid-cols-[60px_minmax(0,1fr)_100px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[80px_minmax(0,1fr)_160px]">
+              <span>排名</span><span>昵称</span><span className="text-right">{metricTitle("慷慨值")}</span>
+            </div>
+            {(data?.generosityUsers ?? []).map((item) => (
+              <button key={item.id} className="ranking-table-row grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-amber-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
+                <RankMark rank={item.rank} />
+                <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
+                <span className="text-right text-sm font-black text-amber-600">{metricText(item.generosityValue)}</span>
+              </button>
+            ))}
+            {data?.generosityOwn && (
+              <button className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-t-2 border-amber-200 bg-amber-50 px-3 py-3 text-left hover:bg-amber-100/70 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${data.generosityOwn!.id}`)}>
+                <RankMark rank={data.generosityOwn.rank} />
+                <span className="truncate text-sm font-bold text-ink">{data.generosityOwn.nickname}</span>
+                <span className="text-right text-sm font-black text-amber-600">{metricText(data.generosityOwn.generosityValue)}</span>
+              </button>
+            )}
+            {data?.generosityUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">暂无用户慷慨值数据</div>}
+          </div>
+        ) : tab === "collection" ? (
           <div>
             <div className="grid grid-cols-[48px_minmax(0,1fr)_72px_88px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[70px_minmax(0,1fr)_120px_140px]">
               <span>排名</span><span>昵称</span><span className="text-right">持有卡片</span><span className="text-right">{metricTitle("收藏值")}</span>
@@ -410,6 +499,27 @@ export default function RankingsPage() {
               </button>
             )}
             {data?.collectionUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">还没有用户获得卡片</div>}
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-[60px_minmax(0,1fr)_100px] gap-2 border-b border-line bg-slate-50 px-3 py-2 text-xs font-bold text-muted sm:grid-cols-[80px_minmax(0,1fr)_160px]">
+              <span>排名</span><span>昵称</span><span className="text-right">{period === "all" ? "累计抽卡" : `${periodLabel}抽卡`}</span>
+            </div>
+            {(data?.drawUsers ?? []).map((item) => (
+              <button key={item.id} className="ranking-table-row grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-cyan-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
+                <RankMark rank={item.rank} />
+                <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
+                <span className="text-right text-sm font-black text-cyan-600">{item.drawCount.toLocaleString()} 张</span>
+              </button>
+            ))}
+            {data?.drawOwn && (
+              <button className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-t-2 border-cyan-200 bg-cyan-50 px-3 py-3 text-left hover:bg-cyan-100/70 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${data.drawOwn!.id}`)}>
+                <RankMark rank={data.drawOwn.rank} />
+                <span className="truncate text-sm font-bold text-ink">{data.drawOwn.nickname}</span>
+                <span className="text-right text-sm font-black text-cyan-600">{data.drawOwn.drawCount.toLocaleString()} 张</span>
+              </button>
+            )}
+            {data?.drawUsers.length === 0 && <div className="p-10 text-center text-sm text-muted">该周期内还没有抽卡记录</div>}
           </div>
         )}
       </div>

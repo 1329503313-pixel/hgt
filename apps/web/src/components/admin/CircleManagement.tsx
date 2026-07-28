@@ -1,6 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
-import { Edit3, ImagePlus, MessageCircle, Plus, Trash2, Users } from "lucide-react";
+import { Edit3, Eye, ImagePlus, MessageCircle, Plus, RotateCcw, Trash2, Users, X } from "lucide-react";
 import { api } from "../../api";
+import type { CircleMessage } from "../../shared/types";
 import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 import { ListSkeleton } from "../Skeletons";
@@ -25,6 +26,11 @@ export function CircleManagement() {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<AdminCircle | null | "new">(null);
   const [form, setForm] = useState(emptyForm);
+  const [previewing, setPreviewing] = useState<AdminCircle | null>(null);
+  const [messages, setMessages] = useState<CircleMessage[]>([]);
+  const [messageCursor, setMessageCursor] = useState<string | null>(null);
+  const [messageHasMore, setMessageHasMore] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const pagination = useAdminPagination(circles.length);
   const visibleCircles = paginateAdminItems(circles, pagination);
 
@@ -98,6 +104,41 @@ export function CircleManagement() {
     }
   }
 
+  async function loadMessages(circle: AdminCircle, before?: string) {
+    setMessagesLoading(true);
+    try {
+      const params = before ? `?before=${encodeURIComponent(before)}` : "";
+      const data = await api<{ messages: CircleMessage[]; hasMore: boolean; nextCursor: string | null }>(`/api/admin/circles/${circle.id}/messages${params}`, { bypassCache: true, dedupe: false });
+      setMessages((current) => before ? [...data.messages, ...current] : data.messages);
+      setMessageHasMore(data.hasMore);
+      setMessageCursor(data.nextCursor);
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }
+
+  function preview(circle: AdminCircle) {
+    setPreviewing(circle);
+    setMessages([]);
+    setMessageCursor(null);
+    setMessageHasMore(false);
+    void loadMessages(circle);
+  }
+
+  async function recall(message: CircleMessage) {
+    if (!previewing || message.recalledAt || message.type === "gift") return;
+    if (!window.confirm(`确认以管理员身份撤回 ${message.sender?.nickname || "已注销用户"} 的这条消息？`)) return;
+    try {
+      const result = await api<{ recalledAt: string }>(`/api/admin/circles/${previewing.id}/messages/${message.id}/recall`, { method: "PATCH" });
+      setMessages((current) => current.map((item) => item.id === message.id ? { ...item, content: "", stickerId: null, mentions: [], recalledAt: result.recalledAt } : item));
+      showToast("消息已撤回");
+    } catch (error) {
+      showToast((error as Error).message);
+    }
+  }
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-soft">
@@ -120,6 +161,7 @@ export function CircleManagement() {
                   </p>
                 </div>
                 <div className="flex gap-2">
+                  <button className="btn btn-secondary px-3" onClick={() => preview(circle)}><Eye size={16} />预览</button>
                   <button className="btn btn-secondary px-3" onClick={() => edit(circle)}><Edit3 size={16} />编辑</button>
                   <button className="btn bg-red-50 px-3 text-red-600 hover:bg-red-100" onClick={() => void remove(circle)}><Trash2 size={16} />删除</button>
                 </div>
@@ -145,6 +187,29 @@ export function CircleManagement() {
           <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={saving} onClick={() => setEditing(null)}>取消</button><button className="btn btn-primary" disabled={saving || !form.name.trim()} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button></div>
         </div>
       </Modal>}
+      {previewing && <Modal full onClose={() => setPreviewing(null)}>
+        <div className="flex items-start justify-between gap-3 border-b border-line pb-3">
+          <div><h2 className="text-xl font-black text-ink">聊天记录 · {previewing.name}</h2><p className="mt-1 text-sm text-muted">管理员可撤回他人消息且不受时间限制；礼物消息不可撤回。</p></div>
+          <button className="btn btn-secondary px-3" onClick={() => setPreviewing(null)}><X size={17} />关闭</button>
+        </div>
+        <div className="py-4">
+          {messageHasMore && <button className="btn btn-secondary mx-auto mb-4 flex" disabled={messagesLoading || !messageCursor} onClick={() => messageCursor && void loadMessages(previewing, messageCursor)}>{messagesLoading ? "加载中…" : "加载更早记录"}</button>}
+          <div className="space-y-2">
+            {messages.map((message) => <div key={message.id} className="flex items-start gap-3 rounded-xl border border-line p-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><strong className="text-sm text-ink">{message.sender?.nickname || "已注销用户"}</strong><span className="text-xs text-muted">{new Date(message.createdAt).toLocaleString()}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-muted">{message.type}</span></div><p className={`mt-2 whitespace-pre-wrap break-words text-sm ${message.recalledAt ? "italic text-muted" : "text-ink"}`}>{adminMessageText(message)}</p></div>{!message.recalledAt && message.type !== "gift" && <button className="btn btn-danger h-8 shrink-0 px-2 text-xs" onClick={() => void recall(message)}><RotateCcw size={14} />撤回</button>}</div>)}
+          </div>
+          {!messagesLoading && messages.length === 0 && <p className="py-16 text-center text-sm text-muted">暂无聊天记录</p>}
+          {messagesLoading && messages.length === 0 && <ListSkeleton rows={6} />}
+        </div>
+      </Modal>}
     </section>
   );
+}
+
+function adminMessageText(message: CircleMessage) {
+  if (message.recalledAt) return "该消息已撤回";
+  if (message.type === "sticker") return `[表情] ${message.stickerName || message.stickerId || ""}`.trim();
+  if (message.type === "gift") return `[礼物] ${message.gift?.giftName || "礼物"} × ${message.gift?.quantity || 1}`;
+  if (message.type === "soup_share") return `[汤品分享] ${message.soupShare?.title || ""}`.trim();
+  if (message.type === "room_invite") return `[玩汤房间邀请] ${message.roomInvite?.roomName || ""}`.trim();
+  return message.content || "—";
 }

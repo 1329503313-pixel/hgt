@@ -3,6 +3,7 @@ import type mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { pool } from "./db.js";
+import { calculateGiftConsumption, creditGiftInventory } from "./giftInventory.js";
 import { optimizeGiftIconBuffer } from "./giftImages.js";
 import { canonicalConversationUserIds } from "./conversations.js";
 import { storeMediaBuffer } from "./ossStorage.js";
@@ -80,6 +81,12 @@ const giftSendSchema = z.object({
   }
 });
 
+const adminGiftGrantSchema = z.object({
+  userId: z.string().trim().min(1).max(64),
+  quantity: z.coerce.number().int().min(1).max(10_000),
+  requestId: z.string().trim().min(8).max(100)
+});
+
 function iconUrl(giftId: unknown, updatedAt?: unknown) {
   const version = updatedAt ? new Date(updatedAt as string | number | Date).getTime() : "";
   return `/api/media/gifts/${encodeURIComponent(String(giftId))}/icon${version ? `?v=${version}` : ""}`;
@@ -103,7 +110,8 @@ function giftMessageFromRow(row: mysql.RowDataPacket): GiftMessage {
 async function storedGiftSend(giftSendId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT gs.*, sender.nickname AS sender_nickname, recipient.nickname AS recipient_nickname,
-       recipient.charm_value AS recipient_charm_value
+       recipient.charm_value AS recipient_charm_value,
+       sender.generosity_value AS sender_generosity_value
      FROM gift_sends gs
      INNER JOIN users sender ON sender.id = gs.sender_id
      INNER JOIN users recipient ON recipient.id = gs.recipient_id
@@ -111,7 +119,11 @@ async function storedGiftSend(giftSendId: string) {
     [giftSendId]
   );
   return rows[0]
-    ? { gift: giftMessageFromRow(rows[0]), recipientCharmValue: Number(rows[0].recipient_charm_value ?? 0) }
+    ? {
+        gift: giftMessageFromRow(rows[0]),
+        recipientCharmValue: Number(rows[0].recipient_charm_value ?? 0),
+        senderGenerosityValue: Number(rows[0].sender_generosity_value ?? 0)
+      }
     : null;
 }
 
@@ -129,6 +141,7 @@ function adminGift(row: mysql.RowDataPacket) {
     status: String(row.status),
     sortOrder: Number(row.sort_order),
     sentCount: Number(row.sent_count ?? 0),
+    inventoryGrantCount: Number(row.inventory_grant_count ?? 0),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
   };
@@ -194,10 +207,15 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     const user = await requireAuth(req, res);
     if (!user) return;
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, name, description, payment_currency, cost_amount, reward_shell, reward_charm, updated_at
-       FROM gifts
-       WHERE status = 'active' AND payment_currency = 'shell'
-       ORDER BY sort_order DESC, created_at DESC`
+      `SELECT g.id, g.name, g.description, g.payment_currency, g.cost_amount,
+         g.reward_shell, g.reward_charm, g.updated_at,
+         COALESCE(inventory.quantity, 0) AS inventory_quantity
+       FROM gifts g
+       LEFT JOIN user_gift_inventory inventory
+         ON inventory.gift_id = g.id AND inventory.user_id = ?
+       WHERE g.status = 'active' AND g.payment_currency = 'shell'
+       ORDER BY g.sort_order DESC, g.created_at DESC`,
+      [user.id]
     );
     res.json({
       gifts: rows.map((row) => ({
@@ -207,7 +225,8 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
         iconUrl: iconUrl(row.id, row.updated_at),
         costAmount: Number(row.cost_amount),
         rewardShell: Number(row.reward_shell),
-        rewardCharm: Number(row.reward_charm)
+        rewardCharm: Number(row.reward_charm),
+        inventoryQuantity: Number(row.inventory_quantity)
       })),
       maxQuantity: 666
     });
@@ -267,7 +286,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
       } else {
         const userIds = canonicalConversationUserIds(user.id, recipientId);
         const [userRows] = await connection.query<mysql.RowDataPacket[]>(
-          `SELECT id, nickname, shell_balance, pearl_balance, charm_value
+          `SELECT id, nickname, shell_balance, pearl_balance, charm_value, generosity_value
            FROM users WHERE id IN (?, ?) ORDER BY id FOR UPDATE`,
           userIds
         );
@@ -289,7 +308,25 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
         if (!gift || gift.status !== "active") throw Object.assign(new Error("礼物已下架或不存在"), { status: 404 });
         if (gift.payment_currency !== "shell") throw Object.assign(new Error("该礼物暂不可赠送"), { status: 400 });
 
-        const totalCost = Number(gift.cost_amount) * quantity;
+        await connection.query(
+          `INSERT INTO user_gift_inventory (user_id, gift_id, quantity)
+           VALUES (?, ?, 0)
+           ON DUPLICATE KEY UPDATE quantity = quantity`,
+          [user.id, giftId]
+        );
+        const [inventoryRows] = await connection.query<mysql.RowDataPacket[]>(
+          `SELECT quantity FROM user_gift_inventory
+           WHERE user_id = ? AND gift_id = ?
+           FOR UPDATE`,
+          [user.id, giftId]
+        );
+        const inventoryQuantity = Number(inventoryRows[0]?.quantity ?? 0);
+        const {
+          inventoryQuantityUsed,
+          purchasedQuantity,
+          inventoryQuantityAfter,
+          totalCost
+        } = calculateGiftConsumption(inventoryQuantity, quantity, Number(gift.cost_amount));
         const rewardShell = Number(gift.reward_shell) * quantity;
         const rewardPearl = Number(gift.reward_pearl) * quantity;
         const rewardCharm = Number(gift.reward_charm) * quantity;
@@ -363,32 +400,64 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
           `INSERT INTO gift_sends (
              id, request_id, gift_id, sender_id, recipient_id, quantity, source_type, source_id,
              gift_name_snapshot, payment_currency, unit_cost, total_cost,
+             inventory_quantity_used, purchased_quantity,
              unit_reward_shell, total_reward_shell, unit_reward_pearl, total_reward_pearl,
              unit_reward_charm, total_reward_charm
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             giftSendId, requestId, giftId, user.id, recipientId, quantity, source.type, source.id ?? null,
             gift.name, gift.payment_currency, gift.cost_amount, totalCost,
+            inventoryQuantityUsed, purchasedQuantity,
             gift.reward_shell, rewardShell, gift.reward_pearl, rewardPearl,
             gift.reward_charm, rewardCharm
           ]
         );
 
+        if (inventoryQuantityUsed > 0) {
+          await connection.query(
+            `UPDATE user_gift_inventory SET quantity = ?
+             WHERE user_id = ? AND gift_id = ?`,
+            [inventoryQuantityAfter, user.id, giftId]
+          );
+          await connection.query(
+            `INSERT INTO gift_inventory_transactions
+             (id, user_id, gift_id, transaction_type, quantity_change, balance_after,
+              related_type, related_id, remark, idempotency_key)
+             VALUES (?, ?, ?, 'gift_sent', ?, ?, 'gift_send', ?, ?, ?)`,
+            [
+              nanoid(),
+              user.id,
+              giftId,
+              -inventoryQuantityUsed,
+              inventoryQuantityAfter,
+              giftSendId,
+              `送出${gift.name}×${quantity}，消耗库存${inventoryQuantityUsed}`,
+              `gift:send:${giftSendId}`
+            ]
+          );
+        }
+
         senderBalance = Number(sender.shell_balance) - totalCost;
         const recipientShellBalance = Number(recipient.shell_balance) + rewardShell;
         const recipientPearlBalance = Number(recipient.pearl_balance) + rewardPearl;
         const recipientCharm = Number(recipient.charm_value) + rewardCharm;
-        await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [senderBalance, user.id]);
+        const senderGenerosity = Number(sender.generosity_value) + rewardCharm;
+        await connection.query(
+          "UPDATE users SET shell_balance = ?, generosity_value = ? WHERE id = ?",
+          [senderBalance, senderGenerosity, user.id]
+        );
         await connection.query(
           "UPDATE users SET shell_balance = ?, pearl_balance = ?, charm_value = ? WHERE id = ?",
           [recipientShellBalance, recipientPearlBalance, recipientCharm, recipientId]
         );
-        await connection.query(
-          `INSERT INTO shell_transactions
-           (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, idempotency_key)
-           VALUES (?, ?, 'gift_sent', ?, ?, 'gift_send', ?, ?, ?)`,
-          [nanoid(), user.id, -totalCost, senderBalance, giftSendId, `赠送${gift.name}×${quantity}`, `gift:send:${giftSendId}`]
-        );
+        if (totalCost > 0) {
+          await connection.query(
+            `INSERT INTO shell_transactions
+             (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, idempotency_key)
+             VALUES (?, ?, 'gift_sent', ?, ?, 'gift_send', ?, ?, ?)`,
+            [nanoid(), user.id, -totalCost, senderBalance, giftSendId, `赠送${gift.name}×${quantity}`, `gift:send:${giftSendId}`]
+          );
+        }
         if (rewardShell > 0) {
           await connection.query(
             `INSERT INTO shell_transactions
@@ -491,7 +560,14 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
 
     const stored = await storedGiftSend(giftSendId);
     if (!stored) return sendError(res, 500, "送礼记录保存失败");
-    const { gift, recipientCharmValue } = stored;
+    const { gift, recipientCharmValue, senderGenerosityValue } = stored;
+    const [inventoryRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT quantity FROM user_gift_inventory
+       WHERE user_id = ? AND gift_id = ?
+       LIMIT 1`,
+      [user.id, giftId]
+    );
+    const inventoryQuantity = Number(inventoryRows[0]?.quantity ?? 0);
     if (!duplicate) {
       onCharmChanged();
       onPrivateGift(recipientId, {
@@ -510,20 +586,109 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
       }
       if (onlineRoomId) onOnlineSoupGift(onlineRoomId);
     }
-    res.status(201).json({ gift, shellBalance: senderBalance, recipientCharmValue, duplicate });
+    res.status(201).json({
+      gift,
+      shellBalance: senderBalance,
+      recipientCharmValue,
+      senderGenerosityValue,
+      inventoryQuantity,
+      duplicate
+    });
   });
 
   app.get("/api/admin/gifts", async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT g.*, COUNT(gs.id) AS sent_count
+      `SELECT g.*,
+         (SELECT COUNT(*) FROM gift_sends gs WHERE gs.gift_id = g.id) AS sent_count,
+         (SELECT COUNT(*) FROM gift_inventory_transactions git
+          WHERE git.gift_id = g.id AND git.transaction_type = 'grant') AS inventory_grant_count
        FROM gifts g
-       LEFT JOIN gift_sends gs ON gs.gift_id = g.id
-       GROUP BY g.id
        ORDER BY g.sort_order DESC, g.created_at DESC`
     );
     res.json({ gifts: rows.map(adminGift) });
+  });
+
+  app.post("/api/admin/gifts/:id/inventory-grants", async (req, res) => {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const parsed = adminGiftGrantSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return sendError(res, 400, parsed.error.issues[0]?.message || "礼物赠送参数不正确");
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [giftRows] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT name FROM gifts WHERE id = ? LIMIT 1",
+        [req.params.id]
+      );
+      if (!giftRows[0]) throw Object.assign(new Error("礼物不存在"), { status: 404 });
+      const [userRows] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT nickname FROM users WHERE id = ? LIMIT 1",
+        [parsed.data.userId]
+      );
+      if (!userRows[0]) throw Object.assign(new Error("用户不存在"), { status: 404 });
+
+      const result = await creditGiftInventory(connection, {
+        userId: parsed.data.userId,
+        giftId: req.params.id,
+        quantity: parsed.data.quantity,
+        idempotencyKey: `admin-gift:${admin.id}:${parsed.data.requestId}`,
+        relatedType: "admin_gift_grant",
+        relatedId: req.params.id,
+        operatorId: admin.id,
+        remark: `后台赠送${giftRows[0].name}×${parsed.data.quantity}`
+      });
+      await connection.commit();
+      res.status(201).json({
+        ...result,
+        gift: { id: req.params.id, name: String(giftRows[0].name) },
+        user: { id: parsed.data.userId, nickname: String(userRows[0].nickname) }
+      });
+    } catch (error) {
+      await connection.rollback();
+      const status = Number((error as { status?: number }).status ?? 500);
+      if (status >= 500) console.error("Grant gift inventory failed:", error);
+      return sendError(
+        res,
+        status,
+        status >= 500 ? "赠送礼物失败，请稍后重试" : (error as Error).message
+      );
+    } finally {
+      connection.release();
+    }
+  });
+
+  app.get("/api/admin/gift-sends", async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const offsetValue = Number(req.query.offset ?? 0);
+    const offset = Number.isFinite(offsetValue) ? Math.max(0, Math.floor(offsetValue)) : 0;
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT gs.id, gs.gift_name_snapshot, gs.quantity, gs.created_at,
+         sender.id AS sender_id, sender.nickname AS sender_nickname,
+         recipient.id AS recipient_id, recipient.nickname AS recipient_nickname
+       FROM gift_sends gs
+       INNER JOIN users sender ON sender.id = gs.sender_id
+       INNER JOIN users recipient ON recipient.id = gs.recipient_id
+       ORDER BY gs.created_at DESC, gs.id DESC
+       LIMIT 10 OFFSET ?`,
+      [offset]
+    );
+    const [[totalRow]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM gift_sends");
+    res.json({
+      total: Number(totalRow.total ?? 0),
+      records: rows.map((row) => ({
+        id: String(row.id),
+        sender: { id: String(row.sender_id), nickname: String(row.sender_nickname) },
+        recipient: { id: String(row.recipient_id), nickname: String(row.recipient_nickname) },
+        giftName: String(row.gift_name_snapshot),
+        quantity: Number(row.quantity),
+        createdAt: new Date(row.created_at).toISOString()
+      }))
+    });
   });
 
   app.post("/api/admin/gifts", async (req, res) => {
@@ -544,7 +709,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
       [id, value.name, value.description, optimizedIcon, value.costAmount, value.rewardShell, value.rewardPearl, value.rewardCharm, value.status, value.sortOrder]
     );
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT g.*, 0 AS sent_count FROM gifts g WHERE id = ? LIMIT 1",
+      "SELECT g.*, 0 AS sent_count, 0 AS inventory_grant_count FROM gifts g WHERE id = ? LIMIT 1",
       [id]
     );
     res.status(201).json({ gift: adminGift(rows[0]) });
@@ -556,13 +721,18 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     const parsed = giftWriteSchema.safeParse(req.body);
     if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message || "礼物参数不正确");
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT g.*, (SELECT COUNT(*) FROM gift_sends gs WHERE gs.gift_id = g.id) AS sent_count
+      `SELECT g.*,
+         (SELECT COUNT(*) FROM gift_sends gs WHERE gs.gift_id = g.id) AS sent_count,
+         (SELECT COUNT(*) FROM gift_inventory_transactions git
+          WHERE git.gift_id = g.id AND git.transaction_type = 'grant') AS inventory_grant_count
        FROM gifts g WHERE g.id = ? LIMIT 1`,
       [req.params.id]
     );
     const current = rows[0];
     if (!current) return sendError(res, 404, "礼物不存在");
-    if (Number(current.sent_count) > 0) return sendError(res, 409, "已赠送过的礼物不可编辑，只能下架");
+    if (Number(current.sent_count) > 0 || Number(current.inventory_grant_count) > 0) {
+      return sendError(res, 409, "已进入流通的礼物不可编辑，只能下架");
+    }
     let optimizedIcon = String(current.icon_image);
     if (parsed.data.iconImage) {
       const nextIcon = await storeGiftIcon(parsed.data.iconImage, req.params.id);
@@ -577,7 +747,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
       [value.name, value.description, optimizedIcon, value.costAmount, value.rewardShell, value.rewardPearl, value.rewardCharm, value.status, value.sortOrder, req.params.id]
     );
     const [updated] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT g.*, 0 AS sent_count FROM gifts g WHERE id = ? LIMIT 1",
+      "SELECT g.*, 0 AS sent_count, 0 AS inventory_grant_count FROM gifts g WHERE id = ? LIMIT 1",
       [req.params.id]
     );
     res.json({ gift: adminGift(updated[0]) });
@@ -600,10 +770,18 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     const [sentRows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT 1 FROM gift_sends WHERE gift_id = ? LIMIT 1",
+      `SELECT 1 FROM gifts g
+       WHERE g.id = ? AND (
+         EXISTS (SELECT 1 FROM gift_sends gs WHERE gs.gift_id = g.id)
+         OR EXISTS (
+           SELECT 1 FROM gift_inventory_transactions git
+           WHERE git.gift_id = g.id AND git.transaction_type = 'grant'
+         )
+       )
+       LIMIT 1`,
       [req.params.id]
     );
-    if (sentRows[0]) return sendError(res, 409, "已赠送过的礼物不可删除，只能下架");
+    if (sentRows[0]) return sendError(res, 409, "已进入流通的礼物不可删除，只能下架");
     const [result] = await pool.query<mysql.ResultSetHeader>("DELETE FROM gifts WHERE id = ?", [req.params.id]);
     if (!result.affectedRows) return sendError(res, 404, "礼物不存在");
     res.status(204).end();
