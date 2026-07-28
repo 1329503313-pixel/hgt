@@ -1681,14 +1681,14 @@ export async function initDatabase() {
     INSERT IGNORE INTO asset_draw_count_events
       (id, order_id, user_id, pack_id, draw_count, event_source, completed_at)
     SELECT
-      CONCAT('free:', usage.user_id, ':', usage.pack_id, ':', DATE_FORMAT(usage.usage_date, '%Y%m%d')),
+      CONCAT('free:', du.user_id, ':', du.pack_id, ':', DATE_FORMAT(du.usage_date, '%Y%m%d')),
       NULL,
-      usage.user_id,
-      usage.pack_id,
-      usage.used_count - COALESCE(exact_free.draw_count, 0),
+      du.user_id,
+      du.pack_id,
+      du.used_count - COALESCE(exact_free.draw_count, 0),
       'free',
-      DATE_ADD(TIMESTAMP(usage.usage_date), INTERVAL 4 HOUR)
-    FROM asset_daily_free_usage usage
+      DATE_ADD(TIMESTAMP(du.usage_date), INTERVAL 4 HOUR)
+    FROM asset_daily_free_usage du
     LEFT JOIN (
       SELECT user_id, pack_id, DATE(DATE_ADD(completed_at, INTERVAL 8 HOUR)) AS usage_date,
         SUM(draw_count) AS draw_count
@@ -1696,10 +1696,10 @@ export async function initDatabase() {
       WHERE event_source = 'free' AND order_id IS NOT NULL
       GROUP BY user_id, pack_id, DATE(DATE_ADD(completed_at, INTERVAL 8 HOUR))
     ) exact_free
-      ON exact_free.user_id = usage.user_id
-     AND exact_free.pack_id = usage.pack_id
-     AND exact_free.usage_date = usage.usage_date
-    WHERE usage.used_count > COALESCE(exact_free.draw_count, 0)
+      ON exact_free.user_id = du.user_id
+     AND exact_free.pack_id = du.pack_id
+     AND exact_free.usage_date = du.usage_date
+    WHERE du.used_count > COALESCE(exact_free.draw_count, 0)
   `);
   // 兼容价格为零但不属于每日免费次数的历史订单。
   await pool.query(`
