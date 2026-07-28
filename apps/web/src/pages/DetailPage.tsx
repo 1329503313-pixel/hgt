@@ -20,6 +20,7 @@ import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { Modal } from "../components/Modal";
 import { seoDescription, setDocumentSeo } from "../shared/seo";
 import { canAccessAdmin } from "../shared/roles";
+import { EvaluationCard } from "../components/EvaluationCard";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -460,84 +461,60 @@ export default function DetailPage() {
           </div>
         )}
 
-        {soup.canEdit && (
-          <div className="detail-desktop-action-card card hidden p-4 lg:block">
-            <p className="text-xs font-black tracking-[0.14em] text-primary">MANAGE</p>
-            <h2 className="mt-1 font-black text-ink">作品管理</h2>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <button className="btn btn-secondary" onClick={() => openSoupEditor(soup)}><Pencil size={17} />编辑</button>
-              <button className="btn btn-danger" onClick={handleDelete}><Trash2 size={17} />删除</button>
+        <div className="detail-evaluations-card card p-4" id="evaluations">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black tracking-[0.14em] text-primary">REVIEWS</p>
+              <h2 className="mt-1 font-black text-ink">玩家评价 <span className="text-sm text-muted">{soup.evaluationCount}</span></h2>
             </div>
-          </div>
-        )}
-      </aside>
-      </div>
-
-      {/* Evaluations */}
-      <div className="detail-evaluations-card card p-4" id="evaluations">
-          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div><p className="text-xs font-black tracking-[0.14em] text-primary">REVIEWS</p><h2 className="mt-1 text-xl font-black text-ink">玩家评价 <span className="text-sm text-muted">{soup.evaluationCount}</span></h2></div>
             {hasEvaluations && (
               <button
-                className="btn btn-primary"
-                disabled={!soup.canViewFull}
-                title={!soup.canViewFull ? "获得汤底查看权限后才能评价" : undefined}
-                onClick={handleEvalOpen}
+                className="text-xs font-black text-primary hover:underline"
+                onClick={() => navigate(`/soup/${soup.id}/evaluations`)}
               >
-                <Star size={18} /> {ownEvaluation ? "编辑我的评价" : "添加评价"}
+                查看更多
               </button>
             )}
           </div>
           {!soup.canViewFull && <p className="mb-3 text-xs text-warning">获得汤底查看权限后才能评价。</p>}
           <div className="detail-evaluation-list">
-            {soup.evaluations.map((item) => (
-              <div key={item.id} className="detail-evaluation-item rounded-xl border border-line bg-slate-50 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="flex min-w-0 items-center gap-2">
-                    {item.reviewerAvatar ? <img className="h-6 w-6 rounded-full object-cover" src={item.reviewerAvatar} alt="" /> : <span className="grid h-6 w-6 place-items-center rounded-full bg-blue-100 text-primary"><User size={14} /></span>}
-                    <strong className="truncate">{item.reviewer}</strong>
-                    <LevelBadge level={item.reviewerLevel} />
-                    <EquippedBadgeIcon badge={item.reviewerEquippedBadge} className="h-5 w-5" />
-                  </span>
-                  <span className="rounded-lg bg-blue-50 px-2 py-1 text-sm font-black text-primary">{item.total}</span>
-                </div>
-                {item.content && <p className="mt-2 text-sm leading-6 text-ink whitespace-pre-wrap">{item.content}</p>}
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted sm:grid-cols-3">
-                  <span>文笔 {item.writing ?? "-"}</span>
-                  <span>逻辑 {item.logic ?? "-"}</span>
-                  <span>分享 {item.share ?? "-"}</span>
-                  <span>机制 {item.mechanism ?? "-"}</span>
-                  <span>反转 {item.twist ?? "-"}</span>
-                  <span>深度 {item.depth ?? "-"}</span>
-                </div>
-              </div>
-            ))}
-            {!hasEvaluations && (
-              <div className="space-y-3">
-                <p className="text-sm text-muted">还没有评价。</p>
-                <button
-                  className="btn btn-primary w-full sm:w-auto"
-                  disabled={!soup.canViewFull}
-                  title={!soup.canViewFull ? "获得汤底查看权限后才能评价" : undefined}
-                  onClick={handleEvalOpen}
-                >
-                  <Star size={18} /> {ownEvaluation ? "编辑我的评价" : "添加评价"}
-                </button>
-              </div>
-            )}
+            {soup.evaluations.slice(0, 3).map((item) => <EvaluationCard key={item.id} evaluation={item} compact />)}
+            {!hasEvaluations && <p className="text-sm text-muted">还没有评价。</p>}
           </div>
-      </div>
-
-      </div>
-
-      <aside className="detail-desktop-floating-actions card hidden p-4 lg:block" aria-label="开始推理">
-        <p className="text-xs font-black tracking-[0.14em] text-primary">ACTIONS</p>
-        <h2 className="mt-1 font-black text-ink">开始推理</h2>
-        <div className="mt-4 grid gap-2">
-          {user && soup.enableAiGame && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => setShowGame(true)}>AI 玩汤</button>}
-          {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }}><DoorOpen size={17} />创建玩汤房间</button>}
-          <button className="btn btn-secondary w-full" onClick={() => setShowShare(true)}><Share2 size={17} />分享作品</button>
+          <button
+            className="btn btn-primary mt-3 w-full"
+            disabled={!soup.canViewFull}
+            title={!soup.canViewFull ? "获得汤底查看权限后才能评价" : undefined}
+            onClick={handleEvalOpen}
+          >
+            <Star size={18} /> {ownEvaluation ? "编辑我的评价" : "添加评价"}
+          </button>
         </div>
+      </aside>
+      </div>
+
+      </div>
+
+      <aside className="detail-desktop-floating-actions hidden lg:grid" aria-label="作品操作">
+        <div className="card p-4">
+          <p className="text-xs font-black tracking-[0.14em] text-primary">ACTIONS</p>
+          <h2 className="mt-1 font-black text-ink">开始推理</h2>
+          <div className="mt-4 grid gap-2">
+            {user && soup.enableAiGame && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => setShowGame(true)}>AI 玩汤</button>}
+            {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }}><DoorOpen size={17} />开房间</button>}
+            <button className="btn btn-secondary w-full" onClick={() => setShowShare(true)}><Share2 size={17} />分享作品</button>
+          </div>
+        </div>
+        {soup.canEdit && (
+          <div className="card p-4">
+            <p className="text-xs font-black tracking-[0.14em] text-primary">MANAGE</p>
+            <h2 className="mt-1 font-black text-ink">作品管理</h2>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button className="btn btn-secondary whitespace-nowrap px-2" onClick={() => openSoupEditor(soup)}>编辑</button>
+              <button className="btn btn-danger whitespace-nowrap px-2" onClick={handleDelete}>删除</button>
+            </div>
+          </div>
+        )}
       </aside>
 
       <div className="detail-side-actions site-footer-safe-bottom-24 fixed right-4 z-30 flex flex-col items-stretch gap-2 lg:hidden">

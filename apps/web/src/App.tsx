@@ -12,6 +12,7 @@ import { SiteFooter } from "./components/SiteFooter";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const DetailPage = lazy(() => import("./pages/DetailPage"));
+const SoupEvaluationsPage = lazy(() => import("./pages/SoupEvaluationsPage"));
 const MessagesPage = lazy(() => import("./pages/MessagesPage"));
 const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
 const RequestsPage = lazy(() => import("./pages/RequestsPage"));
@@ -103,6 +104,7 @@ export default function App() {
         {/* Content detail routes — desktop navigation, mobile page-native header */}
         <Route element={<ContentNavLayout />}>
           <Route path="soup/:id" element={<DetailPage />} />
+          <Route path="soup/:id/evaluations" element={<SoupEvaluationsPage />} />
           <Route path="users/:id" element={<UserProfilePage />} />
           <Route path="users/:id/following" element={<UserFollowsPage type="following" />} />
           <Route path="users/:id/followers" element={<UserFollowsPage type="followers" />} />

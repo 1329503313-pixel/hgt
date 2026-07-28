@@ -69,7 +69,7 @@ export default function MainLayout() {
 
   return (
     <>
-      {desktopModule && <DesktopModuleHeader key={path} {...desktopModule} />}
+      {desktopModule && <DesktopModuleHeader {...desktopModule} />}
       <main className={`main-layout mx-auto max-w-6xl px-4 pt-[72px] pb-28 ${isHome ? "main-layout-home" : ""} ${desktopModule ? "main-layout-desktop-module" : ""} ${desktopSecondary ? "main-layout-desktop-secondary" : ""}`}>
         {desktopSecondary && <div className="desktop-secondary-back-row hidden lg:flex"><UnifiedBackButton to={parentRoute(path)} /></div>}
         <Outlet />

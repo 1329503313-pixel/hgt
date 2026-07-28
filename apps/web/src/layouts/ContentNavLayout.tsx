@@ -2,6 +2,9 @@ import { Outlet, useLocation } from "react-router-dom";
 import { DesktopModuleHeader, type DesktopModuleKey } from "../components/DesktopModuleHeader";
 
 function routeMeta(path: string): { active: DesktopModuleKey; title: string; eyebrow: string } {
+  if (/^\/soup\/[^/]+\/evaluations$/.test(path)) {
+    return { active: "mine", title: "查看玩家评价，了解作品的多维反馈", eyebrow: "评价列表 · REVIEWS" };
+  }
   if (/^\/soup\/[^/]+$/.test(path)) {
     return { active: "mine", title: "阅读完整故事，发现汤面背后的真相", eyebrow: "海龟汤详情 · STORY" };
   }
@@ -17,7 +20,7 @@ export default function ContentNavLayout() {
 
   return (
     <>
-      <DesktopModuleHeader key={location.pathname} {...meta} />
+      <DesktopModuleHeader {...meta} />
       <main className="desktop-content-route-layout">
         <Outlet />
       </main>
