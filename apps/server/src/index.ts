@@ -606,7 +606,7 @@ function feedbackPayload(row: mysql.RowDataPacket, includeScreenshot = false) {
       username: String(row.publisher_username)
     },
     createdAt: new Date(row.created_at).toISOString(),
-    ...(includeScreenshot ? { screenshot: row.screenshot ? String(row.screenshot) : null } : {})
+    ...(includeScreenshot ? { screenshot: publicOssUrl(row.screenshot) } : {})
   };
 }
 

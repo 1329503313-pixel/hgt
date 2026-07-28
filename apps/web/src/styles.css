@@ -2187,8 +2187,19 @@ textarea {
   .detail-page-content {
     width: 100%;
     max-width: none;
-    padding-right: 0;
+    padding-right: 220px;
     padding-left: 0;
+  }
+
+  .detail-desktop-floating-actions {
+    position: fixed;
+    top: clamp(120px, 34vh, 310px);
+    right: max(24px, calc((100% - 1388px) / 2));
+    z-index: 30;
+    width: 196px;
+    border: 1px solid rgba(226, 232, 240, 0.92);
+    border-radius: 18px;
+    box-shadow: 0 16px 42px rgba(15, 23, 42, 0.1);
   }
 
   .detail-meta-card {
@@ -3327,6 +3338,16 @@ textarea {
     bottom: 30px;
     width: 48px;
     height: 48px;
+  }
+}
+
+@media (min-width: 1840px) {
+  .detail-page-content {
+    padding-right: 0;
+  }
+
+  .detail-desktop-floating-actions {
+    right: max(24px, calc((100% - 1388px) / 2 - 220px));
   }
 }
 

@@ -460,16 +460,6 @@ export default function DetailPage() {
           </div>
         )}
 
-        <div className="detail-desktop-action-card card hidden p-4 lg:block">
-          <p className="text-xs font-black tracking-[0.14em] text-primary">ACTIONS</p>
-          <h2 className="mt-1 font-black text-ink">开始推理</h2>
-          <div className="mt-4 grid gap-2">
-            {user && soup.enableAiGame && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => setShowGame(true)}>AI 玩汤</button>}
-            {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }}><DoorOpen size={17} />创建玩汤房间</button>}
-            <button className="btn btn-secondary w-full" onClick={() => setShowShare(true)}><Share2 size={17} />分享作品</button>
-          </div>
-        </div>
-
         {soup.canEdit && (
           <div className="detail-desktop-action-card card hidden p-4 lg:block">
             <p className="text-xs font-black tracking-[0.14em] text-primary">MANAGE</p>
@@ -539,6 +529,16 @@ export default function DetailPage() {
       </div>
 
       </div>
+
+      <aside className="detail-desktop-floating-actions card hidden p-4 lg:block" aria-label="开始推理">
+        <p className="text-xs font-black tracking-[0.14em] text-primary">ACTIONS</p>
+        <h2 className="mt-1 font-black text-ink">开始推理</h2>
+        <div className="mt-4 grid gap-2">
+          {user && soup.enableAiGame && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => setShowGame(true)}>AI 玩汤</button>}
+          {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }}><DoorOpen size={17} />创建玩汤房间</button>}
+          <button className="btn btn-secondary w-full" onClick={() => setShowShare(true)}><Share2 size={17} />分享作品</button>
+        </div>
+      </aside>
 
       <div className="detail-side-actions site-footer-safe-bottom-24 fixed right-4 z-30 flex flex-col items-stretch gap-2 lg:hidden">
         {user && soup.enableAiGame && isReviewApproved && <button className="flex h-14 w-28 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => setShowGame(true)} aria-label="AI 玩汤">AI玩汤</button>}

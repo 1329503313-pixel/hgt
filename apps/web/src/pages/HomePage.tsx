@@ -567,13 +567,16 @@ export default function HomePage() {
       <div ref={listTopRef} className="home-list-anchor" aria-hidden="true" />
 
       <MasonryList
-        soups={soups}
+        soups={isDesktop && loading ? [] : soups}
         onOpen={(id) => navigate(`/soup/${id}`)}
         hasMore={!isDesktop && hasMore}
         loading={loading}
         onLoadMore={handleLoadMore}
         desktopLeadingContent={!isResultMode && currentPage === 1 ? <HomeBannerCarousel variant="desktop" /> : undefined}
-        desktopLoadingContent={loading ? Array.from({ length: soups.length ? 2 : 6 }, (_, index) => <SoupCardSkeleton key={`loading-${index}`} />) : undefined}
+        desktopLoadingContent={loading ? Array.from(
+          { length: currentPage === 1 ? firstDesktopPageSize : desktopPageSize },
+          (_, index) => <SoupCardSkeleton key={`loading-${index}`} />
+        ) : undefined}
       />
 
       {isDesktop && totalPages > 1 && (
