@@ -219,12 +219,14 @@ export async function runDailyInviteShellSettlement(now = new Date()) {
               );
               await connection.query(
                 `INSERT INTO shell_transactions
-                  (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, idempotency_key)
-                 VALUES (?, ?, 'invite_shell_milestone_reward', ?, ?, 'invited_user', ?, ?, ?)`,
+                  (id, user_id, transaction_type, amount, experience_amount, balance_after,
+                   related_type, related_id, remark, idempotency_key)
+                 VALUES (?, ?, 'invite_shell_milestone_reward', ?, ?, ?, 'invited_user', ?, ?, ?)`,
                 [
                   nanoid(),
                   inviterId,
                   shellReward,
+                  experienceReward,
                   balanceAfter,
                   inviteeUserId,
                   `邀请用户累计获得贝壳奖励（${milestoneDelta} 次）`,

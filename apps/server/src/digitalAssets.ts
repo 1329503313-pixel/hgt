@@ -1234,40 +1234,52 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       ).then(([items]) => items),
       cutoff
         ? pool.query<mysql.RowDataPacket[]>(
-            `SELECT user_id, SUM(amount) AS collection_gain
+            `SELECT user_id, SUM(amount) AS collection_gain, MAX(created_at) AS reached_at
              FROM asset_collection_value_events
-             WHERE created_at >= ? GROUP BY user_id`,
+             WHERE included_in_rankings = 1 AND created_at >= ? GROUP BY user_id`,
             [cutoff]
           ).then(([items]) => items)
         : Promise.resolve([] as mysql.RowDataPacket[]),
       pool.query<mysql.RowDataPacket[]>(
         cutoff
-          ? `SELECT user_id, SUM(draw_count) AS draw_count, MIN(completed_at) AS first_draw_at
+          ? `SELECT user_id, SUM(draw_count) AS draw_count, MAX(completed_at) AS reached_at
              FROM asset_draw_count_events
              WHERE completed_at >= ?
              GROUP BY user_id`
           : `SELECT totals.user_id, totals.total_draw_count AS draw_count,
-               users.created_at AS first_draw_at
+               COALESCE(MAX(events.completed_at), users.created_at) AS reached_at
              FROM user_asset_draw_totals totals
              INNER JOIN users ON users.id = totals.user_id
-             WHERE totals.total_draw_count > 0`,
+             LEFT JOIN asset_draw_count_events events ON events.user_id = totals.user_id
+             WHERE totals.total_draw_count > 0
+             GROUP BY totals.user_id, totals.total_draw_count, users.created_at`,
         cutoff ? [cutoff] : []
       ).then(([items]) => items)
     ]);
-    const periodValues = new Map(eventRows.map((row) => [String(row.user_id), Number(row.collection_gain ?? 0)]));
+    const periodValues = new Map(eventRows.map((row) => [
+      String(row.user_id),
+      {
+        value: Number(row.collection_gain ?? 0),
+        reachedAt: new Date(row.reached_at).getTime()
+      }
+    ]));
     const allUsers = rows
       .map((row) => ({
         id: String(row.id),
         nickname: String(row.nickname),
         avatar: bool(row.has_avatar) ? `/api/media/users/${encodeURIComponent(String(row.id))}/avatar` : null,
-        totalCollectionValue: cutoff ? periodValues.get(String(row.id)) ?? 0 : Number(row.total_collection_value),
+        totalCollectionValue: cutoff ? periodValues.get(String(row.id))?.value ?? 0 : Number(row.total_collection_value),
         unlockedCardCount: Number(row.unlocked_card_count),
         legendaryCardCount: Number(row.legendary_card_count),
-        reachedAt: new Date(row.score_reached_at).getTime(),
+        reachedAt: cutoff
+          ? periodValues.get(String(row.id))?.reachedAt ?? new Date(row.created_at).getTime()
+          : new Date(row.score_reached_at).getTime(),
         createdAt: new Date(row.created_at).getTime()
       }))
+      .filter((item) => item.totalCollectionValue > 0)
       .sort((a, b) => b.totalCollectionValue - a.totalCollectionValue
-        || (cutoff ? a.createdAt - b.createdAt : a.reachedAt - b.reachedAt)
+        || a.reachedAt - b.reachedAt
+        || a.createdAt - b.createdAt
         || a.id.localeCompare(b.id))
       .map(({ reachedAt: _reachedAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const ranking = allUsers.slice(0, 10);
@@ -1282,16 +1294,16 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           nickname: String(account.nickname),
           avatar: bool(account.has_avatar) ? `/api/media/users/${encodeURIComponent(String(account.id))}/avatar` : null,
           drawCount: Number(row.draw_count ?? 0),
-          firstDrawAt: new Date(row.first_draw_at).getTime(),
+          reachedAt: new Date(row.reached_at).getTime(),
           createdAt: new Date(account.created_at).getTime()
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null && item.drawCount > 0)
       .sort((a, b) => b.drawCount - a.drawCount
-        || a.firstDrawAt - b.firstDrawAt
+        || a.reachedAt - b.reachedAt
         || a.createdAt - b.createdAt
         || a.id.localeCompare(b.id))
-      .map(({ firstDrawAt: _firstDrawAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
+      .map(({ reachedAt: _reachedAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const drawRanking = allDrawUsers.slice(0, 10);
     const drawOwn = allDrawUsers.find((item) => item.id === user.id) ?? null;
     res.json({

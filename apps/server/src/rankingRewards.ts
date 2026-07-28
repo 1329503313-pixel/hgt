@@ -97,6 +97,18 @@ export function rankingRewardFor(period: RankingRewardPeriod, board: RankingRewa
 
 type Standing = { userId: string; rank: number; value: number };
 type Standings = Record<RankingRewardBoard, Standing[]>;
+type RankedValue = { userId: string; value: number; reachedAt: number; createdAt: number };
+
+export function rankPositiveValues(items: RankedValue[], limit = 10): Standing[] {
+  return items
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value
+      || a.reachedAt - b.reachedAt
+      || a.createdAt - b.createdAt
+      || a.userId.localeCompare(b.userId))
+    .slice(0, limit)
+    .map(({ userId, value }, index) => ({ userId, value, rank: index + 1 }));
+}
 
 async function rankingStandings(
   connection: mysql.PoolConnection,
@@ -119,27 +131,35 @@ async function rankingStandings(
       `SELECT u.id, u.created_at,
          COALESCE(task_gain.value, 0) + COALESCE(beginner_gain.value, 0)
            + COALESCE(adjustment_gain.value, 0) + COALESCE(invite_email_gain.value, 0)
-           + COALESCE(invite_milestone_gain.value, 0) AS metric_value
+           + COALESCE(invite_milestone_gain.value, 0) AS metric_value,
+         GREATEST(
+           COALESCE(task_gain.reached_at, '1970-01-01'),
+           COALESCE(beginner_gain.reached_at, '1970-01-01'),
+           COALESCE(adjustment_gain.reached_at, '1970-01-01'),
+           COALESCE(invite_email_gain.reached_at, '1970-01-01'),
+           COALESCE(invite_milestone_gain.reached_at, '1970-01-01')
+         ) AS reached_at
        FROM users u
        LEFT JOIN (
-         SELECT user_id, SUM(experience_reward) AS value FROM shell_task_events
+         SELECT user_id, SUM(experience_reward) AS value, MAX(created_at) AS reached_at FROM shell_task_events
          WHERE created_at >= ? AND created_at < ? GROUP BY user_id
        ) task_gain ON task_gain.user_id = u.id
        LEFT JOIN (
-         SELECT user_id, SUM(experience_reward) AS value FROM beginner_task_events
+         SELECT user_id, SUM(experience_reward) AS value, MAX(completed_at) AS reached_at FROM beginner_task_events
          WHERE completed_at >= ? AND completed_at < ? GROUP BY user_id
        ) beginner_gain ON beginner_gain.user_id = u.id
        LEFT JOIN (
-         SELECT user_id, SUM(amount) AS value FROM user_experience_adjustments
+         SELECT user_id, SUM(amount) AS value, MAX(created_at) AS reached_at FROM user_experience_adjustments
          WHERE created_at >= ? AND created_at < ? GROUP BY user_id
        ) adjustment_gain ON adjustment_gain.user_id = u.id
        LEFT JOIN (
-         SELECT inviter_user_id AS user_id, SUM(email_experience_reward) AS value
+         SELECT inviter_user_id AS user_id, SUM(email_experience_reward) AS value,
+           MAX(email_rewarded_at) AS reached_at
          FROM user_invite_reward_progress
          WHERE email_rewarded_at >= ? AND email_rewarded_at < ? GROUP BY inviter_user_id
        ) invite_email_gain ON invite_email_gain.user_id = u.id
        LEFT JOIN (
-         SELECT user_id, SUM(amount) AS value FROM shell_transactions
+         SELECT user_id, SUM(experience_amount) AS value, MAX(created_at) AS reached_at FROM shell_transactions
          WHERE transaction_type = 'invite_shell_milestone_reward'
            AND created_at >= ? AND created_at < ?
          GROUP BY user_id
@@ -149,27 +169,32 @@ async function rankingStandings(
     ).then(([rows]) => rows),
     connection.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.created_at,
-         COALESCE(SUM(CASE WHEN gs.created_at >= ? AND gs.created_at < ? THEN gs.total_reward_charm ELSE 0 END), 0) AS metric_value
+         COALESCE(SUM(CASE WHEN gs.created_at >= ? AND gs.created_at < ? THEN gs.total_reward_charm ELSE 0 END), 0) AS metric_value,
+         MAX(CASE WHEN gs.created_at >= ? AND gs.created_at < ? THEN gs.created_at END) AS reached_at
        FROM users u
        LEFT JOIN gift_sends gs ON gs.recipient_id = u.id
        WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        GROUP BY u.id, u.created_at`,
-      [periodStart, periodEnd]
+      [periodStart, periodEnd, periodStart, periodEnd]
     ).then(([rows]) => rows),
     connection.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.created_at,
-         COALESCE(SUM(CASE WHEN gs.created_at >= ? AND gs.created_at < ? THEN gs.total_reward_charm ELSE 0 END), 0) AS metric_value
+         COALESCE(SUM(CASE WHEN gs.created_at >= ? AND gs.created_at < ? THEN gs.total_reward_charm ELSE 0 END), 0) AS metric_value,
+         MAX(CASE WHEN gs.created_at >= ? AND gs.created_at < ? THEN gs.created_at END) AS reached_at
        FROM users u
        LEFT JOIN gift_sends gs ON gs.sender_id = u.id
        WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        GROUP BY u.id, u.created_at`,
-      [periodStart, periodEnd]
+      [periodStart, periodEnd, periodStart, periodEnd]
     ).then(([rows]) => rows),
     connection.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.created_at, COALESCE(SUM(events.amount), 0) AS metric_value
+      `SELECT u.id, u.created_at, COALESCE(SUM(events.amount), 0) AS metric_value,
+         MAX(events.created_at) AS reached_at
        FROM users u
        LEFT JOIN asset_collection_value_events events
-         ON events.user_id = u.id AND events.created_at >= ? AND events.created_at < ?
+         ON events.user_id = u.id
+        AND events.included_in_rankings = 1
+        AND events.created_at >= ? AND events.created_at < ?
        WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        GROUP BY u.id, u.created_at`,
       [periodStart, periodEnd]
@@ -177,7 +202,7 @@ async function rankingStandings(
     connection.query<mysql.RowDataPacket[]>(
       `SELECT events.user_id AS id, users.created_at,
          SUM(events.draw_count) AS metric_value,
-         MIN(events.completed_at) AS reached_at
+         MAX(events.completed_at) AS reached_at
        FROM asset_draw_count_events events
        INNER JOIN users ON users.id = events.user_id
        WHERE events.completed_at >= ?
@@ -209,26 +234,20 @@ async function rankingStandings(
   const rankRows = (
     rows: mysql.RowDataPacket[],
     reachedAt: (row: mysql.RowDataPacket) => number = (row) => new Date(row.created_at).getTime()
-  ) => rows
+  ) => rankPositiveValues(rows
     .map((row) => ({
       userId: String(row.id),
       value: Math.max(0, Math.floor(Number(row.metric_value ?? 0))),
       reachedAt: reachedAt(row),
       createdAt: new Date(row.created_at).getTime()
-    }))
-    .sort((a, b) => b.value - a.value || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.userId.localeCompare(b.userId))
-    .slice(0, 10)
-    .map(({ userId, value }, index) => ({ userId, value, rank: index + 1 }));
+    })));
 
   return {
-    achievement: [...achievements.values()]
-      .sort((a, b) => b.value - a.value || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.userId.localeCompare(b.userId))
-      .slice(0, 10)
-      .map(({ userId, value }, index) => ({ userId, value, rank: index + 1 })),
-    level: rankRows(levelRows),
-    collection: rankRows(collectionRows),
-    charm: rankRows(charmRows),
-    generosity: rankRows(generosityRows),
+    achievement: rankPositiveValues([...achievements.values()]),
+    level: rankRows(levelRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
+    collection: rankRows(collectionRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
+    charm: rankRows(charmRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
+    generosity: rankRows(generosityRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
     draws: rankRows(drawRows, (row) => new Date(row.reached_at).getTime())
   };
 }

@@ -4,6 +4,7 @@ import {
   nextMonthlyRankingSettlement,
   nextRankingPeriodEnd,
   nextWeeklyRankingSettlement,
+  rankPositiveValues,
   rankingPeriodStart,
   rankingRewardFor
 } from "./rankingRewards.js";
@@ -57,4 +58,20 @@ test("30日排行榜货币与礼物奖励符合名次梯度", () => {
   assert.deepEqual(rankingRewardFor("monthly", "generosity", 5), { type: "gift", giftName: "月亮小船", quantity: 2 });
   assert.deepEqual(rankingRewardFor("monthly", "level", 10), { type: "gift", giftName: "月亮小船", quantity: 1 });
   assert.equal(rankingRewardFor("monthly", "level", 11), null);
+});
+
+test("排行榜排除零值并按达到时间处理同分", () => {
+  assert.deepEqual(
+    rankPositiveValues([
+      { userId: "zero", value: 0, reachedAt: 1, createdAt: 1 },
+      { userId: "later", value: 10, reachedAt: 20, createdAt: 1 },
+      { userId: "earlier", value: 10, reachedAt: 10, createdAt: 2 },
+      { userId: "highest", value: 20, reachedAt: 30, createdAt: 3 }
+    ]),
+    [
+      { userId: "highest", value: 20, rank: 1 },
+      { userId: "earlier", value: 10, rank: 2 },
+      { userId: "later", value: 10, rank: 3 }
+    ]
+  );
 });

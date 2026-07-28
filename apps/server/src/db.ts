@@ -406,6 +406,18 @@ export async function initDatabase() {
       CONSTRAINT fk_shell_transaction_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn(
+    "shell_transactions",
+    "experience_amount",
+    "experience_amount INT NOT NULL DEFAULT 0 AFTER amount"
+  );
+  await pool.query(
+    `UPDATE shell_transactions
+     SET experience_amount = amount
+     WHERE transaction_type = 'invite_shell_milestone_reward'
+       AND experience_amount = 0
+       AND amount > 0`
+  );
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pearl_transactions (
       id VARCHAR(64) PRIMARY KEY,
@@ -1617,14 +1629,49 @@ export async function initDatabase() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS asset_collection_value_events (
       id VARCHAR(128) PRIMARY KEY,
-      order_id VARCHAR(64) NOT NULL UNIQUE,
+      order_id VARCHAR(64) NULL UNIQUE,
       user_id VARCHAR(64) NOT NULL,
       amount INT UNSIGNED NOT NULL,
+      event_source ENUM('draw','historical_unlock','historical_upgrade') NOT NULL DEFAULT 'draw',
+      included_in_rankings TINYINT(1) NOT NULL DEFAULT 1,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_asset_collection_events_user_time (user_id, created_at),
       CONSTRAINT fk_asset_collection_event_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn(
+    "asset_collection_value_events",
+    "event_source",
+    "event_source ENUM('draw','historical_unlock','historical_upgrade') NOT NULL DEFAULT 'draw' AFTER amount"
+  );
+  await ensureColumn(
+    "asset_collection_value_events",
+    "included_in_rankings",
+    "included_in_rankings TINYINT(1) NOT NULL DEFAULT 1 AFTER event_source"
+  );
+  const [collectionOrderColumns] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT IS_NULLABLE
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'asset_collection_value_events' AND COLUMN_NAME = 'order_id'`,
+    [config.db.database]
+  );
+  if (String(collectionOrderColumns[0]?.IS_NULLABLE ?? "NO") !== "YES") {
+    await pool.query(
+      "ALTER TABLE asset_collection_value_events MODIFY COLUMN order_id VARCHAR(64) NULL"
+    );
+  }
+  const [collectionSourceColumns] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'asset_collection_value_events' AND COLUMN_NAME = 'event_source'`,
+    [config.db.database]
+  );
+  if (!String(collectionSourceColumns[0]?.COLUMN_TYPE ?? "").includes("'historical_unlock'")) {
+    await pool.query(
+      `ALTER TABLE asset_collection_value_events
+       MODIFY COLUMN event_source ENUM('draw','historical_unlock','historical_upgrade') NOT NULL DEFAULT 'draw'`
+    );
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_asset_draw_totals (
       user_id VARCHAR(64) PRIMARY KEY,
@@ -1756,6 +1803,77 @@ export async function initDatabase() {
         END
     )) > 0
   `);
+  // 旧版仅保留最近 10 笔抽卡明细，无法逐单恢复已删除订单产生的收藏值。
+  // 一次性以当前持卡快照重建历史基线：解锁基础值落在首次获得时间，升星差值落在最后获得时间。
+  // 旧的部分订单事件保留用于审计但不再参与排行，避免与快照重复；今后增长继续逐单记录。
+  const collectionLedgerMigrationKey = "asset-collection-ledger-v2";
+  const [[collectionLedgerMigrated]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+    [collectionLedgerMigrationKey]
+  );
+  if (!collectionLedgerMigrated) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query(
+        "UPDATE asset_collection_value_events SET included_in_rankings = 0"
+      );
+      await connection.query(`
+        INSERT IGNORE INTO asset_collection_value_events
+          (id, order_id, user_id, amount, event_source, included_in_rankings, created_at)
+        SELECT
+          CONCAT('historical-unlock:', SHA2(CONCAT(owned.user_id, ':', owned.card_id), 256)),
+          NULL,
+          owned.user_id,
+          CASE cards.rarity
+            WHEN 'normal' THEN 1
+            WHEN 'rare' THEN 2
+            WHEN 'epic' THEN 5
+            ELSE 15
+          END,
+          'historical_unlock',
+          1,
+          owned.first_obtained_at
+        FROM user_asset_cards owned
+        INNER JOIN asset_cards cards ON cards.id = owned.card_id
+      `);
+      await connection.query(`
+        INSERT IGNORE INTO asset_collection_value_events
+          (id, order_id, user_id, amount, event_source, included_in_rankings, created_at)
+        SELECT
+          CONCAT('historical-upgrade:', SHA2(CONCAT(owned.user_id, ':', owned.card_id), 256)),
+          NULL,
+          owned.user_id,
+          owned.collection_value - CASE cards.rarity
+            WHEN 'normal' THEN 1
+            WHEN 'rare' THEN 2
+            WHEN 'epic' THEN 5
+            ELSE 15
+          END,
+          'historical_upgrade',
+          1,
+          owned.last_obtained_at
+        FROM user_asset_cards owned
+        INNER JOIN asset_cards cards ON cards.id = owned.card_id
+        WHERE owned.collection_value > CASE cards.rarity
+          WHEN 'normal' THEN 1
+          WHEN 'rare' THEN 2
+          WHEN 'epic' THEN 5
+          ELSE 15
+        END
+      `);
+      await connection.query(
+        "INSERT INTO app_data_migrations (migration_key) VALUES (?)",
+        [collectionLedgerMigrationKey]
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
 
   await seedAdmin();
   await backfillInviteCodes();

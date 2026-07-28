@@ -115,7 +115,7 @@ export default function RankingsPage() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    const cacheKey = `hgt:rankings:v9:${user.id}:${period}`;
+    const cacheKey = `hgt:rankings:v10:${user.id}:${period}`;
     const cached = readSessionCache<RankingsResponse>(cacheKey, 2 * 60_000);
     if (cached) {
       setData(cached);
@@ -347,14 +347,14 @@ export default function RankingsPage() {
                     <RankMark rank={item.rank} />
                   </span>
                   <span className="min-w-0 flex-1"><strong>{item.name}</strong><small>{item.detail}</small></span>
-                  <span className="rankings-podium-value"><strong>{metricText(item.value)}</strong><small>{period === "all" ? item.suffix : `${item.suffix}增长`}</small></span>
+                  <span className="rankings-podium-value"><strong>{metricText(item.value)}</strong><small>{period === "all" ? item.suffix : tab === "soups" ? "周期热力" : `${item.suffix}增长`}</small></span>
                 </button>
               ))}
             </div>
           ) : <p className="py-10 text-center text-sm text-muted">暂无可展示数据</p>}
           <div className="rankings-rule-card">
             <Sparkles size={17} />
-            <div><strong>{periodLabel}{activeCategory.label}统计口径</strong><p>{tab === "draws" ? `按${period === "all" ? "累计" : `最近${periodLabel}内`}成功抽出的卡牌张数排列，单抽计 1、十连计 10。` : <>{period === "all" ? "按累计总值排列。" : `按最近${periodLabel}内的净增长值排列。`}{tab === "soups" ? "统计热力增长。" : tab === "collection" ? "统计收藏值增长。" : tab === "level" ? "统计经验增长。" : tab === "charm" ? "统计收礼获得的魅力增长。" : tab === "generosity" ? "统计送礼贡献的魅力价值。" : "统计成就点增长。"}</>}</p></div>
+            <div><strong>{periodLabel}{activeCategory.label}统计口径</strong><p>{tab === "draws" ? `按${period === "all" ? "累计" : `最近${periodLabel}内`}成功抽出的卡牌张数排列，单抽计 1、十连计 10。` : tab === "soups" && period !== "all" ? `按最近${periodLabel}内的浏览、当前有效点赞与收藏、本周期新增或更新评价计算周期热力。` : <>{period === "all" ? "按累计总值排列。" : `按最近${periodLabel}内的净增长值排列。`}{tab === "collection" ? "统计收藏值增长。" : tab === "level" ? "统计经验增长。" : tab === "charm" ? "统计收礼获得的魅力增长。" : tab === "generosity" ? "统计送礼贡献的魅力价值。" : tab === "users" ? "统计成就点增长。" : "统计累计热力。"}</>}</p></div>
           </div>
           {ownRank && <div className="rankings-own-summary"><span>我的{periodLabel}排名</span><strong>第 {ownRank.rank} 名</strong></div>}
         </aside>
@@ -364,7 +364,7 @@ export default function RankingsPage() {
           <span className={`grid h-10 w-10 place-items-center rounded-xl ${tab === "soups" ? "bg-orange-50 text-orange-500" : tab === "collection" ? "bg-indigo-50 text-indigo-600" : tab === "draws" ? "bg-cyan-50 text-cyan-600" : tab === "level" ? "bg-violet-50 text-violet-600" : tab === "charm" ? "bg-rose-50 text-rose-600" : tab === "generosity" ? "bg-amber-50 text-amber-600" : "bg-amber-50 text-amber-500"}`}>
             {tab === "soups" ? <Flame size={22} /> : tab === "collection" ? <GalleryVerticalEnd size={22} /> : tab === "draws" ? <Dices size={22} /> : tab === "level" ? <TrendingUp size={22} /> : tab === "charm" ? <Heart size={22} /> : tab === "generosity" ? <Gift size={22} /> : <Medal size={22} />}
           </span>
-          <div className="min-w-0"><p className="hidden text-[11px] font-black tracking-[0.14em] text-primary lg:block">{activeGroup === "content" ? "CONTENT RANKING" : "USER RANKING"}</p><h2 className="font-black text-ink lg:mt-0.5 lg:text-lg">{periodLabel} · {activeCategory.label} Top 10</h2><p className="mt-0.5 text-xs text-muted">{activeCategory.description} · {period === "all" ? "按累计总值排列" : `按最近${periodLabel}内增长值排列`}</p></div>
+          <div className="min-w-0"><p className="hidden text-[11px] font-black tracking-[0.14em] text-primary lg:block">{activeGroup === "content" ? "CONTENT RANKING" : "USER RANKING"}</p><h2 className="font-black text-ink lg:mt-0.5 lg:text-lg">{periodLabel} · {activeCategory.label} Top 10</h2><p className="mt-0.5 text-xs text-muted">{activeCategory.description} · {period === "all" ? "按累计总值排列" : tab === "soups" ? `按最近${periodLabel}周期热力排列` : `按最近${periodLabel}内增长值排列`}</p></div>
         </div>
         {rankingRewardSummary && <div className="border-b border-amber-100 bg-amber-50/70 px-4 py-2 text-xs font-bold leading-5 text-amber-800"><Gift className="mr-1 inline" size={13} />排行榜奖励：{rankingRewardSummary}</div>}
 

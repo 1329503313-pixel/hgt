@@ -3995,27 +3995,27 @@ app.get("/api/rankings", async (req, res) => {
          s.created_at,
          COALESCE(e.evaluation_count, 0) AS evaluation_count,
          COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
-         COALESCE(e.before_evaluation_count, 0) AS before_evaluation_count,
-         COALESCE(e.before_comprehensive_score, 0) AS before_comprehensive_score,
+         COALESCE(e.period_evaluation_count, 0) AS period_evaluation_count,
+         COALESCE(e.period_comprehensive_score, 0) AS period_comprehensive_score,
          COALESCE(l.like_count, 0) AS like_count,
-         COALESCE(l.before_like_count, 0) AS before_like_count,
+         COALESCE(l.period_like_count, 0) AS period_like_count,
          COALESCE(f.favorite_count, 0) AS favorite_count,
-         COALESCE(f.before_favorite_count, 0) AS before_favorite_count,
+         COALESCE(f.period_favorite_count, 0) AS period_favorite_count,
          COALESCE(v.period_view_count, 0) AS period_view_count
        FROM soups s
        INNER JOIN users creator ON creator.id = s.creator_id
        LEFT JOIN (
          SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score,
-           SUM(created_at < ?) AS before_evaluation_count,
-           AVG(CASE WHEN created_at < ? THEN total END) AS before_comprehensive_score
+           SUM(updated_at >= ?) AS period_evaluation_count,
+           AVG(CASE WHEN updated_at >= ? THEN total END) AS period_comprehensive_score
          FROM evaluations GROUP BY soup_id
        ) e ON e.soup_id = s.id
        LEFT JOIN (
-         SELECT soup_id, COUNT(*) AS like_count, SUM(created_at < ?) AS before_like_count
+         SELECT soup_id, COUNT(*) AS like_count, SUM(created_at >= ?) AS period_like_count
          FROM soup_likes GROUP BY soup_id
        ) l ON l.soup_id = s.id
        LEFT JOIN (
-         SELECT soup_id, COUNT(*) AS favorite_count, SUM(created_at < ?) AS before_favorite_count
+         SELECT soup_id, COUNT(*) AS favorite_count, SUM(created_at >= ?) AS period_favorite_count
          FROM soup_favorites GROUP BY soup_id
        ) f ON f.soup_id = s.id
        LEFT JOIN (
@@ -4042,27 +4042,35 @@ app.get("/api/rankings", async (req, res) => {
       `SELECT u.id, u.nickname, u.experience, u.created_at, u.avatar IS NOT NULL AS has_avatar,
          COALESCE(task_gain.value, 0) + COALESCE(beginner_gain.value, 0)
            + COALESCE(adjustment_gain.value, 0) + COALESCE(invite_email_gain.value, 0)
-           + COALESCE(invite_milestone_gain.value, 0) AS period_experience
+           + COALESCE(invite_milestone_gain.value, 0) AS period_experience,
+         GREATEST(
+           COALESCE(task_gain.reached_at, '1970-01-01'),
+           COALESCE(beginner_gain.reached_at, '1970-01-01'),
+           COALESCE(adjustment_gain.reached_at, '1970-01-01'),
+           COALESCE(invite_email_gain.reached_at, '1970-01-01'),
+           COALESCE(invite_milestone_gain.reached_at, '1970-01-01')
+         ) AS reached_at
        FROM users u
        LEFT JOIN (
-         SELECT user_id, SUM(experience_reward) AS value FROM shell_task_events
+         SELECT user_id, SUM(experience_reward) AS value, MAX(created_at) AS reached_at FROM shell_task_events
          WHERE created_at >= ? GROUP BY user_id
        ) task_gain ON task_gain.user_id = u.id
        LEFT JOIN (
-         SELECT user_id, SUM(experience_reward) AS value FROM beginner_task_events
+         SELECT user_id, SUM(experience_reward) AS value, MAX(completed_at) AS reached_at FROM beginner_task_events
          WHERE completed_at >= ? GROUP BY user_id
        ) beginner_gain ON beginner_gain.user_id = u.id
        LEFT JOIN (
-         SELECT user_id, SUM(amount) AS value FROM user_experience_adjustments
+         SELECT user_id, SUM(amount) AS value, MAX(created_at) AS reached_at FROM user_experience_adjustments
          WHERE created_at >= ? GROUP BY user_id
        ) adjustment_gain ON adjustment_gain.user_id = u.id
        LEFT JOIN (
-         SELECT inviter_user_id AS user_id, SUM(email_experience_reward) AS value
+         SELECT inviter_user_id AS user_id, SUM(email_experience_reward) AS value,
+           MAX(email_rewarded_at) AS reached_at
          FROM user_invite_reward_progress
          WHERE email_rewarded_at >= ? GROUP BY inviter_user_id
        ) invite_email_gain ON invite_email_gain.user_id = u.id
        LEFT JOIN (
-         SELECT user_id, SUM(amount) AS value FROM shell_transactions
+         SELECT user_id, SUM(experience_amount) AS value, MAX(created_at) AS reached_at FROM shell_transactions
          WHERE transaction_type = 'invite_shell_milestone_reward' AND created_at >= ?
          GROUP BY user_id
        ) invite_milestone_gain ON invite_milestone_gain.user_id = u.id
@@ -4073,24 +4081,26 @@ app.get("/api/rankings", async (req, res) => {
 
     const [charmRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.nickname, u.charm_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
-         COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_charm
+         COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_charm,
+         MAX(CASE WHEN gs.created_at >= ? THEN gs.created_at END) AS reached_at
        FROM users u
        LEFT JOIN gift_sends gs ON gs.recipient_id = u.id
        WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        GROUP BY u.id, u.nickname, u.charm_value, u.created_at, has_avatar
        ORDER BY u.created_at ASC, u.id ASC`,
-      [cutoff ?? new Date(0)]
+      [cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
 
     const [generosityRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.nickname, u.generosity_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
-         COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_generosity
+         COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_generosity,
+         MAX(CASE WHEN gs.created_at >= ? THEN gs.created_at END) AS reached_at
        FROM users u
        LEFT JOIN gift_sends gs ON gs.sender_id = u.id
        WHERE u.role IN ('user', 'vip', 'backoffice_admin')
        GROUP BY u.id, u.nickname, u.generosity_value, u.created_at, has_avatar
        ORDER BY u.created_at ASC, u.id ASC`,
-      [cutoff ?? new Date(0)]
+      [cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
 
     const users = new Map<string, { id: string; nickname: string; avatar: string | null; achievementPoints: number; reachedAt: number; createdAt: number }>();
@@ -4127,27 +4137,27 @@ app.get("/api/rankings", async (req, res) => {
           Number(row.favorite_count ?? 0),
           Number(row.evaluation_count ?? 0)
         );
-        const beforeHeat = cutoff && new Date(row.created_at).getTime() < cutoff.getTime()
-          ? heatFromParts(
-              Number(row.before_comprehensive_score ?? 0),
-              Math.max(0, Number(row.view_count ?? 0) - Number(row.period_view_count ?? 0)),
-              Number(row.before_like_count ?? 0),
-              Number(row.before_favorite_count ?? 0),
-              Number(row.before_evaluation_count ?? 0)
-            )
-          : 0;
+        const periodHeat = heatFromParts(
+          Number(row.period_comprehensive_score ?? 0),
+          Number(row.period_view_count ?? 0),
+          Number(row.period_like_count ?? 0),
+          Number(row.period_favorite_count ?? 0),
+          Number(row.period_evaluation_count ?? 0)
+        );
         return {
           id: String(row.id),
           title: String(row.title),
           author: String(row.author),
-          heatValue: cutoff ? currentHeat - beforeHeat : currentHeat,
+          heatValue: cutoff ? periodHeat : currentHeat,
           creatorId: String(row.creator_id),
           createdAt: new Date(row.created_at).getTime()
         };
       })
+      .filter((item) => item.heatValue > 0)
       .sort((a, b) => b.heatValue - a.heatValue || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
       .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const achievementUsers = [...users.values()]
+      .filter((item) => item.achievementPoints > 0)
       .sort((a, b) => b.achievementPoints - a.achievementPoints || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
       .map((item, index) => ({
         rank: index + 1,
@@ -4164,21 +4174,25 @@ app.get("/api/rankings", async (req, res) => {
         avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
         level: levelForExperience(totalExperience),
         experience: cutoff ? Math.floor(Number(row.period_experience) || 0) : totalExperience,
+        reachedAt: new Date(row.reached_at ?? row.created_at).getTime(),
         createdAt: new Date(row.created_at).getTime()
       };
     })
-      .sort((a, b) => b.experience - a.experience || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-      .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
+      .filter((item) => item.experience > 0)
+      .sort((a, b) => b.experience - a.experience || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map(({ reachedAt: _reachedAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const charmUsers = charmRows
       .map((row) => ({
         id: String(row.id),
         nickname: String(row.nickname),
         avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
         charmValue: cutoff ? Math.floor(Number(row.period_charm) || 0) : Math.floor(Number(row.charm_value) || 0),
+        reachedAt: new Date(row.reached_at ?? row.created_at).getTime(),
         createdAt: new Date(row.created_at).getTime()
       }))
-      .sort((a, b) => b.charmValue - a.charmValue || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-      .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
+      .filter((item) => item.charmValue > 0)
+      .sort((a, b) => b.charmValue - a.charmValue || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map(({ reachedAt: _reachedAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
     const generosityUsers = generosityRows
       .map((row) => ({
         id: String(row.id),
@@ -4187,10 +4201,12 @@ app.get("/api/rankings", async (req, res) => {
         generosityValue: cutoff
           ? Math.floor(Number(row.period_generosity) || 0)
           : Math.floor(Number(row.generosity_value) || 0),
+        reachedAt: new Date(row.reached_at ?? row.created_at).getTime(),
         createdAt: new Date(row.created_at).getTime()
       }))
-      .sort((a, b) => b.generosityValue - a.generosityValue || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-      .map(({ createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
+      .filter((item) => item.generosityValue > 0)
+      .sort((a, b) => b.generosityValue - a.generosityValue || a.reachedAt - b.reachedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map(({ reachedAt: _reachedAt, createdAt: _createdAt, ...item }, index) => ({ ...item, rank: index + 1 }));
 
     cached = { expiresAt: Date.now() + 60_000, hotSoups, achievementUsers, levelUsers, charmUsers, generosityUsers };
     rankingsCache.set(period, cached);
@@ -6458,7 +6474,7 @@ app.post("/api/admin/users/:id/experience-adjustments", async (req, res) => {
     if (!userRow) throw new Error("EXPERIENCE_USER_NOT_FOUND");
     const currentExperience = Number(userRow.experience ?? 0);
     const experience = calculateExperienceAdjustment(currentExperience, parsed.data.operation, parsed.data.amount);
-    const signedAmount = parsed.data.operation === "add" ? parsed.data.amount : -parsed.data.amount;
+    const signedAmount = experience - currentExperience;
     await connection.query("UPDATE users SET experience = ? WHERE id = ?", [experience, req.params.id]);
     await connection.query(
       `INSERT INTO user_experience_adjustments
