@@ -1,4 +1,4 @@
-import { FormEvent } from "react";
+import { FormEvent, useRef, useState } from "react";
 import type { EvalForm } from "../context/AppContext";
 import { Modal } from "./Modal";
 import { ScoreInput } from "./FormWidgets";
@@ -9,6 +9,8 @@ import { useNavigate } from "react-router-dom";
 export function EvalEditor() {
   const { evalForm: value, setEvalForm: setValue, soupIdForEval, closeEvalEditor, showToast, checkBadgeUnlocks } = useApp();
   const navigate = useNavigate();
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const patch = (next: Partial<EvalForm>) => setValue({ ...value, ...next });
 
@@ -22,6 +24,9 @@ export function EvalEditor() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       await api(`/api/soups/${soupIdForEval}/evaluations`, { method: "POST", body: value });
       closeEvalEditor();
@@ -30,12 +35,15 @@ export function EvalEditor() {
       navigate(`/soup/${soupIdForEval}`);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
   return (
-    <Modal onClose={closeEvalEditor}>
-      <form className="space-y-4" onSubmit={handleSubmit}>
+    <Modal onClose={() => { if (!submittingRef.current) closeEvalEditor(); }}>
+      <form className="space-y-4" onSubmit={handleSubmit} aria-busy={submitting}>
         <div>
           <h2 className="text-xl font-black text-ink">编辑评价</h2>
           <p className="mt-1 text-sm text-muted">总评分必填，六维评分可选。</p>
@@ -54,7 +62,9 @@ export function EvalEditor() {
           <textarea className="field min-h-24" style={{ minHeight: 96 }} placeholder="说说你对这条海龟汤的看法（选填，最多500字）" maxLength={500} value={value.content} onChange={(e) => patch({ content: e.target.value })} />
           <span className="text-xs text-muted">剩余 {500 - value.content.length} 字</span>
         </label>
-        <button className="btn btn-primary w-full">保存评价</button>
+        <button className="btn btn-primary w-full" disabled={submitting}>
+          {submitting ? "保存中…" : "保存评价"}
+        </button>
       </form>
     </Modal>
   );

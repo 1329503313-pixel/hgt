@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { ImagePlus, Plus, Trash2, X } from "lucide-react";
 import type { SoupForm } from "../context/AppContext";
 import { soupDifficulties, soupTypes } from "../context/AppContext";
@@ -93,6 +93,11 @@ export function SoupEditor() {
   const [coverCropSource, setCoverCropSource] = useState<string | null>(null);
   const [advSettingsOpen, setAdvSettingsOpen] = useState(false);
   const [reanalyzeConfirmOpen, setReanalyzeConfirmOpen] = useState(false);
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const createIdempotencyKeyRef = useRef(
+    globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  );
 
   const authorName = user?.nickname || user?.username || "";
 
@@ -163,8 +168,11 @@ export function SoupEditor() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (submittingRef.current) return;
     if (!termsAccepted) { setTermsError("请先勾选同意用户使用条款"); return; }
     setTermsError("");
+    submittingRef.current = true;
+    setSubmitting(true);
 
     const method = editing ? "PUT" : "POST";
     const path = editing ? `/api/soups/${editingSoupId}` : "/api/soups";
@@ -176,7 +184,11 @@ export function SoupEditor() {
     };
 
     try {
-      const result = await api<{ id?: string; reviewStatus?: "approved" | "pending" | "rejected" }>(path, { method, body: payload });
+      const result = await api<{ id?: string; reviewStatus?: "approved" | "pending" | "rejected" }>(path, {
+        method,
+        body: payload,
+        headers: editing ? undefined : { "Idempotency-Key": createIdempotencyKeyRef.current }
+      });
       if (user) void refreshMineContentCache(user.id, "published").catch(() => {});
       if (editing) triggerRefresh();
       closeSoupEditor();
@@ -189,6 +201,9 @@ export function SoupEditor() {
       navigate(`/soup/${editing ? editingSoupId : result.id}`);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "操作失败");
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -196,18 +211,18 @@ export function SoupEditor() {
     <Modal
       full
       bare
-      onClose={closeSoupEditor}
+      onClose={() => { if (!submittingRef.current) closeSoupEditor(); }}
       overlayClassName="bg-slate-950/55 backdrop-blur-sm"
       contentClassName="!max-w-5xl sm:!h-[92vh]"
     >
-      <form className="soup-editor-dialog flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-white shadow-[0_28px_80px_rgba(15,23,42,.28)] sm:rounded-3xl" onSubmit={handleSubmit}>
+      <form className="soup-editor-dialog flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-white shadow-[0_28px_80px_rgba(15,23,42,.28)] sm:rounded-3xl" onSubmit={handleSubmit} aria-busy={submitting}>
         <header className="soup-editor-header flex shrink-0 items-center justify-between gap-4 border-b border-line bg-white px-4 py-4 sm:px-7 sm:py-5">
           <div className="min-w-0">
             <p className="text-[11px] font-black tracking-[0.18em] text-primary">内容创作 · SOUP EDITOR</p>
             <h2 className="mt-1 text-xl font-black text-ink sm:text-2xl">{editing ? "编辑海龟汤" : "发布海龟汤"}</h2>
             <p className="mt-1 hidden text-sm text-muted sm:block">完善汤面、汤底与展示信息，带给玩家完整的推理体验。</p>
           </div>
-          <button type="button" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-slate-50 text-muted transition hover:border-primary hover:bg-blue-50 hover:text-primary" onClick={closeSoupEditor} aria-label="关闭发布窗口" title="关闭">
+          <button type="button" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-slate-50 text-muted transition hover:border-primary hover:bg-blue-50 hover:text-primary" disabled={submitting} onClick={closeSoupEditor} aria-label="关闭发布窗口" title="关闭">
             <X size={19} />
           </button>
         </header>
@@ -349,8 +364,10 @@ export function SoupEditor() {
         <footer className="soup-editor-footer shrink-0 border-t border-line bg-white px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-7 sm:py-4">
           <div className="mx-auto flex max-w-4xl items-center justify-end gap-3">
             <p className="mr-auto hidden text-xs leading-5 text-muted sm:block">发布前请确认必填内容及公开权限设置。</p>
-            <button type="button" className="btn btn-secondary hidden min-w-28 sm:inline-flex" onClick={closeSoupEditor}>取消</button>
-            <button className="btn btn-primary w-full sm:w-auto sm:min-w-44">{editing ? "保存修改" : "发布海龟汤"}</button>
+            <button type="button" className="btn btn-secondary hidden min-w-28 sm:inline-flex" disabled={submitting} onClick={closeSoupEditor}>取消</button>
+            <button className="btn btn-primary w-full sm:w-auto sm:min-w-44" disabled={submitting}>
+              {submitting ? (editing ? "保存中…" : "发布中…") : (editing ? "保存修改" : "发布海龟汤")}
+            </button>
           </div>
         </footer>
       </form>

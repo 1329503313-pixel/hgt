@@ -39,6 +39,7 @@ import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
+import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
 import {
   AUTH_COOKIE_NAME,
   LEGACY_AUTH_COOKIE_NAME,
@@ -1008,7 +1009,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     reviewStatus: String(row.review_status ?? "approved"),
     reviewReason: row.review_reason ? String(row.review_reason) : null,
     reviewVersion: Number(row.review_version ?? 1),
-    heatValue: Math.round((comprehensiveScore + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25) - 61),
+    heatValue: Math.round((comprehensiveScore + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25) - 60),
     radar: {
       writing: num(row.avg_writing),
       logic: num(row.avg_logic),
@@ -1449,7 +1450,7 @@ async function getMaxOriginalSoupHeat(userId: string) {
          + ((SELECT COUNT(*) FROM soup_likes l WHERE l.soup_id = s.id) + 1) * 15
          + ((SELECT COUNT(*) FROM soup_favorites f WHERE f.soup_id = s.id) + 1) * 20
          + ((SELECT COUNT(*) FROM evaluations ec WHERE ec.soup_id = s.id) + 1) * 25
-       ) - 61
+       ) - 60
      ), 0) AS max_heat
      FROM soups s
      WHERE s.creator_id = ? AND s.is_original = TRUE`,
@@ -3858,7 +3859,7 @@ function rankingCutoff(period: RankingPeriod) {
 }
 
 function heatFromParts(score: number, views: number, likes: number, favorites: number, evaluations: number) {
-  return Math.max(0, Math.round((score + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25) - 61));
+  return Math.max(0, Math.round((score + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25) - 60));
 }
 
 app.get("/api/rankings", async (req, res) => {
@@ -4152,7 +4153,7 @@ async function homeFeaturedSoupIds() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT s.id,
        (COALESCE(e.comprehensive_score, 0) + 1) *
-         (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
+         (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 60 AS heat_value
      FROM soups s
      LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
      LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
@@ -4346,7 +4347,21 @@ app.post("/api/soups", async (req, res) => {
   const parsed = soupSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
 
-  const id = nanoid();
+  const idempotencyKey = req.get("Idempotency-Key")?.trim() ?? "";
+  if (idempotencyKey && !isValidIdempotencyKey(idempotencyKey)) {
+    return sendError(res, 400, "无效的防重复提交标识");
+  }
+  const id = idempotencyKey ? idempotentSoupId(user.id, idempotencyKey) : nanoid();
+  if (idempotencyKey) {
+    const [[existingSoup]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT id, creator_id, review_status FROM soups WHERE id = ? LIMIT 1",
+      [id]
+    );
+    if (existingSoup) {
+      if (String(existingSoup.creator_id) !== user.id) return sendError(res, 409, "防重复提交标识冲突");
+      return res.json({ id: String(existingSoup.id), reviewStatus: String(existingSoup.review_status) });
+    }
+  }
   const soup = parsed.data;
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const duplicate = await findDuplicateSoup(soup);
@@ -4414,6 +4429,15 @@ app.post("/api/soups", async (req, res) => {
     await connection.rollback();
     if (error instanceof Error && error.message === "SOUP_DAILY_QUOTA") {
       return sendError(res, 429, `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧`);
+    }
+    if (idempotencyKey && (error as { code?: string }).code === "ER_DUP_ENTRY") {
+      const [[existingSoup]] = await pool.query<mysql.RowDataPacket[]>(
+        "SELECT id, creator_id, review_status FROM soups WHERE id = ? LIMIT 1",
+        [id]
+      );
+      if (existingSoup && String(existingSoup.creator_id) === user.id) {
+        return res.json({ id: String(existingSoup.id), reviewStatus: String(existingSoup.review_status) });
+      }
     }
     throw error;
   } finally {
@@ -4893,55 +4917,15 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   const parsed = evaluationSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "评分必须在 1-5 之间，步长 0.5");
 
-  const exists = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id FROM evaluations WHERE soup_id = ? AND reviewer_id = ? LIMIT 1",
-    [req.params.id, user.id]
-  );
-  const existing = exists[0][0];
   const data = parsed.data;
-
-  if (existing) {
-    await pool.query(
-      `UPDATE evaluations
-       SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?
-       WHERE id = ?`,
-      [
-        data.total,
-        user.nickname,
-        data.writing,
-        data.logic,
-        data.share,
-        data.mechanism,
-        data.twist,
-        data.depth,
-        data.content || null,
-        existing.id
-      ]
-    );
-    if (data.content?.trim()) {
-      await pool.query(
-        "INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original) VALUES (?, ?, ?, ?)",
-        [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
-      );
-      if (String(soup.creator_id) !== user.id) {
-        await awardShellTask(
-          String(soup.creator_id),
-          "receive_soup_evaluation",
-          `receive-evaluation:${user.id}:${req.params.id}`,
-          { relatedType: "soup", relatedId: req.params.id }
-        );
-      }
-    }
-    queueSystemBadgeSync([user.id, String(soup.creator_id)]);
-    return res.json({ id: existing.id });
-  }
-
   const id = nanoid();
   const connection = await pool.getConnection();
+  let created = false;
+  let savedId = id;
   try {
     await connection.beginTransaction();
-    await connection.query(
-      `INSERT INTO evaluations
+    const [insertResult] = await connection.query<mysql.ResultSetHeader>(
+      `INSERT IGNORE INTO evaluations
         (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth, content)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -4959,17 +4943,45 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         data.content || null
       ]
     );
+    created = insertResult.affectedRows === 1;
+    if (!created) {
+      await connection.query(
+        `UPDATE evaluations
+         SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?
+         WHERE soup_id = ? AND reviewer_id = ?`,
+        [
+          data.total,
+          user.nickname,
+          data.writing,
+          data.logic,
+          data.share,
+          data.mechanism,
+          data.twist,
+          data.depth,
+          data.content || null,
+          req.params.id,
+          user.id
+        ]
+      );
+      const [[savedEvaluation]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT id FROM evaluations WHERE soup_id = ? AND reviewer_id = ? LIMIT 1",
+        [req.params.id, user.id]
+      );
+      savedId = String(savedEvaluation.id);
+    }
     if (data.content?.trim()) {
       await connection.query(
         "INSERT IGNORE INTO evaluation_comment_history (soup_id, reviewer_id, creator_id, is_original) VALUES (?, ?, ?, ?)",
         [req.params.id, user.id, soup.creator_id, Boolean(soup.is_original)]
       );
     }
-    await awardShellTask(user.id, "publish_evaluation", `evaluation:${user.id}:${req.params.id}`, {
-      relatedType: "soup",
-      relatedId: req.params.id,
-      connection
-    });
+    if (created) {
+      await awardShellTask(user.id, "publish_evaluation", `evaluation:${user.id}:${req.params.id}`, {
+        relatedType: "soup",
+        relatedId: req.params.id,
+        connection
+      });
+    }
     if (data.content?.trim() && String(soup.creator_id) !== user.id) {
       await awardShellTask(
         String(soup.creator_id),
@@ -4985,7 +4997,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   } finally {
     connection.release();
   }
-  if (String(soup.creator_id) !== user.id) {
+  if (created && String(soup.creator_id) !== user.id) {
     await notify(
       String(soup.creator_id),
       "soup_evaluation",
@@ -4996,7 +5008,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
     );
   }
   queueSystemBadgeSync([user.id, String(soup.creator_id)]);
-  res.status(201).json({ id });
+  res.status(created ? 201 : 200).json({ id: savedId });
 });
 
 app.delete("/api/evaluations/:id", async (req, res) => {
@@ -5522,7 +5534,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
         COALESCE(l.like_count, 0) AS like_count,
         COALESCE(f.favorite_count, 0) AS favorite_count,
         (COALESCE(e.comprehensive_score, 0) + 1) *
-          (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 61 AS heat_value
+          (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 60 AS heat_value
        FROM soups s
        LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
        LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
