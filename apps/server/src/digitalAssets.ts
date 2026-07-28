@@ -732,6 +732,18 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
       );
     }
     await connection.query("UPDATE asset_draw_orders SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [orderId]);
+    await connection.query(
+      `INSERT INTO asset_draw_count_events
+        (id, order_id, user_id, pack_id, draw_count, event_source, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [`order:${orderId}`, orderId, userId, packId, drawCount, usedFreeDraw ? "free" : shellCost > 0 ? "paid" : "zero_price"]
+    );
+    await connection.query(
+      `INSERT INTO user_asset_draw_totals (user_id, total_draw_count)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE total_draw_count = total_draw_count + VALUES(total_draw_count)`,
+      [userId, drawCount]
+    );
     await pruneDrawHistory(userId, connection);
     await connection.commit();
     return drawOrderPayload(orderId);
@@ -1229,11 +1241,16 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           ).then(([items]) => items)
         : Promise.resolve([] as mysql.RowDataPacket[]),
       pool.query<mysql.RowDataPacket[]>(
-        `SELECT user_id, SUM(draw_count) AS draw_count,
-          MIN(COALESCE(completed_at, created_at)) AS first_draw_at
-         FROM asset_draw_orders
-         WHERE status = 'completed'${cutoff ? " AND COALESCE(completed_at, created_at) >= ?" : ""}
-         GROUP BY user_id`,
+        cutoff
+          ? `SELECT user_id, SUM(draw_count) AS draw_count, MIN(completed_at) AS first_draw_at
+             FROM asset_draw_count_events
+             WHERE completed_at >= ?
+             GROUP BY user_id`
+          : `SELECT totals.user_id, totals.total_draw_count AS draw_count,
+               users.created_at AS first_draw_at
+             FROM user_asset_draw_totals totals
+             INNER JOIN users ON users.id = totals.user_id
+             WHERE totals.total_draw_count > 0`,
         cutoff ? [cutoff] : []
       ).then(([items]) => items)
     ]);
@@ -1291,12 +1308,18 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM asset_cards").then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total, COALESCE(SUM(enabled = 1), 0) AS enabled FROM asset_packs").then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>(
-        `SELECT COUNT(*) AS total_orders, COALESCE(SUM(draw_count), 0) AS total_draws,
-          COALESCE(SUM(shell_cost), 0) AS shell_spent,
-          COALESCE((SELECT SUM(shell_refund) FROM asset_draw_results), 0) AS shell_refunded
-         FROM asset_draw_orders WHERE status = 'completed'`
+        `SELECT
+           (SELECT COALESCE(SUM(CASE WHEN order_id IS NULL AND event_source = 'free' THEN draw_count ELSE 1 END), 0) FROM asset_draw_count_events) AS total_orders,
+           COALESCE((SELECT SUM(total_draw_count) FROM user_asset_draw_totals), 0) AS total_draws,
+           COALESCE((SELECT -SUM(amount) FROM shell_transactions WHERE transaction_type IN ('pack_single_draw','pack_ten_draw')), 0) AS shell_spent,
+           COALESCE((SELECT SUM(amount) FROM shell_transactions WHERE transaction_type = 'duplicate_card_refund'), 0) AS shell_refunded`
       ).then(([rows]) => rows),
-      pool.query<mysql.RowDataPacket[]>("SELECT rarity, COUNT(*) AS count FROM asset_draw_results GROUP BY rarity").then(([rows]) => rows)
+      pool.query<mysql.RowDataPacket[]>(
+        `SELECT cards.rarity, COALESCE(SUM(owned.total_obtained), 0) AS count
+         FROM user_asset_cards owned
+         INNER JOIN asset_cards cards ON cards.id = owned.card_id
+         GROUP BY cards.rarity`
+      ).then(([rows]) => rows)
     ]);
     res.json({
       cardCount: Number(cards?.total ?? 0), packCount: Number(packs?.total ?? 0), enabledPackCount: Number(packs?.enabled ?? 0),
@@ -1544,8 +1567,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
          SELECT pack_id,
            COALESCE(SUM(draw_count), 0) AS total_draw_count,
            COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN draw_count ELSE 0 END), 0) AS recent_7d_draw_count
-         FROM asset_draw_orders
-         WHERE status = 'completed'
+         FROM asset_draw_count_events
          GROUP BY pack_id
        ) draw_stats ON draw_stats.pack_id = p.id
        ORDER BY p.sort_order DESC, p.created_at DESC`

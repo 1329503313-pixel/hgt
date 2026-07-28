@@ -175,16 +175,15 @@ async function rankingStandings(
       [periodStart, periodEnd]
     ).then(([rows]) => rows),
     connection.query<mysql.RowDataPacket[]>(
-      `SELECT orders.user_id AS id, users.created_at,
-         SUM(orders.draw_count) AS metric_value,
-         MIN(COALESCE(orders.completed_at, orders.created_at)) AS reached_at
-       FROM asset_draw_orders orders
-       INNER JOIN users ON users.id = orders.user_id
-       WHERE orders.status = 'completed'
-         AND COALESCE(orders.completed_at, orders.created_at) >= ?
-         AND COALESCE(orders.completed_at, orders.created_at) < ?
+      `SELECT events.user_id AS id, users.created_at,
+         SUM(events.draw_count) AS metric_value,
+         MIN(events.completed_at) AS reached_at
+       FROM asset_draw_count_events events
+       INNER JOIN users ON users.id = events.user_id
+       WHERE events.completed_at >= ?
+         AND events.completed_at < ?
          AND users.role IN ('user', 'vip', 'backoffice_admin')
-       GROUP BY orders.user_id, users.created_at`,
+       GROUP BY events.user_id, users.created_at`,
       [periodStart, periodEnd]
     ).then(([rows]) => rows)
   ]);

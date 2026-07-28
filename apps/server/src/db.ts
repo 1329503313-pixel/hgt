@@ -1626,6 +1626,99 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_asset_draw_totals (
+      user_id VARCHAR(64) PRIMARY KEY,
+      total_draw_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_user_asset_draw_total_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_draw_count_events (
+      id VARCHAR(191) PRIMARY KEY,
+      order_id VARCHAR(64) NULL,
+      user_id VARCHAR(64) NOT NULL,
+      pack_id VARCHAR(64) NULL,
+      draw_count INT UNSIGNED NOT NULL,
+      event_source ENUM('paid','free','zero_price') NOT NULL,
+      completed_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_asset_draw_count_event_order (order_id),
+      INDEX idx_asset_draw_count_events_user_time (user_id, completed_at),
+      INDEX idx_asset_draw_count_events_pack_time (pack_id, completed_at),
+      CONSTRAINT fk_asset_draw_count_event_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_asset_draw_count_event_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  // 永久累计以持卡记录的实际获得次数为准，不依赖只保留最近 10 单的展示历史。
+  await pool.query(`
+    INSERT INTO user_asset_draw_totals (user_id, total_draw_count)
+    SELECT user_id, SUM(total_obtained)
+    FROM user_asset_cards
+    GROUP BY user_id
+    ON DUPLICATE KEY UPDATE
+      total_draw_count = GREATEST(user_asset_draw_totals.total_draw_count, VALUES(total_draw_count))
+  `);
+  // 已删除的付费抽卡订单仍可由不可变贝壳流水恢复准确数量与时间。
+  await pool.query(`
+    INSERT IGNORE INTO asset_draw_count_events
+      (id, order_id, user_id, pack_id, draw_count, event_source, completed_at)
+    SELECT
+      CONCAT('order:', transactions.related_id),
+      transactions.related_id,
+      transactions.user_id,
+      orders.pack_id,
+      CASE transactions.transaction_type WHEN 'pack_ten_draw' THEN 10 ELSE 1 END,
+      'paid',
+      transactions.created_at
+    FROM shell_transactions transactions
+    LEFT JOIN asset_draw_orders orders ON orders.id = transactions.related_id
+    WHERE transactions.transaction_type IN ('pack_single_draw', 'pack_ten_draw')
+      AND transactions.related_id IS NOT NULL
+  `);
+  // 免费抽卡没有贝壳流水，按北京时间自然日的免费次数记录恢复。
+  await pool.query(`
+    INSERT IGNORE INTO asset_draw_count_events
+      (id, order_id, user_id, pack_id, draw_count, event_source, completed_at)
+    SELECT
+      CONCAT('free:', usage.user_id, ':', usage.pack_id, ':', DATE_FORMAT(usage.usage_date, '%Y%m%d')),
+      NULL,
+      usage.user_id,
+      usage.pack_id,
+      usage.used_count - COALESCE(exact_free.draw_count, 0),
+      'free',
+      DATE_ADD(TIMESTAMP(usage.usage_date), INTERVAL 4 HOUR)
+    FROM asset_daily_free_usage usage
+    LEFT JOIN (
+      SELECT user_id, pack_id, DATE(DATE_ADD(completed_at, INTERVAL 8 HOUR)) AS usage_date,
+        SUM(draw_count) AS draw_count
+      FROM asset_draw_count_events
+      WHERE event_source = 'free' AND order_id IS NOT NULL
+      GROUP BY user_id, pack_id, DATE(DATE_ADD(completed_at, INTERVAL 8 HOUR))
+    ) exact_free
+      ON exact_free.user_id = usage.user_id
+     AND exact_free.pack_id = usage.pack_id
+     AND exact_free.usage_date = usage.usage_date
+    WHERE usage.used_count > COALESCE(exact_free.draw_count, 0)
+  `);
+  // 兼容价格为零但不属于每日免费次数的历史订单。
+  await pool.query(`
+    INSERT IGNORE INTO asset_draw_count_events
+      (id, order_id, user_id, pack_id, draw_count, event_source, completed_at)
+    SELECT
+      CONCAT('order:', orders.id),
+      orders.id,
+      orders.user_id,
+      orders.pack_id,
+      orders.draw_count,
+      'zero_price',
+      COALESCE(orders.completed_at, orders.created_at)
+    FROM asset_draw_orders orders
+    WHERE orders.status = 'completed'
+      AND orders.shell_cost = 0
+      AND orders.used_free_draw = 0
+  `);
+  await pool.query(`
     INSERT IGNORE INTO asset_collection_value_events (id, order_id, user_id, amount, created_at)
     SELECT CONCAT('draw:', o.id), o.id, o.user_id,
       SUM(GREATEST(0,

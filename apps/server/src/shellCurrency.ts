@@ -402,8 +402,8 @@ export async function syncBeginnerTasks(userId: string) {
              AND identity.verified_at IS NOT NULL
          ) AS has_verified_email,
          COALESCE((
-           SELECT SUM(draw_count) FROM asset_draw_orders
-           WHERE user_id = u.id AND status = 'completed'
+           SELECT total_draw_count FROM user_asset_draw_totals
+           WHERE user_id = u.id
          ), 0) AS completed_draws
        FROM users u WHERE u.id = ? LIMIT 1`,
       [userId]
