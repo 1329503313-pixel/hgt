@@ -6,6 +6,7 @@ import { createHash } from "crypto";
 import { pool } from "./db.js";
 import { awardShellTask } from "./shellCurrency.js";
 import { canViewAllSoupContentRole, type UserRole } from "./roles.js";
+import { recordUserBehavior } from "./behaviorAnalytics.js";
 
 import { config } from "./config.js";
 
@@ -834,6 +835,7 @@ gameRouter.post("/:soupId/start", async (req, res) => {
     );
   }
   await awardCreatorAiPlay(soupData.creatorId, user.id, req.params.soupId, id);
+  if (existing.length === 0) recordUserBehavior("start_ai_game");
   res.json({ sessionId: id, messages: [initialMsg], progress: 0, completed: false, revealedKeys: [], revealedSupplements: { surfaces: [], bottoms: [] } });
 });
 

@@ -715,10 +715,10 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
      LIMIT 1`,
     [roundId]
   );
-  if (!round?.started_at || !round?.ended_at) return { eligible: false, awardedUsers: [] as string[] };
+  if (!round?.started_at || !round?.ended_at) return { eligible: false, completed: false, awardedUsers: [] as string[] };
   const startedAt = new Date(round.started_at);
   const endedAt = new Date(round.ended_at);
-  if (!isEligibleOnlineSoupDuration(startedAt, endedAt)) return { eligible: false, awardedUsers: [] as string[] };
+  if (!isEligibleOnlineSoupDuration(startedAt, endedAt)) return { eligible: false, completed: false, awardedUsers: [] as string[] };
 
   const [playerRows] = await connection.query<mysql.RowDataPacket[]>(
     `SELECT members.user_id, COUNT(messages.id) AS answered_questions
@@ -781,5 +781,5 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
     if (result.recorded && result.actualReward > 0) reportBadgeProgress(award.userId);
     if (result.recorded && result.giftReward) taskGiftNotificationListener?.(award.userId);
   }
-  return { eligible: true, awardedUsers };
+  return { eligible: true, completed: Number(hostRow?.answered_questions ?? 0) >= 5, awardedUsers };
 }

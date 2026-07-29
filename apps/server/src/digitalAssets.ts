@@ -16,6 +16,7 @@ import {
   uploadCardMotionWebm
 } from "./assetVideos.js";
 import { pool } from "./db.js";
+import { recordUserBehavior } from "./behaviorAnalytics.js";
 import type { UserRole } from "./roles.js";
 import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCurrency.js";
 import { ossRefFromPublicUrl, publicOssUrl, readStoredMediaBuffer, storeMediaBuffer } from "./ossStorage.js";
@@ -746,6 +747,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
     );
     await pruneDrawHistory(userId, connection);
     await connection.commit();
+    recordUserBehavior("draw_cards");
     return drawOrderPayload(orderId);
   } catch (error) {
     await connection.rollback();

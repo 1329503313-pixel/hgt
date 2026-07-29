@@ -11,6 +11,7 @@ import { settleOnlineSoupRound } from "./shellCurrency.js";
 import { levelForExperience } from "./levelSystem.js";
 import { canViewAllSoupContentRole, isSuperAdminRole, type UserRole } from "./roles.js";
 import { parseGiftMessage } from "./gifts.js";
+import { recordUserBehavior } from "./behaviorAnalytics.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -594,6 +595,7 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
     );
     await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection);
     await connection.commit();
+    recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role, joined: true });
     void notifyRoom(String(room.id), "member_joined");
   } catch (error) {
@@ -686,6 +688,7 @@ router.post("/rooms", async (req, res) => {
     await connection.rollback();
     throw error;
   } finally { connection.release(); }
+  recordUserBehavior("create_online_room");
   res.status(201).json({ roomId, code });
   notifyLobby("room_created");
 });
@@ -732,6 +735,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
     }
     const role = existing?.member_role ?? (room.host_id === user.id ? "host" : parsed.data.role);
     await connection.commit();
+    if (!existing) recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role: String(role), joined: !existing });
     if (!existing) void notifyRoom(String(room.id), "member_joined");
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
@@ -1222,6 +1226,7 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
 
   const connection = await pool.getConnection();
   let ended = false;
+  let completedRound = false;
   try {
     await connection.beginTransaction();
     const [[round]] = await connection.query<mysql.RowDataPacket[]>(
@@ -1263,13 +1268,15 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
         );
         await systemMessage(context.room.id, context.room.current_round_id, "主持人手册已自动发布", connection);
       }
-      await settleOnlineSoupRound(connection, String(context.room.current_round_id));
+      const settlement = await settleOnlineSoupRound(connection, String(context.room.current_round_id));
+      completedRound = settlement.completed;
     } else {
       const bottomLabel = parsed.data.bottomIndex === 0 ? "汤底" : `补充汤底 ${parsed.data.bottomIndex}`;
       await systemMessage(context.room.id, context.room.current_round_id, `主持人发布了${bottomLabel}`, connection);
     }
     await connection.commit();
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+  if (completedRound) recordUserBehavior("complete_online_round");
   const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, `bottom:${parsed.data.bottomIndex}`);
   res.json({ ok: true, ended }); void notifyRoom(context.room.id, ended ? "round_ended" : "bottom_published", { activitySequence, activityType: "progress" });
 });
@@ -1279,6 +1286,7 @@ router.post("/rooms/:roomId/end-round", async (req, res) => {
   if (!context) return;
   const connection = await pool.getConnection();
   let roundId = "";
+  let completedRound = false;
   try {
     await connection.beginTransaction();
     const [[room]] = await connection.query<mysql.RowDataPacket[]>(
@@ -1307,7 +1315,8 @@ router.post("/rooms/:roomId/end-round", async (req, res) => {
       [context.room.id]
     );
     await systemMessage(context.room.id, roundId, "主持人关闭了本轮推理", connection);
-    await settleOnlineSoupRound(connection, roundId);
+    const settlement = await settleOnlineSoupRound(connection, roundId);
+    completedRound = settlement.completed;
     await connection.commit();
   } catch (error) {
     await connection.rollback();
@@ -1315,6 +1324,7 @@ router.post("/rooms/:roomId/end-round", async (req, res) => {
   } finally {
     connection.release();
   }
+  if (completedRound) recordUserBehavior("complete_online_round");
   const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, roundId);
   res.json({ ok: true });
   void notifyRoom(context.room.id, "round_ended", { activitySequence, activityType: "progress" });

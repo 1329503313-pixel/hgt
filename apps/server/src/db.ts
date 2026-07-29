@@ -899,6 +899,25 @@ export async function initDatabase() {
       completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_behavior_daily_stats (
+      stat_date DATE NOT NULL,
+      behavior_type VARCHAR(40) NOT NULL,
+      historical_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      tracked_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (stat_date, behavior_type),
+      INDEX idx_user_behavior_type_date (behavior_type, stat_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_behavior_tracking_state (
+      id TINYINT UNSIGNED PRIMARY KEY,
+      tracking_started_at DATETIME(3) NOT NULL,
+      backfill_started_at DATETIME NULL,
+      backfill_completed_at DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
   await backfillHistoricalTaskExperience();
   // Existing ownership and historical unlock notifications are a pre-feature baseline:
   // record them without retroactively changing balances.
@@ -1697,6 +1716,11 @@ export async function initDatabase() {
       CONSTRAINT fk_asset_draw_count_event_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn(
+    "asset_draw_count_events",
+    "event_source",
+    "event_source ENUM('paid','free','zero_price') NOT NULL DEFAULT 'paid' AFTER draw_count"
+  );
   // 永久累计以持卡记录的实际获得次数为准，不依赖只保留最近 10 单的展示历史。
   await pool.query(`
     INSERT INTO user_asset_draw_totals (user_id, total_draw_count)

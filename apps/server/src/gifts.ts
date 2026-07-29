@@ -8,6 +8,7 @@ import { optimizeGiftIconBuffer } from "./giftImages.js";
 import { canonicalConversationUserIds } from "./conversations.js";
 import { storeMediaBuffer } from "./ossStorage.js";
 import type { PublicUser } from "./types.js";
+import { recordUserBehavior } from "./behaviorAnalytics.js";
 
 type AuthenticatedUser = PublicUser & { tokenVersion: number };
 type RequireUser = (
@@ -558,6 +559,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
       connection.release();
     }
 
+    if (!duplicate) recordUserBehavior("send_gift");
     const stored = await storedGiftSend(giftSendId);
     if (!stored) return sendError(res, 500, "送礼记录保存失败");
     const { gift, recipientCharmValue, senderGenerosityValue } = stored;

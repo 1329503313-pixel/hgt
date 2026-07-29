@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Award, Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LogOut, MessageCircleQuestion, Plus, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
+import { Award, Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LogOut, MessageCircleQuestion, Plus, RotateCcw, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
 import type { PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
 import { useApp, soupDifficulties, soupTypes } from "../context/AppContext";
@@ -81,6 +81,14 @@ export default function HomePage() {
   const firstDesktopPageSize = isResultMode ? desktopPageSize : desktopFirstPageSize;
 
   const submitSearch = () => setFilters((old) => ({ ...old, keyword: searchKeyword.trim() }));
+  const resetFilters = () => setFilters((old) => ({
+    ...old,
+    type: "",
+    difficulty: "",
+    minRating: "all",
+    bottomPublic: "all",
+    aiGame: "all"
+  }));
 
   const loadSoups = useCallback(
     async (append = false, bypassCache = false, page = currentPage) => {
@@ -320,7 +328,7 @@ export default function HomePage() {
   }
 
   return (
-    <section className={`home-page space-y-3 lg:space-y-0 ${isResultMode ? "home-page-result-mode" : ""}`}>
+    <section className={`home-page space-y-3 lg:space-y-0 ${isResultMode ? "home-page-result-mode" : ""} ${activeFilterCount > 0 && !filters.keyword ? "home-page-filter-result-mode" : ""}`}>
       <PageTopBar title="海龟汤" />
 
       <div ref={heroParallax.heroRef} className="home-desktop-hero" onPointerMove={heroParallax.onPointerMove} onPointerLeave={heroParallax.onPointerLeave}>
@@ -418,6 +426,9 @@ export default function HomePage() {
                   <option value="disabled">未开启</option>
                 </select>
               </label>
+              <button className="home-filter-reset" type="button" disabled={activeFilterCount === 0} onClick={resetFilters}>
+                <RotateCcw size={14} />重置筛选
+              </button>
             </div>
           )}
           <div className="home-desktop-search-box">
@@ -506,6 +517,9 @@ export default function HomePage() {
               <option value="disabled">未开启</option>
             </select>
           </label>
+          <button className="home-filter-reset" type="button" disabled={activeFilterCount === 0} onClick={resetFilters}>
+            <RotateCcw size={15} />重置筛选
+          </button>
       </div>
 
       {!isResultMode && (

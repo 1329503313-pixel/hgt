@@ -29,7 +29,8 @@ export default function AssetPackPage() {
 
   const load = useCallback((fresh = false, showLoading = true) => {
     if (showLoading) setLoading(true);
-    return api<{ balance: number; pack: AssetPack }>(`/api/asset-store/packs/${packId}`, fresh ? { bypassCache: true } : { cacheTtlMs: 60_000 })
+    const path = `/api/asset-store/packs/${packId}${fresh ? `?refresh=${Date.now()}` : ""}`;
+    return api<{ balance: number; pack: AssetPack }>(path, fresh ? { bypassCache: true } : { cacheTtlMs: 60_000 })
       .then((nextData) => {
         setData(nextData);
         publishShellBalance(user?.id, nextData.balance);
@@ -48,7 +49,13 @@ export default function AssetPackPage() {
     try {
       const result = await api<{ order: AssetDrawOrder; balance: number }>(`/api/asset-store/packs/${packId}/draw`, { method: "POST", body: { mode, requestId: requestId() } });
       for (const card of result.order.results) warmAssetImage(card.thumbnailUrl || card.imageUrl);
-      setData((current) => current ? { ...current, balance: result.balance } : current);
+      setData((current) => current ? {
+        ...current,
+        balance: result.balance,
+        pack: result.order.usedFreeDraw
+          ? { ...current.pack, freeDrawsRemaining: Math.max(0, current.pack.freeDrawsRemaining - 1) }
+          : current.pack
+      } : current);
       publishShellBalance(user?.id, result.balance);
       setOrder(result.order);
       void load(true, false);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertCircle, BarChart3, CalendarDays, Eye, MessageSquare, RefreshCw, Soup, Star, ThumbsUp, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { Activity, AlertCircle, BarChart3, CalendarDays, MessageSquare, RefreshCw, Soup, TrendingDown, TrendingUp, Users } from "lucide-react";
 import {
   ArcElement,
   BarElement,
@@ -14,7 +14,6 @@ import {
   Tooltip
 } from "chart.js";
 import { Bar, Doughnut, Line, Radar } from "react-chartjs-2";
-import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 
 ChartJS.register(CategoryScale, LinearScale, RadialLinearScale, PointElement, LineElement, BarElement, ArcElement, Filler, Tooltip, Legend);
@@ -35,6 +34,11 @@ type DashboardResponse = {
     todayRate: number | null;
     daily: Array<{ date: string; users: number; rate: number | null }>;
   };
+  userBehavior: {
+    definitions: Array<{ key: string; label: string }>;
+    totals: Array<{ key: string; label: string; count: number }>;
+    daily: Array<{ date: string; values: Record<string, number> }>;
+  };
   soups: {
     byType: Array<{ name: string; count: number }>;
     original: number;
@@ -43,7 +47,6 @@ type DashboardResponse = {
     publicBottom: number;
     aiEnabled: number;
     sensitive: number;
-    top: Array<{ id: string; title: string; views: number; evaluations: number; comprehensiveScore: number; likes: number; favorites: number; heatValue: number }>;
   };
   evaluations: {
     averageTotal: number | null;
@@ -55,6 +58,7 @@ type DashboardResponse = {
 
 const numberFormat = new Intl.NumberFormat("zh-CN");
 const palette = ["#2563EB", "#14B8A6", "#F59E0B", "#8B5CF6", "#EC4899", "#64748B", "#22C55E", "#EF4444"];
+const behaviorPalette = ["#2563EB", "#0891B2", "#7C3AED", "#E11D48", "#F59E0B", "#16A34A", "#4F46E5", "#DB2777", "#0D9488", "#64748B", "#EA580C", "#9333EA", "#0284C7"];
 
 function shortDate(value: string) {
   const [, month, day] = value.split("-");
@@ -138,7 +142,6 @@ function DashboardSkeleton() {
 }
 
 export function AdminDashboard() {
-  const navigate = useNavigate();
   const [range, setRange] = useState<DashboardRange>("30d");
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -198,6 +201,20 @@ export function AdminDashboard() {
       }
     ]
   }), [data]);
+
+  const behaviorData = useMemo(() => ({
+    labels: data?.userBehavior.daily.map((item) => shortDate(item.date)) ?? [],
+    datasets: (data?.userBehavior.definitions ?? []).map((definition, index) => ({
+      label: definition.label,
+      data: data?.userBehavior.daily.map((item) => item.values[definition.key] ?? 0) ?? [],
+      borderColor: behaviorPalette[index % behaviorPalette.length],
+      backgroundColor: behaviorPalette[index % behaviorPalette.length],
+      tension: 0.28,
+      pointRadius: range === "90d" ? 0 : 1.5,
+      pointHoverRadius: 4,
+      borderWidth: 2
+    }))
+  }), [data, range]);
 
   const typeData = useMemo(() => ({
     labels: data?.soups.byType.map((item) => item.name) ?? [],
@@ -359,26 +376,20 @@ export function AdminDashboard() {
         </ChartCard>
       </div>
 
-      <ChartCard title="热门汤品 Top 10" description="热力值 =（综合评分 + 1）×（浏览 +（点赞 + 1）× 15 +（收藏 + 1）× 20 +（评价 + 1）× 25）− 60，按热力值降序排列">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] text-left text-sm">
-            <thead><tr className="border-b border-line text-xs text-muted"><th className="px-3 py-2">排名</th><th className="px-3 py-2">汤品</th><th className="px-3 py-2 text-right">综合评分</th><th className="px-3 py-2 text-right">热力值</th><th className="px-3 py-2 text-right">浏览</th><th className="px-3 py-2 text-right">评价</th><th className="px-3 py-2 text-right">点赞</th><th className="px-3 py-2 text-right">收藏</th></tr></thead>
-            <tbody>
-              {data.soups.top.map((item, index) => (
-                <tr key={item.id} className="border-b border-line/70 last:border-0">
-                  <td className="px-3 py-3 font-black text-muted">{index + 1}</td>
-                  <td className="px-3 py-3"><button className="max-w-72 truncate font-bold text-ink hover:text-primary" onClick={() => navigate(`/soup/${item.id}`)}>{item.title}</button></td>
-                  <td className="px-3 py-3 text-right font-bold text-primary">{item.comprehensiveScore.toFixed(1)}</td>
-                  <td className="px-3 py-3 text-right font-black text-amber-600">{numberFormat.format(item.heatValue)}</td>
-                  <td className="px-3 py-3 text-right text-muted"><span className="inline-flex items-center gap-1"><Eye size={13} />{numberFormat.format(item.views)}</span></td>
-                  <td className="px-3 py-3 text-right text-muted"><span className="inline-flex items-center gap-1"><MessageSquare size={13} />{numberFormat.format(item.evaluations)}</span></td>
-                  <td className="px-3 py-3 text-right text-muted"><span className="inline-flex items-center gap-1"><ThumbsUp size={13} />{numberFormat.format(item.likes)}</span></td>
-                  <td className="px-3 py-3 text-right text-muted"><span className="inline-flex items-center gap-1"><Star size={13} />{numberFormat.format(item.favorites)}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {data.soups.top.length === 0 && <p className="py-8 text-center text-sm text-muted">暂无汤品数据</p>}
+      <ChartCard title="用户行为分析" description="按北京时间自然日及成功操作次数统计；点击图例可隐藏或显示对应行为">
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7">
+          {data.userBehavior.totals.map((item, index) => (
+            <div key={item.key} className="rounded-xl border border-line bg-slate-50 px-3 py-2.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold text-muted">
+                <i className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: behaviorPalette[index % behaviorPalette.length] }} />
+                {item.label}
+              </span>
+              <strong className="mt-1 block text-lg font-black text-ink">{numberFormat.format(item.count)}</strong>
+            </div>
+          ))}
+        </div>
+        <div className="h-[420px]">
+          <Line data={behaviorData} options={lineOptions} />
         </div>
       </ChartCard>
     </div>

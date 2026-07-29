@@ -66,6 +66,12 @@ import {
   shellTaskCenter,
   shellTransactions
 } from "./shellCurrency.js";
+import {
+  flushUserBehaviorAnalytics,
+  initializeUserBehaviorAnalytics,
+  recordUserBehavior,
+  USER_BEHAVIOR_DEFINITIONS
+} from "./behaviorAnalytics.js";
 import { WebSocket, WebSocketServer } from "ws";
 import onlineSoupRouter, {
   cleanupOnlineSoupInactiveHostRooms,
@@ -3177,6 +3183,9 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   } finally {
     connection.release();
   }
+  if (messageType === "text" || messageType === "sticker") {
+    recordUserBehavior("speak_circle");
+  }
   const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
@@ -3765,6 +3774,9 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     throw error;
   } finally {
     connection.release();
+  }
+  if (messageType === "text" || messageType === "sticker") {
+    recordUserBehavior("speak_private");
   }
   const createdAt = new Date().toISOString();
   const message = {
@@ -4622,6 +4634,7 @@ app.post("/api/soups", async (req, res) => {
   } finally {
     connection.release();
   }
+  recordUserBehavior("publish_soup");
   queueSystemBadgeSync([user.id]);
   if (review.decision === "pending") await recordAdminModuleEvent("approvals");
   res.status(201).json({ id, reviewStatus: review.decision });
@@ -4655,6 +4668,7 @@ app.get("/api/soups/:id", async (req, res) => {
       [nanoid(), req.params.id, identifier]
     );
     await pool.query("UPDATE soups SET view_count = view_count + 1 WHERE id = ?", [req.params.id]);
+    if (user) recordUserBehavior("view_soup");
   }
 
   const [[statsRows], [evalRows], full] = await Promise.all([
@@ -4789,6 +4803,7 @@ app.post("/api/soups/:id/like", async (req, res) => {
     connection.release();
   }
   if (!isLiked) return res.json({ isLiked: false, likeCount });
+  recordUserBehavior("like_soup");
   res.status(201).json({ isLiked: true, likeCount });
   if (String(soup.creator_id) !== user.id) {
     void notify(
@@ -4896,6 +4911,7 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
     connection.release();
   }
   if (!isFavorited) return res.json({ isFavorited: false, favoriteCount });
+  recordUserBehavior("favorite_soup");
   res.status(201).json({ isFavorited: true, favoriteCount });
   if (String(soup.creator_id) !== user.id) {
     void notify(
@@ -5178,6 +5194,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   } finally {
     connection.release();
   }
+  recordUserBehavior("save_evaluation");
   if (created && String(soup.creator_id) !== user.id) {
     await notify(
       String(soup.creator_id),
@@ -5642,6 +5659,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
   const parsedRange = z.enum(["7d", "15d", "30d", "90d"]).safeParse(req.query.range ?? "30d");
   if (!parsedRange.success) return sendError(res, 400, "统计时间范围不正确");
   const range = parsedRange.data as DashboardRange;
+  if (req.query.refresh === "1") await flushUserBehaviorAnalytics();
   const cached = dashboardCache.get(range);
   if (req.query.refresh !== "1" && cached && cached.expiresAt > Date.now()) return res.json(cached.payload);
 
@@ -5663,7 +5681,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
     [activityDailyRows],
     [typeRows],
     [soupStateRows],
-    [topSoupRows],
+    [behaviorRows],
     [evaluationRows]
   ] = await Promise.all([
     loadDashboardMetric("users", now, todayStart, weekStart),
@@ -5714,19 +5732,12 @@ app.get("/api/admin/dashboard", async (req, res) => {
        FROM soups`
     ),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT s.id, s.title, s.view_count,
-        COALESCE(e.evaluation_count, 0) AS evaluation_count,
-        COALESCE(e.comprehensive_score, 0) AS comprehensive_score,
-        COALESCE(l.like_count, 0) AS like_count,
-        COALESCE(f.favorite_count, 0) AS favorite_count,
-        (COALESCE(e.comprehensive_score, 0) + 1) *
-          (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 60 AS heat_value
-       FROM soups s
-       LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
-       LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
-       LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
-       ORDER BY heat_value DESC, s.view_count DESC, evaluation_count DESC
-       LIMIT 10`
+      `SELECT DATE_FORMAT(stat_date, '%Y-%m-%d') AS day_key, behavior_type,
+        historical_count + tracked_count AS event_count
+       FROM user_behavior_daily_stats
+       WHERE stat_date >= ? AND stat_date <= ?
+       ORDER BY stat_date, behavior_type`,
+      [rangeStartKey, todayKey]
     ),
     pool.query<mysql.RowDataPacket[]>(
       `SELECT
@@ -5744,6 +5755,15 @@ app.get("/api/admin/dashboard", async (req, res) => {
 
   const trendByDate = new Map(trendRows.map((row) => [String(row.day_key), row]));
   const activityByDate = new Map(activityDailyRows.map((row) => [String(row.day_key), Number(row.active_count ?? 0)]));
+  const behaviorByDate = new Map<string, Record<string, number>>();
+  const behaviorTotals = new Map<string, number>();
+  for (const row of behaviorRows) {
+    const date = String(row.day_key);
+    const type = String(row.behavior_type);
+    const count = Number(row.event_count ?? 0);
+    behaviorByDate.set(date, { ...(behaviorByDate.get(date) ?? {}), [type]: count });
+    behaviorTotals.set(type, (behaviorTotals.get(type) ?? 0) + count);
+  }
   const trend = Array.from({ length: rangeDays }, (_, index) => {
     const date = chinaDateKey(new Date(rangeStart.getTime() + index * DASHBOARD_DAY_MS));
     const row = trendByDate.get(date);
@@ -5780,6 +5800,21 @@ app.get("/api/admin/dashboard", async (req, res) => {
       todayRate: userMetric.total > 0 ? Number((Number(activity.today_active ?? 0) / userMetric.total * 100).toFixed(1)) : null,
       daily: activityDaily
     },
+    userBehavior: {
+      definitions: USER_BEHAVIOR_DEFINITIONS,
+      totals: USER_BEHAVIOR_DEFINITIONS.map((item) => ({
+        key: item.key,
+        label: item.label,
+        count: behaviorTotals.get(item.key) ?? 0
+      })),
+      daily: trend.map(({ date }) => ({
+        date,
+        values: Object.fromEntries(USER_BEHAVIOR_DEFINITIONS.map((item) => [
+          item.key,
+          behaviorByDate.get(date)?.[item.key] ?? 0
+        ]))
+      }))
+    },
     soups: {
       byType: typeRows.map((row) => ({ name: String(row.name || "未分类"), count: Number(row.count ?? 0) })),
       original: Number(soupState.original_count ?? 0),
@@ -5787,14 +5822,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
       publicSurface: Number(soupState.public_surface_count ?? 0),
       publicBottom: Number(soupState.public_bottom_count ?? 0),
       aiEnabled: Number(soupState.ai_enabled_count ?? 0),
-      sensitive: Number(soupState.sensitive_count ?? 0),
-      top: topSoupRows.map((row) => ({
-        id: String(row.id), title: String(row.title), views: Number(row.view_count ?? 0),
-        evaluations: Number(row.evaluation_count ?? 0),
-        comprehensiveScore: Number(Number(row.comprehensive_score ?? 0).toFixed(1)),
-        likes: Number(row.like_count ?? 0), favorites: Number(row.favorite_count ?? 0),
-        heatValue: Number(Number(row.heat_value ?? 0).toFixed(1))
-      }))
+      sensitive: Number(soupState.sensitive_count ?? 0)
     },
     evaluations: {
       averageTotal: evaluation.average_total == null ? null : Number(Number(evaluation.average_total).toFixed(1)),
@@ -6671,6 +6699,9 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 
 if (config.runDatabaseMigrations) await initDatabase();
 else await pool.query("SELECT 1");
+await initializeUserBehaviorAnalytics().catch((error) => {
+  console.error("User behavior analytics initialization failed; business routes will continue without analytics persistence:", error);
+});
 await cleanupOnlineSoupStaleSeats();
 await cleanupOnlineSoupInactiveHostRooms();
 const onlineSoupSeatCleanupTimer = setInterval(() => {
