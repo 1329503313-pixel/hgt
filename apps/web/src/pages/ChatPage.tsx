@@ -323,7 +323,7 @@ export default function ChatPage() {
                   {message.type === "room_invite" && message.roomInvite ? (
                     <OnlineSoupRoomInviteCard invite={message.roomInvite} />
                   ) : message.type === "soup_share" && message.soupShare ? (
-                    <SoupShareCard soup={message.soupShare} />
+                    <SoupShareCard soup={message.soupShare} align={message.isMine ? "right" : "left"} />
                   ) : message.type === "gift" && message.gift ? (
                     <GiftMessageCard gift={message.gift} />
                   ) : message.type === "sticker" ? (

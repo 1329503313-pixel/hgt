@@ -3,13 +3,15 @@ import { useLocation, useNavigate } from "react-router-dom";
 import type { SoupShare } from "../shared/types";
 import { defaultCoverUrl } from "../shared/staticAssets";
 
-export function SoupShareCard({ soup }: { soup: SoupShare }) {
+export function SoupShareCard({ soup, align = "left" }: { soup: SoupShare; align?: "left" | "right" }) {
   const navigate = useNavigate();
   const location = useLocation();
   return (
     <button
       type="button"
-      className="flex w-full max-w-[390px] overflow-hidden rounded-2xl border border-line bg-white text-left shadow-[0_8px_24px_rgba(15,23,42,0.10)] transition hover:-translate-y-0.5 hover:border-blue-200 active:translate-y-0"
+      className={`flex w-full max-w-[390px] overflow-hidden rounded-2xl border border-line bg-white text-left shadow-[0_8px_24px_rgba(15,23,42,0.10)] transition hover:-translate-y-0.5 hover:border-blue-200 active:translate-y-0 ${
+        align === "right" ? "ml-auto" : "mr-auto"
+      }`}
       onClick={() => navigate(`/soup/${encodeURIComponent(soup.id)}`, { state: { soupShareReturnTo: `${location.pathname}${location.search}` } })}
       aria-label={`查看海龟汤《${soup.title}》`}
     >

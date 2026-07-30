@@ -587,7 +587,7 @@ export default function CircleChatPage() {
                       </div>
                     ) : message.type === "soup_share" && message.soupShare ? (
                       <div>
-                        <SoupShareCard soup={message.soupShare} />
+                        <SoupShareCard soup={message.soupShare} align={mine ? "right" : "left"} />
                         {message.replyTo && <ReplyQuote reply={message.replyTo} mine={false} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
                       </div>
                     ) : message.type === "gift" && message.gift ? (

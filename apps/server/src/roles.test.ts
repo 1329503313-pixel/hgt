@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canViewAllSoupContentRole,
+  hasUnlimitedSoupPublishingRole,
   isBackofficeAdminRole,
   isSuperAdminRole,
   normalizeUserRole
@@ -25,4 +26,12 @@ test("VIP and administrator roles can view restricted soup content", () => {
   assert.equal(canViewAllSoupContentRole("backoffice_admin"), true);
   assert.equal(canViewAllSoupContentRole("vip"), true);
   assert.equal(canViewAllSoupContentRole("user"), false);
+});
+
+test("VIP and administrator roles can publish soups without a daily quota", () => {
+  assert.equal(hasUnlimitedSoupPublishingRole("super_admin"), true);
+  assert.equal(hasUnlimitedSoupPublishingRole("admin"), true);
+  assert.equal(hasUnlimitedSoupPublishingRole("backoffice_admin"), true);
+  assert.equal(hasUnlimitedSoupPublishingRole("vip"), true);
+  assert.equal(hasUnlimitedSoupPublishingRole("user"), false);
 });

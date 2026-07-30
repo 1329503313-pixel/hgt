@@ -18,6 +18,7 @@ import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarit
 import { PublicUser } from "./types.js";
 import {
   canViewAllSoupContentRole,
+  hasUnlimitedSoupPublishingRole,
   isBackofficeAdminRole,
   isSuperAdminRole,
   normalizeUserRole
@@ -2303,7 +2304,9 @@ app.patch("/api/me/avatar", async (req, res) => {
 app.get("/api/me/soup-publish-quota", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  if (isSuperAdminRole(user.role)) return res.json({ allowed: true, publishedCount: 0, autoRejectCount: 0, remaining: null });
+  if (hasUnlimitedSoupPublishingRole(user.role)) {
+    return res.json({ allowed: true, publishedCount: 0, autoRejectCount: 0, remaining: null });
+  }
   const usage = await getSoupPublishUsage(user.id);
   const blockedByReview = usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT;
   const blockedByLimit = usage.publishedCount >= SOUP_DAILY_PUBLISH_LIMIT;
@@ -4557,7 +4560,8 @@ app.post("/api/soups", async (req, res) => {
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const duplicate = await findDuplicateSoup(soup);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
-  const usage = isSuperAdminRole(user.role) ? null : await getSoupPublishUsage(user.id);
+  const hasUnlimitedPublishing = hasUnlimitedSoupPublishingRole(user.role);
+  const usage = hasUnlimitedPublishing ? null : await getSoupPublishUsage(user.id);
   if (usage && usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT) {
     return sendError(res, 429, `今日自动审核未通过次数已达${SOUP_DAILY_AUTO_REJECT_LIMIT}次，请明天再试`);
   }
@@ -4577,7 +4581,7 @@ app.post("/api/soups", async (req, res) => {
     }
   }
   if (review.decision === "rejected") {
-    await recordSoupAutoReject(user.id, usage!.date);
+    if (!hasUnlimitedPublishing) await recordSoupAutoReject(user.id, usage!.date);
     return sendError(res, 422, review.reason ?? "内容未通过自动审核");
   }
 
@@ -4587,7 +4591,7 @@ app.post("/api/soups", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    if (!isSuperAdminRole(user.role)) {
+    if (!hasUnlimitedPublishing) {
       await connection.query(
         "INSERT IGNORE INTO soup_publish_daily_usage (user_id, usage_date) VALUES (?, ?)",
         [user.id, usage!.date],

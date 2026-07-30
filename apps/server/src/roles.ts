@@ -18,3 +18,7 @@ export function isBackofficeAdminRole(role: unknown) {
 export function canViewAllSoupContentRole(role: unknown) {
   return isBackofficeAdminRole(role) || role === "vip";
 }
+
+export function hasUnlimitedSoupPublishingRole(role: unknown) {
+  return isBackofficeAdminRole(role) || role === "vip";
+}
