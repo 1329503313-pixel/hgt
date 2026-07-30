@@ -4,7 +4,7 @@ import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { Modal } from "./Modal";
 
-type FeedbackType = "bug" | "feature" | "activity";
+type FeedbackType = "bug" | "feature" | "activity" | "activity_feedback";
 
 export function FeedbackCard() {
   const { showToast } = useApp();
@@ -123,6 +123,7 @@ export function FeedbackCard() {
                 <option value="bug">BUG反馈</option>
                 <option value="feature">功能建议</option>
                 <option value="activity">活动建议</option>
+                <option value="activity_feedback">活动反馈</option>
               </select>
             </label>
 

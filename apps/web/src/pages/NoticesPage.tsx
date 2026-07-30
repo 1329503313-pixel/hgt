@@ -17,7 +17,7 @@ export type NoticeItem = {
 };
 
 export default function NoticesPage() {
-  const { user, loadingUser, showToast } = useApp();
+  const { user, loadingUser, showToast, refreshKey } = useApp();
   const navigate = useNavigate();
   const [notices, setNotices] = useState<NoticeItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,7 +30,7 @@ export default function NoticesPage() {
       .then((data) => setNotices(data.notices))
       .catch((error) => showToast((error as Error).message))
       .finally(() => setLoading(false));
-  }, [user, loadingUser, showToast]);
+  }, [user, loadingUser, showToast, refreshKey]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 60_000);

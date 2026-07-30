@@ -9,6 +9,7 @@ import ContentNavLayout from "./layouts/ContentNavLayout";
 import { SeoManager } from "./components/SeoManager";
 import { RouteScrollManager } from "./components/RouteScrollManager";
 import { SiteFooter } from "./components/SiteFooter";
+import { GlobalNoticeModal } from "./components/GlobalNoticeModal";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const DetailPage = lazy(() => import("./pages/DetailPage"));
@@ -125,6 +126,7 @@ export default function App() {
 
       <SiteFooter />
       <IncomingMessageBanner />
+      <GlobalNoticeModal />
 
       {/* Global toast */}
       {toast && (

@@ -731,7 +731,7 @@ export async function initDatabase() {
       publisher_name VARCHAR(50) NOT NULL,
       publisher_username VARCHAR(50) NOT NULL,
       title VARCHAR(100) NOT NULL,
-      feedback_type ENUM('bug','feature','activity') NOT NULL,
+      feedback_type ENUM('bug','feature','activity','activity_feedback') NOT NULL,
       content TEXT NOT NULL,
       screenshot LONGTEXT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -741,6 +741,15 @@ export async function initDatabase() {
       CONSTRAINT fk_user_feedback_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  const [[feedbackTypeColumn]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_feedback' AND COLUMN_NAME = 'feedback_type'`
+  );
+  if (!String(feedbackTypeColumn?.COLUMN_TYPE ?? "").includes("'activity_feedback'")) {
+    await pool.query(
+      "ALTER TABLE user_feedback MODIFY COLUMN feedback_type ENUM('bug','feature','activity','activity_feedback') NOT NULL"
+    );
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admin_module_reads (

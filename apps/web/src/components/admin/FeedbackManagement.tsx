@@ -5,7 +5,7 @@ import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 import { ListSkeleton } from "../Skeletons";
 
-type FeedbackType = "bug" | "feature" | "activity";
+type FeedbackType = "bug" | "feature" | "activity" | "activity_feedback";
 type FeedbackSummary = {
   id: string;
   title: string;
@@ -19,7 +19,8 @@ type FeedbackDetail = FeedbackSummary & { screenshot: string | null };
 const typeLabels: Record<FeedbackType, string> = {
   bug: "BUG反馈",
   feature: "功能建议",
-  activity: "活动建议"
+  activity: "活动建议",
+  activity_feedback: "活动反馈"
 };
 
 function formatDate(value: string) {
@@ -95,8 +96,8 @@ export function FeedbackManagement() {
         <div className="flex flex-col gap-2 sm:flex-row">
           <form className="flex gap-2" onSubmit={search}>
             <label className="relative min-w-0 flex-1 sm:w-64">
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
-              <input className="field h-10 pl-9" value={keyword} onChange={(event) => setKeyword(event.target.value)} maxLength={100} placeholder="搜索意见标题" aria-label="搜索意见标题" />
+              <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
+              <input className="field h-10 pr-9" value={keyword} onChange={(event) => setKeyword(event.target.value)} maxLength={100} placeholder="搜索意见标题" aria-label="搜索意见标题" />
             </label>
             <button className="btn btn-primary h-10 shrink-0 px-4">搜索</button>
           </form>
@@ -105,6 +106,7 @@ export function FeedbackManagement() {
             <option value="bug">BUG反馈</option>
             <option value="feature">功能建议</option>
             <option value="activity">活动建议</option>
+            <option value="activity_feedback">活动反馈</option>
           </select>
           <select className="field h-10 sm:w-36" value={order} onChange={(event) => { setOrder(event.target.value as "asc" | "desc"); setPage(1); }} aria-label="发布时间排序">
             <option value="desc">时间倒序</option>

@@ -578,7 +578,7 @@ const adminNoticeSchema = z.object({
   message: "有效时间至少为 1 小时"
 });
 
-const feedbackTypeSchema = z.enum(["bug", "feature", "activity"]);
+const feedbackTypeSchema = z.enum(["bug", "feature", "activity", "activity_feedback"]);
 const userFeedbackSchema = z.object({
   title: z.string().trim().min(1, "意见标题不能为空").max(100, "意见标题不超过 100 字"),
   type: feedbackTypeSchema,
@@ -5565,6 +5565,45 @@ app.get("/api/notices", async (req, res) => {
       isRead: bool(row.is_read)
     }))
   });
+});
+
+app.get("/api/notices/popup", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT n.id, n.title, n.content, n.published_at
+     FROM admin_notices n
+     WHERE (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+       AND NOT EXISTS (
+         SELECT 1 FROM admin_notice_reads nr
+         WHERE nr.notice_id = n.id AND nr.user_id = ?
+       )
+     ORDER BY n.published_at DESC, n.id DESC
+     LIMIT 1`,
+    [user.id]
+  );
+  const notice = rows[0]
+    ? {
+        id: String(rows[0].id),
+        title: String(rows[0].title),
+        content: String(rows[0].content),
+        publishedAt: new Date(rows[0].published_at).toISOString()
+      }
+    : null;
+  res.json({ notice });
+});
+
+app.patch("/api/notices/:id/read", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `INSERT IGNORE INTO admin_notice_reads (notice_id, user_id)
+     SELECT id, ? FROM admin_notices
+     WHERE id = ?`,
+    [user.id, req.params.id]
+  );
+  if (result.affectedRows > 0) emitUnreadChanged(user.id, "notice_read");
+  res.json({ ok: true });
 });
 
 app.get("/api/notices/:id", async (req, res) => {
