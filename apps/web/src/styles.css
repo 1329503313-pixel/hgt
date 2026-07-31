@@ -366,6 +366,458 @@ body {
   box-shadow: 0 8px 24px rgba(17, 24, 39, 0.04);
 }
 
+/* AI 玩汤：脱离详情页和网站页脚的独立全屏工作区。 */
+.ai-game-workspace {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 14% 8%, rgba(37, 99, 235, 0.09), transparent 30%),
+    #f4f7fb;
+  color: #172033;
+}
+
+.ai-game-header {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.82);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 5px 22px rgba(15, 23, 42, 0.05);
+  backdrop-filter: blur(16px);
+}
+
+.ai-game-header-inner {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+}
+
+.ai-game-back {
+  display: inline-flex;
+  min-width: 40px;
+  min-height: 40px;
+  width: max-content;
+  align-items: center;
+  gap: 7px;
+  border-radius: 12px;
+  padding: 0 10px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 800;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.ai-game-back:hover { background: #eff6ff; color: #2563eb; }
+.ai-game-back:active { transform: scale(0.97); }
+
+.ai-game-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.ai-game-brand-icon,
+.ai-game-host-avatar,
+.ai-game-message-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #2563eb, #4f46e5);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.24);
+}
+
+.ai-game-brand-icon { width: 34px; height: 34px; }
+.ai-game-brand > span:last-child,
+.ai-game-chat-header > span:last-child { min-width: 0; }
+.ai-game-brand strong,
+.ai-game-brand small,
+.ai-game-chat-header strong,
+.ai-game-chat-header small { display: block; }
+.ai-game-brand strong { font-size: 14px; font-weight: 900; }
+.ai-game-brand small { margin-top: 1px; color: #94a3b8; font-size: 10px; font-weight: 700; }
+
+.ai-game-header-title {
+  justify-self: end;
+  max-width: min(30vw, 320px);
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-game-main {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.ai-game-case-panel {
+  display: flex;
+  max-height: 43%;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  border-bottom: 1px solid #dbe3ee;
+  background: rgba(248, 250, 252, 0.96);
+  padding: 14px;
+  scrollbar-gutter: stable;
+}
+
+.ai-game-case-heading > span {
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.ai-game-case-heading h1 {
+  margin-top: 3px;
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-game-case-heading p {
+  display: none;
+  margin-top: 7px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.ai-game-surface-card,
+.ai-game-progress-card {
+  border: 1px solid rgba(203, 213, 225, 0.85);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(30, 64, 175, 0.055);
+}
+
+.ai-game-surface-card {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 12px 14px;
+}
+
+.ai-game-card-title {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-game-card-title > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.ai-game-card-title > span svg { color: #2563eb; }
+
+.ai-game-card-title button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.ai-game-surface-content {
+  display: -webkit-box;
+  margin-top: 8px;
+  overflow: hidden;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.75;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.ai-game-surface-card.is-expanded .ai-game-surface-content {
+  display: block;
+  max-height: 110px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.ai-game-progress-card { padding: 12px 14px; }
+.ai-game-progress-title { display: flex; align-items: center; justify-content: space-between; }
+.ai-game-progress-title span { color: #64748b; font-size: 12px; font-weight: 800; }
+.ai-game-progress-title strong { color: #2563eb; font-size: 15px; font-weight: 900; }
+.ai-game-progress-track { height: 8px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
+.ai-game-progress-track > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2563eb, #6366f1); transition: width 700ms ease; }
+.ai-game-progress-card p { margin-top: 7px; color: #94a3b8; font-size: 10px; font-weight: 700; line-height: 1.5; }
+
+.ai-game-clues h2 { color: #64748b; font-size: 11px; font-weight: 900; }
+.ai-game-clues > div { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.ai-game-clues span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  background: #dbeafe;
+  padding: 4px 8px;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 800;
+}
+.ai-game-clues span.is-bottom { background: #fef3c7; color: #b45309; }
+.ai-game-complete { border-radius: 12px; background: #dcfce7; padding: 10px 12px; color: #15803d; font-size: 12px; font-weight: 800; line-height: 1.6; }
+
+.ai-game-chat-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.ai-game-chat-header {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 11px;
+  border-bottom: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 14px 22px;
+}
+
+.ai-game-host-avatar { width: 42px; height: 42px; }
+.ai-game-chat-header strong { color: #172033; font-size: 14px; font-weight: 900; }
+.ai-game-chat-header small { margin-top: 3px; color: #64748b; font-size: 11px; font-weight: 700; }
+.ai-game-chat-header small i { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border: 2px solid #fff; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 1px #22c55e; }
+
+.ai-game-messages {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.ai-game-message-list {
+  width: min(100%, 820px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 18px 14px 22px;
+}
+
+.ai-game-message {
+  display: flex;
+  max-width: 88%;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ai-game-message:first-child { margin-top: 0; }
+.ai-game-message.is-user { margin-left: auto; justify-content: flex-end; text-align: right; }
+.ai-game-message-avatar { width: 30px; height: 30px; margin-top: 18px; box-shadow: none; }
+.ai-game-message > div { min-width: 0; }
+.ai-game-message small { display: block; margin: 0 5px 5px; color: #94a3b8; font-size: 10px; font-weight: 700; }
+
+.ai-game-bubble {
+  overflow-wrap: anywhere;
+  border: 1px solid #dce5f0;
+  border-radius: 5px 17px 17px 17px;
+  background: #fff;
+  padding: 10px 13px;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.75;
+  text-align: left;
+  white-space: pre-wrap;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.045);
+}
+
+.ai-game-message.is-user .ai-game-bubble {
+  border-color: #2563eb;
+  border-radius: 17px 5px 17px 17px;
+  background: linear-gradient(145deg, #2563eb, #3b5fe8);
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(37, 99, 235, 0.2);
+}
+
+.ai-game-bubble.is-loading { color: #64748b; }
+
+.ai-game-empty {
+  display: flex;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 30px 20px;
+  text-align: center;
+}
+
+.ai-game-empty > span { display: grid; width: 54px; height: 54px; place-items: center; border-radius: 18px; background: #dbeafe; color: #2563eb; }
+.ai-game-empty strong { margin-top: 14px; color: #334155; font-size: 15px; font-weight: 900; }
+.ai-game-empty p { max-width: 360px; margin-top: 7px; color: #94a3b8; font-size: 12px; line-height: 1.75; }
+
+.ai-game-composer-shell {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  border-top: 1px solid #dce5f0;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.045);
+  backdrop-filter: blur(16px);
+}
+
+.ai-game-composer {
+  display: flex;
+  width: min(100%, 820px);
+  margin: 0 auto;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.ai-game-menu-wrap { position: relative; flex: 0 0 auto; }
+.ai-game-composer textarea {
+  min-width: 0;
+  height: 44px;
+  min-height: 44px;
+  max-height: 104px;
+  flex: 1 1 auto;
+  resize: none;
+  overflow-y: auto;
+  border: 1px solid #dce3ed;
+  border-radius: 14px;
+  outline: none;
+  background: #f8fafc;
+  padding: 10px 13px;
+  color: #172033;
+  font-size: 14px;
+  line-height: 22px;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.ai-game-composer textarea:focus { border-color: #93c5fd; background: #fff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.09); }
+.ai-game-composer textarea::placeholder { color: #a0aec0; }
+.ai-game-composer-tip { display: none; width: min(100%, 820px); margin: 5px auto 0; color: #94a3b8; font-size: 10px; text-align: right; }
+
+.ai-game-menu {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 0;
+  width: 184px;
+  overflow: hidden;
+  border: 1px solid #dce3ed;
+  border-radius: 14px;
+  background: #fff;
+  padding: 5px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
+}
+
+.ai-game-menu button { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 8px; border-radius: 10px; padding: 0 10px; color: #334155; font-size: 12px; font-weight: 800; text-align: left; }
+.ai-game-menu button:hover:not(:disabled) { background: #f1f5f9; color: #2563eb; }
+.ai-game-menu button:disabled { cursor: not-allowed; opacity: 0.45; }
+.ai-game-finished { width: min(100%, 820px); margin: 0 auto; border-radius: 13px; background: #ecfdf5; padding: 11px 14px; color: #15803d; font-size: 13px; font-weight: 800; text-align: center; }
+
+.ai-game-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.4);
+  padding: 16px;
+  backdrop-filter: blur(3px);
+}
+
+@media (min-width: 1024px) {
+  .ai-game-header-inner {
+    width: min(100% - 48px, 1440px);
+    min-height: 68px;
+    margin: 0 auto;
+    padding: 10px 0;
+  }
+
+  .ai-game-back { padding: 0 13px; }
+  .ai-game-brand-icon { width: 38px; height: 38px; }
+  .ai-game-brand strong { font-size: 15px; }
+  .ai-game-header-title { font-size: 13px; }
+
+  .ai-game-main {
+    display: grid;
+    width: min(100%, 1440px);
+    margin: 0 auto;
+    grid-template-columns: minmax(330px, 390px) minmax(0, 1fr);
+    overflow: hidden;
+    border-right: 1px solid #dbe3ee;
+    border-left: 1px solid #dbe3ee;
+    background: #fff;
+    box-shadow: 0 20px 70px rgba(15, 23, 42, 0.08);
+  }
+
+  .ai-game-case-panel {
+    max-height: none;
+    flex: none;
+    gap: 16px;
+    border-right: 1px solid #dbe3ee;
+    border-bottom: 0;
+    padding: 28px 24px;
+  }
+
+  .ai-game-case-heading p { display: block; }
+  .ai-game-case-heading h1 { margin-top: 7px; font-size: 24px; white-space: normal; }
+  .ai-game-surface-card { padding: 17px 18px; }
+  .ai-game-surface-content { margin-top: 12px; font-size: 14px; line-height: 1.9; -webkit-line-clamp: 4; }
+  .ai-game-surface-card.is-expanded .ai-game-surface-content { max-height: 30vh; }
+  .ai-game-progress-card { padding: 16px 18px; }
+  .ai-game-progress-track { height: 9px; margin-top: 11px; }
+  .ai-game-progress-card p { margin-top: 9px; font-size: 11px; }
+  .ai-game-chat-header { display: flex; }
+  .ai-game-message-list { padding: 26px 30px 34px; }
+  .ai-game-message { max-width: 74%; margin-top: 18px; gap: 10px; }
+  .ai-game-message-avatar { width: 34px; height: 34px; }
+  .ai-game-bubble { padding: 11px 15px; font-size: 14px; line-height: 1.8; }
+  .ai-game-composer-shell { padding: 14px 22px 12px; }
+  .ai-game-composer { gap: 8px; }
+  .ai-game-composer-tip { display: block; }
+}
+
+@media (max-width: 479px) {
+  .ai-game-back span,
+  .ai-game-header-title { display: none; }
+  .ai-game-header-inner { grid-template-columns: 40px 1fr 40px; }
+  .ai-game-brand { justify-self: center; }
+  .ai-game-case-panel { max-height: 40%; padding: 10px 12px; }
+  .ai-game-case-heading { display: none; }
+  .ai-game-message { max-width: 92%; }
+}
+
 /* 玩汤房间顶栏高度会在中等桌面宽度下变为两行，由文档流为工作区稳定占位。 */
 .online-soup-room-header {
   position: relative;

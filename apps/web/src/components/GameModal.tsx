@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowLeft, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw, Menu } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ArrowLeft, Bot, Send, Lightbulb, Sparkles, ChevronDown, ChevronUp, RotateCcw, Menu } from "lucide-react";
 import { ChatComposerIconButton } from "./ChatComposerIconButton";
 import type { SoupDetail } from "../shared/types";
 import { api } from "../api";
@@ -40,7 +41,16 @@ export function GameModal({
   const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // AI 玩汤是独立工作区。锁定背景滚动，并通过 Portal 脱离详情页的层叠上下文。
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
 
   // 进入时自动开始/载入游戏
   useEffect(() => {
@@ -155,183 +165,176 @@ export function GameModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-page">
-      {/* 顶栏 */}
-      <header className="top-nav-shell shrink-0">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-          <button
-            className="flex min-h-10 items-center gap-2 text-left text-base font-black text-ink"
-            onClick={onBack}
-          >
-            <ArrowLeft size={18} />
+  return createPortal(
+    <div className="ai-game-workspace" role="dialog" aria-modal="true" aria-label={`AI 玩汤：${soup.title}`}>
+      <header className="ai-game-header">
+        <div className="ai-game-header-inner">
+          <button className="ai-game-back" onClick={onBack} aria-label="返回海龟汤详情">
+            <ArrowLeft size={19} />
             <span>返回详情</span>
           </button>
-          <span className="text-sm font-bold text-muted">AI 玩汤</span>
-          <div className="w-16" />
+          <div className="ai-game-brand">
+            <span className="ai-game-brand-icon"><Sparkles size={17} /></span>
+            <span><strong>AI 玩汤</strong><small>沉浸式推理</small></span>
+          </div>
+          <span className="ai-game-header-title" title={soup.title}>{soup.title}</span>
         </div>
       </header>
 
-      {/* 上半部分：汤面 + 进度条（最高不超过屏幕一半，进度条始终可见） */}
-      <div className="shrink-0 border-b border-line bg-white pt-[52px] max-h-[50vh] flex flex-col">
-        <div className="mx-auto max-w-3xl px-4 pt-3 w-full space-y-3 flex flex-col min-h-0 flex-1">
-          {/* 汤面卡片 — 卡片始终完整显示在画面内，内容超出时在卡片内部滚动 */}
-          <div className="card p-3 flex flex-col min-h-0 flex-1">
-            <div className="flex items-start justify-between gap-2 shrink-0">
-              <h2 className="font-black text-ink">{soup.title}</h2>
+      <main className="ai-game-main">
+        <aside className="ai-game-case-panel">
+          <div className="ai-game-case-heading">
+            <span>CASE FILE</span>
+            <h1>{soup.title}</h1>
+            <p>阅读汤面，向 AI 主持人提出只能用“是 / 否 / 无关”回答的问题。</p>
+          </div>
+
+          <section className={`ai-game-surface-card ${infoExpanded ? "is-expanded" : ""}`}>
+            <div className="ai-game-card-title">
+              <span><Sparkles size={15} />汤面</span>
               <button
-                className="shrink-0 mt-1 grid h-7 w-7 place-items-center rounded-md bg-slate-100 text-muted"
+                type="button"
                 onClick={() => setInfoExpanded(!infoExpanded)}
+                aria-expanded={infoExpanded}
+                aria-label={infoExpanded ? "收起汤面" : "展开汤面"}
               >
-                {infoExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                {infoExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
               </button>
             </div>
             <div
-              className={`text-[14px] leading-6 text-ink content-block mt-3 overflow-auto min-h-0 flex-1 ${infoExpanded ? "" : "line-clamp-2 overflow-hidden"}`}
+              className="ai-game-surface-content content-block"
               dangerouslySetInnerHTML={{ __html: sanitizeHtml(soup.surface) }}
             />
-          </div>
+          </section>
 
-          {/* 进度条 — 始终可见，不参与滚动 */}
-          <div className="shrink-0 pb-3">
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-xs font-bold text-muted">推理进度</span>
-              <span className="text-sm font-black text-primary">{state.progress}%</span>
+          <section className="ai-game-progress-card" aria-label={`推理进度 ${state.progress}%`}>
+            <div className="ai-game-progress-title">
+              <span>推理进度</span>
+              <strong>{state.progress}%</strong>
             </div>
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-700 ease-out"
-                style={{ width: `${Math.max(3, state.progress)}%` }}
-              />
+            <div className="ai-game-progress-track">
+              <div style={{ width: `${Math.max(3, state.progress)}%` }} />
             </div>
-            {state.revealedSupplements.surfaces.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
+            <p>{state.completed ? "真相已经揭晓" : state.progress < 20 ? "继续提问，进度达到 20% 后可获取提示" : "已解锁方向性提示"}</p>
+          </section>
+
+          {(state.revealedSupplements.surfaces.length > 0 || state.revealedSupplements.bottoms.length > 0) && (
+            <section className="ai-game-clues" aria-label="已解锁内容">
+              <h2>已解锁内容</h2>
+              <div>
                 {state.revealedSupplements.surfaces.map((idx) => (
-                  <span key={`s${idx}`} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-primary">
-                    <Sparkles size={11} className="mr-1" />补充汤面 #{idx + 1}
-                  </span>
+                  <span key={`s${idx}`}><Sparkles size={12} />补充汤面 #{idx + 1}</span>
                 ))}
                 {state.revealedSupplements.bottoms.map((idx) => (
-                  <span key={`b${idx}`} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                    <Sparkles size={11} className="mr-1" />补充汤底 #{idx + 1}
-                  </span>
+                  <span key={`b${idx}`} className="is-bottom"><Sparkles size={12} />补充汤底 #{idx + 1}</span>
                 ))}
               </div>
-            )}
-            {state.completed && (
-              <div className="mt-2 rounded-md bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700">
-                🎉 恭喜通关！
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 下半部分：聊天对话 */}
-      <div
-        ref={chatRef}
-        className="relative flex-1 overflow-auto"
-      >
-        <div className="mx-auto max-w-3xl px-4 py-3 space-y-3">
-          {state.messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px] leading-7 ${
-                  msg.role === "user"
-                    ? "bg-primary text-white"
-                    : "border border-line bg-white text-ink"
-                }`}
-              >
-                <div
-                  className="whitespace-pre-wrap"
-                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(extractDisplayContent(msg.content, msg.role)) }}
-                />
-              </div>
-            </div>
-          ))}
-          {state.loading && (
-            <div className="flex justify-start">
-              <div className="rounded-2xl border border-line bg-white px-4 py-2.5 text-[15px] text-muted">
-                推理中<DotDots />
-              </div>
-            </div>
+            </section>
           )}
-          <div ref={bottomRef} />
-        </div>
-      </div>
 
-      {/* 底部操作栏：菜单 + 输入 */}
-      <div className="shrink-0 border-t border-line bg-white/95 backdrop-blur">
-        {state.completed ? (
-          <div className="mx-auto max-w-3xl px-4 py-4 text-center text-sm font-bold text-muted">
-            🎉 游戏已通关！返回详情页查看完整汤底。
+          {state.completed && <div className="ai-game-complete">🎉 恭喜通关！返回详情页即可查看完整汤底。</div>}
+        </aside>
+
+        <section className="ai-game-chat-panel">
+          <header className="ai-game-chat-header">
+            <span className="ai-game-host-avatar"><Bot size={23} /></span>
+            <span><strong>AI 主持人</strong><small><i />正在主持本局游戏</small></span>
+          </header>
+
+          <div ref={chatRef} className="ai-game-messages" aria-live="polite">
+            <div className="ai-game-message-list">
+              {state.messages.length === 0 && !state.loading && (
+                <div className="ai-game-empty">
+                  <span><Bot size={26} /></span>
+                  <strong>准备好开始推理了吗？</strong>
+                  <p>从人物、时间、地点或异常行为入手，试着提出你的第一个问题。</p>
+                </div>
+              )}
+              {state.messages.map((msg, i) => (
+                <div key={i} className={`ai-game-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}>
+                  {msg.role === "assistant" && <span className="ai-game-message-avatar"><Bot size={17} /></span>}
+                  <div>
+                    <small>{msg.role === "user" ? "我" : "AI 主持人"}</small>
+                    <div
+                      className="ai-game-bubble"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(extractDisplayContent(msg.content, msg.role)) }}
+                    />
+                  </div>
+                </div>
+              ))}
+              {state.loading && (
+                <div className="ai-game-message is-assistant">
+                  <span className="ai-game-message-avatar"><Bot size={17} /></span>
+                  <div><small>AI 主持人</small><div className="ai-game-bubble is-loading">推理中<DotDots /></div></div>
+                </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
           </div>
-        ) : (
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3">
-          {/* 菜单按钮 */}
-          <div className="relative shrink-0">
-            <button
-              className="btn btn-secondary px-3"
-              onClick={() => setMenuOpen(!menuOpen)}
-              disabled={state.loading}
-              title="菜单"
-            >
-              <Menu size={18} />
-            </button>
-            {menuOpen && (
-              <div className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-line bg-white shadow-lg py-1.5 z-20">
-                <button
-                  className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-bold transition-colors ${
-                    state.progress < 20
-                      ? "cursor-not-allowed text-muted opacity-50"
-                      : "text-ink hover:bg-slate-50"
-                  }`}
-                  onClick={() => { if (state.progress >= 20) { handleHint(); setMenuOpen(false); } }}
-                  disabled={state.loading || state.progress < 20}
-                  title={state.progress < 20 ? "推理进度需达到 20% 后才能使用提示" : "获取提示"}
-                >
-                  <Lightbulb size={16} className={state.progress < 20 ? "text-muted" : "text-amber-500"} />
-                  获取提示{state.progress < 20 ? ` (${state.progress}%)` : ""}
-                </button>
-                <button
-                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-bold text-ink hover:bg-red-50 hover:text-red-600 transition-colors"
-                  onClick={() => { setRestartConfirmOpen(true); setMenuOpen(false); }}
+
+          <footer className="ai-game-composer-shell">
+            {state.completed ? (
+              <div className="ai-game-finished">🎉 游戏已通关，返回详情页查看完整汤底</div>
+            ) : (
+              <div className="ai-game-composer">
+                <div className="ai-game-menu-wrap">
+                  <ChatComposerIconButton
+                    onClick={() => setMenuOpen(!menuOpen)}
+                    disabled={state.loading}
+                    aria-label="游戏菜单"
+                    title="游戏菜单"
+                  >
+                    <Menu size={22} />
+                  </ChatComposerIconButton>
+                  {menuOpen && (
+                    <div className="ai-game-menu">
+                      <button
+                        onClick={() => { if (state.progress >= 20) { void handleHint(); setMenuOpen(false); } }}
+                        disabled={state.loading || state.progress < 20}
+                        title={state.progress < 20 ? "推理进度需达到 20% 后才能使用提示" : "获取提示"}
+                      >
+                        <Lightbulb size={17} />获取提示{state.progress < 20 ? `（${state.progress}%）` : ""}
+                      </button>
+                      <button onClick={() => { setRestartConfirmOpen(true); setMenuOpen(false); }} disabled={state.loading}>
+                        <RotateCcw size={17} />重新开始
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <textarea
+                  ref={inputRef}
+                  rows={1}
+                  placeholder="输入你的推理或提问…"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleSend();
+                    }
+                  }}
                   disabled={state.loading}
+                  aria-label="推理问题"
+                />
+                <ChatComposerIconButton
+                  tone="send"
+                  onClick={() => void handleSend()}
+                  disabled={state.loading || !input.trim()}
+                  aria-label="发送"
+                  title="发送"
                 >
-                  <RotateCcw size={16} className="text-muted" />
-                  重新开始
-                </button>
+                  <Send size={22} />
+                </ChatComposerIconButton>
               </div>
             )}
-          </div>
-          <input
-            ref={inputRef}
-            className="field flex-1"
-            placeholder="输入你的推理或提问…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
-            disabled={state.loading}
-          />
-          <ChatComposerIconButton
-            tone="send"
-            onClick={handleSend}
-            disabled={state.loading || !input.trim()}
-            aria-label="发送"
-            title="发送"
-          >
-            <Send size={22} />
-          </ChatComposerIconButton>
-        </div>
-        )}
-      </div>
+            {!state.completed && <p className="ai-game-composer-tip">Enter 发送 · Shift + Enter 换行</p>}
+          </footer>
+        </section>
+      </main>
 
       {/* 重新开始确认弹窗 */}
       {restartConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4">
+        <div className="ai-game-confirm-backdrop">
           <div className="w-full max-w-sm rounded-t-xl bg-white p-5 shadow-soft sm:rounded-[20px]">
             <h3 className="text-base font-black text-ink">是否重新开始 AI 盘汤？</h3>
             <p className="mt-2 text-sm text-muted leading-6">重新开始将会重置进度。</p>
@@ -352,7 +355,8 @@ export function GameModal({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 }
 
