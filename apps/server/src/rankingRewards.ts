@@ -70,7 +70,7 @@ export function nextRankingPeriodEnd(period: RankingRewardPeriod, periodEnd: Dat
 
 export function rankingRewardFor(period: RankingRewardPeriod, board: RankingRewardBoard, rank: number): RankingReward | null {
   if (!Number.isInteger(rank) || rank < 1 || rank > 10) return null;
-  const currencyBoard = board === "achievement" || board === "collection" || board === "draws";
+  const currencyBoard = board === "level" || board === "charm" || board === "generosity";
   if (currencyBoard) {
     if (period === "weekly") {
       if (rank === 1) return { type: "currency", experience: 200, shell: 100 };

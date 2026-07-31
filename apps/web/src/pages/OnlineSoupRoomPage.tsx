@@ -47,6 +47,10 @@ function mergeMessages(older: OnlineSoupMessage[], newer: OnlineSoupMessage[]) {
   });
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 export default function OnlineSoupRoomPage() {
   const { roomId = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -123,6 +127,8 @@ export default function OnlineSoupRoomPage() {
   const progressQuestionsRef = useRef<ProgressQuestion[]>([]);
   const highlightTimerRef = useRef<number | null>(null);
   const locatedRequestRef = useRef("");
+  const leavingRoomRef = useRef(false);
+  const roomReadAbortRef = useRef(new AbortController());
   const stateRequestStarted = useRef(0);
   const stateRequestApplied = useRef(0);
   progressQuestionsRef.current = progressQuestions;
@@ -158,6 +164,7 @@ export default function OnlineSoupRoomPage() {
   }, []);
 
   const load = useCallback(async (quiet = false) => {
+    if (leavingRoomRef.current) return;
     if (refreshPending.current) {
       refreshQueued.current = true;
       return;
@@ -168,7 +175,8 @@ export default function OnlineSoupRoomPage() {
       do {
         refreshQueued.current = false;
         try {
-          const data = await api<OnlineSoupSnapshot>(`/api/online-soup/rooms/${roomId}`, { bypassCache: true, dedupe: false });
+          const data = await api<OnlineSoupSnapshot>(`/api/online-soup/rooms/${roomId}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+          if (leavingRoomRef.current) return;
           const isQuietPass = quietPass;
           setSnapshot((current) => {
             if (!isQuietPass || !current || !historyExpanded.current) return data;
@@ -181,6 +189,7 @@ export default function OnlineSoupRoomPage() {
           });
           if (data.room.status === "closed") { showToast("房间已关闭"); returnFromInvite(); }
         } catch (error) {
+          if (leavingRoomRef.current || isAbortError(error)) return;
           if (!quietPass && error instanceof ApiError && error.code === "NOT_MEMBER") {
             try {
               const joined = await api<{ roomId: string; role: "player" | "spectator" }>(`/api/online-soup/rooms/${roomId}/join-auto`, {
@@ -188,7 +197,8 @@ export default function OnlineSoupRoomPage() {
                 body: { inviteToken }
               });
               if (joined.role === "spectator") showToast("玩家席位已满，已作为旁观者进入");
-              const data = await api<OnlineSoupSnapshot>(`/api/online-soup/rooms/${roomId}`, { bypassCache: true, dedupe: false });
+              const data = await api<OnlineSoupSnapshot>(`/api/online-soup/rooms/${roomId}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+              if (leavingRoomRef.current) return;
               setSnapshot(data);
             } catch (joinError) {
               if (joinError instanceof ApiError && joinError.code === "PASSWORD_REQUIRED") {
@@ -207,7 +217,7 @@ export default function OnlineSoupRoomPage() {
           }
         }
         quietPass = true;
-      } while (refreshQueued.current);
+      } while (refreshQueued.current && !leavingRoomRef.current);
     } finally { refreshPending.current = false; setLoading(false); }
   }, [inviteToken, roomId, returnFromInvite, showToast]);
 
@@ -230,21 +240,25 @@ export default function OnlineSoupRoomPage() {
       .finally(() => setStickersLoading(false));
   }, [showToast]);
   const loadState = useCallback(async () => {
+    if (leavingRoomRef.current) return;
     const requestId = ++stateRequestStarted.current;
     try {
-      const data = await api<RoomState>(`/api/online-soup/rooms/${roomId}/state`, { bypassCache: true, dedupe: false });
+      const data = await api<RoomState>(`/api/online-soup/rooms/${roomId}/state`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+      if (leavingRoomRef.current) return;
       if (requestId < stateRequestApplied.current) return;
       stateRequestApplied.current = requestId;
       setSnapshot((current) => current ? { ...current, ...data } : current);
       if (data.room.status === "closed") {
         navigate("/online-soup", { replace: true });
       }
-    } catch {
+    } catch (error) {
+      if (leavingRoomRef.current || isAbortError(error)) return;
       if (requestId === stateRequestStarted.current) await load(true);
     }
   }, [load, navigate, roomId]);
 
   const loadNewMessages = useCallback(async () => {
+    if (leavingRoomRef.current) return;
     if (incrementalPending.current) {
       incrementalQueued.current = true;
       return;
@@ -263,7 +277,8 @@ export default function OnlineSoupRoomPage() {
         let hasMore = true;
         const incoming: OnlineSoupMessage[] = [];
         for (let pageNumber = 0; pageNumber < 10 && hasMore; pageNumber += 1) {
-          const page = await api<MessagePage>(`/api/online-soup/rooms/${roomId}/messages?after=${encodeURIComponent(after)}&limit=100`, { bypassCache: true, dedupe: false });
+          const page = await api<MessagePage>(`/api/online-soup/rooms/${roomId}/messages?after=${encodeURIComponent(after)}&limit=100`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+          if (leavingRoomRef.current) return;
           incoming.push(...page.messages);
           hasMore = page.hasMore;
           if (!page.nextCursor) break;
@@ -285,7 +300,8 @@ export default function OnlineSoupRoomPage() {
           });
         }
       } while (incrementalQueued.current);
-    } catch {
+    } catch (error) {
+      if (leavingRoomRef.current || isAbortError(error)) return;
       await load(true);
     } finally {
       incrementalPending.current = false;
@@ -293,6 +309,7 @@ export default function OnlineSoupRoomPage() {
   }, [load, roomId]);
 
   const loadProgress = useCallback(async (force = false) => {
+    if (leavingRoomRef.current) return;
     const roundId = snapshotRef.current?.room.currentRoundId;
     if (!roundId || progressPending.current) return;
     if (!force && progressLoadedRoundId.current === roundId) return;
@@ -305,7 +322,8 @@ export default function OnlineSoupRoomPage() {
       const questions: ProgressQuestion[] = [];
       while (hasMore) {
         const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
-        const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false });
+        const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+        if (leavingRoomRef.current) return;
         questions.push(...page.questions);
         hasMore = page.hasMore;
         if (!page.nextCursor) break;
@@ -314,6 +332,7 @@ export default function OnlineSoupRoomPage() {
       setProgressQuestions(questions);
       progressLoadedRoundId.current = roundId;
     } catch (error) {
+      if (leavingRoomRef.current || isAbortError(error)) return;
       showToast(error instanceof Error ? error.message : "推理进度加载失败");
     } finally {
       progressPending.current = false;
@@ -322,6 +341,7 @@ export default function OnlineSoupRoomPage() {
   }, [roomId, showToast]);
 
   useEffect(() => connectOnlineSoupSocket(roomId, (reason, payload) => {
+    if (leavingRoomRef.current) return;
     if (reason === "room_closed") {
       showToast("主持人已关闭房间");
       navigate("/online-soup", { replace: true });
@@ -364,12 +384,13 @@ export default function OnlineSoupRoomPage() {
     }
     void load(true);
   }, (connected) => {
+    if (leavingRoomRef.current) return;
     setSocketConnected(connected);
     if (connected) void load(true);
   }), [disarmExitGuard, roomId, load, loadNewMessages, loadState, navigate, showToast, user?.id]);
   useEffect(() => {
     const reconcile = () => {
-      if (document.visibilityState !== "visible") return;
+      if (leavingRoomRef.current || document.visibilityState !== "visible") return;
       if (socketConnected) void loadNewMessages();
       else void load(true);
     };
@@ -441,12 +462,13 @@ export default function OnlineSoupRoomPage() {
   }
 
   async function loadOlderMessages() {
-    if (!snapshot?.messagesHasMore || !snapshot.messagesNextCursor || loadingOlder) return;
+    if (leavingRoomRef.current || !snapshot?.messagesHasMore || !snapshot.messagesNextCursor || loadingOlder) return;
     const container = messagesRef.current;
     const previousHeight = container?.scrollHeight ?? 0;
     setLoadingOlder(true);
     try {
-      const page = await api<MessagePage>(`/api/online-soup/rooms/${roomId}/messages?before=${encodeURIComponent(snapshot.messagesNextCursor)}&limit=100`, { bypassCache: true, dedupe: false });
+      const page = await api<MessagePage>(`/api/online-soup/rooms/${roomId}/messages?before=${encodeURIComponent(snapshot.messagesNextCursor)}&limit=100`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+      if (leavingRoomRef.current) return;
       historyExpanded.current = true;
       setSnapshot((current) => current ? {
         ...current,
@@ -458,6 +480,7 @@ export default function OnlineSoupRoomPage() {
         if (container) container.scrollTop += container.scrollHeight - previousHeight;
       });
     } catch (error) {
+      if (leavingRoomRef.current || isAbortError(error)) return;
       showToast(error instanceof Error ? error.message : "历史消息加载失败");
     } finally {
       setLoadingOlder(false);
@@ -465,6 +488,7 @@ export default function OnlineSoupRoomPage() {
   }
 
   const locateRoomMessage = useCallback(async (messageId: string) => {
+    if (leavingRoomRef.current) return false;
     const initial = snapshotRef.current;
     if (!initial) return false;
     let loadedMessages = initial.messages;
@@ -474,8 +498,9 @@ export default function OnlineSoupRoomPage() {
       while (!loadedMessages.some((message) => message.id === messageId) && hasMore && cursor) {
         const page = await api<MessagePage>(
           `/api/online-soup/rooms/${roomId}/messages?before=${encodeURIComponent(cursor)}&limit=100`,
-          { bypassCache: true, dedupe: false }
+          { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal }
         );
+        if (leavingRoomRef.current) return false;
         loadedMessages = mergeMessages(page.messages, loadedMessages);
         cursor = page.nextCursor;
         hasMore = page.hasMore;
@@ -501,6 +526,7 @@ export default function OnlineSoupRoomPage() {
       highlightTimerRef.current = window.setTimeout(() => setHighlightedMessageId(""), 1800);
       return true;
     } catch (error) {
+      if (leavingRoomRef.current || isAbortError(error)) return false;
       showToast(error instanceof Error ? error.message : "定位提问失败");
       return false;
     }
@@ -637,9 +663,14 @@ export default function OnlineSoupRoomPage() {
   }
 
   async function leaveRoom() {
+    if (leavingRoomRef.current) return;
+    leavingRoomRef.current = true;
+    roomReadAbortRef.current.abort();
     try {
       await api(`/api/online-soup/rooms/${roomId}/leave`, { method: "POST" });
     } catch (error) {
+      leavingRoomRef.current = false;
+      roomReadAbortRef.current = new AbortController();
       showToast(error instanceof Error ? error.message : "退出房间失败");
       return;
     }

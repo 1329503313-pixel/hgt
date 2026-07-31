@@ -268,7 +268,7 @@ export default function RankingsPage() {
   const rankingRewardSummary = (() => {
     if (activeGroup !== "user") return null;
     if (period === "all") return "永久榜不参与定时奖励";
-    const currencyBoard = tab === "users" || tab === "collection" || tab === "draws";
+    const currencyBoard = tab === "level" || tab === "charm" || tab === "generosity";
     if (currencyBoard) {
       return period === "7d"
         ? "周一 00:00 结算：第1名 200 EXP＋100 贝壳；第2–3名 120 EXP＋80 贝壳；第4–5名 80 EXP＋50 贝壳；第6–10名 50 EXP＋30 贝壳"

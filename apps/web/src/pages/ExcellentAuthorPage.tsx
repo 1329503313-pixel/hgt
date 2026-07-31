@@ -50,7 +50,7 @@ export default function ExcellentAuthorPage() {
 
   const soupsById = useMemo(() => new Map((data?.eligibleSoups ?? []).map((soup) => [soup.id, soup])), [data]);
   const selectedQualificationSoups = qualificationIds.map((id) => soupsById.get(id)).filter((soup): soup is SoupSummary => Boolean(soup));
-  const primaryCandidates = selectedQualificationSoups.filter((soup) => (soup.averageTotal ?? 0) >= 3.5);
+  const primaryCandidates = selectedQualificationSoups.filter((soup) => soup.heatValue >= 5000 && (soup.averageTotal ?? 0) >= 4);
   const pending = data?.application?.status === "pending";
   const approved = data?.certified || data?.application?.status === "approved";
   const canSubmit = qualificationIds.length === 5 && Boolean(primarySoupId) && !pending && !approved && !submitting;
@@ -118,18 +118,18 @@ export default function ExcellentAuthorPage() {
           <p className="mt-1 text-xs text-muted">提交和审批时都会重新校验作品资格。</p>
         </div>
 
-        <RuleBlock number="1" title="选择5篇资格汤" description="原创、热力值不低于3000，综合评分不低于3.2。必须选择5篇，不能多也不能少。">
+        <RuleBlock number="1" title="选择5篇资格汤" description="原创、热力值不低于3000，综合评分不低于3.5。必须选择5篇，不能多也不能少。">
           <button type="button" className="btn btn-secondary w-full" disabled={pending || approved} onClick={() => setSelectorMode("qualification")}>
             选择海龟汤 <span className="ml-auto text-xs">{qualificationIds.length}/5</span>
           </button>
           {selectedQualificationSoups.length > 0 && <SelectedSoupList soups={selectedQualificationSoups} primarySoupId={primarySoupId} />}
         </RuleBlock>
 
-        <RuleBlock number="2" title="选择1篇认证汤" description="从上述5篇中选择1篇热力值不低于3000、综合评分不低于3.5的作品，由平台进行审核。">
+        <RuleBlock number="2" title="选择1篇认证汤" description="从上述5篇中选择1篇热力值不低于5000、综合评分不低于4.0的作品，由平台进行审核。">
           <button type="button" className="btn btn-secondary w-full" disabled={qualificationIds.length !== 5 || pending || approved} onClick={() => setSelectorMode("primary")}>
             选择海龟汤 <span className="ml-auto text-xs">{primarySoupId ? "1/1" : "0/1"}</span>
           </button>
-          {qualificationIds.length === 5 && primaryCandidates.length === 0 && <p className="text-xs font-semibold text-danger">所选资格汤中暂无评分达到3.5的作品，请重新选择资格汤。</p>}
+          {qualificationIds.length === 5 && primaryCandidates.length === 0 && <p className="text-xs font-semibold text-danger">所选资格汤中暂无热力值达到5000且评分达到4.0的作品，请重新选择资格汤。</p>}
         </RuleBlock>
 
         <RuleBlock number="3" title="接受平台AI评测" description="所有提交作品均须为非AI汤，平台会对申请作品进行AI评测。" />
@@ -150,7 +150,7 @@ export default function ExcellentAuthorPage() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-black text-ink">{selectorMode === "qualification" ? "选择5篇资格汤" : "选择1篇认证汤"}</h2>
-              <p className="mt-1 text-sm text-muted">{selectorMode === "qualification" ? "仅展示满足3000热力值、评分3.2及以上的原创海龟汤。" : "仅展示已选资格汤中评分3.5及以上的作品。"}</p>
+              <p className="mt-1 text-sm text-muted">{selectorMode === "qualification" ? "仅展示满足3000热力值、评分3.5及以上的原创海龟汤。" : "仅展示已选资格汤中满足5000热力值、评分4.0及以上的作品。"}</p>
             </div>
             <button className="btn btn-secondary px-3" type="button" onClick={() => setSelectorMode(null)}><X size={18} /></button>
           </div>

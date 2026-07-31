@@ -1085,11 +1085,11 @@ async function getCreatorCertificationSoups(userId: string) {
 }
 
 function isQualificationSoup(soup: CertificationSoupSummary) {
-  return soup.isOriginal && soup.reviewStatus === "approved" && soup.heatValue >= 3000 && (soup.averageTotal ?? 0) >= 3.2;
+  return soup.isOriginal && soup.reviewStatus === "approved" && soup.heatValue >= 3000 && (soup.averageTotal ?? 0) >= 3.5;
 }
 
 function isPrimaryCertificationSoup(soup: CertificationSoupSummary) {
-  return isQualificationSoup(soup) && (soup.averageTotal ?? 0) >= 3.5;
+  return isQualificationSoup(soup) && soup.heatValue >= 5000 && (soup.averageTotal ?? 0) >= 4;
 }
 
 async function getExcellentAuthorApplicationDetail(applicationId: string) {
@@ -2418,7 +2418,7 @@ app.post("/api/me/excellent-author-application", async (req, res) => {
   }
   const primarySoup = byId.get(parsed.data.primarySoupId);
   if (!primarySoup || !isPrimaryCertificationSoup(primarySoup)) {
-    return sendError(res, 409, "认证汤需达到3000热力值且综合评分不低于3.5");
+    return sendError(res, 409, "认证汤需达到5000热力值且综合评分不低于4.0");
   }
 
   const connection = await pool.getConnection();
