@@ -12,6 +12,7 @@ import { levelForExperience } from "./levelSystem.js";
 import { canViewAllSoupContentRole, isSuperAdminRole, type UserRole } from "./roles.js";
 import { parseGiftMessage } from "./gifts.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
+import { buildAnswerChangeNotice, onlineSoupAnswerValues, type OnlineSoupAnswerValue } from "./onlineSoupAnswerChange.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -34,7 +35,7 @@ export const ONLINE_SOUP_PARTICIPANT_CAPACITY = 11;
 export const ONLINE_SOUP_PLAYER_CAPACITY = ONLINE_SOUP_PARTICIPANT_CAPACITY - 1;
 const PLAYER_CAPACITY = ONLINE_SOUP_PLAYER_CAPACITY;
 const SPECTATOR_CAPACITY = 20;
-const answerValues = ["yes", "no", "both", "unknown", "irrelevant"] as const;
+const answerValues = onlineSoupAnswerValues;
 const badgeNames: Record<string, string[]> = {
   publish: ["熬汤新秀", "熬汤达人", "熬汤大师"],
   insight: ["灵光乍现", "洞察之眼", "全知全能"],
@@ -333,6 +334,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     contentIndex: row.content_index == null ? null : Number(row.content_index),
     questionNumber: row.question_number == null ? null : Number(row.question_number),
     answer: row.answer ? String(row.answer) : null,
+    targetMessageId: row.target_message_id ? String(row.target_message_id) : null,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     recalledAt
@@ -1145,14 +1147,53 @@ router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
   if (!context) return;
   const parsed = z.object({ answer: z.enum(answerValues).nullable() }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "回答类型不正确");
-  const [result] = await pool.query<mysql.ResultSetHeader>(
-    "UPDATE online_soup_messages SET answer = ? WHERE id = ? AND room_id = ? AND message_type = 'question' AND recalled_at IS NULL",
-    [parsed.data.answer, req.params.messageId, context.room.id]
-  );
-  if (!result.affectedRows) return fail(res, 404, "提问不存在");
-  const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, req.params.messageId);
-  res.json({ ok: true });
-  void notifyRoom(context.room.id, "answer_changed", { messageId: req.params.messageId, answer: parsed.data.answer, activitySequence, activityType: "progress" });
+  const connection = await pool.getConnection();
+  let notificationCreated = false;
+  let activitySequence = "0";
+  try {
+    await connection.beginTransaction();
+    const [[question]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, round_id, question_number, answer
+       FROM online_soup_messages
+       WHERE id = ? AND room_id = ? AND message_type = 'question' AND recalled_at IS NULL
+       LIMIT 1 FOR UPDATE`,
+      [req.params.messageId, context.room.id]
+    );
+    if (!question) {
+      await connection.rollback();
+      return fail(res, 404, "提问不存在");
+    }
+    const previousAnswer = question.answer ? String(question.answer) as OnlineSoupAnswerValue : null;
+    await connection.query(
+      "UPDATE online_soup_messages SET answer = ? WHERE id = ?",
+      [parsed.data.answer, req.params.messageId]
+    );
+    const noticeContent = buildAnswerChangeNotice(previousAnswer, parsed.data.answer, Number(question.question_number));
+    if (noticeContent) {
+      await connection.query(
+        `INSERT INTO online_soup_messages
+          (id, room_id, round_id, sender_id, message_type, content, target_message_id)
+         VALUES (?, ?, ?, NULL, 'system', ?, ?)`,
+        [nanoid(), context.room.id, question.round_id, noticeContent, req.params.messageId]
+      );
+      notificationCreated = true;
+    }
+    activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, req.params.messageId, connection);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  res.json({ ok: true, notificationCreated });
+  void notifyRoom(context.room.id, "answer_changed", {
+    messageId: req.params.messageId,
+    answer: parsed.data.answer,
+    notificationCreated,
+    activitySequence,
+    activityType: "progress"
+  });
 });
 
 router.post("/rooms/:roomId/clues", async (req, res) => {

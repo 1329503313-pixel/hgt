@@ -439,6 +439,7 @@ export type OnlineSoupMessage = {
   contentIndex: number | null;
   questionNumber: number | null;
   answer: OnlineSoupAnswer | null;
+  targetMessageId: string | null;
   createdAt: string;
   updatedAt: string;
   recalledAt: string | null;

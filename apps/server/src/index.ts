@@ -3286,11 +3286,10 @@ app.get("/api/admin/circles/:id/messages", async (req, res) => {
   );
   const hasMore = rows.length > 50;
   if (hasMore) rows.pop();
-  rows.reverse();
   res.json({
     messages: rows.map(circleMessagePayload),
     hasMore,
-    nextCursor: hasMore && rows[0] ? String(rows[0].id) : null
+    nextCursor: hasMore && rows.length ? String(rows[rows.length - 1].id) : null
   });
 });
 
@@ -5351,7 +5350,7 @@ app.post("/api/access-requests/:id/decision", async (req, res) => {
 });
 
 app.get("/api/admin/excellent-author-applications", async (req, res) => {
-  if (!(await requireBackofficeAdmin(req, res))) return;
+  if (!(await requireAdmin(req, res))) return;
   const requestedLimit = Number(req.query.limit);
   const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : 10;
   const offset = Math.max(0, Number(req.query.offset ?? 0));
@@ -5382,14 +5381,14 @@ app.get("/api/admin/excellent-author-applications", async (req, res) => {
 });
 
 app.get("/api/admin/excellent-author-applications/:id", async (req, res) => {
-  if (!(await requireBackofficeAdmin(req, res))) return;
+  if (!(await requireAdmin(req, res))) return;
   const application = await getExcellentAuthorApplicationDetail(req.params.id);
   if (!application) return sendError(res, 404, "优秀作者认证申请不存在");
   res.json({ application });
 });
 
 app.post("/api/admin/excellent-author-applications/:id/decision", async (req, res) => {
-  const admin = await requireBackofficeAdmin(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const parsed = z.object({ decision: z.enum(["approved", "rejected"]) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "审批结果不正确");

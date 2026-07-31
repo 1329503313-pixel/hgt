@@ -108,9 +108,27 @@ export function StickerKeyboard({ series, loading = false, sending, onClose, onS
         <div className="grid h-[152px] place-items-center text-sm text-muted sm:h-[168px]">暂无可用表情</div>
       )}
       {pageCount > 1 && !loading && (
-        <div className="mt-2 flex h-7 items-center justify-center gap-1.5" role="status" aria-label={`表情包第 ${page + 1} 页，共 ${pageCount} 页`}>
-          {Array.from({ length: pageCount }, (_, index) => <span key={index} className={`block rounded-full transition-all duration-200 ${index === page ? "h-2 w-4 bg-primary" : "h-2 w-2 bg-slate-300"}`} aria-hidden="true" />)}
-        </div>
+        <nav className="mt-2 flex h-7 items-center justify-center overflow-x-auto" aria-label="表情包分页">
+          {Array.from({ length: pageCount }, (_, index) => (
+            <button
+              key={index}
+              type="button"
+              className="group grid h-7 w-7 shrink-0 place-items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+              onClick={() => {
+                setDragging(false);
+                setDragX(0);
+                touchStartX.current = null;
+                swipeHandled.current = false;
+                setPage(index);
+              }}
+              aria-label={`第 ${index + 1} 页，共 ${pageCount} 页`}
+              aria-current={index === page ? "page" : undefined}
+            >
+              <span className={`block rounded-full transition-all duration-200 group-hover:bg-blue-400 ${index === page ? "h-2 w-4 bg-primary" : "h-2 w-2 bg-slate-300"}`} aria-hidden="true" />
+            </button>
+          ))}
+          <span className="sr-only" aria-live="polite">当前第 {page + 1} 页，共 {pageCount} 页</span>
+        </nav>
       )}
     </div>
   );

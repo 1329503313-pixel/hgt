@@ -586,6 +586,7 @@ export async function initDatabase() {
       content_index INT UNSIGNED NULL,
       question_number INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      target_message_id VARCHAR(64) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       recalled_at DATETIME NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -645,6 +646,11 @@ export async function initDatabase() {
     "recalled_at",
     "recalled_at DATETIME NULL AFTER created_at"
   );
+  await ensureColumn(
+    "online_soup_messages",
+    "target_message_id",
+    "target_message_id VARCHAR(64) NULL AFTER answer"
+  );
   await ensureIndex(
     "online_soup_messages",
     "idx_online_messages_room_sequence",
@@ -659,6 +665,11 @@ export async function initDatabase() {
     "online_soup_messages",
     "idx_online_messages_gift_send",
     "gift_send_id"
+  );
+  await ensureIndex(
+    "online_soup_messages",
+    "idx_online_messages_target",
+    "target_message_id"
   );
   await ensureIndex(
     "online_soup_members",

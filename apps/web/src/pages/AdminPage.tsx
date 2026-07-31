@@ -95,7 +95,7 @@ export default function AdminPage() {
           {activeTab === "evaluations" && <EvaluationManagement />}
           {activeTab === "gifts" && isSuperAdmin && <GiftManagement />}
           {activeTab === "badges" && isSuperAdmin && <BadgeManagement />}
-          {activeTab === "approvals" && <ApprovalManagement />}
+          {activeTab === "approvals" && <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} />}
           {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}
           {activeTab === "circles" && isSuperAdmin && <CircleManagement />}
           {activeTab === "assets" && isSuperAdmin && <DigitalAssetManagement />}

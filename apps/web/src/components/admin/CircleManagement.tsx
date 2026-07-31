@@ -109,7 +109,7 @@ export function CircleManagement() {
     try {
       const params = before ? `?before=${encodeURIComponent(before)}` : "";
       const data = await api<{ messages: CircleMessage[]; hasMore: boolean; nextCursor: string | null }>(`/api/admin/circles/${circle.id}/messages${params}`, { bypassCache: true, dedupe: false });
-      setMessages((current) => before ? [...data.messages, ...current] : data.messages);
+      setMessages((current) => before ? [...current, ...data.messages] : data.messages);
       setMessageHasMore(data.hasMore);
       setMessageCursor(data.nextCursor);
     } catch (error) {
@@ -189,14 +189,14 @@ export function CircleManagement() {
       </Modal>}
       {previewing && <Modal full onClose={() => setPreviewing(null)}>
         <div className="flex items-start justify-between gap-3 border-b border-line pb-3">
-          <div><h2 className="text-xl font-black text-ink">聊天记录 · {previewing.name}</h2><p className="mt-1 text-sm text-muted">管理员可撤回他人消息且不受时间限制；礼物消息不可撤回。</p></div>
+          <div><h2 className="text-xl font-black text-ink">聊天记录 · {previewing.name}</h2><p className="mt-1 text-sm text-muted">按发送时间倒序展示；管理员可撤回他人消息且不受时间限制，礼物消息不可撤回。</p></div>
           <button className="btn btn-secondary px-3" onClick={() => setPreviewing(null)}><X size={17} />关闭</button>
         </div>
         <div className="py-4">
-          {messageHasMore && <button className="btn btn-secondary mx-auto mb-4 flex" disabled={messagesLoading || !messageCursor} onClick={() => messageCursor && void loadMessages(previewing, messageCursor)}>{messagesLoading ? "加载中…" : "加载更早记录"}</button>}
           <div className="space-y-2">
             {messages.map((message) => <div key={message.id} className="flex items-start gap-3 rounded-xl border border-line p-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><strong className="text-sm text-ink">{message.sender?.nickname || "已注销用户"}</strong><span className="text-xs text-muted">{new Date(message.createdAt).toLocaleString()}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-muted">{message.type}</span></div><p className={`mt-2 whitespace-pre-wrap break-words text-sm ${message.recalledAt ? "italic text-muted" : "text-ink"}`}>{adminMessageText(message)}</p></div>{!message.recalledAt && message.type !== "gift" && <button className="btn btn-danger h-8 shrink-0 px-2 text-xs" onClick={() => void recall(message)}><RotateCcw size={14} />撤回</button>}</div>)}
           </div>
+          {messageHasMore && <button className="btn btn-secondary mx-auto mt-4 flex" disabled={messagesLoading || !messageCursor} onClick={() => messageCursor && void loadMessages(previewing, messageCursor)}>{messagesLoading ? "加载中…" : "加载更早记录"}</button>}
           {!messagesLoading && messages.length === 0 && <p className="py-16 text-center text-sm text-muted">暂无聊天记录</p>}
           {messagesLoading && messages.length === 0 && <ListSkeleton rows={6} />}
         </div>

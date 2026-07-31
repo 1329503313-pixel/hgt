@@ -225,7 +225,17 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
           <button type="button" onClick={() => { showFullRoom(session.snapshot.room.id); navigate(`/online-soup/rooms/${session.snapshot.room.id}`); }} aria-label="返回完整房间" title="放大"><Maximize2 size={17} /></button>
           <button type="button" className="text-red-500" onClick={() => setConfirmLeave(true)} aria-label="退出房间" title="退出房间"><LogOut size={17} /></button>
         </header>
-        <MiniMessageList messages={session.snapshot.messages} currentUserId={user?.id ?? ""} onRecall={recallMessage} />
+        <MiniMessageList
+          messages={session.snapshot.messages}
+          currentUserId={user?.id ?? ""}
+          onRecall={recallMessage}
+          showAnswerChangeNotices={!session.snapshot.me.isHost}
+          onLocate={(messageId) => {
+            const activeRoomId = session.snapshot.room.id;
+            showFullRoom(activeRoomId);
+            navigate(`/online-soup/rooms/${activeRoomId}?locateMessage=${encodeURIComponent(messageId)}`);
+          }}
+        />
         {session.snapshot.me.role !== "spectator" && <div className="online-soup-mini-composer">
           {session.snapshot.me.role === "player" && <button
             type="button"
@@ -247,20 +257,20 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   </OnlineSoupDockContext.Provider>;
 }
 
-function MiniMessageList({ messages, currentUserId, onRecall }: { messages: OnlineSoupMessage[]; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void }) {
+function MiniMessageList({ messages, currentUserId, onRecall, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "end" }); }, [messages]);
   return <div className="online-soup-mini-messages">
-    {messages.slice(-60).map((message) => <MiniMessage key={`${message.id}-${message.updatedAt}`} message={message} currentUserId={currentUserId} onRecall={onRecall} />)}
+    {messages.filter((message) => showAnswerChangeNotices || !message.targetMessageId).slice(-60).map((message) => <MiniMessage key={`${message.id}-${message.updatedAt}`} message={message} currentUserId={currentUserId} onRecall={onRecall} onLocate={onLocate} />)}
     <div ref={bottomRef} />
   </div>;
 }
 
-function MiniMessage({ message, currentUserId, onRecall }: { message: OnlineSoupMessage; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void }) {
+function MiniMessage({ message, currentUserId, onRecall, onLocate }: { message: OnlineSoupMessage; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
-  if (message.type === "system") return <p className="online-soup-mini-system">— {message.content} —</p>;
+  if (message.type === "system") return <p className="online-soup-mini-system">— {message.content} {message.targetMessageId && <button type="button" className="font-black text-primary hover:underline" onClick={() => onLocate(message.targetMessageId!)}>【定位】</button>} —</p>;
   if (message.type === "clue") return <article className="online-soup-mini-event is-clue"><strong>主持人线索</strong><p>{message.content}</p></article>;
   if (message.type === "supplemental_surface" || message.type === "bottom" || message.type === "manual") {
     const title = message.type === "supplemental_surface" ? "补充汤面" : message.type === "bottom" ? "汤底已公布" : "主持人手册";

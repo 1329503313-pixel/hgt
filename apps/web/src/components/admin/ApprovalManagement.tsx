@@ -39,17 +39,21 @@ function StatusPill({ status }: { status: RequestStatus }) {
   return <span className={`rounded-full px-2 py-1 text-xs font-bold ${status === "pending" ? "bg-amber-50 text-amber-700" : status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{statusLabel(status)}</span>;
 }
 
-export function ApprovalManagement() {
+export function ApprovalManagement({ canReviewExcellentAuthor }: { canReviewExcellentAuthor: boolean }) {
   const [activeTab, setActiveTab] = useState<ApprovalTab>("soup-review");
+
+  useEffect(() => {
+    if (!canReviewExcellentAuthor && activeTab === "excellent-author") setActiveTab("soup-review");
+  }, [activeTab, canReviewExcellentAuthor]);
 
   return (
     <div className="space-y-4">
       <div className="card flex flex-wrap gap-2 p-2">
         <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "soup-review" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("soup-review")}>汤品审核</button>
         <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "bottom" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("bottom")}>申请汤底</button>
-        <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "excellent-author" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("excellent-author")}>申请认证优秀作者</button>
+        {canReviewExcellentAuthor && <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "excellent-author" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("excellent-author")}>申请认证优秀作者</button>}
       </div>
-      {activeTab === "soup-review" ? <SoupReviewList /> : activeTab === "bottom" ? <BottomApprovalList /> : <ExcellentAuthorApprovalList />}
+      {activeTab === "soup-review" ? <SoupReviewList /> : activeTab === "bottom" ? <BottomApprovalList /> : canReviewExcellentAuthor ? <ExcellentAuthorApprovalList /> : <SoupReviewList />}
     </div>
   );
 }
