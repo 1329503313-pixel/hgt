@@ -41,6 +41,11 @@ import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
 import { normalizeExistingSoupCover } from "./soupInput.js";
+import {
+  evaluationCountsTowardScore,
+  scoringEvaluationJoin,
+  scoringEvaluationPredicate
+} from "./evaluationScoring.js";
 import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
 import { runRankingRewardScheduler } from "./rankingRewards.js";
 import {
@@ -967,8 +972,12 @@ function safeParseJson(value: unknown) {
   }
 }
 
-function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true) {
+function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true, creatorId?: unknown) {
   const isContentHidden = bool(row.is_content_hidden);
+  const isCreatorEvaluation = creatorId != null && String(row.reviewer_id) === String(creatorId);
+  const countsTowardScore = creatorId == null
+    ? undefined
+    : evaluationCountsTowardScore(row.reviewer_id, creatorId, row.reviewer_experience);
   return {
     id: row.id,
     soupId: row.soup_id,
@@ -979,6 +988,8 @@ function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true) {
     reviewerAvatar: avatarUrl(row.reviewer_id, row.reviewer_avatar, bool(row.reviewer_has_avatar)),
     reviewerLevel: levelForExperience(row.reviewer_experience),
     reviewerEquippedBadge: equippedBadge(row.reviewer_badge_key, row.reviewer_badge_icon_url),
+    isCreatorEvaluation,
+    countsTowardScore,
     writing: num(row.writing),
     logic: num(row.logic),
     share: num(row.share),
@@ -1074,7 +1085,7 @@ async function getSoupSummariesWhere(whereSql: string, params: unknown[]): Promi
       AVG(e.twist) AS avg_twist,
       AVG(e.depth) AS avg_depth
      FROM soups s
-     LEFT JOIN evaluations e ON e.soup_id = s.id
+     ${scoringEvaluationJoin("e", "s")}
      LEFT JOIN users u ON u.id = s.creator_id
      WHERE ${whereSql}
      GROUP BY s.id
@@ -1489,12 +1500,14 @@ function badgeNotificationLabel(key: string) {
 async function getMaxOriginalSoupHeat(userId: string) {
   const [[row]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COALESCE(MAX(
-       (COALESCE((SELECT AVG(e.total) FROM evaluations e WHERE e.soup_id = s.id), 0) + 1) *
+       (COALESCE((SELECT AVG(e.total) FROM evaluations e
+         WHERE e.soup_id = s.id AND ${scoringEvaluationPredicate("e", "s")}), 0) + 1) *
        (
          s.view_count
          + ((SELECT COUNT(*) FROM soup_likes l WHERE l.soup_id = s.id) + 1) * 15
          + ((SELECT COUNT(*) FROM soup_favorites f WHERE f.soup_id = s.id) + 1) * 20
-         + ((SELECT COUNT(*) FROM evaluations ec WHERE ec.soup_id = s.id) + 1) * 25
+         + ((SELECT COUNT(*) FROM evaluations ec
+           WHERE ec.soup_id = s.id AND ${scoringEvaluationPredicate("ec", "s")}) + 1) * 25
        ) - 60
      ), 0) AS max_heat
      FROM soups s
@@ -2388,7 +2401,7 @@ app.get("/api/me/soups", async (req, res) => {
       AVG(e.twist) AS avg_twist,
       AVG(e.depth) AS avg_depth
     FROM soups s
-    LEFT JOIN evaluations e ON e.soup_id = s.id
+    ${scoringEvaluationJoin("e", "s")}
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.creator_id = ?
     GROUP BY s.id
@@ -2570,7 +2583,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
         AVG(e.depth) AS avg_depth
        FROM soups s
        LEFT JOIN users u ON u.id = s.creator_id
-       LEFT JOIN evaluations e ON e.soup_id = s.id
+       ${scoringEvaluationJoin("e", "s")}
        WHERE s.creator_id = ? AND s.review_status = 'approved' AND s.is_surface_public = TRUE
        GROUP BY s.id
        ORDER BY s.created_at DESC
@@ -2745,7 +2758,7 @@ async function sharedSoupCard(soupId: string) {
        COUNT(e.id) AS evaluation_count, AVG(e.total) AS average_total,
        AVG(e.writing) AS avg_writing, AVG(e.logic) AS avg_logic, AVG(e.share) AS avg_share,
        AVG(e.mechanism) AS avg_mechanism, AVG(e.twist) AS avg_twist, AVG(e.depth) AS avg_depth
-     FROM soups s LEFT JOIN evaluations e ON e.soup_id = s.id
+     FROM soups s ${scoringEvaluationJoin("e", "s")}
      WHERE s.id = ? AND s.review_status = 'approved' GROUP BY s.id LIMIT 1`,
     [soupId]
   );
@@ -4049,10 +4062,13 @@ app.get("/api/rankings", async (req, res) => {
        FROM soups s
        INNER JOIN users creator ON creator.id = s.creator_id
        LEFT JOIN (
-         SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score,
-           SUM(updated_at >= ?) AS period_evaluation_count,
-           AVG(CASE WHEN updated_at >= ? THEN total END) AS period_comprehensive_score
-         FROM evaluations GROUP BY soup_id
+         SELECT scored_e.soup_id, COUNT(*) AS evaluation_count, AVG(scored_e.total) AS comprehensive_score,
+           SUM(scored_e.updated_at >= ?) AS period_evaluation_count,
+           AVG(CASE WHEN scored_e.updated_at >= ? THEN scored_e.total END) AS period_comprehensive_score
+         FROM evaluations scored_e
+         INNER JOIN soups scored_soup ON scored_soup.id = scored_e.soup_id
+         WHERE ${scoringEvaluationPredicate("scored_e", "scored_soup")}
+         GROUP BY scored_e.soup_id
        ) e ON e.soup_id = s.id
        LEFT JOIN (
          SELECT soup_id, COUNT(*) AS like_count, SUM(created_at >= ?) AS period_like_count
@@ -4308,7 +4324,7 @@ app.get("/api/me/favorites", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     INNER JOIN soup_favorites f ON f.soup_id = s.id
-    LEFT JOIN evaluations e ON e.soup_id = s.id
+    ${scoringEvaluationJoin("e", "s")}
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE f.user_id = ? AND s.review_status = 'approved'
     GROUP BY s.id
@@ -4340,7 +4356,7 @@ app.get("/api/me/evaluations", async (req, res) => {
       AVG(e2.depth) AS avg_depth
     FROM soups s
     INNER JOIN evaluations my ON my.soup_id = s.id
-    LEFT JOIN evaluations e2 ON e2.soup_id = s.id
+    ${scoringEvaluationJoin("e2", "s")}
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE my.reviewer_id = ? AND s.review_status = 'approved'
     GROUP BY s.id
@@ -4362,7 +4378,13 @@ async function homeFeaturedSoupIds() {
        (COALESCE(e.comprehensive_score, 0) + 1) *
          (s.view_count + (COALESCE(l.like_count, 0) + 1) * 15 + (COALESCE(f.favorite_count, 0) + 1) * 20 + (COALESCE(e.evaluation_count, 0) + 1) * 25) - 60 AS heat_value
      FROM soups s
-     LEFT JOIN (SELECT soup_id, COUNT(*) AS evaluation_count, AVG(total) AS comprehensive_score FROM evaluations GROUP BY soup_id) e ON e.soup_id = s.id
+     LEFT JOIN (
+       SELECT scored_e.soup_id, COUNT(*) AS evaluation_count, AVG(scored_e.total) AS comprehensive_score
+       FROM evaluations scored_e
+       INNER JOIN soups scored_soup ON scored_soup.id = scored_e.soup_id
+       WHERE ${scoringEvaluationPredicate("scored_e", "scored_soup")}
+       GROUP BY scored_e.soup_id
+     ) e ON e.soup_id = s.id
      LEFT JOIN (SELECT soup_id, COUNT(*) AS like_count FROM soup_likes GROUP BY soup_id) l ON l.soup_id = s.id
      LEFT JOIN (SELECT soup_id, COUNT(*) AS favorite_count FROM soup_favorites GROUP BY soup_id) f ON f.soup_id = s.id
      WHERE s.is_surface_public = TRUE AND s.review_status = 'approved'
@@ -4516,7 +4538,7 @@ app.get("/api/soups", async (req, res) => {
          ORDER BY ${orderClause}
          LIMIT ${limit + 1} OFFSET ${offset}
        ) s
-       LEFT JOIN evaluations e ON e.soup_id = s.id
+       ${scoringEvaluationJoin("e", "s")}
        LEFT JOIN users u ON u.id = s.creator_id
        GROUP BY s.id
        ORDER BY ${orderClause}`,
@@ -4532,7 +4554,7 @@ app.get("/api/soups", async (req, res) => {
     const [filteredRows] = await pool.query<mysql.RowDataPacket[]>(
       `${summarySelect()}
        FROM soups s
-       LEFT JOIN evaluations e ON e.soup_id = s.id
+       ${scoringEvaluationJoin("e", "s")}
        LEFT JOIN users u ON u.id = s.creator_id
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
        GROUP BY s.id
@@ -4552,7 +4574,7 @@ app.get("/api/soups", async (req, res) => {
       `SELECT COUNT(*) AS total FROM (
         SELECT s.id
         FROM soups s
-        LEFT JOIN evaluations e ON e.soup_id = s.id
+        ${scoringEvaluationJoin("e", "s")}
         ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
         GROUP BY s.id
         ${having.length ? `HAVING ${having.join(" AND ")}` : ""}
@@ -4719,7 +4741,7 @@ app.get("/api/soups/:id", async (req, res) => {
       AVG(e.twist) AS avg_twist,
       AVG(e.depth) AS avg_depth
     FROM soups s
-    LEFT JOIN evaluations e ON e.soup_id = s.id
+    ${scoringEvaluationJoin("e", "s")}
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.id = ?
     GROUP BY s.id
@@ -4771,7 +4793,7 @@ app.get("/api/soups/:id", async (req, res) => {
       isFavorited: favoriteRows.length > 0,
       isLiked: likeRows.length > 0,
       pendingRequestId: requestRows[0]?.id ?? null,
-      evaluations: evalRows.map((row) => mapEvaluation(row, full))
+      evaluations: evalRows.map((row) => mapEvaluation(row, full, soup.creator_id))
     }
   });
 });
@@ -4877,7 +4899,7 @@ app.get("/api/me/likes", async (req, res) => {
       AVG(e.depth) AS avg_depth
     FROM soups s
     INNER JOIN soup_likes lk ON lk.soup_id = s.id
-    LEFT JOIN evaluations e ON e.soup_id = s.id
+    ${scoringEvaluationJoin("e", "s")}
     LEFT JOIN users u2 ON u2.id = s.creator_id
     WHERE lk.user_id = ? AND s.review_status = 'approved'
     GROUP BY s.id

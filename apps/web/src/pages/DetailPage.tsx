@@ -465,7 +465,7 @@ export default function DetailPage() {
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <p className="text-xs font-black tracking-[0.14em] text-primary">REVIEWS</p>
-              <h2 className="mt-1 font-black text-ink">玩家评价 <span className="text-sm text-muted">{soup.evaluationCount}</span></h2>
+              <h2 className="mt-1 font-black text-ink">玩家评价 <span className="text-sm text-muted">{soup.evaluations.length}</span></h2>
             </div>
             {hasEvaluations && (
               <button

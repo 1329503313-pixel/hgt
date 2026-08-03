@@ -73,7 +73,7 @@ export default function SoupEvaluationsPage() {
               <div className="min-w-0">
                 <p className="text-xs font-black tracking-[0.14em] text-primary">REVIEWS</p>
                 <h1 className="mt-1 truncate text-2xl font-black text-ink">《{soup.title}》的玩家评价</h1>
-                <p className="mt-2 text-sm text-muted">{soup.evaluationCount} 条评价 · 综合评分 {soup.averageTotal ?? "—"}</p>
+                <p className="mt-2 text-sm text-muted">{soup.evaluations.length} 条评价 · 综合评分 {soup.averageTotal ?? "—"}</p>
               </div>
               <button
                 className="btn btn-primary shrink-0"

@@ -7,7 +7,7 @@ export function EvaluationCard({ evaluation, compact = false }: { evaluation: Ev
   return (
     <article className={`detail-evaluation-item rounded-xl border border-line bg-slate-50 p-4 ${compact ? "detail-evaluation-item-compact" : ""}`}>
       <div className="flex items-center justify-between gap-3">
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
           {evaluation.reviewerAvatar ? (
             <img className="h-6 w-6 shrink-0 rounded-full object-cover" src={evaluation.reviewerAvatar} alt={`${evaluation.reviewer}头像`} />
           ) : (
@@ -16,6 +16,11 @@ export function EvaluationCard({ evaluation, compact = false }: { evaluation: Ev
           <strong className="truncate">{evaluation.reviewer}</strong>
           <LevelBadge level={evaluation.reviewerLevel} />
           <EquippedBadgeIcon badge={evaluation.reviewerEquippedBadge} className="h-5 w-5" />
+          {evaluation.isCreatorEvaluation ? (
+            <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">上传者评价 · 仅展示</span>
+          ) : !evaluation.countsTowardScore ? (
+            <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-600">未计入评分</span>
+          ) : null}
         </span>
         <span className="shrink-0 rounded-lg bg-blue-50 px-2 py-1 text-sm font-black text-primary">{evaluation.total}</span>
       </div>

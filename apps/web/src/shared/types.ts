@@ -71,6 +71,8 @@ export type Evaluation = {
   reviewerAvatar: string | null;
   reviewerLevel: number;
   reviewerEquippedBadge: EquippedBadge | null;
+  isCreatorEvaluation: boolean;
+  countsTowardScore: boolean;
   writing: number | null;
   logic: number | null;
   share: number | null;

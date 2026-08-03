@@ -50,6 +50,8 @@ export type Evaluation = {
   total: number;
   reviewer: string;
   reviewerId: string;
+  isCreatorEvaluation: boolean;
+  countsTowardScore: boolean;
   writing: number | null;
   logic: number | null;
   share: number | null;
