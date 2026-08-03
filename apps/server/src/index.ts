@@ -40,6 +40,7 @@ import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
+import { normalizeExistingSoupCover } from "./soupInput.js";
 import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
 import { runRankingRewardScheduler } from "./rankingRewards.js";
 import {
@@ -4965,7 +4966,10 @@ app.put("/api/soups/:id", async (req, res) => {
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
 
-  const parsed = soupSchema.safeParse(req.body);
+  const existingCoverUrl = soupImageUrl(req.params.id, soup.cover_image, "cover");
+  const parsed = soupSchema.safeParse(
+    normalizeExistingSoupCover(req.body, req.params.id, existingCoverUrl)
+  );
   if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
   const next = parsed.data;
   if (next.isOriginal && !next.author) return sendError(res, 400, "原创海龟汤需要填写作者");
