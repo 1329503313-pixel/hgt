@@ -100,6 +100,9 @@ export function SoupEditor() {
   );
 
   const authorName = user?.nickname || user?.username || "";
+  const canEnableAiGame = editing
+    ? value.canConfigureAiGame
+    : user?.role === "super_admin" || user?.role === "backoffice_admin" || user?.role === "vip";
 
   const patch = (next: Partial<SoupForm>) => setValue({ ...value, ...next });
 
@@ -176,8 +179,13 @@ export function SoupEditor() {
 
     const method = editing ? "PUT" : "POST";
     const path = editing ? `/api/soups/${editingSoupId}` : "/api/soups";
+    const { canConfigureAiGame: _canConfigureAiGame, ...formValue } = value;
     const payload = {
-      ...value,
+      ...formValue,
+      enableAiGame: canEnableAiGame ? value.enableAiGame : false,
+      aiPrompt: canEnableAiGame ? value.aiPrompt : "",
+      keyFacts: canEnableAiGame ? value.keyFacts : [],
+      keyFactsCustomized: canEnableAiGame ? value.keyFactsCustomized : false,
       supplementalSurfaces: value.supplementalSurfaces.map((s: string) => s.trim()).filter(Boolean),
       supplementalBottoms: value.supplementalBottoms.map((s: string) => s.trim()).filter(Boolean),
       author: value.isOriginal ? authorName : "佚名"
@@ -330,7 +338,7 @@ export function SoupEditor() {
         <div className="space-y-2 border-t border-line pt-3">
           <CheckRow label="公开汤面" desc="勾选后，其他用户可以在列表和详情中看到这条海龟汤。" checked={value.isSurfacePublic} onChange={(c) => patch({ isSurfacePublic: c })} />
           <CheckRow label="公开汤底和主持人手册" desc="勾选后，其他用户无需申请即可查看完整内容。" checked={value.isBottomPublic} onChange={(c) => patch({ isBottomPublic: c })} />
-          <div className="space-y-1">
+          {canEnableAiGame && <div className="space-y-1">
             <div className="flex items-center gap-2">
               <CheckRow label="开启 AI 玩汤" desc="" checked={value.enableAiGame} onChange={(c) => patch({ enableAiGame: c })} />
               {value.enableAiGame && (
@@ -348,7 +356,7 @@ export function SoupEditor() {
                 仅无任何机制的汤建议开启 AI 玩汤，开启后用户如通关，可以直接获得汤底。
               </p>
             )}
-          </div>
+          </div>}
           <label className="flex items-center gap-2 text-xs leading-5 text-muted">
             <input className="h-4 w-4 shrink-0" type="checkbox" checked={termsAccepted} onChange={(e) => { setTermsAccepted(e.target.checked); if (e.target.checked) setTermsError(""); }} />
             <span className="flex min-h-11 flex-wrap items-center">
@@ -358,7 +366,6 @@ export function SoupEditor() {
           </label>
           {termsError && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-danger">{termsError}</div>}
         </div>
-
           </div>
         </div>
         <footer className="soup-editor-footer shrink-0 border-t border-line bg-white px-4 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-7 sm:py-4">

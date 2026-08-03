@@ -17,6 +17,7 @@ import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
 import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
 import {
+  canEnableAiGameRole,
   canViewAllSoupContentRole,
   hasUnlimitedSoupPublishingRole,
   isBackofficeAdminRole,
@@ -47,7 +48,11 @@ import {
   scoringEvaluationPredicate
 } from "./evaluationScoring.js";
 import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
-import { runRankingRewardScheduler } from "./rankingRewards.js";
+import {
+  RANKING_REWARD_BOARD_LABELS,
+  runRankingRewardScheduler,
+  type RankingRewardBoard
+} from "./rankingRewards.js";
 import {
   AUTH_COOKIE_NAME,
   LEGACY_AUTH_COOKIE_NAME,
@@ -1073,7 +1078,7 @@ type CertificationSoupSummary = ReturnType<typeof mapSoupSummary> & { enableAiGa
 async function getSoupSummariesWhere(whereSql: string, params: unknown[]): Promise<CertificationSoupSummary[]> {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.role AS creator_role, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -1092,7 +1097,10 @@ async function getSoupSummariesWhere(whereSql: string, params: unknown[]): Promi
      ORDER BY s.created_at DESC`,
     params
   );
-  return rows.map((row) => ({ ...mapSoupSummary(row), enableAiGame: bool(row.enable_ai_game) }));
+  return rows.map((row) => ({
+    ...mapSoupSummary(row),
+    enableAiGame: bool(row.enable_ai_game) && canEnableAiGameRole(row.creator_role)
+  }));
 }
 
 async function getCreatorCertificationSoups(userId: string) {
@@ -4445,8 +4453,12 @@ app.get("/api/soups", async (req, res) => {
   }
   if (req.query.bottomPublic === "surface") where.push("s.is_surface_public = TRUE");
   if (req.query.bottomPublic === "bottom") where.push("s.is_bottom_public = TRUE");
-  if (req.query.aiGame === "enabled") where.push("s.enable_ai_game = TRUE");
-  if (req.query.aiGame === "disabled") where.push("s.enable_ai_game = FALSE");
+  if (req.query.aiGame === "enabled") {
+    where.push("s.enable_ai_game = TRUE AND EXISTS (SELECT 1 FROM users ai_creator WHERE ai_creator.id = s.creator_id AND ai_creator.role IN ('admin', 'super_admin', 'backoffice_admin', 'vip'))");
+  }
+  if (req.query.aiGame === "disabled") {
+    where.push("(s.enable_ai_game = FALSE OR NOT EXISTS (SELECT 1 FROM users ai_creator WHERE ai_creator.id = s.creator_id AND ai_creator.role IN ('admin', 'super_admin', 'backoffice_admin', 'vip')))");
+  }
 
   const having: string[] = [];
   if (["2", "3", "4"].includes(String(req.query.minRating ?? ""))) {
@@ -4607,7 +4619,15 @@ app.post("/api/soups", async (req, res) => {
       return res.json({ id: String(existingSoup.id), reviewStatus: String(existingSoup.review_status) });
     }
   }
-  const soup = parsed.data;
+  const soup = canEnableAiGameRole(user.role)
+    ? parsed.data
+    : {
+        ...parsed.data,
+        enableAiGame: false,
+        aiPrompt: "",
+        keyFacts: [],
+        keyFactsCustomized: false
+      };
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const duplicate = await findDuplicateSoup(soup);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
@@ -4729,7 +4749,7 @@ app.get("/api/soups/:id", async (req, res) => {
   const [[statsRows], [evalRows], full] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(`
     SELECT s.id, s.view_count, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.role AS creator_role, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -4784,7 +4804,8 @@ app.get("/api/soups/:id", async (req, res) => {
       bottom: full ? soup.bottom : null,
       supplementalBottoms: full ? jsonList(soup.supplemental_bottoms) : null,
       manual: full ? soup.host_manual : null,
-      enableAiGame: bool(soup.enable_ai_game),
+      enableAiGame: bool(soup.enable_ai_game) && canEnableAiGameRole(statsRows[0]?.creator_role),
+      canConfigureAiGame: canEnableAiGameRole(statsRows[0]?.creator_role),
       aiPrompt: canEdit ? (soup.ai_prompt as string) || null : null,
       keyFacts: canEdit ? safeParseJson(soup.key_facts) : null,
       keyFactsCustomized: canEdit && (soup.key_facts_customized as number) === 1,
@@ -4987,6 +5008,11 @@ app.put("/api/soups/:id", async (req, res) => {
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
+  const [[creator]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT role FROM users WHERE id = ? LIMIT 1",
+    [soup.creator_id]
+  );
+  const creatorCanConfigureAiGame = canEnableAiGameRole(creator?.role);
 
   const existingCoverUrl = soupImageUrl(req.params.id, soup.cover_image, "cover");
   const parsed = soupSchema.safeParse(
@@ -5015,6 +5041,15 @@ app.put("/api/soups/:id", async (req, res) => {
   if (next.coverImage && !existingCoverSelected && !optimizedCover) return sendError(res, 400, "封面图片无法处理");
   const coverImage = existingCoverSelected ? soup.cover_image : (optimizedCover?.full ?? null);
   const thumbnail = existingCoverSelected ? soup.cover_thumbnail : (optimizedCover?.thumbnail ?? null);
+  const enableAiGame = creatorCanConfigureAiGame ? next.enableAiGame : bool(soup.enable_ai_game);
+  const aiPrompt = creatorCanConfigureAiGame ? (next.aiPrompt || null) : soup.ai_prompt;
+  const keyFacts = creatorCanConfigureAiGame
+    ? (next.keyFacts.length > 0 ? JSON.stringify(next.keyFacts) : null)
+    : soup.key_facts;
+  const keyFactsHash = creatorCanConfigureAiGame ? null : soup.key_facts_hash;
+  const keyFactsCustomized = creatorCanConfigureAiGame
+    ? (next.keyFactsCustomized ? 1 : 0)
+    : Number(soup.key_facts_customized ?? 0);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -5041,13 +5076,13 @@ app.put("/api/soups/:id", async (req, res) => {
         next.manual || null,
         next.isSurfacePublic,
         next.isBottomPublic,
-        next.enableAiGame,
+        enableAiGame,
         review.decision,
         review.reason,
-        next.aiPrompt || null,
-        next.keyFacts.length > 0 ? JSON.stringify(next.keyFacts) : null,
-        null,
-        next.keyFactsCustomized ? 1 : 0,
+        aiPrompt,
+        keyFacts,
+        keyFactsHash,
+        keyFactsCustomized,
         req.params.id
       ]
     );
@@ -5070,9 +5105,9 @@ app.put("/api/soups/:id", async (req, res) => {
   res.json({ ok: true, reviewStatus: review.decision });
 
   // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
-  if (next.enableAiGame && !next.keyFactsCustomized) {
+  if (creatorCanConfigureAiGame && enableAiGame && !keyFactsCustomized) {
     splitKeyFactsForSoup(req.params.id).catch(() => {});
-  } else if (!next.enableAiGame) {
+  } else if (creatorCanConfigureAiGame && !enableAiGame) {
     // 关闭 AI 玩汤时清空缓存
     pool.query("UPDATE soups SET key_facts = NULL, key_facts_hash = NULL, ai_prompt = NULL, key_facts_customized = 0 WHERE id = ?", [req.params.id]).catch(() => {});
   }
@@ -5085,6 +5120,8 @@ app.post("/api/soups/:id/reanalyze-keyfacts", async (req, res) => {
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
+  const [[creator]] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [soup.creator_id]);
+  if (!canEnableAiGameRole(creator?.role)) return sendError(res, 403, "该上传者无权配置 AI 玩汤");
 
   forceReanalyzeKeyFacts(req.params.id).catch(() => {});
   res.json({ ok: true });
@@ -5528,6 +5565,66 @@ app.post("/api/admin/excellent-author-applications/:id/decision", async (req, re
   res.json({ ok: true });
 });
 
+app.get("/api/ranking-rewards/:settlementId", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT settlements.id AS settlement_id, settlements.period_type,
+       settlements.period_start, settlements.period_end, settlements.completed_at,
+       grants.board_type, grants.rank_position, grants.metric_value,
+       grants.actual_experience_reward, grants.actual_shell_reward,
+       grants.gift_name_snapshot, grants.gift_quantity,
+       COALESCE(inventory.overflow_quantity, 0) AS overflow_quantity,
+       COALESCE(inventory.overflow_shell, 0) AS overflow_shell
+     FROM ranking_reward_settlements settlements
+     INNER JOIN ranking_reward_grants grants ON grants.settlement_id = settlements.id
+     LEFT JOIN gift_inventory_transactions inventory
+       ON inventory.related_type = 'ranking_reward'
+      AND inventory.related_id = grants.id
+      AND inventory.transaction_type = 'grant'
+     WHERE settlements.id = ? AND grants.user_id = ?
+     ORDER BY FIELD(grants.board_type, 'achievement', 'level', 'collection', 'charm', 'generosity', 'draws')`,
+    [req.params.settlementId, user.id]
+  );
+  if (!rows[0]) return sendError(res, 404, "排行榜奖励结算不存在");
+
+  const first = rows[0];
+  res.json({
+    settlement: {
+      id: String(first.settlement_id),
+      periodType: String(first.period_type),
+      periodLabel: String(first.period_type) === "weekly" ? "7日排行榜" : "30日排行榜",
+      periodStart: new Date(first.period_start).toISOString(),
+      periodEnd: new Date(first.period_end).toISOString(),
+      completedAt: new Date(first.completed_at ?? first.period_end).toISOString(),
+      grants: rows.map((row) => {
+        const board = String(row.board_type) as RankingRewardBoard;
+        const overflowQuantity = Number(row.overflow_quantity ?? 0);
+        return {
+          board,
+          boardLabel: RANKING_REWARD_BOARD_LABELS[board] ?? board,
+          rank: Number(row.rank_position),
+          metricValue: Number(row.metric_value ?? 0),
+          reward: row.gift_name_snapshot
+            ? {
+                type: "gift",
+                giftName: String(row.gift_name_snapshot),
+                quantity: Number(row.gift_quantity ?? 0),
+                creditedQuantity: Math.max(0, Number(row.gift_quantity ?? 0) - overflowQuantity),
+                overflowQuantity,
+                overflowShell: Number(row.overflow_shell ?? 0)
+              }
+            : {
+                type: "currency",
+                experience: Number(row.actual_experience_reward ?? 0),
+                shell: Number(row.actual_shell_reward ?? 0)
+              }
+        };
+      })
+    }
+  });
+});
+
 app.get("/api/notifications", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
@@ -5556,8 +5653,8 @@ app.get("/api/notifications", async (req, res) => {
         ? "/mine/achievements"
         : row.type === "daily_task_gift_reward"
           ? "/mine/tasks"
-        : row.type === "ranking_reward"
-          ? "/rankings"
+        : row.type === "ranking_reward" && row.related_id
+          ? `/messages/ranking-rewards/${row.related_id}`
         : row.type === "shell_adjustment" || row.type === "badge_history_backfill"
           ? "/mine/shells/transactions"
         : row.type === "user_follow" && row.actor_id

@@ -260,6 +260,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
 
     const recipientId = req.params.id;
     const { giftId, quantity, requestId, source } = parsed.data;
+    let effectiveSource: typeof source = source;
     const connection = await pool.getConnection();
     let giftSendId = "";
     let privateMessageId = "";
@@ -344,25 +345,25 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
           throw Object.assign(new Error("贝壳余额不足"), { status: 409 });
         }
 
-        if (source.type === "private") {
+        if (effectiveSource.type === "private") {
           const [sourceRows] = await connection.query<mysql.RowDataPacket[]>(
             `SELECT id FROM conversations
              WHERE id = ? AND ((user_a_id = ? AND user_b_id = ?) OR (user_a_id = ? AND user_b_id = ?))
              LIMIT 1`,
-            [source.id, user.id, recipientId, recipientId, user.id]
+            [effectiveSource.id, user.id, recipientId, recipientId, user.id]
           );
           if (!sourceRows[0]) throw Object.assign(new Error("私聊来源无效"), { status: 403 });
           privateConversationId = String(sourceRows[0].id);
-        } else if (source.type === "circle") {
+        } else if (effectiveSource.type === "circle") {
           const [sourceRows] = await connection.query<mysql.RowDataPacket[]>(
             `SELECT COUNT(*) AS member_count FROM circle_members
              WHERE circle_id = ? AND user_id IN (?, ?)`,
-            [source.id, user.id, recipientId]
+            [effectiveSource.id, user.id, recipientId]
           );
           if (Number(sourceRows[0]?.member_count ?? 0) !== 2) {
             throw Object.assign(new Error("仅可向同一圈子的成员送礼"), { status: 403 });
           }
-        } else if (source.type === "online_soup") {
+        } else if (effectiveSource.type === "online_soup") {
           const [sourceRows] = await connection.query<mysql.RowDataPacket[]>(
             `SELECT r.id, r.status, r.current_round_id,
                SUM(m.user_id = ? AND m.is_active = 1) AS sender_active,
@@ -371,13 +372,14 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
              LEFT JOIN online_soup_members m ON m.room_id = r.id
              WHERE r.id = ?
              GROUP BY r.id, r.status, r.current_round_id`,
-            [user.id, recipientId, source.id]
+            [user.id, recipientId, effectiveSource.id]
           );
           const room = sourceRows[0];
           if (!room || Number(room.sender_active) < 1 || Number(room.recipient_active) < 1 || room.status === "closed") {
-            throw Object.assign(new Error("仅可向同一玩汤房间的在线成员送礼"), { status: 403 });
+            effectiveSource = { type: "profile" };
+          } else {
+            onlineRoomId = String(effectiveSource.id);
           }
-          onlineRoomId = String(source.id);
         }
 
         if (!privateConversationId) {
@@ -406,7 +408,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
              unit_reward_charm, total_reward_charm
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            giftSendId, requestId, giftId, user.id, recipientId, quantity, source.type, source.id ?? null,
+            giftSendId, requestId, giftId, user.id, recipientId, quantity, effectiveSource.type, effectiveSource.id ?? null,
             gift.name, gift.payment_currency, gift.cost_amount, totalCost,
             inventoryQuantityUsed, purchasedQuantity,
             gift.reward_shell, rewardShell, gift.reward_pearl, rewardPearl,
@@ -500,32 +502,32 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
         );
         await connection.query("UPDATE conversations SET last_message_at = CURRENT_TIMESTAMP WHERE id = ?", [privateConversationId]);
 
-        if (source.type === "circle") {
+        if (effectiveSource.type === "circle") {
           circleMessageId = nanoid();
           await connection.query(
             `INSERT INTO circle_messages
              (id, circle_id, sender_id, content, message_type, gift_send_id)
              VALUES (?, ?, ?, ?, 'gift', ?)`,
-            [circleMessageId, source.id, user.id, content, giftSendId]
+            [circleMessageId, effectiveSource.id, user.id, content, giftSendId]
           );
-          await connection.query("UPDATE circles SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [source.id]);
-        } else if (source.type === "online_soup") {
+          await connection.query("UPDATE circles SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", [effectiveSource.id]);
+        } else if (effectiveSource.type === "online_soup") {
           const [roomRows] = await connection.query<mysql.RowDataPacket[]>(
             "SELECT current_round_id FROM online_soup_rooms WHERE id = ? LIMIT 1",
-            [source.id]
+            [effectiveSource.id]
           );
           const onlineMessageId = nanoid();
           await connection.query(
             `INSERT INTO online_soup_messages
              (id, room_id, round_id, sender_id, message_type, content, gift_send_id)
              VALUES (?, ?, ?, ?, 'gift', ?, ?)`,
-            [onlineMessageId, source.id, roomRows[0]?.current_round_id ?? null, user.id, content, giftSendId]
+            [onlineMessageId, effectiveSource.id, roomRows[0]?.current_round_id ?? null, user.id, content, giftSendId]
           );
           await connection.query(
             `INSERT INTO online_soup_activities
              (id, room_id, actor_user_id, activity_type, reference_id)
              VALUES (?, ?, ?, 'chat', ?)`,
-            [nanoid(), source.id, user.id, onlineMessageId]
+            [nanoid(), effectiveSource.id, user.id, onlineMessageId]
           );
         }
 
@@ -583,7 +585,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
         createdAt: gift.createdAt
       });
       if (circleMessageId) {
-        void onCircleGift(String(source.id), circleMessageId, user.id)
+        void onCircleGift(String(effectiveSource.id), circleMessageId, user.id)
           .catch((error) => console.error("Publish circle gift event failed:", error));
       }
       if (onlineRoomId) onOnlineSoupGift(onlineRoomId);

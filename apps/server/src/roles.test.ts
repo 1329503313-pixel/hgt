@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canEnableAiGameRole,
   canViewAllSoupContentRole,
   hasUnlimitedSoupPublishingRole,
   isBackofficeAdminRole,
@@ -34,4 +35,12 @@ test("VIP and administrator roles can publish soups without a daily quota", () =
   assert.equal(hasUnlimitedSoupPublishingRole("backoffice_admin"), true);
   assert.equal(hasUnlimitedSoupPublishingRole("vip"), true);
   assert.equal(hasUnlimitedSoupPublishingRole("user"), false);
+});
+
+test("only VIP and administrator roles can enable AI soup games", () => {
+  assert.equal(canEnableAiGameRole("super_admin"), true);
+  assert.equal(canEnableAiGameRole("admin"), true);
+  assert.equal(canEnableAiGameRole("backoffice_admin"), true);
+  assert.equal(canEnableAiGameRole("vip"), true);
+  assert.equal(canEnableAiGameRole("user"), false);
 });

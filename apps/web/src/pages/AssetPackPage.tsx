@@ -37,7 +37,7 @@ export default function AssetPackPage() {
       }).catch((error) => showToast((error as Error).message)).finally(() => { if (showLoading) setLoading(false); });
   }, [packId, user?.id]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(true); }, [load]);
 
   useEffect(() => { warmAssetImage("/card-back.webp?v=20260721"); }, []);
 

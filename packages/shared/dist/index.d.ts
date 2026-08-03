@@ -64,6 +64,8 @@ export type SoupDetail = SoupSummary & {
     bottom: string | null;
     supplementalBottoms: string[] | null;
     manual: string | null;
+    enableAiGame: boolean;
+    canConfigureAiGame: boolean;
     canViewFull: boolean;
     canEdit: boolean;
     isFavorited: boolean;

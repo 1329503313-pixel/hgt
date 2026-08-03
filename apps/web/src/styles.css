@@ -1403,6 +1403,12 @@ textarea {
   display: none;
 }
 
+@media (max-width: 1023px) {
+  .home-page .soup-card-footer-favorite {
+    display: none;
+  }
+}
+
 .soup-card-difficulty-tag {
   display: none;
 }

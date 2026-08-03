@@ -19,6 +19,7 @@ const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
 const RequestsPage = lazy(() => import("./pages/RequestsPage"));
 const NoticesPage = lazy(() => import("./pages/NoticesPage"));
 const NoticeDetailPage = lazy(() => import("./pages/NoticeDetailPage"));
+const RankingRewardDetailPage = lazy(() => import("./pages/RankingRewardDetailPage"));
 const ChatPage = lazy(() => import("./pages/ChatPage"));
 const MinePage = lazy(() => import("./pages/MinePage"));
 const MySoupsPage = lazy(() => import("./pages/MySoupsPage"));
@@ -100,6 +101,7 @@ export default function App() {
           <Route path="messages/requests" element={<RequestsPage />} />
           <Route path="messages/notices" element={<NoticesPage />} />
           <Route path="messages/notices/:id" element={<NoticeDetailPage />} />
+          <Route path="messages/ranking-rewards/:settlementId" element={<RankingRewardDetailPage />} />
         </Route>
 
         {/* Content detail routes — desktop navigation, mobile page-native header */}

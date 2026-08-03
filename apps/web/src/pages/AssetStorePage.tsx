@@ -38,7 +38,6 @@ export default function AssetStorePage() {
     const warm = () => {
       void import("./AssetPackPage");
       for (const pack of data.packs.slice(0, 2)) {
-        void prefetchApi(`/api/asset-store/packs/${pack.id}`, 60_000);
         warmAssetImage(pack.coverCard?.imageUrl);
       }
     };
@@ -53,7 +52,6 @@ export default function AssetStorePage() {
 
   function warmPack(pack: AssetPack) {
     void import("./AssetPackPage");
-    void prefetchApi(`/api/asset-store/packs/${pack.id}`, 60_000);
     warmAssetImage(pack.coverCard?.imageUrl);
   }
 

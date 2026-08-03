@@ -8,6 +8,10 @@ import {
   rankingPeriodStart,
   rankingRewardFor
 } from "./rankingRewards.js";
+import {
+  mergedRankingRewardNotificationReadState,
+  rankingRewardNotificationSummary
+} from "./rankingRewardNotifications.js";
 
 test("排行榜周结算固定为北京时间周一零点", () => {
   assert.equal(
@@ -74,4 +78,13 @@ test("排行榜排除零值并按达到时间处理同分", () => {
       { userId: "later", value: 10, rank: 3 }
     ]
   );
+});
+
+test("同一次排行榜结算汇总为一条通知", () => {
+  assert.deepEqual(rankingRewardNotificationSummary("weekly", 3), {
+    title: "7日排行榜奖励",
+    content: "本次结算你在 3 个榜单进入前 10 名并获得奖励，点击查看各榜单名次与奖励。"
+  });
+  assert.equal(mergedRankingRewardNotificationReadState([1, true, "1"]), true);
+  assert.equal(mergedRankingRewardNotificationReadState([1, 0]), false);
 });

@@ -31,6 +31,7 @@ export type SoupForm = {
   manual: string;
   isSurfacePublic: boolean;
   isBottomPublic: boolean;
+  canConfigureAiGame: boolean;
   enableAiGame: boolean;
   aiPrompt: string;
   keyFacts: KeyFact[];
@@ -64,6 +65,7 @@ export const emptySoup: SoupForm = {
   manual: "",
   isSurfacePublic: true,
   isBottomPublic: false,
+  canConfigureAiGame: false,
   enableAiGame: false,
   aiPrompt: "",
   keyFacts: [],
@@ -299,6 +301,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         manual: soup.manual ?? "",
         isSurfacePublic: soup.isSurfacePublic,
         isBottomPublic: soup.isBottomPublic,
+        canConfigureAiGame: soup.canConfigureAiGame,
         enableAiGame: (soup as any).enableAiGame ?? false,
         aiPrompt: soup.aiPrompt ?? "",
         keyFacts: soup.keyFacts ?? [],

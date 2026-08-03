@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightLeft, ArrowUp, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LogOut, Menu, MessageCircle, Minimize2, Play, Plus, RefreshCw, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowRightLeft, ArrowUp, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LogOut, Menu, MessageCircle, Minimize2, Play, Plus, RefreshCw, Reply, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
@@ -17,6 +17,7 @@ import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import type { OnlineSoupAnswer, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
 import { GiftMessageCard } from "../components/GiftMessageCard";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
+import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -31,7 +32,10 @@ type ProgressQuestion = {
   sender: { id: string | null; nickname: string; avatar: string | null };
   createdAt: string;
 };
-type ProgressPage = { questions: ProgressQuestion[]; hasMore: boolean; nextCursor: string | null };
+type RoundClue = Pick<OnlineSoupMessage, "id" | "sequence" | "content" | "createdAt">;
+type ProgressPage = { roundId: string | null; questions: ProgressQuestion[]; hasMore: boolean; nextCursor: string | null };
+type CluePage = { roundId: string | null; clues: RoundClue[]; hasMore: boolean; nextCursor: string | null };
+type MentionRequest = { userId: string; nickname: string; key: number };
 const structuralRoomEvents = new Set([
   "member_joined", "member_left", "member_kicked", "host_transferred", "soup_selected", "round_started",
   "supplemental_surface_published", "bottom_published", "round_ended"
@@ -49,6 +53,37 @@ function mergeMessages(older: OnlineSoupMessage[], newer: OnlineSoupMessage[]) {
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function activeMentionAt(content: string, cursor: number) {
+  const beforeCursor = content.slice(0, cursor);
+  const atIndex = beforeCursor.lastIndexOf("@");
+  if (atIndex < 0) return null;
+  const query = beforeCursor.slice(atIndex + 1);
+  if (/[\s@]/.test(query)) return null;
+  return { start: atIndex, end: cursor, query };
+}
+
+function onlineMessagePreview(message: OnlineSoupMessage | NonNullable<OnlineSoupMessage["replyTo"]>) {
+  if (message.recalledAt) return "[消息已撤回]";
+  if (message.type === "sticker") return "[表情]";
+  return message.content.trim() || "[空消息]";
+}
+
+function OnlineMessageText({ message, currentUserId }: { message: OnlineSoupMessage; currentUserId: string }) {
+  const selfMention = message.mentions.find((mention) => mention.userId === currentUserId);
+  if (!selfMention) return <>{message.content}</>;
+  const token = `@${selfMention.nickname}`;
+  const parts = message.content.split(token);
+  return <>{parts.map((part, index) => <span key={`${message.id}-${index}`}>{index > 0 && <span className="rounded bg-white/90 px-0.5 font-bold text-blue-600">{token}</span>}{part}</span>)}</>;
+}
+
+function OnlineReplyQuote({ reply, mine, onLocate }: {
+  reply: NonNullable<OnlineSoupMessage["replyTo"]>;
+  mine: boolean;
+  onLocate: () => void;
+}) {
+  return <button type="button" className={`mb-2 block w-full truncate rounded-lg border-l-2 px-2.5 py-1.5 text-left text-xs ${mine ? "border-white/60 bg-white/15 text-white/85" : "border-blue-300 bg-slate-100/90 text-muted hover:bg-blue-50"}`} onClick={onLocate} title="点击定位到原消息"><span className={`mr-1 font-bold ${mine ? "text-white" : "text-primary"}`}>{reply.senderName ?? "已注销用户"}:</span>{onlineMessagePreview(reply)}</button>;
 }
 
 export default function OnlineSoupRoomPage() {
@@ -70,6 +105,10 @@ export default function OnlineSoupRoomPage() {
   const [socketConnected, setSocketConnected] = useState(false);
   const [mode, setMode] = useState<"discussion" | "question">("discussion");
   const [content, setContent] = useState("");
+  const [mentionedUsers, setMentionedUsers] = useState<Array<{ userId: string; nickname: string }>>([]);
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(null);
+  const [replyingTo, setReplyingTo] = useState<OnlineSoupMessage | null>(null);
   const [sending, setSending] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [soupExpanded, setSoupExpanded] = useState(true);
@@ -80,6 +119,8 @@ export default function OnlineSoupRoomPage() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [clueOpen, setClueOpen] = useState(false);
+  const [roundClues, setRoundClues] = useState<RoundClue[]>([]);
+  const [cluesLoading, setCluesLoading] = useState(false);
   const [progressQuestions, setProgressQuestions] = useState<ProgressQuestion[]>([]);
   const [progressLoading, setProgressLoading] = useState(false);
   const [surfacePublishOpen, setSurfacePublishOpen] = useState(false);
@@ -124,7 +165,12 @@ export default function OnlineSoupRoomPage() {
   const entryStarted = useRef(false);
   const progressLoadedRoundId = useRef<string | null>(null);
   const progressPending = useRef(false);
+  const progressQueued = useRef(false);
   const progressQuestionsRef = useRef<ProgressQuestion[]>([]);
+  const cluesLoadedRoundId = useRef<string | null>(null);
+  const cluesPending = useRef(false);
+  const cluesQueued = useRef(false);
+  const roundCluesRef = useRef<RoundClue[]>([]);
   const highlightTimerRef = useRef<number | null>(null);
   const locatedRequestRef = useRef("");
   const leavingRoomRef = useRef(false);
@@ -132,6 +178,7 @@ export default function OnlineSoupRoomPage() {
   const stateRequestStarted = useRef(0);
   const stateRequestApplied = useRef(0);
   progressQuestionsRef.current = progressQuestions;
+  roundCluesRef.current = roundClues;
   useEffect(() => { showFullRoom(roomId); }, [roomId, showFullRoom]);
   useEffect(() => () => {
     if (highlightTimerRef.current != null) window.clearTimeout(highlightTimerRef.current);
@@ -310,27 +357,47 @@ export default function OnlineSoupRoomPage() {
 
   const loadProgress = useCallback(async (force = false) => {
     if (leavingRoomRef.current) return;
-    const roundId = snapshotRef.current?.room.currentRoundId;
-    if (!roundId || progressPending.current) return;
-    if (!force && progressLoadedRoundId.current === roundId) return;
+    const initialRoundId = snapshotRef.current?.room.currentRoundId;
+    if (!initialRoundId) return;
+    if (progressPending.current) {
+      progressQueued.current = true;
+      return;
+    }
+    if (!force && progressLoadedRoundId.current === initialRoundId) return;
     progressPending.current = true;
     const showInitialLoading = progressQuestionsRef.current.length === 0;
     if (showInitialLoading) setProgressLoading(true);
     try {
-      let after = "";
-      let hasMore = true;
-      const questions: ProgressQuestion[] = [];
-      while (hasMore) {
-        const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
-        const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
-        if (leavingRoomRef.current) return;
-        questions.push(...page.questions);
-        hasMore = page.hasMore;
-        if (!page.nextCursor) break;
-        after = page.nextCursor;
-      }
-      setProgressQuestions(questions);
-      progressLoadedRoundId.current = roundId;
+      do {
+        progressQueued.current = false;
+        const requestedRoundId = snapshotRef.current?.room.currentRoundId;
+        if (!requestedRoundId) break;
+        let after = "";
+        let hasMore = true;
+        let responseRoundId: string | null = requestedRoundId;
+        const questions: ProgressQuestion[] = [];
+        while (hasMore) {
+          const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
+          const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+          if (leavingRoomRef.current) return;
+          responseRoundId = page.roundId;
+          questions.push(...page.questions);
+          hasMore = page.hasMore;
+          if (!page.nextCursor) break;
+          after = page.nextCursor;
+        }
+        const currentRoundId = snapshotRef.current?.room.currentRoundId;
+        if (responseRoundId !== requestedRoundId) {
+          void loadState();
+          break;
+        }
+        if (progressQueued.current || currentRoundId !== requestedRoundId) {
+          progressQueued.current = true;
+          continue;
+        }
+        setProgressQuestions(questions);
+        progressLoadedRoundId.current = requestedRoundId;
+      } while (progressQueued.current && !leavingRoomRef.current);
     } catch (error) {
       if (leavingRoomRef.current || isAbortError(error)) return;
       showToast(error instanceof Error ? error.message : "推理进度加载失败");
@@ -338,7 +405,59 @@ export default function OnlineSoupRoomPage() {
       progressPending.current = false;
       if (showInitialLoading) setProgressLoading(false);
     }
-  }, [roomId, showToast]);
+  }, [loadState, roomId, showToast]);
+
+  const loadClues = useCallback(async (force = false) => {
+    if (leavingRoomRef.current) return;
+    const initialRoundId = snapshotRef.current?.room.currentRoundId;
+    if (!initialRoundId) return;
+    if (cluesPending.current) {
+      cluesQueued.current = true;
+      return;
+    }
+    if (!force && cluesLoadedRoundId.current === initialRoundId) return;
+    cluesPending.current = true;
+    const showInitialLoading = roundCluesRef.current.length === 0;
+    if (showInitialLoading) setCluesLoading(true);
+    try {
+      do {
+        cluesQueued.current = false;
+        const requestedRoundId = snapshotRef.current?.room.currentRoundId;
+        if (!requestedRoundId) break;
+        let after = "";
+        let hasMore = true;
+        let responseRoundId: string | null = requestedRoundId;
+        const clues: RoundClue[] = [];
+        while (hasMore) {
+          const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
+          const page = await api<CluePage>(`/api/online-soup/rooms/${roomId}/clues${query}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
+          if (leavingRoomRef.current) return;
+          responseRoundId = page.roundId;
+          clues.push(...page.clues);
+          hasMore = page.hasMore;
+          if (!page.nextCursor) break;
+          after = page.nextCursor;
+        }
+        const currentRoundId = snapshotRef.current?.room.currentRoundId;
+        if (responseRoundId !== requestedRoundId) {
+          void loadState();
+          break;
+        }
+        if (cluesQueued.current || currentRoundId !== requestedRoundId) {
+          cluesQueued.current = true;
+          continue;
+        }
+        setRoundClues(clues);
+        cluesLoadedRoundId.current = requestedRoundId;
+      } while (cluesQueued.current && !leavingRoomRef.current);
+    } catch (error) {
+      if (leavingRoomRef.current || isAbortError(error)) return;
+      showToast(error instanceof Error ? error.message : "线索加载失败");
+    } finally {
+      cluesPending.current = false;
+      if (showInitialLoading) setCluesLoading(false);
+    }
+  }, [loadState, roomId, showToast]);
 
   useEffect(() => connectOnlineSoupSocket(roomId, (reason, payload) => {
     if (leavingRoomRef.current) return;
@@ -354,17 +473,24 @@ export default function OnlineSoupRoomPage() {
       return;
     }
     if (reason === "message" || reason === "clue") {
-      if (reason === "message") progressLoadedRoundId.current = null;
+      if (reason === "message" && payload.activityType === "progress") void loadProgress(true);
+      if (reason === "clue") void loadClues(true);
       void loadNewMessages();
       return;
     }
     if (reason === "message_recalled" && typeof payload.messageId === "string" && typeof payload.recalledAt === "string") {
       setSnapshot((current) => current ? {
         ...current,
-        messages: current.messages.map((message) => message.id === payload.messageId
-          ? { ...message, content: "", stickerId: null, recalledAt: payload.recalledAt as string }
-          : message)
+        messages: current.messages.map((message) => {
+          if (message.id === payload.messageId) return { ...message, content: "", stickerId: null, mentions: [], recalledAt: payload.recalledAt as string };
+          const reply = message.replyTo;
+          if (reply && reply.id === payload.messageId) {
+            return { ...message, replyTo: { ...reply, content: "", stickerId: null, recalledAt: payload.recalledAt as string } };
+          }
+          return message;
+        })
       } : current);
+      setReplyingTo((current) => current?.id === payload.messageId ? null : current);
       setProgressQuestions((current) => current.filter((question) => question.id !== payload.messageId));
       return;
     }
@@ -387,12 +513,16 @@ export default function OnlineSoupRoomPage() {
     if (leavingRoomRef.current) return;
     setSocketConnected(connected);
     if (connected) void load(true);
-  }), [disarmExitGuard, roomId, load, loadNewMessages, loadState, navigate, showToast, user?.id]);
+  }), [disarmExitGuard, roomId, load, loadClues, loadNewMessages, loadProgress, loadState, navigate, showToast, user?.id]);
   useEffect(() => {
     const reconcile = () => {
       if (leavingRoomRef.current || document.visibilityState !== "visible") return;
       if (socketConnected) void loadNewMessages();
       else void load(true);
+      if (snapshotRef.current?.room.currentRoundId) {
+        void loadClues(true);
+        void loadProgress(true);
+      }
     };
     const timer = window.setInterval(reconcile, 15_000);
     const onVisibilityChange = () => {
@@ -403,7 +533,7 @@ export default function OnlineSoupRoomPage() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [load, loadNewMessages, socketConnected]);
+  }, [load, loadClues, loadNewMessages, loadProgress, socketConnected]);
   const latestMessageId = snapshot?.messages[snapshot.messages.length - 1]?.id ?? null;
   useEffect(() => {
     if (!latestMessageId || latestMessageId === newestMessageId.current) return;
@@ -421,6 +551,19 @@ export default function OnlineSoupRoomPage() {
     if (soupExpanded && (hostViewingProgress || viewerViewingProgress)) void loadProgress();
   }, [hostPanelGroup, hostRoundTab, latestMessageId, loadProgress, snapshot?.me.isHost, snapshot?.room.currentRoundId, soupExpanded, viewerPanelTab]);
   useEffect(() => {
+    const roundId = snapshot?.room.currentRoundId ?? null;
+    setRoundClues([]);
+    setProgressQuestions([]);
+    cluesLoadedRoundId.current = null;
+    progressLoadedRoundId.current = null;
+    if (cluesPending.current) cluesQueued.current = true;
+    if (progressPending.current) progressQueued.current = true;
+    if (roundId) {
+      void loadClues();
+      void loadProgress();
+    }
+  }, [loadClues, loadProgress, snapshot?.room.currentRoundId]);
+  useEffect(() => {
     const input = messageInputRef.current;
     if (!input) return;
     input.style.height = "auto";
@@ -433,6 +576,13 @@ export default function OnlineSoupRoomPage() {
   const isHost = snapshot?.me.isHost ?? false;
   const canDiscuss = snapshot && snapshot.me.role !== "spectator" && snapshot.room.status !== "closed";
   const canQuestion = snapshot?.me.role === "player" && snapshot.room.status === "playing";
+  const activeMention = activeMentionAt(content, cursorPosition);
+  const mentionCandidates = activeMention && snapshot
+    ? snapshot.members
+      .filter((member) => member.id !== user?.id)
+      .filter((member) => member.nickname.toLocaleLowerCase("zh-CN").includes(activeMention.query.toLocaleLowerCase("zh-CN")))
+      .slice(0, 5)
+    : [];
   const allStickers = useMemo(() => stickerSeries.flatMap((series) => series.stickers), [stickerSeries]);
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
   useEffect(() => {
@@ -447,16 +597,84 @@ export default function OnlineSoupRoomPage() {
     setHostRoundTab("clues");
   }, [snapshot?.room.currentRoundId, snapshot?.room.soup?.id]);
 
+  useEffect(() => {
+    if (!mentionRequest) return;
+    const token = `@${mentionRequest.nickname}`;
+    setContent((current) => {
+      if (current.includes(token)) return current;
+      const spacer = current && !/\s$/.test(current) ? " " : "";
+      return `${current}${spacer}${token} `.slice(0, 1000);
+    });
+    setMentionedUsers((current) => current.some((mention) => mention.userId === mentionRequest.userId)
+      ? current
+      : [...current, { userId: mentionRequest.userId, nickname: mentionRequest.nickname }]);
+    window.requestAnimationFrame(() => {
+      const nextCursor = messageInputRef.current?.value.length ?? 0;
+      setCursorPosition(nextCursor);
+      messageInputRef.current?.focus();
+      messageInputRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  }, [mentionRequest?.key]);
+
+  useEffect(() => {
+    if (!replyingTo) return;
+    window.requestAnimationFrame(() => messageInputRef.current?.focus());
+  }, [replyingTo?.id]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const keepLatestVisible = () => {
+      if (document.activeElement !== messageInputRef.current) return;
+      isNearMessagesBottom.current = true;
+      window.requestAnimationFrame(() => scrollToLatestMessage("auto"));
+    };
+    viewport.addEventListener("resize", keepLatestVisible);
+    viewport.addEventListener("scroll", keepLatestVisible);
+    return () => {
+      viewport.removeEventListener("resize", keepLatestVisible);
+      viewport.removeEventListener("scroll", keepLatestVisible);
+    };
+  }, [scrollToLatestMessage]);
+
+  function requestMention(userId: string, nickname: string) {
+    if (userId === user?.id || !canDiscuss) return;
+    setStickersOpen(false);
+    setMentionRequest({ userId, nickname, key: Date.now() });
+  }
+
+  function chooseMention(member: OnlineSoupSnapshot["members"][number]) {
+    if (!activeMention) return;
+    const before = content.slice(0, activeMention.start);
+    const after = content.slice(activeMention.end);
+    const inserted = `@${member.nickname} `;
+    const next = `${before}${inserted}${after}`.slice(0, 1000);
+    const nextCursor = Math.min(before.length + inserted.length, next.length);
+    setContent(next);
+    setCursorPosition(nextCursor);
+    setMentionedUsers((current) => current.some((mention) => mention.userId === member.id)
+      ? current
+      : [...current, { userId: member.id, nickname: member.nickname }]);
+    window.requestAnimationFrame(() => {
+      messageInputRef.current?.focus();
+      messageInputRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
   async function sendMessage() {
     const text = content.trim();
     if (!text || sending) return;
+    const activeMentionIds = mentionedUsers.filter((mention) => text.includes(`@${mention.nickname}`)).map((mention) => mention.userId);
     setSending(true);
     try {
-      await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: mode, content: text } });
+      await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: mode, content: text, mentionedUserIds: activeMentionIds, replyToMessageId: replyingTo?.id } });
       setContent("");
+      setMentionedUsers([]);
+      setReplyingTo(null);
       isNearMessagesBottom.current = true;
       setShowScrollToLatest(false);
-      await loadNewMessages();
+      if (mode === "question") await Promise.all([loadNewMessages(), loadProgress(true)]);
+      else await loadNewMessages();
     } catch (error) { showToast(error instanceof Error ? error.message : "发送失败"); }
     finally { setSending(false); }
   }
@@ -543,7 +761,8 @@ export default function OnlineSoupRoomPage() {
     setSending(true);
     try {
       setStickersOpen(false);
-      await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: "sticker", stickerId: sticker.id } });
+      await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: "sticker", stickerId: sticker.id, replyToMessageId: replyingTo?.id } });
+      setReplyingTo(null);
       isNearMessagesBottom.current = true;
       setShowScrollToLatest(false);
       await loadNewMessages();
@@ -562,6 +781,7 @@ export default function OnlineSoupRoomPage() {
         ...current,
         messages: current.messages.map((item) => item.id === message.id ? { ...item, answer: nextAnswer } : item)
       } : current);
+      setProgressQuestions((current) => current.map((question) => question.id === message.id ? { ...question, answer: nextAnswer } : question));
     } catch (error) { showToast(error instanceof Error ? error.message : "回答失败"); }
   }
 
@@ -574,9 +794,12 @@ export default function OnlineSoupRoomPage() {
       setSnapshot((current) => current ? {
         ...current,
         messages: current.messages.map((item) => item.id === result.messageId
-          ? { ...item, content: "", stickerId: null, recalledAt: result.recalledAt }
-          : item)
+          ? { ...item, content: "", stickerId: null, mentions: [], recalledAt: result.recalledAt }
+          : item.replyTo?.id === result.messageId
+            ? { ...item, replyTo: { ...item.replyTo, content: "", stickerId: null, recalledAt: result.recalledAt } }
+            : item)
       } : current);
+      setReplyingTo((current) => current?.id === result.messageId ? null : current);
       setProgressQuestions((current) => current.filter((question) => question.id !== result.messageId));
     } catch (error) {
       showToast(error instanceof Error ? error.message : "撤回失败");
@@ -587,7 +810,7 @@ export default function OnlineSoupRoomPage() {
     try {
       await api(`/api/online-soup/rooms/${roomId}/${path}`, { method: "POST", body });
       if (path === "close") return;
-      if (path === "clues") await loadNewMessages();
+      if (path === "clues") await Promise.all([loadNewMessages(), loadClues(true)]);
       else await Promise.all([loadState(), loadNewMessages()]);
     }
     catch (error) { showToast(error instanceof Error ? error.message : "操作失败"); throw error; }
@@ -716,9 +939,8 @@ export default function OnlineSoupRoomPage() {
   const unpublishedSurfaces = (snapshot?.room.soup?.supplementalSurfaces ?? [])
     .map((content, index) => ({ content, index }))
     .filter(({ index }) => !snapshot?.room.soup?.publishedSurfaceIndices?.includes(index));
-  const clueMessages = snapshot?.messages.filter((message) => message.type === "clue" && message.roundId === snapshot.room.currentRoundId) ?? [];
   const visibleProgressQuestions = snapshot?.messages.filter((message) => message.type === "question" && message.roundId === snapshot.room.currentRoundId) ?? [];
-  const newestFirstClueMessages = [...clueMessages].reverse();
+  const newestFirstClueMessages = [...roundClues].reverse();
   const newestFirstProgressQuestions = [...progressQuestions].reverse();
   const unansweredProgressCount = (progressLoadedRoundId.current === snapshot?.room.currentRoundId
     ? progressQuestions
@@ -831,7 +1053,7 @@ export default function OnlineSoupRoomPage() {
                   ] as const).map(([value, label]) => <button key={value} className={`rounded-md px-2.5 py-1 text-[11px] font-black transition ${hostPanelGroup === value ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setHostPanelGroup(value); setSoupExpanded(true); }} aria-pressed={hostPanelGroup === value}>{label}</button>)}
                 </div>}
                 {!isHost && <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5" aria-label="汤面辅助视图">
-                  <button className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("clues"); setSoupExpanded(true); }} aria-pressed={viewerPanelTab === "clues"}><Lightbulb size={13} />线索</button>
+                  <button className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("clues"); setSoupExpanded(true); void loadClues(); }} aria-pressed={viewerPanelTab === "clues"}><Lightbulb size={13} />线索</button>
                   <button className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("progress"); setSoupExpanded(true); }} aria-pressed={viewerPanelTab === "progress"}><ListChecks size={13} />进度</button>
                 </div>}
                 <button className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink active:scale-95" onClick={() => setSoupExpanded((expanded) => !expanded)} aria-label={soupExpanded ? "收起汤面卡片" : "展开汤面卡片"} title={soupExpanded ? "收起" : "展开"}>{soupExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
@@ -842,7 +1064,7 @@ export default function OnlineSoupRoomPage() {
                   ["bottom", "汤底"],
                   ["manual", "手册"]
                 ] as const).map(([value, label]) => <button key={value} className={`rounded-md px-2 py-1.5 text-[11px] font-black transition ${soupTab === value ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setSoupTab(value); setSoupExpanded(true); }} aria-pressed={soupTab === value}>{label}</button>) : <>
-                  <button className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-black transition ${hostRoundTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setHostRoundTab("clues"); setSoupExpanded(true); }} aria-pressed={hostRoundTab === "clues"}><Lightbulb size={13} />线索{clueMessages.length > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[10px] leading-4 text-amber-800">{clueMessages.length > 99 ? "99+" : clueMessages.length}</span>}</button>
+                  <button className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-black transition ${hostRoundTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setHostRoundTab("clues"); setSoupExpanded(true); void loadClues(); }} aria-pressed={hostRoundTab === "clues"}><Lightbulb size={13} />线索{roundClues.length > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[10px] leading-4 text-amber-800">{roundClues.length > 99 ? "99+" : roundClues.length}</span>}</button>
                   <button className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-black transition ${hostRoundTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setHostRoundTab("progress"); setSoupExpanded(true); }} aria-pressed={hostRoundTab === "progress"}><ListChecks size={13} />进度{unansweredProgressCount > 0 && <span className="rounded-full bg-blue-100 px-1.5 text-[10px] leading-4 text-primary">{unansweredProgressCount > 99 ? "99+" : unansweredProgressCount}</span>}</button>
                 </>}
               </div>}
@@ -863,8 +1085,8 @@ export default function OnlineSoupRoomPage() {
                 })}
               </>}
               {assistantPanelTab && showAssistantScrollToLatest && <div className="pointer-events-none sticky top-0 z-20 flex h-0 justify-end"><button type="button" className="pointer-events-auto grid h-9 w-9 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_6px_18px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95" onClick={scrollAssistantToLatest} aria-label="回到最新线索或进度" title="回到最新"><ArrowUp size={19} strokeWidth={2.5} /></button></div>}
-              {assistantPanelTab === "clues" && (newestFirstClueMessages.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstClueMessages.map((message, index) => <article key={message.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {clueMessages.length - index}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>)}
-              {assistantPanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <article key={question.id} className="rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="flex items-center gap-2"><button className="shrink-0 rounded-full" disabled={!question.sender.id} onClick={() => question.sender.id && openMemberProfile(question.sender.id)}>{question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="shrink-0 text-xs font-black text-primary">#{question.number}</span><span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span><time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p></div></div><div className="mt-2 pl-10">{question.answer ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{answerLabels[question.answer]}</span> : <span className="inline-flex rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted">等待主持人回复</span>}</div></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
+              {assistantPanelTab === "clues" && (cluesLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstClueMessages.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstClueMessages.map((message, index) => <article key={message.id} className="cursor-pointer rounded-xl border border-amber-200 bg-amber-50 p-3 transition hover:border-amber-400 hover:shadow-sm active:scale-[0.99]" onClick={() => void locateRoomMessage(message.id)}><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {roundClues.length - index}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>)}
+              {assistantPanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <article key={question.id} className="cursor-pointer rounded-xl border border-blue-100 bg-blue-50 p-3 transition hover:border-blue-300 hover:shadow-sm active:scale-[0.99]" onClick={() => void locateRoomMessage(question.id)}><div className="flex items-center gap-2"><button className="shrink-0 rounded-full" disabled={!question.sender.id} onClick={(event) => { event.stopPropagation(); question.sender.id && openMemberProfile(question.sender.id); }}>{question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="shrink-0 text-xs font-black text-primary">#{question.number}</span><span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span><time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p></div></div><div className="mt-2 pl-10">{question.answer ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{answerLabels[question.answer]}</span> : <span className="inline-flex rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted">等待主持人回复</span>}</div></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
               {isHost && hostPanelGroup === "materials" && soupTab === "bottom" && <>
                 {snapshot.room.soup.bottom && <section className="rounded-xl bg-amber-50 p-3">
                   <h3 className="text-sm font-black text-amber-800">主汤底{snapshot.room.soup.publishedBottomIndices?.includes(0) ? " · 已发布" : ""}</h3>
@@ -884,11 +1106,11 @@ export default function OnlineSoupRoomPage() {
         </aside>
 
         <section className="online-soup-room-member-rail flex min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
-          {snapshot.members.map((member) => { const canManage = isHost && member.id !== user?.id; return <button key={member.id} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.role === "host" ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} onClick={() => openMemberProfile(member.id)} aria-label={canManage ? `管理成员${member.nickname}` : `查看${member.nickname}的主页`} title={`${member.nickname} · ${member.role === "host" ? "主持人" : member.role === "player" ? "玩家" : "旁观者"}`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.role === "host" && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}</button>; })}
+          {snapshot.members.map((member) => { const canManage = isHost && member.id !== user?.id; return <MentionableAvatarButton key={member.id} canMention={member.id !== user?.id && Boolean(canDiscuss)} onMention={() => requestMention(member.id, member.nickname)} onOpen={() => openMemberProfile(member.id)} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.role === "host" ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} ariaLabel={canManage ? `管理成员${member.nickname}，长按@他` : `查看${member.nickname}的主页，长按@他`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.role === "host" && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}</MentionableAvatarButton>; })}
           <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
         </section>
 
-        <section className="card flex min-h-0 flex-col overflow-hidden lg:order-2">
+        <section className="card relative flex min-h-0 flex-col overflow-hidden lg:order-2">
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">讨论、正式提问、主持人回复和线索会实时同步</p></div>
           <div ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4" onScroll={updateMessagesScrollPosition}>
             {snapshot.messagesHasMore && <button className="mx-auto block rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-blue-50 disabled:opacity-50" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
@@ -899,12 +1121,14 @@ export default function OnlineSoupRoomPage() {
                 key={message.id}
                 className={`scroll-mt-24 rounded-2xl transition duration-500 ${highlightedMessageId === message.id ? "bg-violet-100/80 ring-2 ring-violet-400 ring-offset-4" : ""}`}
               >
-                <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={isHost} onAnswer={answer} onRecall={recallMessage} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
+                <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
               </div>;
             })}
             <div ref={bottomRef} />
           </div>
-          {canDiscuss && <div className="shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
+          {canDiscuss && <div className="relative shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
+            {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-40 border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-bold text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} /></span></span></button>)}</div></div>}
+            {replyingTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-2"><Reply size={16} className="shrink-0 text-primary" /><p className="min-w-0 flex-1 truncate text-xs text-muted"><span className="font-bold text-primary">回复 {replyingTo.senderName ?? "已注销用户"}：</span>{onlineMessagePreview(replyingTo)}</p><button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-white hover:text-ink" onClick={() => setReplyingTo(null)} aria-label="取消回复"><X size={16} /></button></div>}
             <div className="flex items-end gap-1">
               {!isHost && <div className="relative shrink-0">
                 {showQuestionModeGuide && <div className="question-mode-guide absolute bottom-[calc(100%+14px)] left-0 z-50 w-56 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
@@ -929,7 +1153,7 @@ export default function OnlineSoupRoomPage() {
                   <ArrowRightLeft size={14} className="shrink-0 transition-transform duration-200 group-hover:rotate-180" />
                 </button>
               </div>}
-              <textarea ref={messageInputRef} className="field room-message-input min-w-0 flex-1 resize-none" rows={1} maxLength={1000} value={content} onChange={(e) => setContent(e.target.value)} onFocus={() => setStickersOpen(false)} placeholder={isHost ? "主持人发言…" : mode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(); } }} />
+              <textarea ref={messageInputRef} className="field room-message-input min-w-0 flex-1 resize-none" rows={1} maxLength={1000} value={content} onChange={(event) => { setContent(event.target.value); const cursor = event.target.selectionStart ?? event.target.value.length; setCursorPosition(cursor); if (stickersOpen && activeMentionAt(event.target.value, cursor)) setStickersOpen(false); }} onFocus={() => { setStickersOpen(false); isNearMessagesBottom.current = true; window.requestAnimationFrame(() => scrollToLatestMessage("auto")); }} onClick={(event) => setCursorPosition(event.currentTarget.selectionStart ?? content.length)} onKeyUp={(event) => setCursorPosition(event.currentTarget.selectionStart ?? content.length)} placeholder={isHost ? "主持人发言…" : mode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} />
               <ChatComposerIconButton tone={stickersOpen ? "active" : "neutral"} onClick={() => { if (!stickersOpen) messageInputRef.current?.blur(); setStickersOpen((open) => !open); setHostActionsOpen(false); }} aria-label="表情包" title="表情包"><Smile size={23} /></ChatComposerIconButton>
               <ChatComposerIconButton tone="send" disabled={sending || (mode === "question" && !canQuestion)} onClick={sendMessage} aria-label="发送" title="发送"><Send size={22} /></ChatComposerIconButton>
             </div>
@@ -939,7 +1163,7 @@ export default function OnlineSoupRoomPage() {
       </main>
 
       {showScrollToLatest && <button
-        className={`fixed bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 grid h-12 w-12 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${isHost ? "right-[4.25rem]" : "right-3"} ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`}
+        className={`fixed bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 grid h-12 w-12 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 lg:bottom-6 ${isHost ? "right-[4.25rem] lg:!right-20" : "right-3 lg:!right-6"} ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`}
         onClick={() => scrollToLatestMessage()}
         aria-label="滚动到最新消息"
         title="滚动到最新消息"
@@ -1020,7 +1244,7 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
   return <button className={`group relative grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-full border px-1 text-center text-[12px] font-black leading-[1.25] ring-1 ring-white/80 transition duration-200 hover:-translate-y-1 hover:scale-[1.03] active:translate-y-0 active:scale-95 ${tones[tone]}`} onClick={onClick} aria-label={label} title={label}><span className="pointer-events-none absolute inset-1 rounded-full border border-white/80" /><span className="pointer-events-none absolute inset-0 grid place-items-center opacity-[0.12] transition duration-200 group-hover:scale-110 group-hover:opacity-[0.18]">{icon}</span><span className="relative drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]">{lines.map((line) => <span className="block" key={line}>{line}</span>)}</span></button>;
 }
 
-const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, onAnswer, onRecall, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRecall: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
+const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, canReply, onAnswer, onRecall, onReply, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
@@ -1045,18 +1269,18 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
         : "border-line bg-white text-ink shadow-sm";
   return (
     <div className={`flex items-start gap-2.5 ${mine ? "flex-row-reverse" : ""}`}>
-      <button
-        type="button"
+      <MentionableAvatarButton
+        canMention={Boolean(message.senderId && message.senderId !== currentUserId)}
+        onMention={() => message.senderId && onMention(message.senderId, message.senderName ?? "用户")}
+        onOpen={() => message.senderId && onOpenUser(message.senderId)}
         className={`relative mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-full ring-2 ring-white transition active:scale-95 ${host ? "bg-amber-100 text-amber-700 shadow-[0_0_0_2px_#fbbf24]" : "bg-blue-100 text-primary shadow-sm"}`}
-        disabled={!message.senderId}
-        onClick={() => message.senderId && onOpenUser(message.senderId)}
-        aria-label={message.senderId ? `查看${message.senderName ?? "用户"}的主页` : "未知用户"}
+        ariaLabel={message.senderId ? `查看${message.senderName ?? "用户"}的主页，长按@他` : "未知用户"}
       >
         {message.senderAvatar
           ? <img className="h-10 w-10 rounded-full object-cover" src={message.senderAvatar} alt="" />
           : <span className="text-sm font-black">{message.senderName?.slice(0, 1) ?? "?"}</span>}
         {host && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={15} />}
-      </button>
+      </MentionableAvatarButton>
       <div className={`flex min-w-0 max-w-[78%] flex-col ${question ? "w-full max-w-[84%]" : ""} ${mine ? "items-end" : "items-start"}`}>
         <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] font-bold text-muted ${mine ? "flex-row-reverse" : ""}`}>
           <span className="max-w-28 truncate text-ink">{message.senderName ?? "未知用户"}</span>
@@ -1066,15 +1290,19 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
           {question && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-black text-violet-700"><MessageCircle size={11} />正式提问 #{message.questionNumber}</span>}
         </div>
         <MessageActionMenu
-          actions={canRecall ? [{ label: "撤回", tone: "danger", availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => onRecall(message) }] : []}
+          actions={[
+            ...(canReply ? [{ label: "回复", onSelect: () => onReply(message) }] : []),
+            ...(canRecall ? [{ label: "撤回", tone: "danger" as const, availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => onRecall(message) }] : [])
+          ]}
           className="max-w-full"
         >
           <div className={`max-w-full rounded-2xl border px-3.5 py-2.5 text-sm leading-6 ${mine ? "rounded-br-md" : "rounded-bl-md"} ${bubbleTone}`}>
+            {message.replyTo && <OnlineReplyQuote reply={message.replyTo} mine={mine || host || question} onLocate={() => void onLocate(message.replyTo!.id)} />}
             {message.type === "sticker"
               ? sticker
                 ? <img className="h-28 w-28 object-contain sm:h-32 sm:w-32" src={sticker.animatedUrl} alt={sticker.text} loading="lazy" decoding="async" />
                 : <span className={`inline-block rounded-xl px-3 py-2 text-sm ${host ? "bg-white/20 text-white" : "bg-slate-100 text-muted"}`}>表情已下架</span>
-              : <p className="whitespace-pre-wrap break-words">{message.content}</p>}
+              : <p className="whitespace-pre-wrap break-words"><OnlineMessageText message={message} currentUserId={currentUserId} /></p>}
           </div>
         </MessageActionMenu>
         {question && (
@@ -1113,6 +1341,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
   previous.message === next.message
   && previous.currentUserId === next.currentUserId
   && previous.isHost === next.isHost
+  && previous.canReply === next.canReply
   && previous.soupId === next.soupId
   && previous.stickers === next.stickers
 ));

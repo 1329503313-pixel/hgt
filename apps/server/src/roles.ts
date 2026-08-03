@@ -22,3 +22,7 @@ export function canViewAllSoupContentRole(role: unknown) {
 export function hasUnlimitedSoupPublishingRole(role: unknown) {
   return isBackofficeAdminRole(role) || role === "vip";
 }
+
+export function canEnableAiGameRole(role: unknown) {
+  return isBackofficeAdminRole(role) || role === "vip";
+}

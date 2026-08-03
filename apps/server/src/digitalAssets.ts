@@ -906,7 +906,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
   app.get("/api/asset-store/packs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-    res.setHeader("Cache-Control", "private, max-age=10, stale-while-revalidate=30");
+    res.setHeader("Cache-Control", "private, no-store");
     const taskDate = beijingTaskDate();
     const [userRows, packs, pityRows, usageRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
@@ -958,7 +958,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const usage = usageRows[0];
     const userRow = userRows[0];
     const ownedStarLevels = new Map(ownedRows.map((row: mysql.RowDataPacket) => [String(row.card_id), Number(row.star_level)]));
-    res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
+    res.setHeader("Cache-Control", "private, no-store");
     res.json({
       balance: Number(userRow?.shell_balance ?? 0),
       pack: {

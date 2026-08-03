@@ -97,6 +97,7 @@ export type SoupDetail = SoupSummary & {
   supplementalBottoms: string[] | null;
   manual: string | null;
   enableAiGame: boolean;
+  canConfigureAiGame: boolean;
   aiPrompt: string | null;
   keyFacts: KeyFact[] | null;
   keyFactsCustomized: boolean;
@@ -131,6 +132,24 @@ export type ViewRequestItem = {
   createdAt: string;
   handledAt: string | null;
   handledBy: string | null;
+};
+
+export type RankingRewardSettlementDetail = {
+  id: string;
+  periodType: "weekly" | "monthly";
+  periodLabel: string;
+  periodStart: string;
+  periodEnd: string;
+  completedAt: string;
+  grants: Array<{
+    board: "achievement" | "level" | "collection" | "charm" | "generosity" | "draws";
+    boardLabel: string;
+    rank: number;
+    metricValue: number;
+    reward:
+      | { type: "currency"; experience: number; shell: number }
+      | { type: "gift"; giftName: string; quantity: number; creditedQuantity: number; overflowQuantity: number; overflowShell: number };
+  }>;
 };
 
 export type AccountUser = PublicUser & {
@@ -442,6 +461,17 @@ export type OnlineSoupMessage = {
   questionNumber: number | null;
   answer: OnlineSoupAnswer | null;
   targetMessageId: string | null;
+  mentions: Array<{ userId: string; nickname: string }>;
+  replyTo: {
+    id: string;
+    sequence: string;
+    senderId: string | null;
+    senderName: string | null;
+    type: "discussion" | "question" | "host" | "sticker";
+    content: string;
+    stickerId: string | null;
+    recalledAt: string | null;
+  } | null;
   createdAt: string;
   updatedAt: string;
   recalledAt: string | null;

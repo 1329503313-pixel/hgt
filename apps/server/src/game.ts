@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import { createHash } from "crypto";
 import { pool } from "./db.js";
 import { awardShellTask } from "./shellCurrency.js";
-import { canViewAllSoupContentRole, type UserRole } from "./roles.js";
+import { canEnableAiGameRole, canViewAllSoupContentRole, type UserRole } from "./roles.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
 
 import { config } from "./config.js";
@@ -476,7 +476,13 @@ ${candidates.map((fact) => `[${fact.id}] ${fact.content}`).join("\n")}
 // ---------- 获取汤底数据 ----------
 async function getSoupGameData(soupId: string): Promise<GameSoupData | null> {
   const [rows] = await pool.query<any[]>(
-    "SELECT surface, bottom, host_manual, supplemental_surfaces, supplemental_bottoms, key_facts, ai_prompt, creator_id, is_surface_public, enable_ai_game, review_status FROM soups WHERE id = ? LIMIT 1", [soupId]
+    `SELECT s.surface, s.bottom, s.host_manual, s.supplemental_surfaces, s.supplemental_bottoms,
+      s.key_facts, s.ai_prompt, s.creator_id, s.is_surface_public, s.enable_ai_game, s.review_status,
+      creator.role AS creator_role
+     FROM soups s
+     INNER JOIN users creator ON creator.id = s.creator_id
+     WHERE s.id = ? LIMIT 1`,
+    [soupId]
   );
   if (rows.length === 0) return null;
   return {
@@ -489,7 +495,7 @@ async function getSoupGameData(soupId: string): Promise<GameSoupData | null> {
     aiPrompt: (rows[0].ai_prompt as string) || null,
     creatorId: String(rows[0].creator_id),
     isSurfacePublic: Boolean(Number(rows[0].is_surface_public)),
-    enableAiGame: Boolean(Number(rows[0].enable_ai_game)),
+    enableAiGame: Boolean(Number(rows[0].enable_ai_game)) && canEnableAiGameRole(rows[0].creator_role),
     reviewStatus: String(rows[0].review_status ?? "approved"),
   };
 }

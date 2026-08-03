@@ -16,6 +16,7 @@ import { GiftMessageCard } from "../components/GiftMessageCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
+import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
 
 type CircleState = {
   circle: Omit<CircleSummary, "isJoined" | "latestMessage">;
@@ -34,59 +35,6 @@ function Avatar({ avatar, nickname, online, size = "h-10 w-10" }: { avatar: stri
       </span>
       {online && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
     </span>
-  );
-}
-
-function MentionableAvatarButton({ canMention, onMention, onOpen, ariaLabel, children }: {
-  canMention: boolean;
-  onMention: () => void;
-  onOpen: () => void;
-  ariaLabel: string;
-  children: React.ReactNode;
-}) {
-  const timerRef = useRef<number | null>(null);
-  const longPressedRef = useRef(false);
-  const cancelTimer = () => {
-    if (timerRef.current != null) window.clearTimeout(timerRef.current);
-    timerRef.current = null;
-  };
-  useEffect(() => () => {
-    if (timerRef.current != null) window.clearTimeout(timerRef.current);
-  }, []);
-  return (
-    <button
-      type="button"
-      className={canMention ? "mention-avatar-trigger" : undefined}
-      aria-label={ariaLabel}
-      onPointerDown={() => {
-        longPressedRef.current = false;
-        if (!canMention) return;
-        cancelTimer();
-        timerRef.current = window.setTimeout(() => {
-          longPressedRef.current = true;
-          onMention();
-        }, 550);
-      }}
-      onPointerUp={cancelTimer}
-      onPointerCancel={cancelTimer}
-      onPointerLeave={cancelTimer}
-      onContextMenu={(event) => {
-        if (canMention) event.preventDefault();
-      }}
-      onDragStart={(event) => {
-        if (canMention) event.preventDefault();
-      }}
-      onClick={(event) => {
-        if (longPressedRef.current) {
-          event.preventDefault();
-          longPressedRef.current = false;
-          return;
-        }
-        onOpen();
-      }}
-    >
-      {children}
-    </button>
   );
 }
 

@@ -2,6 +2,7 @@ export function parentRoute(pathname: string) {
   const path = pathname.replace(/\/+$/, "") || "/";
 
   if (/^\/messages\/notices\/[^/]+$/.test(path)) return "/messages/notices";
+  if (/^\/messages\/ranking-rewards\/[^/]+$/.test(path)) return "/messages/system";
   if (/^\/messages\/chat\/[^/]+$/.test(path)) return "/messages";
   if (/^\/messages\/(system|interactions|notifications|requests|notices)$/.test(path)) return "/messages";
   if (path === "/messages") return "/";

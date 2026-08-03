@@ -13,6 +13,7 @@ import { canViewAllSoupContentRole, isSuperAdminRole, type UserRole } from "./ro
 import { parseGiftMessage } from "./gifts.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
 import { buildAnswerChangeNotice, onlineSoupAnswerValues, type OnlineSoupAnswerValue } from "./onlineSoupAnswerChange.js";
+import { finalizeOnlineSoupRoundPanelPage } from "./onlineSoupRoundPanel.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -313,6 +314,7 @@ function lobbyRoom(row: mysql.RowDataPacket) {
 
 function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
   const recalledAt = iso(row.recalled_at);
+  const replyRecalledAt = iso(row.reply_recalled_at);
   return {
     id: String(row.id),
     sequence: String(row.message_sequence),
@@ -335,6 +337,17 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     questionNumber: row.question_number == null ? null : Number(row.question_number),
     answer: row.answer ? String(row.answer) : null,
     targetMessageId: row.target_message_id ? String(row.target_message_id) : null,
+    mentions: recalledAt ? [] : jsonList<{ userId: string; nickname: string }>(row.mentions_json),
+    replyTo: row.reply_id ? {
+      id: String(row.reply_id),
+      sequence: String(row.reply_sequence),
+      senderId: row.reply_sender_id ? String(row.reply_sender_id) : null,
+      senderName: row.reply_sender_name ? String(row.reply_sender_name) : null,
+      type: String(row.reply_message_type),
+      content: replyRecalledAt ? "" : String(row.reply_content ?? ""),
+      stickerId: row.reply_sticker_id ? String(row.reply_sticker_id) : null,
+      recalledAt: replyRecalledAt
+    } : null,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     recalledAt
@@ -355,11 +368,17 @@ async function roomMessagePage(room: mysql.RowDataPacket, before?: string, limit
        sender_lb.name AS sender_special_badge_name, sender_lb.tier AS sender_special_badge_tier,
        r.soup_id AS message_soup_id, r.status AS message_round_status,
        r.published_bottom_indices AS message_published_bottom_indices,
-       ms.supplemental_bottoms AS message_supplemental_bottoms
+       ms.supplemental_bottoms AS message_supplemental_bottoms,
+       reply.id AS reply_id, reply.message_sequence AS reply_sequence,
+       reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_name,
+       reply.message_type AS reply_message_type, reply.content AS reply_content,
+       reply.sticker_id AS reply_sticker_id, reply.recalled_at AS reply_recalled_at
      FROM online_soup_messages m LEFT JOIN users u ON u.id = m.sender_id
      LEFT JOIN legendary_badges sender_lb ON u.equipped_badge_key = CONCAT('legendary:', sender_lb.id)
      LEFT JOIN online_soup_rounds r ON r.id = m.round_id
      LEFT JOIN soups ms ON ms.id = r.soup_id
+     LEFT JOIN online_soup_messages reply ON reply.id = m.reply_to_message_id AND reply.room_id = m.room_id
+     LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
      WHERE m.room_id = ? ${beforeClause} ${afterClause}
      ORDER BY m.message_sequence ${after ? "ASC" : "DESC"} LIMIT ?`,
     params
@@ -774,7 +793,7 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
   if (!context.room.current_round_id) {
-    return res.json({ questions: [], hasMore: false, nextCursor: null });
+    return res.json({ roundId: null, questions: [], hasMore: false, nextCursor: null });
   }
   const parsed = z.object({
     after: z.string().regex(/^\d+$/).optional(),
@@ -794,10 +813,10 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
      ORDER BY m.message_sequence ASC LIMIT ?`,
     params
   );
-  const hasMore = rows.length > parsed.data.limit;
-  if (hasMore) rows.pop();
+  const page = finalizeOnlineSoupRoundPanelPage(rows, parsed.data.limit, (row) => row.message_sequence);
   res.json({
-    questions: rows.map((row) => ({
+    roundId: String(context.room.current_round_id),
+    questions: page.items.map((row) => ({
       id: String(row.id),
       sequence: String(row.message_sequence),
       number: Number(row.question_number ?? 0),
@@ -812,8 +831,44 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
       },
       createdAt: iso(row.created_at)
     })),
-    hasMore,
-    nextCursor: hasMore && rows.length ? String(rows[rows.length - 1].message_sequence) : null
+    hasMore: page.hasMore,
+    nextCursor: page.nextCursor
+  });
+});
+
+router.get("/rooms/:roomId/clues", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!context.room.current_round_id) {
+    return res.json({ roundId: null, clues: [], hasMore: false, nextCursor: null });
+  }
+  const parsed = z.object({
+    after: z.string().regex(/^\d+$/).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(100)
+  }).safeParse(req.query);
+  if (!parsed.success) return fail(res, 400, "线索游标不正确");
+  const params: Array<string | number> = [String(context.room.current_round_id)];
+  const afterClause = parsed.data.after ? "AND message_sequence > ?" : "";
+  if (parsed.data.after) params.push(parsed.data.after);
+  params.push(parsed.data.limit + 1);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, message_sequence, content, created_at
+     FROM online_soup_messages
+     WHERE round_id = ? AND message_type = 'clue' ${afterClause}
+     ORDER BY message_sequence ASC LIMIT ?`,
+    params
+  );
+  const page = finalizeOnlineSoupRoundPanelPage(rows, parsed.data.limit, (row) => row.message_sequence);
+  res.json({
+    roundId: String(context.room.current_round_id),
+    clues: page.items.map((row) => ({
+      id: String(row.id),
+      sequence: String(row.message_sequence),
+      content: String(row.content),
+      createdAt: iso(row.created_at)
+    })),
+    hasMore: page.hasMore,
+    nextCursor: page.nextCursor
   });
 });
 
@@ -1035,8 +1090,17 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
   const parsed = z.discriminatedUnion("type", [
-    z.object({ type: z.enum(["discussion", "question"]), content: z.string().trim().min(1).max(1000) }),
-    z.object({ type: z.literal("sticker"), stickerId: z.string().trim().min(1).max(64) })
+    z.object({
+      type: z.enum(["discussion", "question"]),
+      content: z.string().trim().min(1).max(1000),
+      mentionedUserIds: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+      replyToMessageId: z.string().trim().min(1).max(64).optional()
+    }),
+    z.object({
+      type: z.literal("sticker"),
+      stickerId: z.string().trim().min(1).max(64),
+      replyToMessageId: z.string().trim().min(1).max(64).optional()
+    })
   ]).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
   const sticker = parsed.data.type === "sticker" ? getSticker(parsed.data.stickerId) : null;
@@ -1053,17 +1117,54 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   let activitySequence = "0";
   try {
     await connection.beginTransaction();
+    if (parsed.data.replyToMessageId) {
+      const [[replyTarget]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT id FROM online_soup_messages
+         WHERE id = ? AND room_id = ? AND recalled_at IS NULL
+           AND message_type IN ('discussion','question','host','sticker')
+         LIMIT 1`,
+        [parsed.data.replyToMessageId, context.room.id]
+      );
+      if (!replyTarget) {
+        await connection.rollback();
+        return fail(res, 400, "被回复的消息不存在、已撤回或不属于当前房间");
+      }
+    }
+    const mentionedUserIds = parsed.data.type === "sticker"
+      ? []
+      : [...new Set(parsed.data.mentionedUserIds ?? [])].filter((id) => id !== context.user.id);
+    const messageContent = parsed.data.type === "sticker" ? "" : parsed.data.content;
+    let mentions: Array<{ userId: string; nickname: string }> = [];
+    if (mentionedUserIds.length) {
+      const [mentionedMembers] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT m.user_id AS id, u.nickname
+         FROM online_soup_members m JOIN users u ON u.id = m.user_id
+         WHERE m.room_id = ? AND m.is_active = 1 AND m.user_id IN (?)`,
+        [context.room.id, mentionedUserIds]
+      );
+      if (mentionedMembers.length !== mentionedUserIds.length) {
+        await connection.rollback();
+        return fail(res, 400, "被@的用户不在当前房间");
+      }
+      mentions = mentionedMembers.map((member) => ({ userId: String(member.id), nickname: String(member.nickname) }));
+      if (mentions.some((mention) => !messageContent.includes(`@${mention.nickname}`))) {
+        await connection.rollback();
+        return fail(res, 400, "消息正文缺少被@用户的完整昵称");
+      }
+    }
     if (parsed.data.type === "question") {
       await connection.query("UPDATE online_soup_rounds SET question_count = LAST_INSERT_ID(question_count + 1) WHERE id = ?", [context.room.current_round_id]);
       const [[row]] = await connection.query<mysql.RowDataPacket[]>("SELECT question_count FROM online_soup_rounds WHERE id = ?", [context.room.current_round_id]);
       questionNumber = Number(row.question_count);
     }
     const type = parsed.data.type === "discussion" && context.user.id === context.room.host_id ? "host" : parsed.data.type;
-    const content = parsed.data.type === "sticker" ? "" : parsed.data.content;
+    const content = messageContent;
     const id = nanoid();
     await connection.query(
-      "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content, sticker_id, question_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, context.room.id, context.room.current_round_id, context.user.id, type, content, sticker?.id ?? null, questionNumber]
+      `INSERT INTO online_soup_messages
+       (id, room_id, round_id, sender_id, message_type, content, sticker_id, question_number, mentions_json, reply_to_message_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, context.room.id, context.room.current_round_id, context.user.id, type, content, sticker?.id ?? null, questionNumber, mentions.length ? JSON.stringify(mentions) : null, parsed.data.replyToMessageId ?? null]
     );
     activitySequence = await recordRoomActivity(context.room.id, parsed.data.type === "question" ? "progress" : "chat", context.user.id, id, connection);
     await connection.commit();
@@ -1112,7 +1213,7 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
     }
     const [result] = await connection.query<mysql.ResultSetHeader>(
       `UPDATE online_soup_messages
-       SET content = '', sticker_id = NULL, recalled_at = CURRENT_TIMESTAMP
+       SET content = '', sticker_id = NULL, mentions_json = NULL, recalled_at = CURRENT_TIMESTAMP
        WHERE id = ? AND room_id = ? AND sender_id = ? AND recalled_at IS NULL
          AND created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE)
          AND (message_type <> 'question' OR answer IS NULL)`,

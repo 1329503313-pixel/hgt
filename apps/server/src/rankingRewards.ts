@@ -5,6 +5,7 @@ import { creditGiftInventory } from "./giftInventory.js";
 import { MAX_EXPERIENCE } from "./levelSystem.js";
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
 import { resolveRewardGift, type RewardGiftBindingKey } from "./rewardGiftBindings.js";
+import { rankingRewardNotificationSummary } from "./rankingRewardNotifications.js";
 
 export type RankingRewardPeriod = "weekly" | "monthly";
 export type RankingRewardBoard = "achievement" | "level" | "collection" | "charm" | "generosity" | "draws";
@@ -16,7 +17,7 @@ export type RankingReward = CurrencyReward | GiftReward;
 const BEIJING_OFFSET_MS = 8 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 const BOARD_ORDER: RankingRewardBoard[] = ["achievement", "level", "collection", "charm", "generosity", "draws"];
-const BOARD_LABELS: Record<RankingRewardBoard, string> = {
+export const RANKING_REWARD_BOARD_LABELS: Record<RankingRewardBoard, string> = {
   achievement: "成就榜",
   level: "等级榜",
   collection: "收藏榜",
@@ -252,13 +253,6 @@ async function rankingStandings(
   };
 }
 
-function rewardText(reward: RankingReward, actualExperience: number, actualShell: number, overflowText = "") {
-  if (reward.type === "currency") {
-    return `经验 +${actualExperience}、贝壳 +${actualShell}`;
-  }
-  return `礼物“${reward.giftName}”×${reward.quantity}${overflowText}`;
-}
-
 async function settlePeriod(
   connection: mysql.PoolConnection,
   period: RankingRewardPeriod,
@@ -319,7 +313,6 @@ async function settlePeriod(
       let giftId: string | null = null;
       let giftName: string | null = null;
       let giftQuantity = 0;
-      let overflowText = "";
 
       if (reward.type === "currency") {
         actualExperience = Math.max(0, Math.min(reward.experience, MAX_EXPERIENCE - balance.experience));
@@ -349,7 +342,7 @@ async function settlePeriod(
               actualShell,
               balance.shell,
               grantId,
-              `${period === "weekly" ? "7日" : "30日"}${BOARD_LABELS[board]}第${standing.rank}名奖励`,
+              `${period === "weekly" ? "7日" : "30日"}${RANKING_REWARD_BOARD_LABELS[board]}第${standing.rank}名奖励`,
               `ranking-reward:shell:${grantId}`
             ]
           );
@@ -370,12 +363,9 @@ async function settlePeriod(
           idempotencyKey: `ranking-gift:${grantId}`,
           relatedType: "ranking_reward",
           relatedId: grantId,
-          remark: `${period === "weekly" ? "7日" : "30日"}${BOARD_LABELS[board]}第${standing.rank}名奖励`
+          remark: `${period === "weekly" ? "7日" : "30日"}${RANKING_REWARD_BOARD_LABELS[board]}第${standing.rank}名奖励`
         });
         balance.shell = inventory.shellBalance;
-        if (inventory.overflowQuantity > 0) {
-          overflowText = `；其中 ${inventory.overflowQuantity} 个超出库存上限，已折算为 ${inventory.overflowShell} 贝壳`;
-        }
       }
 
       await connection.query(
@@ -400,16 +390,25 @@ async function settlePeriod(
           giftQuantity
         ]
       );
+    }
+
+    const boardCounts = new Map<string, number>();
+    for (const item of planned) {
+      if (!balances.has(item.standing.userId)) continue;
+      boardCounts.set(item.standing.userId, (boardCounts.get(item.standing.userId) ?? 0) + 1);
+    }
+    for (const [userId, boardCount] of boardCounts) {
+      const notification = rankingRewardNotificationSummary(period, boardCount);
       await connection.query(
         `INSERT INTO notifications (id, user_id, type, title, content, related_id, actor_id)
          VALUES (?, ?, 'ranking_reward', ?, ?, ?, ?)`,
         [
           nanoid(),
-          standing.userId,
-          `${period === "weekly" ? "7日" : "30日"}排行榜奖励`,
-          `恭喜你获得用户榜·${BOARD_LABELS[board]}第 ${standing.rank} 名，奖励${rewardText(reward, actualExperience, actualShell, overflowText)}。`,
-          grantId,
-          standing.userId
+          userId,
+          notification.title,
+          notification.content,
+          settlementId,
+          userId
         ]
       );
     }

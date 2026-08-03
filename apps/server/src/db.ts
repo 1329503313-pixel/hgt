@@ -7,6 +7,10 @@ import { BANNER_MAX_BYTES, optimizeBannerImage, storedBannerImageBytes } from ".
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
 import { canonicalConversationUserIds } from "./conversations.js";
 import { generateInviteCode } from "./inviteCodes.js";
+import {
+  mergedRankingRewardNotificationReadState,
+  rankingRewardNotificationSummary
+} from "./rankingRewardNotifications.js";
 
 export const pool = mysql.createPool({
   ...config.db,
@@ -19,6 +23,103 @@ export const pool = mysql.createPool({
 });
 
 export const db = drizzle(pool);
+
+const RANKING_REWARD_NOTIFICATION_SUMMARY_MIGRATION = "ranking-reward-notification-summary-v1";
+
+async function migrateRankingRewardNotifications() {
+  const [[completed]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+    [RANKING_REWARD_NOTIFICATION_SUMMARY_MIGRATION]
+  );
+  if (completed) return;
+
+  const connection = await pool.getConnection();
+  let lockAcquired = false;
+  try {
+    const [[lockRow]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT GET_LOCK(?, 60) AS acquired",
+      [RANKING_REWARD_NOTIFICATION_SUMMARY_MIGRATION]
+    );
+    lockAcquired = Number(lockRow?.acquired) === 1;
+    if (!lockAcquired) throw new Error("RANKING_REWARD_NOTIFICATION_MIGRATION_LOCK_TIMEOUT");
+    const [[alreadyCompleted]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+      [RANKING_REWARD_NOTIFICATION_SUMMARY_MIGRATION]
+    );
+    if (alreadyCompleted) return;
+    await connection.beginTransaction();
+    const [groups] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT settlements.id AS settlement_id, settlements.period_type, settlements.period_end,
+         settlements.completed_at, grants.user_id, COUNT(*) AS board_count
+       FROM ranking_reward_settlements settlements
+       INNER JOIN ranking_reward_grants grants ON grants.settlement_id = settlements.id
+       GROUP BY settlements.id, settlements.period_type, settlements.period_end,
+         settlements.completed_at, grants.user_id
+       ORDER BY settlements.period_end ASC, settlements.id ASC, grants.user_id ASC`
+    );
+
+    for (const group of groups) {
+      const settlementId = String(group.settlement_id);
+      const userId = String(group.user_id);
+      const [notifications] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT notifications.*
+         FROM notifications
+         LEFT JOIN ranking_reward_grants grants ON grants.id = notifications.related_id
+         WHERE notifications.user_id = ?
+           AND notifications.type = 'ranking_reward'
+           AND (notifications.related_id = ? OR grants.settlement_id = ?)
+         ORDER BY notifications.created_at ASC, notifications.id ASC`,
+        [userId, settlementId, settlementId]
+      );
+      const summary = notifications.find((row) => String(row.related_id) === settlementId) ?? notifications[0];
+      const isRead = mergedRankingRewardNotificationReadState(notifications.map((row) => row.is_read));
+      const { title, content } = rankingRewardNotificationSummary(
+        String(group.period_type) === "weekly" ? "weekly" : "monthly",
+        Number(group.board_count)
+      );
+      const createdAt = notifications[0]?.created_at ?? group.completed_at ?? group.period_end;
+
+      if (summary) {
+        const duplicateIds = notifications
+          .filter((row) => String(row.id) !== String(summary.id))
+          .map((row) => String(row.id));
+        if (duplicateIds.length > 0) {
+          await connection.query(
+            `DELETE FROM notifications WHERE id IN (${duplicateIds.map(() => "?").join(",")})`,
+            duplicateIds
+          );
+        }
+        await connection.query(
+          `UPDATE notifications
+           SET title = ?, content = ?, related_id = ?, actor_id = ?, is_read = ?, created_at = ?
+           WHERE id = ?`,
+          [title, content, settlementId, userId, isRead ? 1 : 0, createdAt, summary.id]
+        );
+      } else {
+        await connection.query(
+          `INSERT INTO notifications
+            (id, user_id, type, title, content, related_id, actor_id, is_read, created_at)
+           VALUES (?, ?, 'ranking_reward', ?, ?, ?, ?, FALSE, ?)`,
+          [nanoid(), userId, title, content, settlementId, userId, createdAt]
+        );
+      }
+    }
+
+    await connection.query(
+      "INSERT INTO app_data_migrations (migration_key) VALUES (?)",
+      [RANKING_REWARD_NOTIFICATION_SUMMARY_MIGRATION]
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    if (lockAcquired) {
+      await connection.query("SELECT RELEASE_LOCK(?)", [RANKING_REWARD_NOTIFICATION_SUMMARY_MIGRATION]).catch(() => undefined);
+    }
+    connection.release();
+  }
+}
 
 async function normalizeConversationPairs() {
   const connection = await pool.getConnection();
@@ -587,6 +688,8 @@ export async function initDatabase() {
       question_number INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
       target_message_id VARCHAR(64) NULL,
+      mentions_json JSON NULL,
+      reply_to_message_id VARCHAR(64) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       recalled_at DATETIME NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -651,6 +754,16 @@ export async function initDatabase() {
     "target_message_id",
     "target_message_id VARCHAR(64) NULL AFTER answer"
   );
+  await ensureColumn(
+    "online_soup_messages",
+    "mentions_json",
+    "mentions_json JSON NULL AFTER target_message_id"
+  );
+  await ensureColumn(
+    "online_soup_messages",
+    "reply_to_message_id",
+    "reply_to_message_id VARCHAR(64) NULL AFTER mentions_json"
+  );
   await ensureIndex(
     "online_soup_messages",
     "idx_online_messages_room_sequence",
@@ -670,6 +783,11 @@ export async function initDatabase() {
     "online_soup_messages",
     "idx_online_messages_target",
     "target_message_id"
+  );
+  await ensureIndex(
+    "online_soup_messages",
+    "idx_online_messages_reply",
+    "reply_to_message_id"
   );
   await ensureIndex(
     "online_soup_members",
@@ -1215,6 +1333,7 @@ export async function initDatabase() {
       CONSTRAINT fk_ranking_reward_grant_gift FOREIGN KEY (gift_id) REFERENCES gifts(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await migrateRankingRewardNotifications();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS gift_sends (
