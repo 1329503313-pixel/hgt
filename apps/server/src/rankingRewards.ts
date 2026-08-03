@@ -73,15 +73,15 @@ export function rankingRewardFor(period: RankingRewardPeriod, board: RankingRewa
   const currencyBoard = board === "level" || board === "charm" || board === "generosity";
   if (currencyBoard) {
     if (period === "weekly") {
-      if (rank === 1) return { type: "currency", experience: 200, shell: 100 };
-      if (rank <= 3) return { type: "currency", experience: 120, shell: 80 };
-      if (rank <= 5) return { type: "currency", experience: 80, shell: 50 };
-      return { type: "currency", experience: 50, shell: 30 };
+      if (rank === 1) return { type: "currency", experience: 100, shell: 50 };
+      if (rank <= 3) return { type: "currency", experience: 60, shell: 30 };
+      if (rank <= 5) return { type: "currency", experience: 40, shell: 20 };
+      return { type: "currency", experience: 30, shell: 15 };
     }
-    if (rank === 1) return { type: "currency", experience: 1000, shell: 500 };
-    if (rank <= 3) return { type: "currency", experience: 600, shell: 400 };
-    if (rank <= 5) return { type: "currency", experience: 400, shell: 250 };
-    return { type: "currency", experience: 250, shell: 150 };
+    if (rank === 1) return { type: "currency", experience: 500, shell: 200 };
+    if (rank <= 3) return { type: "currency", experience: 300, shell: 100 };
+    if (rank <= 5) return { type: "currency", experience: 200, shell: 80 };
+    return { type: "currency", experience: 100, shell: 50 };
   }
   if (period === "weekly") {
     if (rank === 1) return { type: "gift", giftName: "月亮小船", quantity: 1 };
@@ -89,9 +89,9 @@ export function rankingRewardFor(period: RankingRewardPeriod, board: RankingRewa
     if (rank <= 5) return { type: "gift", giftName: "神秘钥匙", quantity: 3 };
     return { type: "gift", giftName: "神秘钥匙", quantity: 2 };
   }
-  if (rank === 1) return { type: "gift", giftName: "深海明珠", quantity: 2 };
-  if (rank <= 3) return { type: "gift", giftName: "深海明珠", quantity: 1 };
-  if (rank <= 5) return { type: "gift", giftName: "月亮小船", quantity: 2 };
+  if (rank === 1) return { type: "gift", giftName: "深海明珠", quantity: 1 };
+  if (rank <= 3) return { type: "gift", giftName: "月亮小船", quantity: 2 };
+  if (rank <= 5) return { type: "gift", giftName: "月亮小船", quantity: 1 };
   return { type: "gift", giftName: "月亮小船", quantity: 1 };
 }
 

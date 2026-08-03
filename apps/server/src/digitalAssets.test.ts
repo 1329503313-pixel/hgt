@@ -34,7 +34,7 @@ test("高品质卡同时重置覆盖的低品质保底", () => {
 });
 
 test("满星重复返还按品质固定", () => {
-  assert.deepEqual(digitalAssetRules.fullStarRefunds, { normal: 2, rare: 4, epic: 8, legend: 30 });
+  assert.deepEqual(digitalAssetRules.fullStarRefunds, { normal: 0, rare: 1, epic: 2, legend: 5 });
 });
 
 test("卡包抽取统计将数据库聚合值转换为前端数字", () => {

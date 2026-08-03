@@ -109,7 +109,7 @@ const COLLECTION_VALUES: Record<Rarity, readonly [number, number, number, number
   epic: [5, 12, 30, 100],
   legend: [15, 40, 120, 360]
 };
-const FULL_STAR_REFUNDS: Record<Rarity, number> = { normal: 2, rare: 4, epic: 8, legend: 30 };
+const FULL_STAR_REFUNDS: Record<Rarity, number> = { normal: 0, rare: 1, epic: 2, legend: 5 };
 const PITY_LIMITS: Record<PityType, number> = { rare: 10, epic: 60, legend: 150 };
 const PACK_TYPE_LABELS: Record<PackType, string> = { permanent: "常驻卡包", limited: "限定卡包", collaboration: "联动卡包" };
 const PUBLIC_PACK_COLUMNS = `id, name, '' AS cover_url, description, pack_story, pack_type,
