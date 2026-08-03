@@ -122,6 +122,9 @@ export type StatsResponse = {
   maxOriginalSoupHeat: number;
   totalCollectionValue: number;
   unlockedCardCount: number;
+  totalDrawCount: number;
+  generosityValue: number;
+  charmValue: number;
   legendaryCardDrawCount: number;
   epicThreeStarCount: number;
   legendThreeStarCount: number;

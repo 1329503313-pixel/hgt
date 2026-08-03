@@ -2,10 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   LEGENDARY_CARD_DRAW_COUNT_SQL,
+  SYSTEM_BADGE_ACHIEVEMENT_POINTS,
   badgeUnlockNotificationContent,
   calculateBadgeShellReward,
   systemBadgeKeysWithPrerequisites
 } from "./badgeRewards.js";
+
+test("抽卡、慷慨和魅力成就使用产品配置的四阶成就点", () => {
+  assert.deepEqual(
+    ["normal", "rare", "epic", "legend"].map((tier) => SYSTEM_BADGE_ACHIEVEMENT_POINTS[`drawLuck:${tier}`]),
+    [10, 20, 50, 150]
+  );
+  assert.deepEqual(
+    ["normal", "rare", "epic", "legend"].map((tier) => SYSTEM_BADGE_ACHIEVEMENT_POINTS[`generosity:${tier}`]),
+    [20, 50, 120, 250]
+  );
+  assert.deepEqual(
+    ["normal", "rare", "epic", "legend"].map((tier) => SYSTEM_BADGE_ACHIEVEMENT_POINTS[`charm:${tier}`]),
+    [30, 100, 200, 500]
+  );
+});
 
 test("徽章贝壳奖励只按首次创建的奖励记录发放", () => {
   assert.equal(calculateBadgeShellReward(150, true, true), 150);

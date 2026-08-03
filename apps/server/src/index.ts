@@ -916,6 +916,9 @@ const SYSTEM_BADGE_ICON_BASE: Record<string, string> = {
   heat: "heat",
   collectionValue: "collection-value",
   cardCollector: "card-collector",
+  drawLuck: "draw-luck",
+  generosity: "generosity",
+  charm: "charm",
   legendCard: "legend-card",
   threeStarEpic: "three-star-epic",
   threeStarLegend: "three-star-legend",
@@ -1355,6 +1358,9 @@ type AchievementStats = {
   maxOriginalSoupHeat: number;
   totalCollectionValue: number;
   unlockedCardCount: number;
+  totalDrawCount: number;
+  generosityValue: number;
+  charmValue: number;
   legendaryCardDrawCount: number;
   epicThreeStarCount: number;
   legendThreeStarCount: number;
@@ -1407,6 +1413,18 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "cardCollector:rare", stat: "unlockedCardCount", target: 100 },
   { key: "cardCollector:epic", stat: "unlockedCardCount", target: 300 },
   { key: "cardCollector:legend", stat: "unlockedCardCount", target: 1_000 },
+  { key: "drawLuck:normal", stat: "totalDrawCount", target: 100 },
+  { key: "drawLuck:rare", stat: "totalDrawCount", target: 1_000 },
+  { key: "drawLuck:epic", stat: "totalDrawCount", target: 3_000 },
+  { key: "drawLuck:legend", stat: "totalDrawCount", target: 10_000 },
+  { key: "generosity:normal", stat: "generosityValue", target: 500 },
+  { key: "generosity:rare", stat: "generosityValue", target: 5_000 },
+  { key: "generosity:epic", stat: "generosityValue", target: 15_000 },
+  { key: "generosity:legend", stat: "generosityValue", target: 50_000 },
+  { key: "charm:normal", stat: "charmValue", target: 1_000 },
+  { key: "charm:rare", stat: "charmValue", target: 10_000 },
+  { key: "charm:epic", stat: "charmValue", target: 50_000 },
+  { key: "charm:legend", stat: "charmValue", target: 250_000 },
   { key: "legendCard:normal", stat: "legendaryCardDrawCount", target: 1 },
   { key: "legendCard:rare", stat: "legendaryCardDrawCount", target: 10 },
   { key: "legendCard:epic", stat: "legendaryCardDrawCount", target: 50 },
@@ -1448,6 +1466,9 @@ const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
   heat: ["热力小子", "炽热瞩目", "狂热巅峰", "登峰造极"],
   collectionValue: ["收藏家", "大收藏家", "收藏之王", "收藏之神"],
   cardCollector: ["卡牌爱好者", "卡牌收集者", "卡牌大师", "袖里乾坤"],
+  drawLuck: ["初试手气", "好运连连", "天命眷顾", "气运之子"],
+  generosity: ["赠人玫瑰", "慷慨之士", "一掷千金", "福泽四方"],
+  charm: ["风姿绰约", "倾国倾城", "风华绝代", "天外飞仙"],
   legendCard: ["传说降临I", "传说降临II", "传说降临III"],
   threeStarEpic: ["金色传说！", "金色传说！", "金色传说！"],
   threeStarLegend: ["炫彩传说！", "炫彩传说！", "炫彩传说！", "炫彩传说！"],
@@ -1501,6 +1522,7 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     [aiCompletionRows],
     maxOriginalSoupHeat,
     [assetSummaryRows],
+    [drawTotalRows],
     [legendaryCardDrawRows],
     [threeStarRows],
     [completePackRows],
@@ -1522,6 +1544,10 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
       `SELECT COALESCE(total_collection_value, 0) AS total_collection_value,
         COALESCE(unlocked_card_count, 0) AS unlocked_card_count
        FROM user_asset_summaries WHERE user_id = ? LIMIT 1`,
+      [userId]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      "SELECT total_draw_count FROM user_asset_draw_totals WHERE user_id = ? LIMIT 1",
       [userId]
     ),
     pool.query<mysql.RowDataPacket[]>(
@@ -1554,7 +1580,7 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
       [userId]
     ),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.shell_balance,
+      `SELECT u.shell_balance, u.generosity_value, u.charm_value,
         COALESCE((SELECT SUM(shell_tx.amount) FROM shell_transactions shell_tx
           WHERE shell_tx.user_id = u.id AND shell_tx.amount > 0), 0) AS total_shell_earned
        FROM users u WHERE u.id = ? LIMIT 1`,
@@ -1577,6 +1603,9 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     maxOriginalSoupHeat,
     totalCollectionValue: Number(assetSummaryRows[0]?.total_collection_value ?? 0),
     unlockedCardCount: Number(assetSummaryRows[0]?.unlocked_card_count ?? 0),
+    totalDrawCount: Number(drawTotalRows[0]?.total_draw_count ?? 0),
+    generosityValue: Number(shellRows[0]?.generosity_value ?? 0),
+    charmValue: Number(shellRows[0]?.charm_value ?? 0),
     legendaryCardDrawCount: Number(legendaryCardDrawRows[0]?.count ?? 0),
     epicThreeStarCount: Number(threeStarRows[0]?.epic_three_star_count ?? 0),
     legendThreeStarCount: Number(threeStarRows[0]?.legend_three_star_count ?? 0),
@@ -6725,7 +6754,10 @@ registerGiftRoutes(app, {
   onOnlineSoupGift: (roomId) => {
     emitOnlineSoupSocketEvent(roomId, "online_soup_changed", { reason: "gift_message" });
   },
-  onCharmChanged: () => rankingsCache.clear()
+  onCharmChanged: (userIds) => {
+    rankingsCache.clear();
+    queueSystemBadgeSync(userIds);
+  }
 });
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

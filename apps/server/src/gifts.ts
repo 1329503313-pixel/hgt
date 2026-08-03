@@ -52,7 +52,7 @@ type GiftRouteDependencies = {
   }) => void;
   onCircleGift: (circleId: string, messageId: string, senderId: string) => Promise<void>;
   onOnlineSoupGift: (roomId: string) => void;
-  onCharmChanged: () => void;
+  onCharmChanged: (userIds: string[]) => void;
 };
 
 const giftWriteSchema = z.object({
@@ -571,7 +571,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     );
     const inventoryQuantity = Number(inventoryRows[0]?.quantity ?? 0);
     if (!duplicate) {
-      onCharmChanged();
+      onCharmChanged([user.id, recipientId]);
       onPrivateGift(recipientId, {
         id: privateMessageId,
         conversationId: privateConversationId,
