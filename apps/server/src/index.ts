@@ -555,6 +555,7 @@ const soupSchema = z.object({
       })
     )
     .max(20)
+    .refine((facts) => facts.length === 0 || facts.reduce((sum, fact) => sum + fact.weight, 0) === 100, "进度关键点权重总和必须为 100")
     .optional()
     .default([]),
   keyFactsCustomized: z.boolean().optional().default(false)
@@ -4714,8 +4715,8 @@ app.post("/api/soups", async (req, res) => {
   if (review.decision === "pending") await recordAdminModuleEvent("approvals");
   res.status(201).json({ id, reviewStatus: review.decision });
 
-  // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
-  if (soup.enableAiGame && !soup.keyFactsCustomized) {
+  // 异步生成进度关键点，并基于作者关键点继续拆分内部原子事实；不阻塞发布响应。
+  if (soup.enableAiGame) {
     splitKeyFactsForSoup(id).catch(() => {});
   }
 
@@ -5104,12 +5105,12 @@ app.put("/api/soups/:id", async (req, res) => {
   if (review.decision === "pending") await recordAdminModuleEvent("approvals");
   res.json({ ok: true, reviewStatus: review.decision });
 
-  // 异步预拆分关键事实点（不阻塞响应）。用户已自定义则跳过
-  if (creatorCanConfigureAiGame && enableAiGame && !keyFactsCustomized) {
+  // 作者前台仍维护进度关键点；内部原子事实由 AI 基于最新关键点异步刷新。
+  if (creatorCanConfigureAiGame && enableAiGame) {
     splitKeyFactsForSoup(req.params.id).catch(() => {});
   } else if (creatorCanConfigureAiGame && !enableAiGame) {
     // 关闭 AI 玩汤时清空缓存
-    pool.query("UPDATE soups SET key_facts = NULL, key_facts_hash = NULL, ai_prompt = NULL, key_facts_customized = 0 WHERE id = ?", [req.params.id]).catch(() => {});
+    pool.query("UPDATE soups SET key_facts = NULL, key_facts_hash = NULL, key_fact_atoms = NULL, key_fact_atoms_hash = NULL, ai_prompt = NULL, key_facts_customized = 0 WHERE id = ?", [req.params.id]).catch(() => {});
   }
 });
 

@@ -16,3 +16,6 @@ test_*.mjs
 hgt.tar.gz
 apps/server/dist/
 .local-backups/
+playwright-report/
+test-results/
+.e2e-artifacts/

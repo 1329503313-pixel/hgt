@@ -1,0 +1,19 @@
+services:
+  mysql-e2e:
+    image: mysql:8.4
+    container_name: hgt-mysql-e2e
+    environment:
+      MYSQL_ROOT_PASSWORD: hgt_e2e_root_password
+      MYSQL_DATABASE: hgt_e2e
+      MYSQL_USER: hgt_e2e
+      MYSQL_PASSWORD: hgt_e2e_password
+    ports:
+      - "127.0.0.1:3307:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uhgt_e2e", "-phgt_e2e_password"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s

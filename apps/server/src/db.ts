@@ -603,9 +603,12 @@ export async function initDatabase() {
       user_id VARCHAR(64) NOT NULL,
       messages JSON NOT NULL,
       revealed_keys JSON NOT NULL,
+      revealed_atoms JSON NULL,
       revealed_supplements JSON NULL,
       content_hash VARCHAR(64) NULL,
       progress INT NOT NULL DEFAULT 0,
+      version INT UNSIGNED NOT NULL DEFAULT 0,
+      status ENUM('active','awaiting_retell','completed') NOT NULL DEFAULT 'active',
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_game_user_soup (soup_id, user_id),
@@ -1568,10 +1571,15 @@ export async function initDatabase() {
     WHERE hit.key_id IS NOT NULL
   `);
   await ensureColumn("game_sessions", "revealed_supplements", "revealed_supplements JSON NULL AFTER revealed_keys");
+  await ensureColumn("game_sessions", "revealed_atoms", "revealed_atoms JSON NULL AFTER revealed_keys");
   await ensureColumn("game_sessions", "content_hash", "content_hash VARCHAR(64) NULL AFTER revealed_supplements");
+  await ensureColumn("game_sessions", "version", "version INT UNSIGNED NOT NULL DEFAULT 0 AFTER progress");
+  await ensureColumn("game_sessions", "status", "status ENUM('active','awaiting_retell','completed') NOT NULL DEFAULT 'active' AFTER version");
   await ensureColumn("soups", "key_facts", "key_facts JSON NULL AFTER enable_ai_game");
   await ensureColumn("soups", "key_facts_hash", "key_facts_hash VARCHAR(64) NULL AFTER key_facts");
   await ensureColumn("soups", "key_facts_customized", "key_facts_customized TINYINT(1) NOT NULL DEFAULT 0 AFTER key_facts_hash");
+  await ensureColumn("soups", "key_fact_atoms", "key_fact_atoms JSON NULL AFTER key_facts_customized");
+  await ensureColumn("soups", "key_fact_atoms_hash", "key_fact_atoms_hash VARCHAR(64) NULL AFTER key_fact_atoms");
   await ensureColumn("soups", "ai_prompt", "ai_prompt TEXT NULL AFTER enable_ai_game");
   await ensureColumn("soups", "review_status", "review_status ENUM('approved','pending','rejected') NOT NULL DEFAULT 'approved' AFTER enable_ai_game");
   await ensureColumn("soups", "review_reason", "review_reason VARCHAR(500) NULL AFTER review_status");
@@ -1579,6 +1587,20 @@ export async function initDatabase() {
   await ensureColumn("soups", "reviewed_at", "reviewed_at DATETIME NULL AFTER review_version");
   await ensureColumn("soups", "reviewed_by", "reviewed_by VARCHAR(64) NULL AFTER reviewed_at");
   await ensureIndex("soups", "idx_soups_review_status_created", "review_status, created_at");
+
+  await pool.query(`
+    UPDATE game_sessions
+    SET status = CASE
+      WHEN progress >= 100 THEN 'completed'
+      WHEN progress >= 90 THEN 'awaiting_retell'
+      ELSE 'active'
+    END
+    WHERE status <> CASE
+      WHEN progress >= 100 THEN 'completed'
+      WHEN progress >= 90 THEN 'awaiting_retell'
+      ELSE 'active'
+    END
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS home_banners (

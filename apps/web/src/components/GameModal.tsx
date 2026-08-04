@@ -215,7 +215,7 @@ export function GameModal({
             <div className="ai-game-progress-track">
               <div style={{ width: `${Math.max(3, state.progress)}%` }} />
             </div>
-            <p>{state.completed ? "真相已经揭晓" : state.progress < 20 ? "继续提问，进度达到 20% 后可获取提示" : "已解锁方向性提示"}</p>
+            <p>{state.completed ? "真相已经揭晓" : state.progress >= 90 ? "已接近真相，请尝试复述完整故事" : state.progress < 20 ? "继续提问，进度达到 20% 后可获取提示" : "已解锁方向性提示"}</p>
           </section>
 
           {(state.revealedSupplements.surfaces.length > 0 || state.revealedSupplements.bottoms.length > 0) && (

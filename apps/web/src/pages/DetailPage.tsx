@@ -273,7 +273,7 @@ export default function DetailPage() {
 
   if (loading) return <main className="mx-auto max-w-6xl px-4 py-20"><DetailSkeleton /></main>;
   if (!soup) return <div className="card p-8 text-center text-sm text-muted">海龟汤不存在</div>;
-  if (showGame) return <GameModal soup={soup} onBack={() => setShowGame(false)} />;
+  if (showGame) return <GameModal soup={soup} onBack={() => { setShowGame(false); triggerRefresh(); }} />;
 
   const hasRadarData = [
     soup.radar.writing, soup.radar.logic, soup.radar.share,

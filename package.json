@@ -15,10 +15,15 @@
     "media:migrate": "npm run media:migrate -w apps/server --",
     "check": "npm run check -w apps/server && npm run check -w apps/web",
     "test": "npm run test -w apps/server",
+    "test:e2e": "node e2e/run-e2e.mjs",
+    "test:e2e:headed": "node e2e/run-e2e.mjs --headed",
+    "test:e2e:install": "playwright install chromium",
+    "test:all": "npm test && npm run test:e2e",
     "db:up": "docker compose up -d mysql",
     "start": "npm run start -w apps/server"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/qrcode": "^1.5.6",
