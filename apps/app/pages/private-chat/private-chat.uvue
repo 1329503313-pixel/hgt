@@ -1,0 +1,89 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading && data.chat == null" class="loading-card"><text>正在加载消息...</text></view>
+    <view v-else-if="data.errorMessage.length > 0 && data.chat == null" class="state-card"><text class="state-title">加载失败</text><text class="state-message">{{ data.errorMessage }}</text><button class="retry-button" @click="reload">重新加载</button></view>
+    <view v-else-if="data.chat != null" class="chat-shell">
+      <view class="chat-header"><AppBackButton @click="goBack" /><view class="header-person" hover-class="pressed" @click="openOtherProfile"><view class="header-avatar"><image v-if="data.chat!.conversation.otherUser.avatar != null" class="avatar" :src="otherAvatar" mode="aspectFill"></image><view v-else class="avatar avatar-placeholder"><text>{{ data.chat!.conversation.otherUser.nickname.substring(0, 1) }}</text></view><view v-if="data.chat!.conversation.otherUser.isOnline" class="online-dot"></view></view><view class="header-copy"><view class="header-identity"><text class="header-name">{{ data.chat!.conversation.otherUser.nickname }}</text><text class="header-level">Lv{{ data.chat!.conversation.otherUser.level }}</text><view v-if="data.chat!.conversation.otherUser.equippedBadge != null" class="header-badge-wrap"><image class="header-badge-icon" :src="otherBadgeUrl" mode="aspectFit"></image><text class="header-badge">{{ data.chat!.conversation.otherUser.equippedBadge!.name }}</text></view></view><text class="header-status" :class="data.chat!.conversation.otherUser.isOnline ? 'online-status' : ''">{{ data.chat!.conversation.otherUser.isOnline ? '在线 · 消息实时送达' : '离线 · 上线后可查看消息' }}</text></view></view></view>
+      <scroll-view class="message-scroll" direction="vertical" :scroll-top="data.scrollTop" @scroll="handleScroll" @scrolltoupper="loadOlder" @scrolltolower="markAtBottom">
+        <view v-if="data.chat!.hasMore" class="older-button" hover-class="pressed" @click="loadOlder"><text>{{ data.loadingOlder ? '加载中...' : '加载更早消息' }}</text></view>
+        <view v-for="message in data.chat!.messages" :key="message.id">
+          <view v-if="message.recalledAt != null" class="recalled"><text class="recalled-text">{{ message.isMine ? '你撤回了一条消息' : data.chat!.conversation.otherUser.nickname + '撤回了一条消息' }}</text></view>
+          <view v-else class="message-row" :class="message.isMine ? 'mine-row' : 'other-row'">
+            <view class="message-avatar">
+              <image v-if="avatarFor(message).length > 0" class="avatar" :src="avatarFor(message)" mode="aspectFill"></image>
+              <view v-else class="avatar avatar-placeholder" :class="message.isMine ? 'mine-avatar' : ''"><text>{{ message.isMine ? myInitial : data.chat!.conversation.otherUser.nickname.substring(0, 1) }}</text></view>
+            </view>
+            <view class="message-body">
+              <image v-if="message.type == 'sticker' && stickerUrl(message).length > 0" class="message-sticker" :src="stickerUrl(message)" mode="aspectFit" @longpress="openRecall(message)"></image>
+              <view v-else-if="message.type == 'sticker'" class="missing-sticker"><text>表情已下架</text></view>
+              <GiftMessageCard v-else-if="message.type == 'gift' && message.giftDisplay != null" :gift-name="message.giftDisplay!.giftName" :icon-url="message.giftDisplay!.iconUrl" :quantity="message.giftDisplay!.quantity" :sender-name="message.giftDisplay!.senderName" :receiver-name="message.giftDisplay!.receiverName" :shell-reward="message.giftDisplay!.shellReward" :charm-reward="message.giftDisplay!.charmReward" />
+              <view v-else class="bubble" :class="message.isMine ? 'mine-bubble' : 'other-bubble'" @longpress="openRecall(message)"><text class="bubble-text" :class="message.isMine ? 'mine-bubble-text' : ''">{{ messagePreview(message) }}</text></view>
+              <text class="time" :class="message.isMine ? 'mine-time' : ''">{{ timeText(message.createdAt) }}</text>
+            </view>
+          </view>
+        </view>
+        <view v-if="data.chat!.messages.length == 0" class="empty-chat"><text>发送第一条消息吧</text></view>
+      </scroll-view>
+      <view v-if="data.showScrollBottom && !data.showStickers" class="scroll-bottom" hover-class="pressed" @click="scrollToBottom"><image class="scroll-bottom-icon" src="/static/messages/chevron-down.png" mode="aspectFit"></image></view>
+      <view v-if="data.errorMessage.length > 0" class="send-error"><text>{{ data.errorMessage }}</text></view>
+      <view class="composer"><input class="composer-input" v-model="data.draft" maxlength="1000" confirm-type="send" placeholder="输入消息" @focus="handleComposerFocus" @blur="keepLatestVisible" @confirm="send" /><view class="icon-button" :class="data.showStickers ? 'icon-button-active' : ''" hover-class="pressed" @click="toggleStickers"><image class="composer-icon" src="/static/messages/smile.png" mode="aspectFit"></image></view><button class="send-button" :class="data.sending || data.draft.trim().length == 0 ? 'send-disabled' : ''" :disabled="data.sending || data.draft.trim().length == 0" @click="send"><text class="send-label">{{ data.sending ? '发送中' : '发送' }}</text></button></view>
+      <StickerKeyboard v-if="data.showStickers" :stickers="data.stickers" :loading="data.stickersLoading" :sending="data.sending" @close="closeStickers" @send="sendSticker" />
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import StickerKeyboard from '@/components/chat/StickerKeyboard.uvue'
+import GiftMessageCard from '@/components/chat/GiftMessageCard.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { ChatResponse, PrivateMessage, StickerAsset, loadChat, loadStickers, markConversationRead, recallPrivateMessage, sendPrivateMessage, sendPrivateSticker } from '@/services/messages.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+
+type ChatData = { id: string, chat: ChatResponse | null, draft: string, stickers: StickerAsset[], stickersLoading: boolean, showStickers: boolean, showScrollBottom: boolean, atBottom: boolean, loading: boolean, reconciling: boolean, loadingOlder: boolean, sending: boolean, scrollTop: number, timerId: number, errorMessage: string }
+const data = reactive({ id: '', chat: null, draft: '', stickers: [], stickersLoading: false, showStickers: false, showScrollBottom: false, atBottom: true, loading: false, reconciling: false, loadingOlder: false, sending: false, scrollTop: 999999, timerId: 0, errorMessage: '' } as ChatData)
+const myInitial = computed((): string => sessionState.user == null || sessionState.user!.nickname.length == 0 ? '我' : sessionState.user!.nickname.substring(0, 1))
+const otherAvatar = computed((): string => data.chat == null ? '' : absoluteApiUrl(data.chat!.conversation.otherUser.avatar))
+const otherBadgeUrl = computed((): string => data.chat == null || data.chat!.conversation.otherUser.equippedBadge == null ? '' : absoluteApiUrl(data.chat!.conversation.otherUser.equippedBadge!.iconUrl))
+function goBack() { uni.navigateBack() }
+function timeText(value: string): string { const date = new Date(value); return date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0') }
+function avatarFor(message: PrivateMessage): string { if (message.isMine) return sessionState.user == null ? '' : absoluteApiUrl(sessionState.user!.avatar); if (data.chat == null) return ''; return absoluteApiUrl(data.chat!.conversation.otherUser.avatar) }
+function openOtherProfile() { if (data.chat != null) uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(data.chat!.conversation.otherUser.id) }) }
+function stickerUrl(message: PrivateMessage): string { if (message.stickerId == null) return ''; const sticker = data.stickers.find((item: StickerAsset): boolean => item.id == message.stickerId); return sticker == null ? '' : absoluteApiUrl(sticker!.animatedUrl) }
+function messagePreview(message: PrivateMessage): string { if (message.type == 'room_invite') return '[玩汤房间邀请]'; if (message.type == 'soup_share') return '[海龟汤分享]'; return message.content }
+function loadStickerData() { if (data.stickersLoading || data.stickers.length > 0) return; data.stickersLoading = true; loadStickers((response) => { const all: StickerAsset[] = []; response.series.forEach((series) => { all.push(...series.stickers) }); data.stickers = all; data.stickersLoading = false }, (error) => { data.stickersLoading = false; data.errorMessage = error.message }) }
+function toggleStickers() { if (data.showStickers) { data.showStickers = false; return }; uni.hideKeyboard(); data.showStickers = true; loadStickerData(); data.scrollTop = data.scrollTop + 1 }
+function closeStickers() { data.showStickers = false }
+function updateBottomPosition() { data.scrollTop = data.scrollTop == 999999 ? 999998 : 999999 }
+function scrollToBottom() { data.atBottom = true; data.showScrollBottom = false; updateBottomPosition(); setTimeout(() => { updateBottomPosition() }, 48) }
+function keepLatestVisible() { if (data.atBottom) scrollToBottom() }
+function handleComposerFocus() { closeStickers(); keepLatestVisible() }
+function markAtBottom() { data.atBottom = true; data.showScrollBottom = false }
+function handleScroll(event: UniScrollEvent) { if (event.detail.deltaY < -2) data.atBottom = false }
+function reload() { if (data.id.length == 0 || data.loading) return; data.loading = true; data.errorMessage = ''; loadStickerData(); loadChat(data.id, '', (response) => { data.chat = response; data.loading = false; scrollToBottom(); markConversationRead(data.id, () => {}, (error) => { data.errorMessage = error.message }) }, (error) => { data.loading = false; data.errorMessage = error.message; if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' }) }) }
+function reconcile() { if (data.id.length == 0 || data.chat == null || data.reconciling || data.sending) return; data.reconciling = true; loadChat(data.id, '', (response) => { if (data.chat != null) { const existingIds: string[] = data.chat!.messages.map((item: PrivateMessage): string => item.id); const incoming = response.messages.filter((item: PrivateMessage): boolean => !existingIds.includes(item.id)); if (incoming.length > 0) { data.chat!.messages = data.chat!.messages.concat(incoming); if (data.atBottom) scrollToBottom(); else data.showScrollBottom = true }; data.chat!.conversation = response.conversation }; data.reconciling = false }, (error) => { data.reconciling = false; data.errorMessage = error.message }) }
+function stopReconcile() { if (data.timerId != 0) { clearInterval(data.timerId); data.timerId = 0 } }
+function startReconcile() { stopReconcile(); data.timerId = setInterval(() => { reconcile() }, 5000) }
+function loadOlder() { if (data.chat == null || !data.chat!.hasMore || data.loadingOlder || data.chat!.nextCursor == null) return; data.loadingOlder = true; const cursor = data.chat!.nextCursor!; loadChat(data.id, cursor, (response) => { if (data.chat != null) { data.chat!.messages = response.messages.concat(data.chat!.messages); data.chat!.hasMore = response.hasMore; data.chat!.nextCursor = response.nextCursor }; data.loadingOlder = false }, (error) => { data.loadingOlder = false; data.errorMessage = error.message }) }
+function send() { const content = data.draft.trim(); if (content.length == 0 || data.sending || data.chat == null) return; data.sending = true; data.errorMessage = ''; sendPrivateMessage(data.id, content, (response) => { if (response.message != null && data.chat != null) data.chat!.messages.push(response.message!); data.draft = ''; data.sending = false; scrollToBottom() }, (error) => { data.sending = false; data.errorMessage = error.message }) }
+function sendSticker(sticker: StickerAsset) { if (data.sending || data.chat == null) return; data.showStickers = false; data.sending = true; data.errorMessage = ''; sendPrivateSticker(data.id, sticker.id, (response) => { if (response.message != null && data.chat != null) data.chat!.messages.push(response.message!); data.sending = false; scrollToBottom() }, (error) => { data.sending = false; data.errorMessage = error.message }) }
+function openRecall(message: PrivateMessage) { if (!message.isMine || message.recalledAt != null || Date.now() - new Date(message.createdAt).getTime() > 120000) return; uni.showActionSheet({ itemList: ['撤回'], success: () => { recallPrivateMessage(data.id, message.id, (response) => { message.content = ''; message.stickerId = null; message.recalledAt = response.recalledAt }, (error) => { data.errorMessage = error.message }) } }) }
+onLoad((options) => { data.id = options['id'] ?? ''; if (!sessionState.restored) restoreSession(); if (data.id.length > 0 && sessionState.user != null) reload() })
+onShow(() => { if (data.id.length > 0 && sessionState.user != null) { if (data.chat == null) reload(); else reconcile(); startReconcile() } })
+onHide(() => { stopReconcile(); closeStickers() })
+onUnload(() => { stopReconcile() })
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.chat-shell { flex: 1; }
+.chat-header { height: 96px; padding: 48px 14px 8px 14px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #E5EAF2; background-color: #FFFFFF; }
+.back-button { width: 34px; height: 40px; margin-right: 7px; align-items: center; justify-content: center; }.back-symbol { color: #344054; font-size: 34px; line-height: 34px; }.header-avatar, .message-avatar { position: relative; width: 40px; height: 40px; }.avatar { width: 40px; height: 40px; border-radius: 20px; }.avatar-placeholder { align-items: center; justify-content: center; background-color: #DBEAFE; color: #2563EB; font-size: 15px; font-weight: 700; }.mine-avatar { background-color: #2563EB; color: #FFFFFF; }.online-dot { position: absolute; right: -1px; bottom: 0; width: 11px; height: 11px; border-width: 2px; border-color: #FFFFFF; border-radius: 6px; background-color: #12B76A; }.header-copy { margin-left: 10px; }.header-identity { flex-direction: row; align-items: center; }.header-name { color: #121826; font-size: 16px; font-weight: 800; }.header-level { margin-left: 6px; padding: 2px 6px; border-radius: 8px; background-color: #F59E0B; color: #FFFFFF; font-size: 9px; }.header-badge { margin-left: 6px; color: #7C3AED; font-size: 10px; font-weight: 800; }.header-status { margin-top: 3px; color: #667085; font-size: 10px; }.online-status { color: #039855; }
+.message-scroll { flex: 1; padding: 12px 14px; background-color: #F4F7FB; }.older-button { align-self: center; margin: 0 auto 12px auto; padding: 8px 14px; border-radius: 16px; background-color: #FFFFFF; color: #2563EB; font-size: 11px; }.message-row { margin-bottom: 12px; flex-direction: row; align-items: flex-start; }.mine-row { flex-direction: row-reverse; }.message-body { width: 78%; margin-left: 8px; margin-right: 8px; }.bubble { padding: 10px 12px; border-radius: 17px; }.bubble-text { color: #121826; font-size: 14px; line-height: 21px; }.mine-bubble { border-bottom-right-radius: 5px; background-color: #2563EB; }.mine-bubble-text { color: #FFFFFF; }.other-bubble { border-bottom-left-radius: 5px; background-color: #FFFFFF; }.message-sticker { width: 142px; height: 142px; }.missing-sticker { padding: 10px 12px; border-radius: 13px; background-color: #EAECF0; color: #667085; font-size: 12px; }.time { margin-top: 4px; padding: 0 3px; color: #98A2B3; font-size: 9px; }.mine-time { text-align: right; }.recalled { margin-bottom: 10px; align-items: center; }.recalled-text { color: #98A2B3; font-size: 11px; }.empty-chat { align-items: center; padding: 80px 20px; color: #98A2B3; font-size: 13px; }.composer { min-height: 58px; padding: 8px 10px; flex-direction: row; align-items: center; border-top-width: 1px; border-top-color: #E5EAF2; background-color: #FFFFFF; }.composer-input { flex: 1; height: 42px; padding: 0 12px; border-radius: 13px; background-color: #F4F7FB; color: #121826; font-size: 14px; }.icon-button { width: 42px; height: 42px; margin-left: 7px; align-items: center; justify-content: center; border-width: 1px; border-color: #D0D5DD; border-radius: 12px; background-color: #FFFFFF; }.icon-button-active { border-color: #2563EB; background-color: #EFF6FF; }.smile-symbol { color: #344054; font-size: 24px; }.send-button { width: 58px; height: 40px; margin-left: 7px; padding: 0; align-items: center; justify-content: center; border-radius: 12px; background-color: #2563EB; }.send-label { color: #FFFFFF; font-size: 12px; font-weight: 700; }.send-disabled { background-color: #AFC6F7; }.loading-card, .state-card { margin: 16px; padding: 26px 20px; align-items: center; border-radius: 18px; background-color: #FFFFFF; color: #667085; font-size: 14px; }.state-title { color: #121826; font-size: 18px; font-weight: 700; }.state-message, .send-error { margin-top: 7px; color: #B42318; font-size: 12px; }.retry-button { width: 100%; margin-top: 15px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }.send-error { padding: 4px 14px; background-color: #FEF3F2; }.pressed { opacity: 0.7; }
+.back-image { width: 26px; height: 26px; }
+.composer-icon { width: 25px; height: 25px; }
+.scroll-bottom { position: absolute; right: 16px; bottom: 72px; width: 44px; height: 44px; align-items: center; justify-content: center; border-width: 1px; border-color: #E5EAF2; border-radius: 22px; background-color: #FFFFFF; }
+.scroll-bottom-icon { width: 23px; height: 23px; }
+.header-person { flex: 1; flex-direction: row; align-items: center; }
+.header-badge-wrap { margin-left: 6px; flex-direction: row; align-items: center; }.header-badge-icon { width: 15px; height: 15px; }
+</style>

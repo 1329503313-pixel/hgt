@@ -1,0 +1,105 @@
+import { apiGet, apiPatch, apiPost, ApiError } from './api-client.uts'
+import { CircleDetailResponse, CircleMessagesResponse, CirclesResponse, CircleUnreadMentionsResponse, JoinCircleResponse, RecallCircleMessageResponse, SendCircleMessageResponse } from '@/domain/dto/circle.uts'
+import { normalizeGiftMessage } from '@/services/chat-content.uts'
+
+function normalizeMessageSender(message: UTSJSONObject) {
+  normalizeGiftMessage(message)
+  const sender = message['sender'] as UTSJSONObject | null
+  if (sender != null) {
+    // 等级和在线状态上线前的历史消息可能返回 null，统一补成稳定 DTO。
+    if (sender['level'] == null) sender['level'] = 1
+    if (sender['isOnline'] == null) sender['isOnline'] = false
+  }
+  const reply = message['replyTo'] as UTSJSONObject | null
+  if (reply != null) {
+    const replySender = reply['sender'] as UTSJSONObject | null
+    if (replySender != null) {
+      if (replySender['level'] == null) replySender['level'] = 1
+      if (replySender['isOnline'] == null) replySender['isOnline'] = false
+    }
+  }
+}
+
+function decodeCircleMessages(json: string): CircleMessagesResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const messages = root['messages'] as UTSJSONObject[] | null
+  if (messages != null) messages.forEach((message) => { normalizeMessageSender(message) })
+  return JSON.parse<CircleMessagesResponse>(JSON.stringify(root))!
+}
+
+function decodeCircles(json: string): CirclesResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const circles = root['circles'] as UTSJSONObject[] | null
+  if (circles != null) circles.forEach((circle) => {
+    const latest = circle['latestMessage'] as UTSJSONObject | null
+    if (latest != null) normalizeGiftMessage(latest)
+  })
+  return JSON.parse<CirclesResponse>(JSON.stringify(root))!
+}
+
+function decodeSentCircleMessage(json: string): SendCircleMessageResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const message = root['message'] as UTSJSONObject | null
+  if (message != null) normalizeMessageSender(message)
+  return JSON.parse<SendCircleMessageResponse>(JSON.stringify(root))!
+}
+
+export function loadCircles(
+  success: (data: CirclesResponse) => void,
+  fail: (error: ApiError) => void
+) {
+  apiGet<CirclesResponse>('/api/circles', (json: string): CirclesResponse => decodeCircles(json), success, fail)
+}
+
+export function joinCircle(
+  id: string,
+  success: (data: JoinCircleResponse) => void,
+  fail: (error: ApiError) => void
+) {
+  apiPost<JoinCircleResponse>('/api/circles/' + encodeURIComponent(id) + '/join', {} as UTSJSONObject, (json: string): JoinCircleResponse => JSON.parse<JoinCircleResponse>(json)!, success, fail)
+}
+
+export function loadCircleDetail(id: string, success: (data: CircleDetailResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<CircleDetailResponse>('/api/circles/' + encodeURIComponent(id), (json: string): CircleDetailResponse => JSON.parse<CircleDetailResponse>(json)!, success, fail)
+}
+
+export function loadCircleMessages(id: string, before: string, success: (data: CircleMessagesResponse) => void, fail: (error: ApiError) => void) {
+  let path = '/api/circles/' + encodeURIComponent(id) + '/messages?limit=100'
+  if (before.length > 0) path += '&before=' + encodeURIComponent(before)
+  apiGet<CircleMessagesResponse>(path, (json: string): CircleMessagesResponse => decodeCircleMessages(json), success, fail)
+}
+
+export function sendCircleMessage(id: string, content: string, replyToMessageId: string, mentionedUserIds: string[], success: (data: SendCircleMessageResponse) => void, fail: (error: ApiError) => void) {
+  let body: UTSJSONObject = {}
+  body['content'] = content
+  if (replyToMessageId.length > 0) body['replyToMessageId'] = replyToMessageId
+  if (mentionedUserIds.length > 0) body['mentionedUserIds'] = mentionedUserIds
+  apiPost<SendCircleMessageResponse>('/api/circles/' + encodeURIComponent(id) + '/messages', body, (json: string): SendCircleMessageResponse => decodeSentCircleMessage(json), success, fail)
+}
+
+export function sendCircleSticker(id: string, stickerId: string, replyToMessageId: string, success: (data: SendCircleMessageResponse) => void, fail: (error: ApiError) => void) {
+  let body: UTSJSONObject = {}
+  body['stickerId'] = stickerId
+  if (replyToMessageId.length > 0) body['replyToMessageId'] = replyToMessageId
+  apiPost<SendCircleMessageResponse>('/api/circles/' + encodeURIComponent(id) + '/messages', body, (json: string): SendCircleMessageResponse => decodeSentCircleMessage(json), success, fail)
+}
+
+export function markCircleRead(id: string, success: () => void, fail: (error: ApiError) => void) {
+  apiPatch<UTSJSONObject>('/api/circles/' + encodeURIComponent(id) + '/read', {} as UTSJSONObject, (json: string): UTSJSONObject => JSON.parse(json) as UTSJSONObject, (_) => success(), fail)
+}
+
+export function recallCircleMessage(id: string, messageId: string, success: (data: RecallCircleMessageResponse) => void, fail: (error: ApiError) => void) {
+  apiPatch<RecallCircleMessageResponse>('/api/circles/' + encodeURIComponent(id) + '/messages/' + encodeURIComponent(messageId) + '/recall', {} as UTSJSONObject, (json: string): RecallCircleMessageResponse => JSON.parse<RecallCircleMessageResponse>(json)!, success, fail)
+}
+
+export function loadCircleUnreadMentions(id: string, success: (data: CircleUnreadMentionsResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<CircleUnreadMentionsResponse>('/api/circles/' + encodeURIComponent(id) + '/mentions', (json: string): CircleUnreadMentionsResponse => JSON.parse<CircleUnreadMentionsResponse>(json)!, success, fail)
+}
+
+export function markCircleMentionRead(id: string, messageId: string, success: () => void, fail: (error: ApiError) => void) {
+  apiPatch<UTSJSONObject>('/api/circles/' + encodeURIComponent(id) + '/mentions/' + encodeURIComponent(messageId) + '/read', {} as UTSJSONObject, (json: string): UTSJSONObject => JSON.parse(json) as UTSJSONObject, (_) => success(), fail)
+}
+
+export function markAllCircleMentionsRead(id: string, success: () => void, fail: (error: ApiError) => void) {
+  apiPatch<UTSJSONObject>('/api/circles/' + encodeURIComponent(id) + '/mentions/read-all', {} as UTSJSONObject, (json: string): UTSJSONObject => JSON.parse(json) as UTSJSONObject, (_) => success(), fail)
+}

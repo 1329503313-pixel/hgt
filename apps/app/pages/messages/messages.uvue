@@ -1,0 +1,94 @@
+<template>
+  <view class="page">
+    <view class="header" :style="headerStyle"><text class="eyebrow">实时提醒</text><text class="headline">消息</text></view>
+    <view v-if="sessionState.restoring || !sessionState.restored" class="state-card"><text class="state-title">正在恢复会话...</text></view>
+    <view v-else-if="sessionState.user == null" class="state-card"><text class="empty-symbol">信</text><text class="state-title">登录后查看消息</text><text class="state-message">登录后接收互动、申请和系统通知</text><button class="primary-button" @click="openAuth">登录 / 注册</button></view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view v-if="data.loading" class="loading-stack"><view class="loading-card"></view><view class="loading-card loading-list"></view></view>
+      <view v-else-if="data.errorMessage.length > 0" class="error-card"><text>{{ data.errorMessage }}</text><button class="retry-button" @click="reload">重新加载</button></view>
+      <view v-else class="category-card">
+        <view v-for="item in categories" :key="item.key" class="category-item" hover-class="item-pressed" @click="showCategory(item.key)">
+          <view class="category-icon-shell"><view class="category-icon" :class="item.color"><image class="category-image" :src="item.icon" mode="aspectFit"></image></view><view v-if="countFor(item.key) > 0" class="count-badge"><text class="count-badge-text">{{ countFor(item.key) > 99 ? '99+' : countFor(item.key) }}</text></view></view><text class="category-label">{{ item.label }}</text>
+        </view>
+      </view>
+      <view class="section-card">
+        <view class="section-head"><text class="section-title">消息</text><text class="section-meta">{{ data.counts.privateMessages }} 条未读</text></view>
+        <view v-if="data.conversations.length > 0" class="conversation-list">
+          <view v-for="conversation in data.conversations" :key="conversation.id" class="conversation" hover-class="item-pressed" @click="openConversation(conversation.id)">
+            <view class="avatar-wrap" @click.stop="openUser(conversation.otherUser.id)"><image v-if="conversation.otherUser.avatar != null" class="avatar" :src="conversationAvatar(conversation)" mode="aspectFill"></image><view v-else class="avatar avatar-placeholder"><text>{{ conversation.otherUser.nickname.substring(0, 1) }}</text></view><view v-if="conversation.otherUser.isOnline" class="online-dot"></view><view v-if="conversation.unreadCount > 0" class="conversation-badge"><text class="count-badge-text">{{ conversation.unreadCount > 99 ? '99+' : conversation.unreadCount }}</text></view></view>
+            <view class="conversation-copy"><view class="identity-row"><text class="conversation-name">{{ conversation.otherUser.nickname }}</text><text class="level">Lv{{ conversation.otherUser.level }}</text><view v-if="conversation.otherUser.equippedBadge != null" class="badge-wrap"><image class="badge-icon-image" :src="conversationBadge(conversation)" mode="aspectFit"></image><text class="badge-name">{{ conversation.otherUser.equippedBadge!.name }}</text></view></view><text class="conversation-preview">{{ preview(conversation) }}</text></view><text class="date">{{ dateText(conversation.lastMessage == null ? conversation.updatedAt : conversation.lastMessage!.createdAt) }}</text>
+          </view>
+        </view>
+        <view v-else class="empty-inline"><view class="empty-inline-icon"><image class="empty-inline-image" src="/static/messages/empty-chat.png" mode="aspectFit"></image></view><text class="empty-inline-title">暂无私信</text><text class="empty-inline-message">关注用户后可以发起私信</text></view>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { loadConversations, loadMessageCounts, Conversation, MessageCounts } from '@/services/messages.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+
+type Category = { key: string, label: string, icon: string, color: string }
+const categories: Category[] = [
+  { key: 'system', label: '系统', icon: '/static/messages/system.png', color: 'system-color' },
+  { key: 'interactions', label: '互动', icon: '/static/messages/interactions.png', color: 'interaction-color' },
+  { key: 'requests', label: '申请', icon: '/static/messages/requests.png', color: 'request-color' },
+  { key: 'notices', label: '通知', icon: '/static/messages/notices.png', color: 'notice-color' }
+]
+type MessageData = { counts: MessageCounts, conversations: Conversation[], loading: boolean, timerId: number, errorMessage: string }
+const data = reactive({ counts: { system: 0, interactions: 0, requests: 0, notices: 0, privateMessages: 0, circleMessages: 0, circleMentions: 0, total: 0 }, conversations: [], loading: false, timerId: 0, errorMessage: '' } as MessageData)
+const statusBarHeight = uni.getSystemInfoSync().statusBarHeight ?? 0
+const headerStyle = 'padding-top: ' + (statusBarHeight + 12).toString() + 'px;'
+function openAuth() { uni.navigateTo({ url: '/pages/auth/auth' }) }
+function conversationAvatar(item: Conversation): string { return absoluteApiUrl(item.otherUser.avatar) }
+function conversationBadge(item: Conversation): string { return item.otherUser.equippedBadge == null ? '' : absoluteApiUrl(item.otherUser.equippedBadge!.iconUrl) }
+function countFor(key: string): number { if (key == 'system') return data.counts.system; if (key == 'interactions') return data.counts.interactions; if (key == 'requests') return data.counts.requests; return data.counts.notices }
+function preview(item: Conversation): string { if (item.lastMessage == null) return '开始聊天吧'; if (item.lastMessage!.recalledAt != null) return item.lastMessage!.isMine ? '你撤回了一条消息' : '对方撤回了一条消息'; let content = item.lastMessage!.content; if (item.lastMessage!.type == 'sticker') content = '[表情] ' + (item.lastMessage!.stickerName ?? '表情'); if (item.lastMessage!.type == 'gift') content = '[礼物] ' + content; if (item.lastMessage!.type == 'room_invite') content = '[玩汤房间邀请]'; if (item.lastMessage!.type == 'soup_share') content = '[海龟汤分享]'; return (item.lastMessage!.isMine ? '我：' : '') + content }
+function dateText(value: string): string { const date = new Date(value); return (date.getMonth() + 1).toString() + '/' + date.getDate().toString() }
+function showCategory(key: string) { uni.navigateTo({ url: '/pages/message-category/message-category?mode=' + key }) }
+function openConversation(conversationId: string) { if (conversationId.length > 0) uni.navigateTo({ url: '/pages/private-chat/private-chat?id=' + encodeURIComponent(conversationId) }) }
+function openUser(id: string) { if (id.length > 0) uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(id) }) }
+function syncTabBadge() { if (data.counts.total > 0) uni.setTabBarBadge({ index: 3, text: data.counts.total > 99 ? '99+' : data.counts.total.toString() }); else uni.removeTabBarBadge({ index: 3 }) }
+function reload() { if (data.loading || sessionState.user == null) return; data.loading = true; data.errorMessage = ''; loadMessageCounts((response) => { data.counts = response.counts; syncTabBadge() }, (error) => { data.errorMessage = error.message }); loadConversations((response) => { data.conversations = response.conversations; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }
+function stopReconcile() { if (data.timerId != 0) { clearInterval(data.timerId); data.timerId = 0 } }
+function startReconcile() { stopReconcile(); data.timerId = setInterval(() => { if (sessionState.user != null) reload() }, 15000) }
+onLoad(() => { if (!sessionState.restored) restoreSession() })
+onShow(() => { if (sessionState.user != null) { reload(); startReconcile() } })
+onHide(() => { stopReconcile() })
+onUnload(() => { stopReconcile() })
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.scroll { flex: 1; }
+.header { padding: 12px 16px; }
+.eyebrow { color: #2563EB; font-size: 12px; font-weight: 700; }
+.headline { margin-top: 3px; color: #121826; font-size: 30px; font-weight: 800; }
+.state-card, .error-card { margin: 16px; padding: 26px 20px; align-items: center; border-width: 1px; border-color: #E5EAF2; border-radius: 20px; background-color: #FFFFFF; }
+.state-title { margin-top: 10px; color: #121826; font-size: 18px; font-weight: 700; }
+.state-message { margin-top: 6px; color: #667085; font-size: 13px; }
+.empty-symbol, .empty-inline-icon { width: 58px; height: 58px; padding-top: 14px; border-radius: 29px; background-color: #EAF2FF; color: #2563EB; font-size: 24px; font-weight: 700; text-align: center; }
+.primary-button, .retry-button { width: 100%; margin-top: 16px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.error-card { color: #B42318; font-size: 13px; }
+.category-card, .section-card { margin: 0 16px 14px 16px; border-radius: 18px; background-color: #FFFFFF; }.section-card{overflow:hidden}.category-card{overflow:visible}
+.loading-stack { padding: 0 16px; }.loading-card { height: 126px; margin-bottom: 14px; border-radius: 18px; background-color: #E9EDF3; }.loading-list { height: 340px; }
+.category-card { padding: 18px 8px 16px 8px; flex-direction: row; justify-content: space-around; }
+.category-item { flex: 1; align-items: center; }
+.category-icon-shell { position: relative; width: 60px; height: 60px; align-items: center; justify-content: center; }
+.category-icon { width: 52px; height: 52px; align-items: center; justify-content: center; border-radius: 17px; }
+.category-image { width: 29px; height: 29px; }
+.system-color { background-color: #DBEAFE; }.interaction-color { background-color: #FEE2E2; }.request-color { background-color: #FEF3C7; }.notice-color { background-color: #EDE9FE; }
+.count-badge, .conversation-badge { position: absolute; right: 0; top: 0; min-width: 20px; height: 20px; padding: 0 4px; align-items:center;justify-content:center;border-width: 2px; border-color: #FFFFFF; border-radius: 10px; background-color: #EF4444; }.count-badge-text{color:#FFFFFF;font-size:9px;font-weight:800;line-height:16px;text-align:center}
+.category-label { margin-top: 7px; color: #344054; font-size: 12px; font-weight: 700; }
+.section-head { padding: 15px 16px; flex-direction: row; align-items: center; justify-content: space-between; border-bottom-width: 1px; border-bottom-color: #F0F2F5; }
+.section-title { color: #121826; font-size: 17px; font-weight: 800; }.section-meta, .date { color: #98A2B3; font-size: 11px; }.read-all { margin: 0; padding: 0; background-color: transparent; color: #2563EB; font-size: 12px; }
+.conversation, .notification { min-height: 76px; padding: 13px 16px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #F0F2F5; }.conversation:last-child, .notification:last-child { border-bottom-width: 0; }
+.avatar-wrap { position: relative; width: 46px; height: 46px; margin-right: 11px; }.avatar { width: 46px; height: 46px; border-radius: 23px; }.avatar-placeholder { align-items: center; justify-content: center; background-color: #DBEAFE; color: #2563EB; font-size: 17px; font-weight: 700; }.online-dot { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; border-width: 2px; border-color: #FFFFFF; border-radius: 6px; background-color: #12B76A; }.conversation-badge { right: 0; top: 0; }
+.conversation-copy, .notification-copy { flex: 1; min-width: 0; }.identity-row { flex-direction: row; align-items: center; }.conversation-name, .notification-title { color: #121826; font-size: 14px; font-weight: 800; }.level { margin-left: 5px; padding: 2px 5px; border-radius: 7px; background-color: #F59E0B; color: #FFFFFF; font-size: 9px; }.badge-name { margin-left: 5px; color: #7C3AED; font-size: 10px; font-weight: 800; }.conversation-preview, .notification-content { margin-top: 5px; color: #667085; font-size: 12px; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.date { margin-left: 7px; align-self: flex-start; margin-top: 3px; }
+.empty-inline { min-height: 190px; align-items: center; justify-content: center; padding: 20px; }.empty-inline-icon { width: 54px; height: 54px; padding-top: 0; align-items: center; justify-content: center; }.empty-inline-image { width: 31px; height: 31px; }.empty-inline-title { margin-top: 9px; color: #121826; font-size: 14px; font-weight: 700; }.empty-inline-message { margin-top: 5px; color: #98A2B3; font-size: 12px; }.small-empty { min-height: 100px; color: #98A2B3; font-size: 13px; }
+.notification-icon { width: 40px; height: 40px; margin-right: 10px; align-items: center; justify-content: center; border-radius: 20px; background-color: #EFF6FF; color: #2563EB; font-size: 17px; font-weight: 700; }.notification-title-row { flex-direction: row; align-items: center; }.unread-dot { width: 7px; height: 7px; margin-left: 6px; border-radius: 4px; background-color: #EF4444; }.item-pressed { opacity: 0.72; }.safe-bottom { height: 24px; }
+.badge-wrap { margin-left: 5px; flex-direction: row; align-items: center; }.badge-icon-image { width: 15px; height: 15px; }
+</style>

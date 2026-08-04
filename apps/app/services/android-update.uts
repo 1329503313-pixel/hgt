@@ -1,0 +1,105 @@
+import { apiGet, type ApiError } from '@/services/api-client.uts'
+
+export type AndroidUpdateInfo = {
+  platform: string,
+  enabled: boolean,
+  updateAvailable: boolean,
+  forceUpdate: boolean,
+  latestVersionCode: number,
+  latestVersionName: string,
+  minSupportedVersionCode: number,
+  apkUrl: string,
+  releaseNotes: string[],
+  publishedAt: string
+}
+
+let checking = false
+let downloading = false
+
+function releaseContent(info: AndroidUpdateInfo): string {
+  if (info.releaseNotes.length == 0) return '发现新版本 ' + info.latestVersionName + '，建议立即更新。'
+  return '发现新版本 ' + info.latestVersionName + '\n\n' + info.releaseNotes.map((item: string): string => '• ' + item).join('\n')
+}
+
+function showDownloadFailure(message: string, info: AndroidUpdateInfo): void {
+  uni.hideLoading()
+  downloading = false
+  uni.showModal({
+    title: '更新失败',
+    content: message,
+    showCancel: !info.forceUpdate,
+    cancelText: '稍后再试',
+    confirmText: '重新下载',
+    success: (result) => {
+      if (result.confirm) downloadAndInstall(info)
+    }
+  })
+}
+
+function installDownloadedApk(filePath: string, info: AndroidUpdateInfo): void {
+  uni.hideLoading()
+  uni.installApk({
+    filePath,
+    success: () => {
+      downloading = false
+    },
+    fail: (error) => {
+      showDownloadFailure(error.errMsg.length > 0 ? error.errMsg : '无法调起系统安装器，请检查是否允许安装未知来源应用。', info)
+    }
+  })
+}
+
+function downloadAndInstall(info: AndroidUpdateInfo): void {
+  if (downloading) return
+  downloading = true
+  uni.showLoading({ title: '下载更新 0%', mask: true })
+  const task = uni.downloadFile({
+    url: info.apkUrl,
+    timeout: 120000,
+    success: (result) => {
+      if (result.statusCode < 200 || result.statusCode >= 300 || result.tempFilePath.length == 0) {
+        showDownloadFailure('APK 下载失败（' + result.statusCode.toString() + '）', info)
+        return
+      }
+      installDownloadedApk(result.tempFilePath, info)
+    },
+    fail: (error) => {
+      showDownloadFailure(error.errMsg.length > 0 ? error.errMsg : '网络连接失败', info)
+    }
+  })
+  task.onProgressUpdate((progress) => {
+    uni.showLoading({ title: '下载更新 ' + progress.progress.toString() + '%', mask: true })
+  })
+}
+
+function promptUpdate(info: AndroidUpdateInfo): void {
+  uni.showModal({
+    title: info.forceUpdate ? '需要更新后继续使用' : '发现新版本',
+    content: releaseContent(info),
+    showCancel: !info.forceUpdate,
+    cancelText: '稍后更新',
+    confirmText: '立即更新',
+    success: (result) => {
+      if (result.confirm) downloadAndInstall(info)
+    }
+  })
+}
+
+export function checkAndroidAppUpdate(): void {
+  if (checking || downloading) return
+  const appInfo = uni.getAppBaseInfo({ filter: ['appVersionCode'] })
+  const versionCode = appInfo.appVersionCode ?? '0'
+  checking = true
+  apiGet<AndroidUpdateInfo>(
+    '/api/app/android-update?versionCode=' + encodeURIComponent(versionCode),
+    (json: string): AndroidUpdateInfo => JSON.parse<AndroidUpdateInfo>(json)!,
+    (info) => {
+      checking = false
+      if (info.platform == 'android' && info.updateAvailable && info.apkUrl.length > 0) promptUpdate(info)
+    },
+    (_error: ApiError) => {
+      checking = false
+      console.log('[HGT Update] 版本检查失败，继续使用当前版本')
+    }
+  )
+}

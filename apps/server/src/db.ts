@@ -185,6 +185,23 @@ async function normalizeConversationPairs() {
 
 export async function initDatabase() {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS android_app_releases (
+      id VARCHAR(64) PRIMARY KEY,
+      version_code INT UNSIGNED NOT NULL,
+      version_name VARCHAR(32) NOT NULL,
+      min_supported_version_code INT UNSIGNED NOT NULL,
+      apk_url VARCHAR(1000) NOT NULL,
+      release_notes JSON NOT NULL,
+      published_at DATETIME NOT NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_android_app_releases_version_code (version_code),
+      INDEX idx_android_app_releases_enabled_version (enabled, version_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id VARCHAR(64) PRIMARY KEY,
       username VARCHAR(50) NOT NULL UNIQUE,

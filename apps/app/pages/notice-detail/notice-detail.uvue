@@ -1,0 +1,34 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading" class="state-card"><text class="state-message">正在加载通知...</text></view>
+    <view v-else-if="data.errorMessage.length > 0" class="state-card"><text class="state-title">通知加载失败</text><text class="state-message">{{ data.errorMessage }}</text><button class="retry-button" @click="reload">重新加载</button></view>
+    <scroll-view v-else-if="data.notice != null" class="scroll" direction="vertical">
+      <view class="article">
+        <view class="article-header">
+          <view class="notice-mark"><image class="notice-icon" src="/static/messages/notices.png" mode="aspectFit"></image></view>
+          <text class="article-title">{{ data.notice!.title }}</text>
+          <text class="article-meta">{{ data.notice!.author }} · {{ dateText(data.notice!.publishedAt) }}</text>
+        </view>
+        <rich-text class="article-content" :nodes="data.notice!.content"></rich-text>
+        <view v-if="data.notice!.updatedAt != data.notice!.publishedAt" class="updated"><text>更新于 {{ dateText(data.notice!.updatedAt) }}</text></view>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+    <view v-else class="state-card"><text class="state-title">通知不存在或已失效</text></view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { NoticeDetail, loadNoticeDetail } from '@/services/messages.uts'
+
+type DetailData = { id: string, notice: NoticeDetail | null, loading: boolean, errorMessage: string }
+const data = reactive({ id: '', notice: null, loading: false, errorMessage: '' } as DetailData)
+function dateText(value: string): string { const date = new Date(value); return date.getFullYear().toString() + '年' + (date.getMonth() + 1).toString() + '月' + date.getDate().toString() + '日 ' + date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0') }
+function reload() { if (data.id.length == 0 || data.loading) return; data.loading = true; data.errorMessage = ''; loadNoticeDetail(data.id, (response) => { data.notice = response.notice; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }
+onLoad((options) => { data.id = options['id'] ?? ''; reload() })
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }.scroll { flex: 1; }.state-card { margin: 12px 16px; padding: 28px 18px; align-items: center; border-radius: 18px; background-color: #FFFFFF; }.state-title { color: #121826; font-size: 17px; font-weight: 800; }.state-message { margin-top: 6px; color: #667085; font-size: 13px; }.retry-button { width: 100%; margin-top: 16px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.article { margin: 12px 16px 24px 16px; padding: 22px 18px; border-radius: 18px; background-color: #FFFFFF; }.article-header { align-items: center; padding-bottom: 20px; border-bottom-width: 1px; border-bottom-color: #E5EAF2; }.notice-mark { width: 46px; height: 46px; align-items: center; justify-content: center; border-radius: 23px; background-color: #EDE9FE; }.notice-icon { width: 25px; height: 25px; }.article-title { margin-top: 13px; color: #121826; font-size: 22px; font-weight: 800; text-align: center; line-height: 30px; }.article-meta { margin-top: 9px; color: #667085; font-size: 11px; text-align: center; }.article-content { margin-top: 22px; color: #121826; font-size: 14px; line-height: 24px; }.updated { margin-top: 24px; padding-top: 14px; border-top-width: 1px; border-top-color: #F0F2F5; color: #98A2B3; font-size: 10px; }.safe-bottom { height: 24px; }
+</style>

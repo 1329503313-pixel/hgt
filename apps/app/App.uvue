@@ -1,0 +1,43 @@
+<script setup lang="uts">
+import { restoreSession } from '@/stores/session.uts'
+import { refreshUnreadState, startUnreadPolling, stopUnreadPolling } from '@/stores/unread.uts'
+import { API_ORIGIN, getApiOrigin } from '@/config/runtime.uts'
+// #ifdef APP-ANDROID
+import { checkAndroidAppUpdate } from '@/services/android-update.uts'
+// #endif
+
+onLaunch(() => {
+  console.log('[HGT] Launch, API_ORIGIN =', API_ORIGIN)
+  console.log('[HGT] 切换地址方式：编辑 config/runtime.uts 的 DEFAULT_API_ORIGIN 后重新编译')
+  restoreSession()
+  // #ifdef APP-ANDROID
+  checkAndroidAppUpdate()
+  // #endif
+})
+
+onAppShow(() => {
+  console.log('[HGT] Show, API_ORIGIN =', getApiOrigin())
+  startUnreadPolling()
+  refreshUnreadState()
+})
+
+onAppHide(() => {
+  console.log('[HGT] Hide')
+  stopUnreadPolling()
+})
+</script>
+
+<style>
+.page {
+  flex: 1;
+  background-color: #F5F7FA;
+}
+
+.row {
+  flex-direction: row;
+}
+
+.column {
+  flex-direction: column;
+}
+</style>

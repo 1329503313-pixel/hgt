@@ -1,0 +1,258 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading&&data.snapshot==null" class="state"><text>正在进入房间...</text></view>
+    <view v-else-if="data.errorMessage.length>0&&data.snapshot==null" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button><button class="secondary" @click="backLobby">返回大厅</button></view>
+    <view v-else-if="data.snapshot!=null" class="shell">
+      <view class="topbar">
+        <AppBackButton @click="backLobby" />
+        <view class="top-copy">
+          <text class="title">{{ data.snapshot!.room.name }}</text>
+          <text class="meta">#{{ data.snapshot!.room.code }} · {{ roleText(data.snapshot!.me.role) }}</text>
+        </view>
+        <view class="status">
+          <view class="dot" :class="data.snapshot!.room.hostOnline?'dot-online':''"></view>
+          <text>{{ statusText(data.snapshot!.room.status) }}</text>
+        </view>
+      </view>
+      <scroll-view class="scroll" direction="vertical">
+        <view class="soup-card">
+          <view class="soup-head">
+            <text class="label">当前海龟汤</text>
+            <text class="round-status">{{ statusText(data.snapshot!.room.status) }}</text>
+          </view>
+          <text class="soup-title">{{ data.snapshot!.room.soup==null?'尚未选择海龟汤':data.snapshot!.room.soup!.title }}</text>
+          <text v-if="data.snapshot!.room.soup!=null" class="surface">{{ data.snapshot!.room.soup!.surface }}</text>
+          <text v-else class="surface muted">主持人选择海龟汤后，汤面将在这里展示。</text>
+          <view v-if="data.snapshot!.me.isHost&&data.snapshot!.room.status!='playing'" class="host-actions">
+            <button class="host-secondary" @click="openSelector">{{ data.snapshot!.room.soup==null?'选择海龟汤':'更换海龟汤' }}</button>
+            <button class="host-primary" :disabled="data.snapshot!.room.soup==null||data.busy" @click="confirmStart">开始推理</button>
+          </view>
+        </view>
+        <view v-if="data.snapshot!.me.isHost&&data.snapshot!.room.soup!=null" class="host-control">
+          <text class="host-control-title">主持人控制台</text>
+          <view class="host-control-row">
+            <view class="control-card clue-card" :class="data.snapshot!.room.status!='playing'||data.busy?'control-disabled':''" hover-class="control-pressed" @click="openClue">
+              <text class="control-eyebrow">线索</text>
+              <text class="control-name">发布主持人线索</text>
+              <text class="control-copy">给玩家方向性提示</text>
+            </view>
+            <view class="control-card surface-card" :class="data.snapshot!.room.status!='playing'||data.busy||unpublishedSurfaces.length==0?'control-disabled':''" hover-class="control-pressed" @click="openSurface">
+              <text class="control-eyebrow">补充汤面</text>
+              <text class="control-name">{{ unpublishedSurfaces.length==0?'已全部发布':'还有 '+unpublishedSurfaces.length.toString()+' 条未发布' }}</text>
+              <text class="control-copy">逐步揭晓补充信息</text>
+            </view>
+          </view>
+          <view class="host-control-row">
+            <view class="control-card bottom-card" :class="data.snapshot!.room.status!='playing'||data.busy?'control-disabled':''" hover-class="control-pressed" @click="openBottom">
+              <text class="control-eyebrow">汤底</text>
+              <text class="control-name">{{ publishedBottomCount.toString()+'/'+totalBottomCount.toString()+' 已发布' }}</text>
+              <text class="control-copy">公布答案与补充汤底</text>
+            </view>
+            <view class="control-card end-card" :class="data.snapshot!.room.status!='playing'||data.busy?'control-disabled':''" hover-class="control-pressed" @click="confirmEnd">
+              <text class="control-eyebrow">结束</text>
+              <text class="control-name">关闭本轮推理</text>
+              <text class="control-copy">不再自动公布未发汤底</text>
+            </view>
+          </view>
+        </view>
+        <view class="members-card">
+          <view class="section-head">
+            <text class="section-title">房间成员</text>
+            <text class="section-meta">{{ data.snapshot!.members.length }}/{{ data.snapshot!.room.participantCapacity }}</text>
+          </view>
+          <scroll-view class="member-scroll" direction="horizontal" :show-scrollbar="false">
+            <view class="member-row">
+              <view v-for="member in data.snapshot!.members" :key="member.id" class="member" @click="openProfile(member.id)">
+                <view class="avatar-wrap">
+                  <image v-if="avatar(member).length>0" class="avatar" :src="avatar(member)" mode="aspectFill"></image>
+                  <view v-else class="avatar avatar-empty"><text>{{ member.nickname.substring(0,1) }}</text></view>
+                  <text v-if="member.role=='host'" class="host-mark">主</text>
+                </view>
+                <text class="member-name">{{ member.nickname }}</text>
+                <text class="member-role">{{ roleText(member.role) }}</text>
+              </view>
+            </view>
+          </scroll-view>
+        </view>
+        <view class="messages-card">
+          <view class="section-head">
+            <text class="section-title">房间动态</text>
+            <text class="section-meta">{{ data.snapshot!.messages.length }} 条</text>
+          </view>
+          <view v-for="message in visibleMessages" :key="message.id">
+            <view v-if="message.recalledAt!=null" class="recall-line"><text>— {{ senderLabel(message) }} 撤回了一条消息 —</text></view>
+            <view v-else-if="message.type=='system'" class="system-line"><text>{{ message.content }}</text></view>
+            <view v-else-if="message.type=='clue'" class="event-card clue-event">
+              <view class="event-head"><text class="event-eyebrow">主持人线索</text><text class="event-time">{{ timeText(message.createdAt) }}</text></view>
+              <text class="event-content">{{ message.content }}</text>
+            </view>
+            <view v-else-if="message.type=='supplemental_surface'" class="event-card surface-event">
+              <view class="event-head"><text class="event-eyebrow">补充汤面 {{ (message.contentIndex??0)+1 }}</text><text class="event-time">{{ timeText(message.createdAt) }}</text></view>
+              <text class="event-content">{{ stripHtml(message.content) }}</text>
+            </view>
+            <view v-else-if="message.type=='bottom'" class="event-card bottom-event">
+              <view class="event-head"><text class="event-eyebrow">{{ message.contentIndex==0?'汤底已公布':'补充汤底 '+(message.contentIndex??0).toString()+' 已公布' }}</text><text class="event-time">{{ timeText(message.createdAt) }}</text></view>
+              <text class="event-content">{{ stripHtml(message.content) }}</text>
+              <button v-if="message.allBottomsPublished&&message.soupId!=null" class="event-action" @click="openSoup(message.soupId!)">查看完整汤底</button>
+            </view>
+            <view v-else-if="message.type=='manual'" class="event-card manual-event">
+              <view class="event-head"><text class="event-eyebrow">主持人手册</text><text class="event-time">{{ timeText(message.createdAt) }}</text></view>
+              <text class="event-content">{{ stripHtml(message.content) }}</text>
+            </view>
+            <view v-else :class="['bubble-row', isMine(message)?'bubble-mine':'']">
+              <view class="bubble-head">
+                <text class="bubble-name">{{ message.senderName??'已注销用户' }}</text>
+                <text class="bubble-level">Lv{{ message.senderLevel.toString() }}</text>
+                <text v-if="message.senderIsHost" class="bubble-host">主持人</text>
+                <text v-if="message.type=='question'&&message.questionNumber!=null" class="bubble-question">正式提问 #{{ message.questionNumber!.toString() }}</text>
+              </view>
+              <view :class="['bubble', bubbleClass(message)]">
+                <text class="bubble-content">{{ message.content }}</text>
+              </view>
+              <view v-if="message.type=='question'" class="answer-row">
+                <view v-if="data.snapshot!.me.isHost" class="answer-buttons">
+                  <button v-for="option in answerOptions" :key="option.value" :class="['answer-btn', message.answer==option.value?'answer-btn-active':'']" :disabled="data.busy" @click="answerQuestion(message,option.value)">{{ option.label }}</button>
+                </view>
+                <view v-else-if="message.answer!=null" class="answer-text"><text>主持回答：{{ answerLabel(message.answer!) }}</text></view>
+                <view v-else class="answer-pending"><text>等待主持人回复</text></view>
+              </view>
+              <text class="bubble-time">{{ timeText(message.createdAt) }}</text>
+            </view>
+          </view>
+          <text v-if="visibleMessages.length==0" class="empty">房间还没有动态</text>
+        </view>
+        <view class="safe-bottom"></view>
+      </scroll-view>
+      <view v-if="canSpeak" class="composer-wrap">
+        <view v-if="canQuestion" class="mode-row">
+          <view class="mode" :class="data.mode=='discussion'?'mode-active':''" @click="data.mode='discussion'"><text>讨论</text></view>
+          <view class="mode" :class="data.mode=='question'?'question-active':''" @click="data.mode='question'"><text>正式提问</text></view>
+        </view>
+        <view class="composer">
+          <input class="input" v-model="data.draft" maxlength="1000" confirm-type="send" :placeholder="composerPlaceholder" @confirm="sendMessage"/>
+          <button class="send" :class="data.mode=='question'?'question-send':''" :disabled="data.busy||data.draft.trim().length==0" @click="sendMessage">{{ data.busy?'发送中':'发送' }}</button>
+        </view>
+      </view>
+      <view v-else-if="data.snapshot!.me.role=='spectator'" class="readonly"><text>旁观者只能查看房间内容</text></view>
+    </view>
+    <view v-if="data.modal.length>0" class="mask" @click="closeModal">
+      <view class="panel" @click.stop>
+        <view v-if="data.modal=='clue'">
+          <text class="panel-title">发布主持人线索</text>
+          <text class="panel-copy">给玩家方向性提示，长度 1–2000 字。</text>
+          <textarea class="panel-area" maxlength="2000" v-model="data.clueDraft" placeholder="输入线索内容…"></textarea>
+          <button class="primary" :disabled="data.busy||data.clueDraft.trim().length==0" @click="submitClue">{{ data.busy?'发布中…':'发布线索' }}</button>
+        </view>
+        <view v-else-if="data.modal=='surface'">
+          <text class="panel-title">发布补充汤面</text>
+          <text class="panel-copy">选择一条尚未发布的补充汤面。</text>
+          <view class="surface-list">
+            <view v-for="entry in unpublishedSurfaces" :key="entry.index" class="surface-row" @click="submitSurface(entry.index)">
+              <text class="surface-row-title">补充汤面 {{ entry.index+1 }}</text>
+              <text class="surface-row-content">{{ stripHtml(entry.content) }}</text>
+            </view>
+          </view>
+          <button v-if="unpublishedSurfaces.length==0" class="secondary" disabled>已全部发布</button>
+        </view>
+        <view v-else-if="data.modal=='bottom'">
+          <text class="panel-title">选择要发布的汤底</text>
+          <text class="panel-copy">全部发布后本轮结束，并自动发布主持人手册。</text>
+          <view class="bottom-list">
+            <view v-for="entry in bottomEntries" :key="entry.index" :class="['bottom-row', entry.published?'bottom-row-done':'']" @click="onBottomRowClick(entry)">
+              <text class="bottom-row-title">{{ entry.index==0?'主汤底':'补充汤底 '+entry.index.toString() }}{{ entry.published?' · 已发布':'' }}</text>
+              <text class="bottom-row-content">{{ stripHtml(entry.content) }}</text>
+            </view>
+          </view>
+        </view>
+        <view v-else-if="data.modal=='end'">
+          <text class="panel-title">确认关闭本轮？</text>
+          <text class="panel-copy">关闭后将结束本轮推理，但不会解散房间，也不会自动公布尚未发布的汤底。</text>
+          <view class="modal-buttons">
+            <button class="secondary" @click="closeModal">取消</button>
+            <button class="danger" :disabled="data.busy" @click="submitEnd">{{ data.busy?'关闭中…':'关闭本轮' }}</button>
+          </view>
+        </view>
+        <button class="cancel" @click="closeModal">关闭</button>
+      </view>
+    </view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import {absoluteApiUrl} from '@/config/runtime.uts'
+import {ApiError} from '@/services/api-client.uts'
+import {OnlineSoupMember,OnlineSoupMessage,OnlineSoupOkResponse,OnlineSoupSelectedSoup,OnlineSoupSnapshot} from '@/domain/dto/online-soup.uts'
+import {answerOnlineSoupQuestion,endOnlineSoupRound,loadOnlineSoupRoom,publishOnlineSoupBottom,publishOnlineSoupClue,publishOnlineSoupSurface,sendOnlineSoupMessage,startOnlineSoupRound} from '@/services/online-soup.uts'
+import {sessionState} from '@/stores/session.uts'
+type ModalType='clue'|'surface'|'bottom'|'end'|''
+type AnswerOption={value:string,label:string}
+type SurfaceEntry={index:number,content:string}
+type BottomEntry={index:number,content:string,published:boolean}
+type RoomData={id:string,snapshot:OnlineSoupSnapshot|null,loading:boolean,busy:boolean,mode:string,draft:string,timerId:number,errorMessage:string,modal:ModalType,clueDraft:string,busyAction:string}
+const data=reactive({id:'',snapshot:null,loading:false,busy:false,mode:'discussion',draft:'',timerId:0,errorMessage:'',modal:'' as ModalType,clueDraft:'',busyAction:''} as RoomData)
+const answerOptions:AnswerOption[]=[{value:'yes',label:'是'},{value:'no',label:'否'},{value:'both',label:'是也不是'},{value:'unknown',label:'不确定'},{value:'irrelevant',label:'无关'}]
+const visibleMessages=computed<OnlineSoupMessage[]>(()=>data.snapshot==null?[] as OnlineSoupMessage[]:data.snapshot!.messages.slice(-40))
+const canSpeak=computed<boolean>(()=>data.snapshot!=null&&data.snapshot!.me.role!='spectator')
+const canQuestion=computed<boolean>(()=>data.snapshot!=null&&data.snapshot!.me.role=='player'&&data.snapshot!.room.status=='playing')
+const composerPlaceholder=computed<string>(()=>data.snapshot!=null&&data.snapshot!.me.isHost?'主持人发言…':data.mode=='question'?'输入正式问题…':'参与讨论…')
+const hostSoup=computed<OnlineSoupSelectedSoup|null>(()=>data.snapshot==null||data.snapshot!.room.soup==null?null:data.snapshot!.room.soup!)
+function buildUnpublishedSurfaces():SurfaceEntry[]{const soup=hostSoup.value;if(soup==null||soup.supplementalSurfaces==null)return[];const published=soup.publishedSurfaceIndices??[];const result:SurfaceEntry[]=[];(soup.supplementalSurfaces??[]).forEach((content,index)=>{if(!published.includes(index))result.push({index,content})});return result}
+function buildBottomEntries():BottomEntry[]{const soup=hostSoup.value;if(soup==null||soup.bottom==null)return[];const published=soup.publishedBottomIndices??[];const list:SurfaceEntry[]=[{index:0,content:soup.bottom}];(soup.supplementalBottoms??[]).forEach((content,offset)=>{list.push({index:offset+1,content})});const result:BottomEntry[]=[];list.forEach((entry)=>{result.push({index:entry.index,content:entry.content,published:published.includes(entry.index)})});return result}
+const unpublishedSurfaces=computed<SurfaceEntry[]>(()=>buildUnpublishedSurfaces())
+const totalBottomCount=computed<number>(()=>{const soup=hostSoup.value;if(soup==null)return 0;return 1+(soup.supplementalBottoms?.length??0)})
+const publishedBottomCount=computed<number>(()=>{const soup=hostSoup.value;if(soup==null)return 0;return(soup.publishedBottomIndices??[]).length})
+const bottomEntries=computed<BottomEntry[]>(()=>buildBottomEntries())
+function avatar(member:OnlineSoupMember):string{return absoluteApiUrl(member.avatar)}
+function roleText(role:string):string{return role=='host'?'主持人':role=='spectator'?'旁观者':'玩家'}
+function statusText(status:string):string{return status=='playing'?'推理中':status=='ended'?'本轮已结束':'准备中'}
+function answerLabel(answer:string):string{return answer=='yes'?'是':answer=='no'?'否':answer=='both'?'是也不是':answer=='irrelevant'?'无关':'不确定'}
+function isMine(message:OnlineSoupMessage):boolean{const current=sessionState.user;return current!=null&&message.senderId!=null&&message.senderId==current.id}
+function bubbleClass(message:OnlineSoupMessage):string{if(message.type=='question')return'bubble-question-bubble';if(message.senderIsHost)return'bubble-host-bubble';if(isMine(message))return'bubble-mine-bubble';return'bubble-peer-bubble'}
+function senderLabel(message:OnlineSoupMessage):string{return message.senderName??'已注销用户'}
+function timeText(value:string):string{const date=new Date(value);if(Number.isNaN(date.getTime()))return'';const hh=date.getHours().toString().padStart(2,'0');const mm=date.getMinutes().toString().padStart(2,'0');return hh+':'+mm}
+function stripHtml(value:string):string{return value.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim()}
+function backLobby(){uni.redirectTo({url:'/pages/online-soup-lobby/online-soup-lobby'})}
+function openProfile(id:string){uni.navigateTo({url:'/pages/user-profile/user-profile?id='+encodeURIComponent(id)})}
+function openSoup(id:string){uni.navigateTo({url:'/pages/soup-detail/soup-detail?id='+encodeURIComponent(id)+'&fromOnlineRoom=1'})}
+function openSelector(){uni.navigateTo({url:'/pages/online-soup-select/online-soup-select?roomId='+encodeURIComponent(data.id)})}
+function reload(){if(data.id.length==0||data.loading)return;data.loading=true;data.errorMessage='';loadOnlineSoupRoom(data.id,(response)=>{data.snapshot=response;data.loading=false},(error)=>{data.loading=false;data.errorMessage=error.message})}
+function confirmStart(){if(data.snapshot==null||data.snapshot!.room.soup==null||data.busy)return;uni.showModal({title:'开始推理',content:'确认使用《'+data.snapshot!.room.soup!.title+'》开始本轮推理？',cancelText:'取消',confirmText:'开始',success:(result)=>{if(!result.confirm)return;data.busy=true;startOnlineSoupRound(data.id,(_)=>{data.busy=false;reload()},(error)=>{data.busy=false;uni.showToast({title:error.message,icon:'none'})})}})}
+function sendMessage(){if(data.snapshot==null||data.busy)return;const content=data.draft.trim();if(content.length==0)return;if(data.mode=='question'&&!canQuestion.value){uni.showToast({title:'当前无法发送正式提问',icon:'none'});data.mode='discussion';return}data.busy=true;sendOnlineSoupMessage(data.id,data.mode,content,(_)=>{data.draft='';data.busy=false;reload()},(error)=>{data.busy=false;uni.showToast({title:error.message,icon:'none'})})}
+function closeModal(){data.modal='';data.clueDraft=''}
+function canUseHostControls():boolean{return data.snapshot!=null&&data.snapshot!.room.status=='playing'&&!data.busy}
+function openClue(){if(!canUseHostControls())return;data.clueDraft='';data.modal='clue'}
+function openSurface(){if(!canUseHostControls())return;if(unpublishedSurfaces.value.length==0){uni.showToast({title:'已全部发布',icon:'none'});return}data.modal='surface'}
+function openBottom(){if(!canUseHostControls())return;if(totalBottomCount.value==0){uni.showToast({title:'当前没有汤底可发布',icon:'none'});return}data.modal='bottom'}
+function confirmEnd(){if(!canUseHostControls())return;data.modal='end'}
+function submitClue(){const content=data.clueDraft.trim();if(content.length==0){uni.showToast({title:'请填写线索内容',icon:'none'});return}data.busy=true;data.busyAction='clue';publishOnlineSoupClue(data.id,content,(_)=>{data.busy=false;data.busyAction='';closeModal();reload()},(error)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
+function submitSurface(index:number){data.busy=true;data.busyAction='surface';publishOnlineSoupSurface(data.id,index,(_)=>{data.busy=false;data.busyAction='';closeModal();reload()},(error)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
+function submitBottom(index:number):void{data.busy=true;data.busyAction='bottom';publishOnlineSoupBottom(data.id,index,(response:OnlineSoupOkResponse)=>{data.busy=false;data.busyAction='';closeModal();reload();if(response.ended==true){uni.showToast({title:'全部汤底已发布，本轮结束',icon:'none'})}},(error:ApiError)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
+function onBottomRowClick(entry:BottomEntry):void{if(entry.published)return;submitBottom(entry.index)}
+function submitEnd(){data.busy=true;data.busyAction='end';endOnlineSoupRound(data.id,(_)=>{data.busy=false;data.busyAction='';closeModal();reload()},(error)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
+function answerQuestion(message:OnlineSoupMessage,value:string){if(!data.snapshot!.me.isHost||data.busy)return;const nextAnswer=message.answer==value?null:value;data.busy=true;answerOnlineSoupQuestion(data.id,message.id,nextAnswer,(_)=>{data.busy=false;reload()},(error)=>{data.busy=false;uni.showToast({title:error.message,icon:'none'})})}
+function stopTimer(){if(data.timerId!=0){clearInterval(data.timerId);data.timerId=0}}
+function startTimer(){stopTimer();data.timerId=setInterval(()=>{reload()},5000)}
+onLoad((options)=>{data.id=options['id']??'';reload()})
+onShow(()=>{reload();startTimer()});onHide(()=>stopTimer());onUnload(()=>stopTimer())
+watch(canQuestion,(allowed:boolean)=>{if(!allowed&&data.mode=='question')data.mode='discussion'})
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}.shell{flex:1}.topbar{height:100px;padding:49px 14px 9px;flex-direction:row;align-items:center;background-color:#FFF}.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px}.top-copy{flex:1;min-width:0}.title{color:#121826;font-size:16px;font-weight:900;lines:1}.meta{margin-top:3px;color:#667085;font-size:9px}.status{flex-direction:row;align-items:center;color:#667085;font-size:9px}.dot{width:7px;height:7px;margin-right:5px;border-radius:4px;background-color:#98A2B3}.dot-online{background-color:#12B76A}.scroll{flex:1}.soup-card,.host-control,.members-card,.messages-card{margin:12px 16px 0;border-radius:18px;background-color:#FFF}.soup-card{padding:16px;background-color:#172554}.soup-head,.section-head{flex-direction:row;align-items:center;justify-content:space-between}.label{color:#93C5FD;font-size:9px;font-weight:900}.round-status{padding:4px 7px;border-radius:8px;background-color:rgba(255,255,255,.1);color:#FFF;font-size:8px}.soup-title{margin-top:9px;color:#FFF;font-size:19px;font-weight:900}.surface{margin-top:12px;color:#E0E7FF;font-size:12px;line-height:20px}.muted{color:#94A3B8}.host-actions{margin-top:14px;flex-direction:row}.host-secondary,.host-primary{flex:1;height:38px;margin:0 3px;border-radius:10px;font-size:10px;font-weight:800}.host-secondary{border-width:1px;border-color:#60A5FA;background-color:transparent;color:#BFDBFE}.host-primary{background-color:#2563EB;color:#FFF}
+.host-control{padding:14px}.host-control-title{color:#121826;font-size:13px;font-weight:900}.host-control-row{flex-direction:row;margin-top:10px}.control-card{flex:1;margin:0 4px;padding:11px;border-radius:13px;align-items:flex-start}.clue-card{background-color:#FFFAEB}.surface-card{background-color:#EFF6FF}.bottom-card{background-color:#EEF2FF}.end-card{background-color:#FEF2F2}.control-eyebrow{color:#667085;font-size:8px;font-weight:900}.control-name{margin-top:5px;color:#121826;font-size:11px;font-weight:900;lines:1}.control-copy{margin-top:4px;color:#667085;font-size:8px;line-height:13px}
+.section-head{padding:14px;border-bottom-width:1px;border-bottom-color:#E5EAF2}.section-title{color:#121826;font-size:14px;font-weight:900}.section-meta{color:#667085;font-size:10px}.member-scroll{height:118px}.member-row{padding:12px;flex-direction:row}.member{width:74px;align-items:center}.avatar-wrap{position:relative}.avatar{width:48px;height:48px;border-radius:24px}.avatar-empty{align-items:center;justify-content:center;background-color:#DBEAFE;color:#2563EB;font-weight:900}.host-mark{position:absolute;right:-3px;bottom:-2px;width:18px;height:18px;padding-top:3px;border-width:2px;border-color:#FFF;border-radius:9px;background-color:#F59E0B;color:#FFF;font-size:8px;text-align:center}.member-name{max-width:68px;margin-top:6px;color:#344054;font-size:9px;font-weight:800;lines:1}.member-role{margin-top:2px;color:#98A2B3;font-size:8px}
+.bubble-row{padding:10px 14px}.bubble-mine{flex-direction:column;align-items:flex-end}.bubble-head{flex-direction:row;align-items:center;color:#475467;font-size:9px;font-weight:800}.bubble-name{color:#121826;font-size:9px;font-weight:900}.bubble-level{margin-left:5px;color:#94A3B8;font-size:8px}.bubble-host{margin-left:5px;padding:2px 5px;border-radius:6px;background-color:#FFFAEB;color:#B54708;font-size:7px;font-weight:900}.bubble-question{margin-left:5px;padding:2px 5px;border-radius:6px;background-color:#F5F3FF;color:#6D28D9;font-size:7px;font-weight:900}.bubble{margin-top:5px;padding:9px 12px;border-radius:12px;max-width:300px}.bubble-content{font-size:12px;line-height:18px}.bubble-question-bubble{background-color:#F5F3FF;border-width:1px;border-color:#DDD6FE}.bubble-host-bubble{background-color:#FFFAEB;border-width:1px;border-color:#FDE68A}.bubble-mine-bubble{background-color:#2563EB;color:#FFF}.bubble-peer-bubble{background-color:#F1F5F9;color:#121826}.bubble-time{margin-top:4px;color:#94A3B8;font-size:8px}.answer-row{margin-top:6px;max-width:320px}.answer-buttons{flex-direction:row;flex-wrap:wrap}.answer-btn{height:28px;margin:3px 4px 0 0;padding:0 11px;border-radius:14px;border-width:1px;border-color:#DDD6FE;background-color:#FFF;color:#6D28D9;font-size:10px;font-weight:800}.answer-btn-active{border-color:#2563EB;background-color:#2563EB;color:#FFF}.answer-text{margin-top:3px;padding:5px 10px;border-radius:10px;background-color:#EFF6FF;color:#1D4ED8;font-size:10px;font-weight:800}.answer-pending{margin-top:3px;color:#7C3AED;font-size:9px;font-weight:800}
+.event-card{margin:8px 14px;padding:11px 13px;border-radius:12px;border-width:1px}.clue-event{background-color:#FFFAEB;border-color:#FDE68A}.surface-event{background-color:#EFF6FF;border-color:#BFDBFE}.bottom-event{background-color:#EEF2FF;border-color:#C7D2FE}.manual-event{background-color:#F5F3FF;border-color:#DDD6FE}.event-head{flex-direction:row;align-items:center;justify-content:space-between}.event-eyebrow{color:#121826;font-size:10px;font-weight:900}.event-time{color:#94A3B8;font-size:8px}.event-content{margin-top:6px;color:#344054;font-size:12px;line-height:18px}.event-action{margin-top:9px;height:30px;padding:0 13px;border-radius:9px;background-color:#2563EB;color:#FFF;font-size:10px;font-weight:800}.system-line{padding:10px 14px;text-align:center;color:#94A3B8;font-size:10px}.recall-line{padding:10px 14px;text-align:center;color:#98A2B3;font-size:9px}
+.messages-card{padding-bottom:10px}.empty{padding:35px;text-align:center;color:#98A2B3;font-size:11px}.state{margin:16px;padding:38px 18px;align-items:center;border-radius:18px;background-color:#FFF;color:#667085}.error{color:#B42318}.retry{width:100%;margin-top:14px;background-color:#2563EB;color:#FFF}.secondary{width:100%;margin-top:8px;background-color:#F2F4F7;color:#344054}.safe-bottom{height:28px}
+.composer-wrap{padding:7px 10px 22px;border-top-width:1px;border-top-color:#E5EAF2;background-color:#FFF}.mode-row{height:31px;flex-direction:row}.mode{width:70px;align-items:center;justify-content:center;border-radius:9px;color:#667085;font-size:10px;font-weight:800}.mode-active{background-color:#EFF6FF;color:#2563EB}.question-active{background-color:#F5F3FF;color:#7C3AED}.composer{margin-top:5px;flex-direction:row;align-items:center}.input{flex:1;height:42px;padding:0 11px;border-radius:12px;background-color:#F4F7FB;font-size:12px}.send{width:58px;height:40px;margin-left:7px;padding:0;border-radius:11px;background-color:#2563EB;color:#FFF;font-size:11px;font-weight:800}.question-send{background-color:#7C3AED}.readonly{height:60px;padding-bottom:14px;align-items:center;justify-content:center;border-top-width:1px;border-top-color:#E5EAF2;background-color:#FFF;color:#98A2B3;font-size:10px}
+.mask{position:fixed;left:0;right:0;top:0;bottom:0;padding:24px;align-items:center;justify-content:center;background-color:rgba(15,23,42,.55)}.panel{width:100%;padding:20px;border-radius:22px;background-color:#FFF}.panel-title{color:#121826;font-size:18px;font-weight:900}.panel-copy{margin-top:7px;color:#667085;font-size:11px;line-height:17px}.panel-area{width:100%;min-height:120px;margin-top:14px;padding:11px;border-width:1px;border-color:#D0D5DD;border-radius:12px;font-size:12px;line-height:18px}.surface-list,.bottom-list{margin-top:14px}.surface-row,.bottom-row{margin-bottom:8px;padding:11px 13px;border-radius:11px;border-width:1px;border-color:#E5EAF2;background-color:#F8FAFC}.bottom-row-done{background-color:#F1F5F9;border-color:#E2E8F0}.surface-row-title,.bottom-row-title{color:#121826;font-size:12px;font-weight:900}.surface-row-content,.bottom-row-content{margin-top:6px;color:#475467;font-size:10px;line-height:15px;lines:2}.primary{width:100%;margin-top:14px;background-color:#2563EB;color:#FFF}.modal-buttons{flex-direction:row;margin-top:16px}.modal-buttons .secondary{flex:1;margin:0 4px;background-color:#F2F4F7;color:#344054}.danger{flex:1;margin:0 4px;background-color:#DC2626;color:#FFF}.cancel{width:100%;margin-top:8px;background-color:#F2F4F7;color:#344054}
+.topbar{height:96px;padding:48px 14px 8px}
+.control-card{min-height:96px;justify-content:center}
+.control-disabled{opacity:.48}
+.control-pressed{opacity:.78;transform:scale(.98)}
+.host-secondary,.host-primary{height:40px;padding:0;font-size:11px;line-height:40px}
+.answer-btn{height:30px;padding-top:0;padding-bottom:0;border-radius:15px;font-size:11px;line-height:30px}
+.event-action{height:32px;padding-top:0;padding-bottom:0;font-size:11px;line-height:32px}
+.retry,.secondary,.primary,.danger,.cancel{height:42px;padding-top:0;padding-bottom:0;border-radius:11px;font-size:11px;font-weight:800;line-height:42px}
+.mode{height:32px;font-size:11px}
+.send{width:62px;height:42px;padding:0;font-size:11px;line-height:42px}
+</style>

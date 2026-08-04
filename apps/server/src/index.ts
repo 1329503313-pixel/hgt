@@ -94,6 +94,7 @@ import onlineSoupRouter, {
   setOnlineSoupLobbyEventEmitter,
   validRoomInviteToken
 } from "./onlineSoup.js";
+import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const insecureJwtSecrets = new Set([
@@ -371,6 +372,24 @@ app.use((_req, res, next) => {
   next();
 });
 
+app.get("/api/app/android-update", async (req, res) => {
+  const rawVersionCode = String(req.query.versionCode ?? "0");
+  if (!/^\d{1,10}$/.test(rawVersionCode)) {
+    return res.status(400).json({ error: "versionCode 必须是非负整数" });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, version_code, version_name, min_supported_version_code, apk_url,
+      release_notes, published_at, enabled, created_at, updated_at
+     FROM android_app_releases
+     WHERE enabled = 1
+     ORDER BY version_code DESC
+     LIMIT 1`
+  );
+  const release = rows.length > 0 ? mapAndroidReleaseRow(rows[0]) : null;
+  res.json(resolveAndroidUpdate(Number(rawVersionCode), release));
+});
+
 // 生产环境：serve Vite 构建产物
 if (config.nodeEnv === "production") {
   const path = await import("node:path");
@@ -591,6 +610,19 @@ const adminNoticeSchema = z.object({
   message: "有效时间至少为 1 小时"
 });
 
+const androidReleaseSchema = z.object({
+  versionCode: z.coerce.number().int().positive().max(2_147_483_647),
+  versionName: z.string().trim().min(1).max(32),
+  minSupportedVersionCode: z.coerce.number().int().nonnegative().max(2_147_483_647),
+  apkUrl: z.string().url().max(1000).refine((value) => value.startsWith("https://"), "APK 地址必须使用 HTTPS"),
+  releaseNotes: z.array(z.string().trim().min(1).max(500)).max(30),
+  publishedAt: z.coerce.date(),
+  enabled: z.boolean().optional().default(false)
+}).refine((value) => value.minSupportedVersionCode <= value.versionCode, {
+  message: "最低支持版本不能高于发布版本",
+  path: ["minSupportedVersionCode"]
+});
+
 const feedbackTypeSchema = z.enum(["bug", "feature", "activity", "activity_feedback"]);
 const userFeedbackSchema = z.object({
   title: z.string().trim().min(1, "意见标题不能为空").max(100, "意见标题不超过 100 字"),
@@ -685,7 +717,16 @@ async function sendStoredImage(
   const stored = String(value);
   if (!stored.startsWith("data:image/")) {
     const url = publicOssUrl(stored);
-    return url ? res.redirect(302, url) : sendError(res, 404, "图片不存在");
+    if (!url) return sendError(res, 404, "图片不存在");
+    if (!stored.startsWith("oss://")) return res.redirect(302, url);
+
+    const upstream = await fetch(url);
+    if (!upstream.ok) return sendError(res, upstream.status, "图片读取失败");
+    const output = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader("Cache-Control", cacheControl);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/octet-stream");
+    res.setHeader("Content-Length", output.length);
+    return res.send(output);
   }
   const decoded = decodeDataImage(stored);
   if (!decoded) return sendError(res, 415, "图片格式不受支持");
@@ -1030,6 +1071,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     creatorEquippedBadge: equippedBadge(row.creator_badge_key, row.creator_badge_icon_url),
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
+    enableAiGame: bool(row.enable_ai_game),
     viewCount: views,
     likeCount: likes,
     favoriteCount: favorites,
@@ -3722,7 +3764,10 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
         equippedBadge: equippedBadge(conversation.other_badge_key, conversation.other_badge_icon_url),
         isOnline: isUserOnline(conversation.other_id),
         isFollowing: bool(conversation.is_following)
-      }
+      },
+      lastMessage: null,
+      unreadCount: 0,
+      updatedAt: conversation.last_message_at ? new Date(conversation.last_message_at).toISOString() : ""
     },
     messages: rows.map((row) => ({
       id: String(row.id), senderId: String(row.sender_id), content: row.recalled_at ? "" : String(row.content),
@@ -4805,6 +4850,7 @@ app.get("/api/soups/:id", async (req, res) => {
       bottom: full ? soup.bottom : null,
       supplementalBottoms: full ? jsonList(soup.supplemental_bottoms) : null,
       manual: full ? soup.host_manual : null,
+      isSensitive: canEdit ? bool(soup.is_sensitive) : false,
       enableAiGame: bool(soup.enable_ai_game) && canEnableAiGameRole(statsRows[0]?.creator_role),
       canConfigureAiGame: canEnableAiGameRole(statsRows[0]?.creator_role),
       aiPrompt: canEdit ? (soup.ai_prompt as string) || null : null,
@@ -6338,6 +6384,57 @@ app.post(
     }
   }
 );
+
+app.get("/api/admin/android-releases", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, version_code, version_name, min_supported_version_code, apk_url,
+      release_notes, published_at, enabled, created_at, updated_at
+     FROM android_app_releases
+     ORDER BY version_code DESC`
+  );
+  res.json({ releases: rows.map((row) => mapAndroidReleaseRow(row)) });
+});
+
+app.post("/api/admin/android-releases", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = androidReleaseSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "Android 发布信息不正确");
+  const id = nanoid();
+  try {
+    await pool.query(
+      `INSERT INTO android_app_releases
+        (id, version_code, version_name, min_supported_version_code, apk_url, release_notes, published_at, enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        parsed.data.versionCode,
+        parsed.data.versionName,
+        parsed.data.minSupportedVersionCode,
+        parsed.data.apkUrl,
+        JSON.stringify(parsed.data.releaseNotes),
+        parsed.data.publishedAt,
+        parsed.data.enabled ? 1 : 0
+      ]
+    );
+  } catch (error) {
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") return sendError(res, 409, "该 versionCode 已存在");
+    throw error;
+  }
+  res.status(201).json({ id });
+});
+
+app.patch("/api/admin/android-releases/:id/enabled", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "enabled 必须是布尔值");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "UPDATE android_app_releases SET enabled = ? WHERE id = ?",
+    [parsed.data.enabled ? 1 : 0, req.params.id]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, "Android 发布版本不存在");
+  res.json({ ok: true });
+});
 
 app.get("/api/admin/notices", async (req, res) => {
   if (!(await requireAdmin(req, res))) return;

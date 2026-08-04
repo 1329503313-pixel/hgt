@@ -1,0 +1,268 @@
+<template>
+  <view class="page">
+    <view class="header" :style="headerStyle">
+      <text class="eyebrow">兴趣社区</text>
+      <text class="headline">圈子</text>
+    </view>
+    <view v-if="sessionState.restoring || !sessionState.restored" class="state-card">
+      <text class="state-title">正在恢复会话...</text>
+    </view>
+    <view v-else-if="sessionState.user == null" class="state-card">
+      <view class="state-symbol"><image class="state-symbol-image" src="/static/tabbar/circles-selected.png" mode="aspectFit"></image></view>
+      <text class="state-title">登录后进入圈子</text>
+      <text class="state-message">找到同好，一起聊汤</text>
+      <button class="primary-button" @click="openAuth">登录 / 注册</button>
+    </view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view v-if="data.loading" class="loading-stack">
+        <view class="hero-skeleton"></view>
+        <view class="list-skeleton"></view>
+      </view>
+      <view v-else-if="data.errorMessage.length > 0" class="error-card">
+        <text class="error-text">{{ data.errorMessage }}</text>
+        <button class="retry-button" @click="reload">重新加载</button>
+      </view>
+      <view v-else>
+        <view class="hero-card">
+          <view class="hero-copy">
+            <text class="hero-title">找到同好，一起聊汤</text>
+            <text class="hero-subtitle">{{ joinedCount }} 个已加入 · {{ onlineTotal }} 人在线</text>
+          </view>
+          <view class="hero-icon"><image class="hero-icon-image" src="/static/tabbar/circles-selected.png" mode="aspectFit"></image></view>
+        </view>
+
+        <view class="circle-card">
+          <view v-for="circle in data.circles" :key="circle.id" class="circle-row" hover-class="row-pressed" @click="openCircle(circle)">
+            <view class="avatar-wrap">
+              <image class="avatar" :src="circleAvatar(circle)" mode="aspectFill"></image>
+              <view v-if="circle.onlineCount > 0" class="online-dot"></view>
+              <view v-if="circle.isJoined && circle.unreadCount > 0" class="unread-badge"><text class="unread-badge-text">{{ unreadText(circle.unreadCount) }}</text></view>
+            </view>
+            <view class="circle-copy">
+              <view class="title-row">
+                <text class="circle-name">{{ circle.name }}</text>
+                <text v-if="!circle.isJoined" class="not-joined">未加入</text>
+              </view>
+              <text class="preview" :class="circle.unreadMention != null ? 'mention-preview' : ''">{{ preview(circle) }}</text>
+              <view class="meta-row">
+                <text class="meta">{{ circle.memberCount }} 位成员</text>
+                <view class="online-meta"><view class="mini-dot"></view><text class="online-text">{{ circle.onlineCount }} 人在线</text></view>
+              </view>
+            </view>
+            <view class="row-tail">
+              <text class="time">{{ messageTime(circle) }}</text>
+              <text class="chevron">›</text>
+            </view>
+          </view>
+          <view v-if="data.circles.length == 0" class="empty">
+            <view class="empty-icon"><image class="empty-icon-image" src="/static/tabbar/circles.png" mode="aspectFit"></image></view>
+            <text class="empty-title">暂无圈子</text>
+            <text class="empty-copy">新圈子创建后会显示在这里</text>
+          </view>
+        </view>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+
+    <view v-if="data.joining != null" class="modal-mask" @click="cancelJoin">
+      <view class="join-modal" @click.stop>
+        <button class="close-button" :disabled="data.saving" @click="cancelJoin">×</button>
+        <image class="join-avatar" :src="circleAvatar(data.joining!)" mode="aspectFill"></image>
+        <text class="join-title">是否加入圈子？</text>
+        <text class="join-copy">加入「{{ data.joining!.name }}」后即可进入聊天。</text>
+        <view class="modal-actions">
+          <button class="secondary-button" :disabled="data.saving" @click="cancelJoin">取消</button>
+          <button class="join-button" :disabled="data.saving" @click="confirmJoin">{{ data.saving ? '加入中…' : '加入' }}</button>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { CircleSummary } from '@/domain/dto/circle.uts'
+import { loadCircles, joinCircle } from '@/services/circles.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+import { refreshUnreadState, setCirclesPageVisible } from '@/stores/unread.uts'
+
+type CirclePageData = {
+  circles: CircleSummary[],
+  loading: boolean,
+  saving: boolean,
+  errorMessage: string,
+  joining: CircleSummary | null
+}
+
+const data = reactive({
+  circles: [] as CircleSummary[],
+  loading: false,
+  saving: false,
+  errorMessage: '',
+  joining: null as CircleSummary | null
+} as CirclePageData)
+
+const statusBarHeight = uni.getSystemInfoSync().statusBarHeight ?? 0
+const headerStyle = 'padding-top: ' + (statusBarHeight + 12).toString() + 'px;'
+
+const joinedCount = computed<number>(() => data.circles.filter((circle: CircleSummary): boolean => circle.isJoined).length)
+const onlineTotal = computed<number>(() => data.circles.reduce((total: number, circle: CircleSummary): number => total + circle.onlineCount, 0))
+
+function openAuth() {
+  uni.navigateTo({ url: '/pages/auth/auth' })
+}
+
+function circleAvatar(circle: CircleSummary): string {
+  return absoluteApiUrl(circle.avatar)
+}
+
+function unreadText(count: number): string {
+  return count > 99 ? '99+' : count.toString()
+}
+
+function preview(circle: CircleSummary): string {
+  if (circle.unreadMention != null) return '有人@你 [' + circle.unreadMention!.content + ']'
+  if (circle.latestMessage != null) return circle.latestMessage!.senderName + '：' + circle.latestMessage!.content
+  return '还没有消息，来聊第一句吧'
+}
+
+function messageTime(circle: CircleSummary): string {
+  if (circle.latestMessage == null) return ''
+  const date = new Date(circle.latestMessage!.createdAt)
+  const now = new Date()
+  if (date.getFullYear() == now.getFullYear() && date.getMonth() == now.getMonth() && date.getDate() == now.getDate()) {
+    const hours = date.getHours().toString().padStart(2, '0')
+    const minutes = date.getMinutes().toString().padStart(2, '0')
+    return hours + ':' + minutes
+  }
+  return (date.getMonth() + 1).toString() + '/' + date.getDate().toString()
+}
+
+function reload() {
+  if (data.loading || sessionState.user == null) return
+  data.loading = true
+  data.errorMessage = ''
+  loadCircles((response) => {
+    data.circles = response.circles
+    data.loading = false
+  }, (error) => {
+    data.loading = false
+    data.errorMessage = error.message
+  })
+}
+
+function openCircle(circle: CircleSummary) {
+  if (circle.isJoined) {
+    let url = '/pages/circle-chat/circle-chat?id=' + encodeURIComponent(circle.id)
+    if (circle.unreadMention != null) url += '&mentionId=' + encodeURIComponent(circle.unreadMention!.id)
+    uni.navigateTo({ url })
+    return
+  }
+  data.joining = circle
+}
+
+function cancelJoin() {
+  if (!data.saving) data.joining = null
+}
+
+function confirmJoin() {
+  if (data.saving || data.joining == null) return
+  const joiningId = data.joining!.id
+  data.saving = true
+  joinCircle(joiningId, (_) => {
+    data.saving = false
+    data.joining = null
+    for (let index = 0; index < data.circles.length; index++) {
+      if (data.circles[index].id == joiningId) {
+        data.circles[index].isJoined = true
+        data.circles[index].memberCount += 1
+        break
+      }
+    }
+    uni.showToast({ title: '已加入圈子', icon: 'success' })
+    setTimeout(() => {
+      uni.navigateTo({ url: '/pages/circle-chat/circle-chat?id=' + encodeURIComponent(joiningId) })
+    }, 220)
+  }, (error) => {
+    data.saving = false
+    uni.showToast({ title: error.message, icon: 'none' })
+  })
+}
+
+onLoad(() => {
+  if (!sessionState.restored) restoreSession()
+})
+
+onShow(() => {
+  setCirclesPageVisible(true)
+  if (sessionState.user != null) reload()
+})
+onHide(() => { setCirclesPageVisible(false) })
+
+watch((): string => sessionState.user == null ? '' : sessionState.user!.id, (userId: string) => {
+  if (userId.length > 0) reload()
+  else data.circles = []
+  refreshUnreadState()
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.scroll { flex: 1; }
+.header { padding: 12px 16px; }
+.eyebrow { color: #2563EB; font-size: 12px; font-weight: 700; }
+.headline { margin-top: 3px; color: #121826; font-size: 30px; font-weight: 800; }
+.state-card, .error-card { margin: 16px; padding: 26px 20px; align-items: center; border-width: 1px; border-color: #E5EAF2; border-radius: 20px; background-color: #FFFFFF; }
+.state-symbol, .empty-icon { width: 58px; height: 58px; align-items: center; justify-content: center; border-radius: 29px; background-color: #EAF2FF; }
+.state-symbol-image, .empty-icon-image { width: 30px; height: 30px; }
+.state-title { margin-top: 10px; color: #121826; font-size: 18px; font-weight: 700; }
+.state-message { margin-top: 6px; color: #667085; font-size: 13px; }
+.primary-button, .retry-button { width: 100%; margin-top: 16px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.loading-stack { padding: 0 16px; }
+.hero-skeleton { height: 86px; border-radius: 18px; background-color: #E9EDF3; }
+.list-skeleton { height: 390px; margin-top: 14px; border-radius: 18px; background-color: #E9EDF3; }
+.error-text { color: #B42318; font-size: 13px; }
+.hero-card { margin: 0 16px 14px 16px; padding: 18px; flex-direction: row; align-items: center; justify-content: space-between; border-radius: 18px; background-color: #EFF6FF; }
+.hero-copy { flex: 1; }
+.hero-title { color: #121826; font-size: 18px; font-weight: 800; }
+.hero-subtitle { margin-top: 6px; color: #667085; font-size: 12px; }
+.hero-icon { width: 48px; height: 48px; margin-left: 12px; align-items: center; justify-content: center; border-radius: 16px; background-color: #FFFFFF; }
+.hero-icon-image { width: 28px; height: 28px; }
+.circle-card { margin: 0 16px; overflow: hidden; border-radius: 18px; background-color: #FFFFFF; }
+.circle-row { min-height: 94px; padding: 15px 14px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #F0F2F5; }
+.circle-row:last-child { border-bottom-width: 0; }
+.row-pressed { background-color: #F8FAFC; opacity: 0.78; }
+.avatar-wrap { position: relative; width: 56px; height: 56px; margin-right: 12px; }
+.avatar { width: 56px; height: 56px; border-radius: 17px; background-color: #EAF2FF; }
+.online-dot { position: absolute; right: -1px; bottom: -1px; width: 13px; height: 13px; border-width: 2px; border-color: #FFFFFF; border-radius: 7px; background-color: #12B76A; }
+.unread-badge { position: absolute; right: 1px; top: 1px; min-width: 20px; height: 20px; padding: 2px 4px; border-width: 2px; border-color: #FFFFFF; border-radius: 11px; background-color: #EF4444; color: #FFFFFF; font-size: 9px; font-weight: 700; line-height: 12px; text-align: center; }
+.circle-copy { flex: 1; min-width: 0; }
+.title-row { flex-direction: row; align-items: center; }
+.circle-name { max-width: 180px; color: #121826; font-size: 15px; font-weight: 800; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.not-joined { margin-left: 7px; padding: 2px 7px; border-radius: 8px; background-color: #FFF7E6; color: #B54708; font-size: 9px; font-weight: 700; }
+.preview { margin-top: 5px; color: #667085; font-size: 12px; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-preview { color: #2563EB; font-weight: 700; }
+.meta-row { margin-top: 6px; flex-direction: row; align-items: center; }
+.meta { color: #98A2B3; font-size: 10px; }
+.online-meta { margin-left: 12px; flex-direction: row; align-items: center; }
+.mini-dot { width: 6px; height: 6px; margin-right: 4px; border-radius: 3px; background-color: #12B76A; }
+.online-text { color: #039855; font-size: 10px; }
+.row-tail { width: 34px; align-self: stretch; align-items: flex-end; justify-content: space-between; }
+.time { color: #98A2B3; font-size: 10px; }
+.chevron { color: #98A2B3; font-size: 25px; font-weight: 300; }
+.empty { min-height: 260px; padding: 28px; align-items: center; justify-content: center; }
+.empty-title { margin-top: 10px; color: #121826; font-size: 15px; font-weight: 700; }
+.empty-copy { margin-top: 5px; color: #98A2B3; font-size: 12px; }
+.safe-bottom { height: 24px; }
+.modal-mask { position: absolute; left: 0; right: 0; top: 0; bottom: 0; padding: 24px; align-items: center; justify-content: center; background-color: rgba(15, 23, 42, 0.42); }
+.join-modal { position: relative; width: 100%; padding: 28px 20px 20px 20px; align-items: center; border-radius: 22px; background-color: #FFFFFF; }
+.close-button { position: absolute; right: 9px; top: 8px; width: 38px; height: 38px; margin: 0; padding: 0; background-color: transparent; color: #667085; font-size: 26px; }
+.join-avatar { width: 78px; height: 78px; border-radius: 24px; background-color: #EAF2FF; }
+.join-title { margin-top: 16px; color: #121826; font-size: 19px; font-weight: 800; }
+.join-copy { margin-top: 7px; color: #667085; font-size: 13px; text-align: center; }
+.modal-actions { width: 100%; margin-top: 20px; flex-direction: row; }
+.secondary-button, .join-button { flex: 1; margin: 0; border-radius: 12px; font-size: 13px; }
+.secondary-button { margin-right: 5px; border-width: 1px; border-color: #D0D5DD; background-color: #FFFFFF; color: #344054; }
+.join-button { margin-left: 5px; background-color: #2563EB; color: #FFFFFF; }
+.unread-badge { right: 0; top: 0; padding: 0 4px; align-items: center; justify-content: center; border-radius: 10px; }.unread-badge-text { color: #FFFFFF; font-size: 9px; font-weight: 800; line-height: 16px; text-align: center; }
+</style>

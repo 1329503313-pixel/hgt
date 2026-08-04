@@ -1,0 +1,224 @@
+<template>
+  <view class="page">
+    <view class="topbar"><AppBackButton @click="goBack" /><text class="title">商城</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state"><text>正在加载卡包...</text></view>
+    <view v-else-if="data.errorMessage.length > 0" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <!-- 钱包卡：H5 渐变 + 动效 + 3 入口 -->
+      <view class="wallet">
+        <view class="wallet-bg-circle wallet-bg-circle-a"></view>
+        <view class="wallet-bg-circle wallet-bg-circle-b"></view>
+        <view class="wallet-top">
+          <view class="wallet-summary">
+            <text class="wallet-label">当前贝壳余额</text>
+            <view class="balance-row">
+              <image class="shell-icon" src="/static/tasks/shell.png" mode="aspectFit"></image>
+              <text class="balance">{{ data.store == null ? 0 : data.store!.balance }}</text>
+            </view>
+          </view>
+          <view class="wallet-sparkle-wrap">
+            <text class="wallet-sparkle wallet-sparkle-1">✦</text>
+            <text class="wallet-sparkle wallet-sparkle-2">✦</text>
+            <text class="wallet-sparkle wallet-sparkle-3">✦</text>
+          </view>
+        </view>
+        <view class="insights">
+          <view class="insight"><text class="insight-label">今日免费抽取</text><text class="insight-value">{{ freeDraws }} 次</text></view>
+          <view class="insight"><text class="insight-label">当前在售卡包</text><text class="insight-value">{{ onSaleCount }} 个</text></view>
+        </view>
+        <view class="wallet-actions">
+          <view class="wallet-action" hover-class="wallet-action-pressed" :hover-stay-time="80" @click="openCabinet">
+            <image class="action-icon" src="/static/tasks/profile.png" mode="aspectFit"></image>
+            <text class="action-text">收藏柜</text>
+          </view>
+          <view class="wallet-action" hover-class="wallet-action-pressed" :hover-stay-time="80" @click="openRankings">
+            <image class="action-icon" src="/static/tasks/growth.png" mode="aspectFit"></image>
+            <text class="action-text">收藏榜</text>
+          </view>
+          <view class="wallet-action" hover-class="wallet-action-pressed" :hover-stay-time="80" @click="openHistory">
+            <image class="action-icon" src="/static/tasks/calendar.png" mode="aspectFit"></image>
+            <text class="action-text">抽卡记录</text>
+          </view>
+        </view>
+      </view>
+      <!-- 空状态 -->
+      <view v-if="packs.length == 0" class="empty">
+        <view class="empty-icon-wrap"><text class="empty-icon">卡</text></view>
+        <text class="empty-title">商城正在准备卡包</text>
+        <text class="empty-copy">管理员上传卡牌素材、配置概率并启用卡包后，会自动展示在这里。</text>
+      </view>
+      <!-- 卡包分组：APP 端按 H5 手机布局使用单列横向卡片 -->
+      <view v-for="group in groups" :key="group.type" class="group">
+        <view class="group-head">
+          <text class="group-title">{{ group.label }}</text>
+          <text class="group-count">{{ group.packs.length }} 款</text>
+        </view>
+        <view class="pack-list">
+          <view v-for="pack in group.packs" :key="pack.id" class="pack-card" hover-class="pack-card-pressed" :hover-stay-time="100" @click="openPack(pack.id)">
+            <view class="cover-wrap">
+              <image v-if="pack.coverCard != null" class="cover" :src="assetUrl(pack.coverCard!.thumbnailUrl.length > 0 ? pack.coverCard!.thumbnailUrl : pack.coverCard!.imageUrl)" mode="aspectFill"></image>
+              <view v-else class="cover cover-empty"><text>暂无封面</text></view>
+              <view v-if="pack.freeDrawsRemaining > 0" class="free-tag"><text>免费</text></view>
+            </view>
+            <view class="pack-copy">
+              <view class="name-row">
+                <text class="pack-name">{{ pack.name }}</text>
+                <text class="type-pill">{{ pack.packTypeLabel }}</text>
+              </view>
+              <text class="description">{{ pack.description }}</text>
+              <view class="meta">
+                <text class="meta-item">⏱ {{ remainingText(pack.saleEndAt) }}</text>
+                <text class="meta-item">传说保底 {{ pack.pity.legend }}/{{ pack.pity.legendLimit }}</text>
+              </view>
+              <view class="pack-bottom">
+                <view class="previews">
+                  <image v-for="card in pack.previewCards.slice(0,3)" :key="card.id" class="preview" :src="assetUrl(card.thumbnailUrl.length > 0 ? card.thumbnailUrl : card.imageUrl)" mode="aspectFill"></image>
+                </view>
+                <view class="pack-actions">
+                  <view class="draw-button" hover-class="draw-button-pressed" :hover-stay-time="80" @click.stop="openPack(pack.id)"><text class="draw-button-text">{{ pack.freeDrawsRemaining > 0 ? '免费抽取(' + pack.freeDrawsRemaining.toString() + ')' : '抽取卡牌' }}</text></view>
+                  <view class="story-button" hover-class="story-button-pressed" :hover-stay-time="80" @click.stop="openStory(pack)"><text class="story-button-text">卡包故事</text></view>
+                </view>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+    <!-- 故事 modal：独立组件风格，与 H5 AssetPackStoryModal 对齐 -->
+    <view v-if="data.storyPack != null" class="story-mask" @click="closeStory">
+      <view class="story-card" @click.stop>
+        <view class="story-header">
+          <view class="story-meta">
+            <text class="story-eyebrow">卡包故事</text>
+            <text class="story-name">{{ data.storyPack!.name }}</text>
+            <text class="story-description">{{ data.storyPack!.description }}</text>
+          </view>
+          <view class="story-close" hover-class="story-close-pressed" @click="closeStory"><text class="story-close-text">×</text></view>
+        </view>
+        <scroll-view class="story-scroll" direction="vertical">
+          <text class="story-content">{{ storyText(data.storyPack!.packStory) }}</text>
+        </scroll-view>
+        <view class="story-footer-close" hover-class="story-footer-close-pressed" :hover-stay-time="80" @click="closeStory"><text class="story-footer-close-text">关闭故事</text></view>
+      </view>
+    </view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { AssetPack, AssetStoreResponse } from '@/domain/dto/digital-asset.uts'
+import { loadAssetStore } from '@/services/digital-assets.uts'
+type PackGroup = { type: string, label: string, packs: AssetPack[] }
+type StoreData = { store: AssetStoreResponse | null, loading: boolean, errorMessage: string, storyPack: AssetPack | null }
+const data = reactive({ store: null, loading: false, errorMessage: '', storyPack: null } as StoreData)
+const packs = computed<AssetPack[]>(() => data.store == null ? [] as AssetPack[] : data.store!.packs)
+const freeDraws = computed<number>(() => packs.value.reduce((total, item) => total + item.freeDrawsRemaining, 0))
+const onSaleCount = computed<number>(() => packs.value.filter((item) => item.status == 'on_sale').length)
+function groupFor(type: string, label: string): PackGroup { return { type, label, packs: packs.value.filter((item) => item.packType == type) } as PackGroup }
+const groups = computed<PackGroup[]>(() => [groupFor('limited','限定卡包'), groupFor('collaboration','联动卡包'), groupFor('permanent','常驻卡包')].filter((item) => item.packs.length > 0))
+function assetUrl(url: string): string { return absoluteApiUrl(url) }
+function remainingText(value: string | null): string { if (value == null || value.length == 0) return '长期上架'; const end = new Date(value).getTime(); const hours = Math.floor((end - Date.now()) / 3600000); if (hours <= 0) return '已结束'; return hours >= 24 ? '剩余 ' + Math.floor(hours / 24).toString() + ' 天' : '剩余 ' + hours.toString() + ' 小时' }
+function goBack() { uni.navigateBack() }
+function openCabinet() { uni.navigateTo({ url: '/pages/card-cabinet/card-cabinet' }) }
+function openRankings() { uni.navigateTo({ url: '/pages/rankings/rankings' }) }
+function openHistory() { uni.navigateTo({ url: '/pages/asset-draw-history/asset-draw-history' }) }
+function openPack(id: string) { uni.navigateTo({ url: '/pages/asset-pack/asset-pack?id=' + encodeURIComponent(id) }) }
+function storyText(value: string): string { const text = value.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim(); return text.length > 0 ? text : '暂无卡包故事' }
+function openStory(pack: AssetPack) { data.storyPack = pack }
+function closeStory() { data.storyPack = null }
+function reload() { if (data.loading) return; data.loading = true; data.errorMessage = ''; loadAssetStore((response) => { data.store = response; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }
+onLoad(() => reload())
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}
+.topbar{height:96px;padding:48px 14px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}
+.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px;border-radius:20px}
+.back-pressed{background-color:#EEF2F6}
+.title{color:#121826;font-size:17px;font-weight:800}
+.scroll{flex:1}
+/* 钱包卡：H5 渐变 + 动效装饰 */
+.wallet{margin:12px 16px;padding:20px;border-radius:24px;background-color:#3730A3;background-image:linear-gradient(135deg,#2563EB 0%,#4F46E5 50%,#7C3AED 100%);overflow:hidden;position:relative}
+.wallet-bg-circle{position:absolute;border-radius:50%;background-color:rgba(255,255,255,.08)}
+.wallet-bg-circle-a{width:200px;height:200px;right:-60px;top:-80px}
+.wallet-bg-circle-b{width:140px;height:140px;left:-50px;bottom:-50px;background-color:rgba(167,243,250,.06)}
+.wallet-top,.balance-row,.insights,.wallet-actions{flex-direction:row;align-items:center}
+.wallet-top{justify-content:space-between;position:relative;z-index:1}
+.wallet-summary{flex:1}
+.wallet-label{color:#DBEAFE;font-size:10px;font-weight:800}
+.balance-row{margin-top:7px;flex-direction:row;align-items:center}
+.shell-icon{width:26px;height:26px}
+.balance{margin-left:7px;color:#FFF;font-size:30px;font-weight:900}
+.wallet-sparkle-wrap{width:60px;height:50px;position:relative}
+.wallet-sparkle{position:absolute;color:#A5F3FC;font-size:18px;font-weight:900}
+.wallet-sparkle-1{right:8px;top:0;font-size:22px;opacity:.7}
+.wallet-sparkle-2{right:0;top:22px;font-size:14px;opacity:.5}
+.wallet-sparkle-3{right:24px;top:8px;font-size:10px;opacity:.4}
+.insights{margin-top:14px;position:relative;z-index:1}
+.insight{flex:1;margin-right:7px;padding:11px 12px;border-radius:13px;background-color:rgba(255,255,255,.12)}
+.insight:last-child{margin-right:0}
+.insight-label{color:#C7D2FE;font-size:9px}
+.insight-value{margin-top:4px;color:#FFF;font-size:16px;font-weight:900}
+.wallet-actions{margin-top:14px;position:relative;z-index:1}
+.wallet-action{flex:1;margin:0 4px;padding:9px 4px;align-items:center;border-radius:12px;background-color:rgba(255,255,255,.12);color:#FFF;font-size:10px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.wallet-action-pressed{opacity:.78;transform:scale(.96)}
+.action-icon{width:19px;height:19px;margin-bottom:4px}
+.action-text{color:#FFF}
+/* 分组 */
+.group{margin:18px 16px 4px}
+.group-head{flex-direction:row;align-items:center;justify-content:space-between;margin-bottom:10px;padding:0 2px}
+.group-title{color:#121826;font-size:15px;font-weight:900}
+.group-count{color:#98A2B3;font-size:9px;font-weight:700}
+/* 手机端对齐 H5：单列横向卡，左封面右信息 */
+.pack-list{width:100%}
+.pack-card{width:100%;height:220px;margin-bottom:12px;overflow:hidden;flex-direction:row;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF;transition-property:transform,border-color;transition-duration:140ms}
+.pack-card-pressed{transform:scale(.98);border-color:#C7D2FE;box-shadow:0 4px 14px rgba(79,70,229,.12)}
+.cover-wrap{position:relative;width:112px;height:220px;background-color:#EEF2F6}
+.cover{width:112px;height:220px}
+.cover-empty{align-items:center;justify-content:center;background-color:#EEF2F6;color:#98A2B3;font-size:9px}
+.free-tag{position:absolute;left:8px;top:8px;padding:3px 7px;border-radius:7px;background-color:#F59E0B;color:#FFF;font-size:8px;font-weight:900;letter-spacing:0.4px}
+.pack-copy{flex:1;min-width:0;padding:14px 13px 12px}
+.name-row{flex-direction:row;align-items:center;justify-content:space-between}
+.pack-name{flex:1;min-width:0;margin-right:6px;color:#121826;font-size:16px;font-weight:900;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.type-pill{padding:2px 6px;border-radius:6px;background-color:#EFF6FF;color:#2563EB;font-size:8px;font-weight:800}
+.description{margin-top:5px;color:#667085;font-size:10px;line-height:16px;lines:2;overflow:hidden;text-overflow:ellipsis}
+.meta{margin-top:9px;flex-direction:row;flex-wrap:wrap;color:#667085;font-size:8px;font-weight:700}
+.meta-item{margin-right:8px;margin-bottom:3px}
+.pack-bottom{margin-top:auto;flex-direction:row;align-items:flex-end;justify-content:space-between}
+.previews{flex:1;min-width:0;height:54px;flex-direction:row;align-items:flex-end;overflow:hidden}
+.preview{width:38px;height:53px;margin-right:-10px;border-width:2px;border-color:#FFF;border-radius:7px;background-color:#F1F5F9}
+.pack-actions{width:100px;margin-left:8px}
+.story-button{width:100%;height:35px;margin-top:6px;align-items:center;justify-content:center;border-radius:10px;border-width:1px;border-color:#FCD34D;background-color:#FFFBEB;transition-property:opacity,transform;transition-duration:120ms}
+.story-button-text{color:#B45309;font-size:9px;font-weight:800}
+.story-button-pressed{opacity:.78;transform:scale(.97)}
+.draw-button{width:100%;height:35px;align-items:center;justify-content:center;border-radius:10px;background-color:#2563EB;transition-property:opacity,transform;transition-duration:120ms}
+.draw-button-text{color:#FFF;font-size:9px;font-weight:800}
+.draw-button-pressed{opacity:.85;transform:scale(.97);box-shadow:0 2px 6px rgba(37,99,235,.18)}
+/* 空状态 */
+.empty{margin:14px 16px;padding:38px 18px;align-items:center;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF}
+.empty-icon-wrap{width:62px;height:62px;align-items:center;justify-content:center;border-radius:20px;background-color:#EEF2FF}
+.empty-icon{color:#4F46E5;font-size:24px;font-weight:900}
+.empty-title{margin-top:14px;color:#121826;font-size:15px;font-weight:800}
+.empty-copy{margin-top:5px;color:#98A2B3;font-size:10px;line-height:16px;text-align:center}
+/* 加载/错误状态 */
+.state{margin:16px;padding:38px 18px;align-items:center;border-radius:18px;background-color:#FFF;color:#667085}
+.error{color:#B42318}
+.retry{width:100%;margin-top:14px;border-radius:12px;background-color:#2563EB;color:#FFF;font-size:11px}
+.safe-bottom{height:30px}
+/* 故事 modal：与 H5 AssetPackStoryModal 对齐：信纸风 + 关闭按钮 */
+.story-mask{position:fixed;left:0;right:0;top:0;bottom:0;align-items:center;justify-content:center;padding:36px 18px;background-color:rgba(15,23,42,.74)}
+.story-card{width:100%;max-width:520px;height:400px;padding:20px 18px 16px;border-radius:20px;background-color:#FFFBEB;overflow:hidden;position:relative}
+.story-header{flex-direction:row;align-items:flex-start;justify-content:space-between;padding-bottom:14px;border-bottom-width:1px;border-bottom-color:rgba(180,83,9,.18)}
+.story-meta{flex:1;padding-right:10px}
+.story-eyebrow{color:#B45309;font-size:9px;font-weight:800;letter-spacing:1px}
+.story-name{margin-top:4px;color:#111827;font-size:20px;font-weight:900;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.story-description{margin-top:5px;color:#92400E;font-size:10px;line-height:15px;font-style:italic;lines:2;overflow:hidden;text-overflow:ellipsis}
+.story-close{width:34px;height:34px;align-items:center;justify-content:center;border-radius:17px;background-color:#1F2937;color:#FFF;font-size:22px;font-weight:300;line-height:22px;transition-property:opacity,transform;transition-duration:120ms}
+.story-close-text{color:#FFF;font-size:22px;line-height:22px}
+.story-close-pressed{opacity:.7;transform:scale(.9)}
+.story-scroll{flex:1;margin-top:12px}
+.story-content{color:#1F2937;font-size:13px;line-height:24px}
+.story-footer-close{height:42px;margin-top:12px;align-items:center;justify-content:center;border-radius:12px;background-color:#1F2937}
+.story-footer-close-text{color:#FFF;font-size:12px;font-weight:800}
+.story-footer-close-pressed{opacity:.78}
+</style>

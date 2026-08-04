@@ -1,0 +1,344 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading" class="state-card">
+      <text class="state-title">正在端上这碗汤...</text>
+    </view>
+    <view v-else-if="data.errorMessage.length > 0" class="state-card">
+      <text class="state-title">详情加载失败</text>
+      <text class="muted">{{ data.errorMessage }}</text>
+      <button class="primary-button" @click="fetchDetail">重新加载</button>
+    </view>
+    <scroll-view v-else-if="data.soup != null" class="scroll" direction="vertical">
+      <view class="hero">
+        <image v-if="coverUrl.length > 0" class="detail-cover" :src="coverUrl" mode="aspectFill"></image>
+        <view v-else class="detail-cover cover-placeholder"><text class="cover-placeholder-text">汤</text></view>
+        <text class="case-eyebrow">TURTLE SOUP · CASE FILE</text>
+        <text class="title">{{ data.soup!.title }}</text>
+        <text v-if="data.soup!.summary.length > 0" class="hero-summary">{{ data.soup!.summary }}</text>
+        <view class="chips">
+          <text class="chip">{{ data.soup!.type }}</text>
+          <text class="chip warm">{{ data.soup!.difficulty }}</text>
+          <text class="chip public-chip">{{ data.soup!.isBottomPublic ? '汤底公开' : '汤底需授权' }}</text>
+          <text class="score">{{ totalScore }}</text>
+        </view>
+        <view class="creator-row" hover-class="interaction-pressed" @click="openUser(data.soup!.creatorId)">
+          <view class="creator-avatar"><image v-if="creatorAvatarUrl.length > 0" class="creator-avatar-image" :src="creatorAvatarUrl" mode="aspectFill"></image><text v-else class="creator-avatar-text">{{ creatorAvatarText }}</text></view>
+          <view class="creator-copy">
+            <text class="author-label">作者 {{ data.soup!.author }} · 发布者</text>
+            <view class="creator-identity"><text class="creator">{{ data.soup!.creatorName }}</text><text class="level">Lv{{ data.soup!.creatorLevel }}</text><view v-if="data.soup!.creatorEquippedBadge != null" class="badge-wrap"><image class="badge-icon-image" :src="creatorBadgeUrl" mode="aspectFit"></image><text class="badge">{{ data.soup!.creatorEquippedBadge!.name }}</text></view></view>
+          </view>
+        </view>
+        <view class="stat-grid">
+          <view class="stat-item"><text class="stat-icon">◉</text><text class="stat-value">{{ data.soup!.viewCount }}</text><text class="stat-label">浏览</text></view>
+          <view class="stat-item"><text class="stat-icon heat-stat">♥</text><text class="stat-value">{{ data.soup!.heatValue }}</text><text class="stat-label">热力</text></view>
+          <view class="stat-item"><text class="stat-icon score-stat">✣</text><text class="stat-value">{{ data.soup!.averageTotal == null ? '—' : data.soup!.averageTotal!.toFixed(1) }}</text><text class="stat-label">评分</text></view>
+          <view class="stat-item"><text class="stat-icon">▤</text><text class="stat-value">{{ data.soup!.evaluationCount }}</text><text class="stat-label">评价</text></view>
+        </view>
+        <view class="interaction-row">
+          <view class="interaction-button" :class="data.soup!.isLiked ? 'interaction-active' : ''" hover-class="interaction-pressed" @click="toggleLike">
+            <view class="icon-stage" :class="data.likeBurst ? 'icon-burst' : ''">
+              <text v-if="data.likePending" class="loading-icon">•••</text>
+              <text v-else class="interaction-icon like-icon">{{ data.soup!.isLiked ? '♥' : '♡' }}</text>
+              <view v-if="data.likeBurst" class="spark spark-one"></view>
+              <view v-if="data.likeBurst" class="spark spark-two"></view>
+              <view v-if="data.likeBurst" class="spark spark-three"></view>
+            </view>
+            <text class="interaction-label">{{ data.soup!.isLiked ? '已点赞' : '点赞' }}</text>
+            <text class="interaction-count">{{ data.soup!.likeCount }}</text>
+          </view>
+          <view class="interaction-button favorite-button" :class="data.soup!.isFavorited ? 'favorite-active' : ''" hover-class="interaction-pressed" @click="toggleFavorite">
+            <view class="icon-stage" :class="data.favoriteBurst ? 'icon-burst' : ''">
+              <text v-if="data.favoritePending" class="loading-icon">•••</text>
+              <text v-else class="interaction-icon favorite-icon">{{ data.soup!.isFavorited ? '★' : '☆' }}</text>
+              <view v-if="data.favoriteBurst" class="spark favorite-spark spark-one"></view>
+              <view v-if="data.favoriteBurst" class="spark favorite-spark spark-two"></view>
+              <view v-if="data.favoriteBurst" class="spark favorite-spark spark-three"></view>
+            </view>
+            <text class="interaction-label">{{ data.soup!.isFavorited ? '已收藏' : '收藏' }}</text>
+            <text class="interaction-count">{{ data.soup!.favoriteCount }}</text>
+          </view>
+          <view class="interaction-button favorite-button" hover-class="interaction-pressed" @click="openEvaluation">
+            <view class="icon-stage"><text class="interaction-icon comment-icon">▤</text></view>
+            <text class="interaction-label">{{ ownEvaluation == null ? '评价' : '改评价' }}</text>
+            <text class="interaction-count">{{ data.soup!.evaluationCount }}</text>
+          </view>
+        </view>
+        <view v-if="data.soup!.canEdit" class="edit-button" hover-class="interaction-pressed" @click="openEditor">
+          <text class="edit-icon">✎</text>
+          <text class="edit-text">编辑这碗海龟汤</text>
+        </view>
+        <view v-if="data.soup!.enableAiGame" class="game-button" hover-class="interaction-pressed" @click="openGame">
+          <text class="game-icon">✦</text>
+          <view class="game-copy"><text class="game-button-title">AI 玩汤</text><text class="game-button-subtitle">让 AI 主持人陪你推理这碗汤</text></view>
+          <text class="game-arrow">›</text>
+        </view>
+      </view>
+
+      <view id="evaluations" class="card">
+        <text class="section-title">汤面</text>
+        <text class="content">{{ data.soup!.surface }}</text>
+        <view v-for="(item, index) in data.soup!.supplementalSurfaces" :key="'surface-' + index.toString()" class="supplement">
+          <text class="supplement-label">补充 {{ index + 1 }}</text>
+          <text class="content">{{ item }}</text>
+        </view>
+      </view>
+
+      <view class="card">
+        <text class="section-title">六维评价</text>
+        <RadarChart :radar="data.soup!.radar" />
+        <text class="muted center">基于 {{ data.soup!.evaluationCount }} 条评价</text>
+      </view>
+
+      <view class="card">
+        <text class="section-title">汤底</text>
+        <text v-if="data.soup!.canViewFull && data.soup!.bottom != null" class="content">{{ data.soup!.bottom! }}</text>
+        <view v-else class="locked">
+          <text class="lock-title">汤底暂未公开</text>
+          <text class="muted">当前账号没有查看权限。本阶段只读，不在此页发起申请。</text>
+        </view>
+        <view v-if="data.soup!.canViewFull && data.soup!.supplementalBottoms != null">
+          <view v-for="(item, index) in data.soup!.supplementalBottoms!" :key="'bottom-' + index.toString()" class="supplement">
+            <text class="supplement-label">汤底补充 {{ index + 1 }}</text>
+            <text class="content">{{ item }}</text>
+          </view>
+        </view>
+      </view>
+
+      <view v-if="data.soup!.canViewFull && data.soup!.manual != null" class="card">
+        <text class="section-title">主持人手册</text>
+        <text class="content">{{ data.soup!.manual! }}</text>
+      </view>
+
+      <view class="card">
+        <text class="section-title">评价（{{ data.soup!.evaluations.length }}）</text>
+        <text v-if="data.soup!.evaluations.length == 0" class="muted">还没有评价</text>
+        <view v-for="evaluation in data.soup!.evaluations" :key="evaluation.id" class="evaluation">
+          <view class="evaluation-head" hover-class="interaction-pressed" @click="openUser(evaluation.reviewerId)">
+            <text class="creator">{{ evaluation.reviewer }}</text>
+            <text class="level">Lv{{ evaluation.reviewerLevel }}</text>
+            <text class="evaluation-score">{{ evaluation.total.toFixed(1) }}</text>
+          </view>
+          <text v-if="evaluation.content != null && evaluation.content!.length > 0" class="content">{{ evaluation.content! }}</text>
+        </view>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import RadarChart from '@/components/business/RadarChart.uvue'
+import { absoluteApiUrl, soupThumbnailUrl } from '@/config/runtime.uts'
+import { EvaluationSummary, SoupDetail } from '@/domain/dto/soup.uts'
+import { loadSoupDetail, toggleSoupFavorite, toggleSoupLike } from '@/services/soups.uts'
+import { sessionState } from '@/stores/session.uts'
+import { requestGameLaunch } from '@/stores/game-launch.uts'
+
+type DetailData = {
+  id: string,
+  soup: SoupDetail | null,
+  loading: boolean,
+  likePending: boolean,
+  favoritePending: boolean,
+  likeBurst: boolean,
+  favoriteBurst: boolean,
+  errorMessage: string
+}
+const data = reactive({
+  id: '',
+  soup: null,
+  loading: true,
+  likePending: false,
+  favoritePending: false,
+  likeBurst: false,
+  favoriteBurst: false,
+  errorMessage: ''
+} as DetailData)
+const totalScore = computed((): string => {
+  if (data.soup == null || data.soup!.averageTotal == null) return '暂无评分'
+  return data.soup!.averageTotal!.toFixed(1) + ' 分'
+})
+const coverUrl = computed((): string => data.soup == null ? '' : soupThumbnailUrl(data.soup!.id, data.soup!.coverImage))
+const creatorAvatarText = computed((): string => data.soup == null || data.soup!.creatorName.length == 0 ? '汤' : data.soup!.creatorName.substring(0, 1))
+const creatorAvatarUrl = computed((): string => data.soup == null ? '' : absoluteApiUrl(data.soup!.creatorAvatar))
+const creatorBadgeUrl = computed((): string => data.soup == null || data.soup!.creatorEquippedBadge == null ? '' : absoluteApiUrl(data.soup!.creatorEquippedBadge!.iconUrl))
+const ownEvaluation = computed((): EvaluationSummary | null => {
+  if (data.soup == null || sessionState.user == null) return null
+  return data.soup!.evaluations.find((item): boolean => item.reviewerId == sessionState.user!.id) ?? null
+})
+
+function fetchDetail() {
+  if (data.id.length == 0) return
+  data.loading = true
+  data.errorMessage = ''
+  loadSoupDetail(data.id, (response) => {
+    data.soup = response.soup
+    data.loading = false
+    uni.setNavigationBarTitle({ title: response.soup.title })
+  }, (error) => {
+    data.loading = false
+    data.errorMessage = error.message
+  })
+}
+
+function openUser(id: string) {
+  if (id.length > 0) uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(id) })
+}
+
+function requireInteractionLogin(): boolean {
+  if (sessionState.user != null) return true
+  uni.showModal({
+    title: '需要登录',
+    content: '登录后才能点赞或收藏。',
+    cancelText: '取消',
+    confirmText: '去登录',
+    success: (result) => {
+      if (result.confirm) uni.navigateTo({ url: '/pages/auth/auth' })
+    }
+  })
+  return false
+}
+
+function toggleLike() {
+  if (data.soup == null || data.likePending || !requireInteractionLogin()) return
+  data.likePending = true
+  toggleSoupLike(data.id, (response) => {
+    data.soup!.isLiked = response.isLiked
+    data.soup!.likeCount = response.likeCount
+    data.likePending = false
+    if (response.isLiked) {
+      data.likeBurst = true
+      setTimeout(() => { data.likeBurst = false }, 520)
+    }
+    uni.showToast({ title: response.isLiked ? '点赞成功' : '已取消点赞', icon: 'none' })
+  }, (error) => {
+    data.likePending = false
+    if (error.statusCode == 401) uni.navigateTo({ url: '/pages/auth/auth' })
+    else uni.showToast({ title: error.message, icon: 'none' })
+  })
+}
+
+function toggleFavorite() {
+  if (data.soup == null || data.favoritePending || !requireInteractionLogin()) return
+  data.favoritePending = true
+  toggleSoupFavorite(data.id, (response) => {
+    data.soup!.isFavorited = response.isFavorited
+    data.soup!.favoriteCount = response.favoriteCount
+    data.favoritePending = false
+    if (response.isFavorited) {
+      data.favoriteBurst = true
+      setTimeout(() => { data.favoriteBurst = false }, 520)
+    }
+    uni.showToast({ title: response.isFavorited ? '收藏成功' : '已取消收藏', icon: 'none' })
+  }, (error) => {
+    data.favoritePending = false
+    if (error.statusCode == 401) uni.navigateTo({ url: '/pages/auth/auth' })
+    else uni.showToast({ title: error.message, icon: 'none' })
+  })
+}
+function openEvaluation() {
+  if (!requireInteractionLogin()) return
+  uni.navigateTo({ url: '/pages/evaluation-editor/evaluation-editor?id=' + encodeURIComponent(data.id) })
+}
+function openEditor() {
+  if (data.soup == null || !data.soup!.canEdit) return
+  uni.navigateTo({ url: '/pages/soup-editor/soup-editor?id=' + encodeURIComponent(data.id) })
+}
+function openGame() {
+  if (data.soup == null || !data.soup!.enableAiGame) return
+  if (!requireInteractionLogin()) return
+  requestGameLaunch(data.id)
+  uni.switchTab({ url: '/pages/game/game' })
+}
+
+onLoad((options) => {
+  data.id = options['id'] ?? ''
+  if (data.id.length == 0) {
+    data.loading = false
+    data.errorMessage = '缺少海龟汤 ID'
+    return
+  }
+  fetchDetail()
+})
+onShow(() => { if (data.soup != null) fetchDetail() })
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.scroll { flex: 1; }
+.hero { margin: 12px; padding: 14px; border-width: 1px; border-color: #E5E7EB; border-radius: 18px; background-color: #FFFFFF; }
+.detail-cover { width: 100%; height: 186px; border-radius: 14px; background-color: #E5E7EB; }
+.cover-placeholder { align-items: center; justify-content: center; background-color: #EAF2FF; }
+.cover-placeholder-text { color: #2563EB; font-size: 34px; font-weight: 800; }
+.case-eyebrow { margin-top: 14px; color: #2563EB; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+.title { margin-top: 7px; color: #121826; font-size: 25px; font-weight: 800; }
+.hero-summary { margin-top: 8px; color: #667085; font-size: 13px; line-height: 20px; }
+.chips, .creator-row, .evaluation-head { flex-direction: row; align-items: center; }
+.chips { margin-top: 12px; }
+.chip { margin-right: 7px; padding: 4px 8px; border-radius: 10px; background-color: #EAF2FF; color: #2563EB; font-size: 11px; }
+.chip.warm { background-color: #FFF7ED; color: #C2410C; }
+.public-chip { background-color: #ECFDF5; color: #059669; }
+.score { margin-left: auto; color: #2563EB; font-size: 16px; font-weight: 700; }
+.creator-row { margin-top: 14px; align-items: center; }
+.creator-avatar { width: 40px; height: 40px; align-items: center; justify-content: center; border-radius: 20px; background-color: #DBEAFE; }
+.creator-avatar-image { width: 40px; height: 40px; border-radius: 20px; }
+.creator-avatar-text { color: #2563EB; font-size: 16px; font-weight: 800; }
+.creator-copy { flex: 1; margin-left: 10px; }
+.author-label { color: #98A2B3; font-size: 10px; font-weight: 600; }
+.creator-identity { flex-direction: row; align-items: center; margin-top: 4px; }
+.creator { color: #344054; font-size: 13px; font-weight: 700; }
+.level { margin-left: 6px; padding: 2px 6px; border-radius: 8px; background-color: #F59E0B; color: #FFFFFF; font-size: 10px; }
+.badge { margin-left: 7px; color: #7C3AED; font-size: 11px; font-weight: 700; }
+.stat-grid { flex-direction: row; margin-top: 14px; padding: 10px 0; border-top-width: 1px; border-top-color: #EEF2F6; border-bottom-width: 1px; border-bottom-color: #EEF2F6; }
+.stat-item { flex: 1; align-items: center; }
+.stat-icon { color: #667085; font-size: 14px; }
+.heat-stat { color: #EF4444; }
+.score-stat { color: #2563EB; }
+.stat-value { margin-top: 3px; color: #121826; font-size: 14px; font-weight: 800; }
+.stat-label { margin-top: 2px; color: #98A2B3; font-size: 9px; }
+.meta, .muted { margin-top: 7px; color: #667085; font-size: 12px; }
+.interaction-row { flex-direction: row; margin-top: 14px; }
+.interaction-button { position: relative; flex: 1; min-height: 48px; flex-direction: row; align-items: center; justify-content: center; border-width: 1px; border-color: #DCE3EE; border-radius: 15px; background-color: #FFFFFF; transform: scale(1); transition-property: transform, background-color, border-color; transition-duration: 160ms; }
+.interaction-pressed { transform: scale(0.96); background-color: #F8FAFC; }
+.favorite-button { margin-left: 10px; }
+.interaction-active { border-color: #FCA5A5; background-color: #FEF2F2; color: #DC2626; }
+.favorite-active { border-color: #FCD34D; background-color: #FFFBEB; color: #D97706; }
+.icon-stage { position: relative; width: 24px; height: 26px; align-items: center; justify-content: center; }
+.interaction-icon { font-size: 23px; line-height: 25px; }
+.like-icon { color: #EF4444; }
+.favorite-icon { color: #F59E0B; }
+.comment-icon { color: #2563EB; font-size: 19px; }
+.loading-icon { color: #98A2B3; font-size: 12px; letter-spacing: 1px; }
+.interaction-label { margin-left: 5px; color: #475467; font-size: 13px; font-weight: 600; }
+.interaction-count { margin-left: 4px; color: #667085; font-size: 12px; font-weight: 700; }
+.edit-button { min-height: 44px; margin-top: 10px; flex-direction: row; align-items: center; justify-content: center; border-width: 1px; border-color: #BFDBFE; border-radius: 14px; background-color: #EFF6FF; transform: scale(1); transition-property: transform, background-color; transition-duration: 140ms; }
+.edit-icon { color: #2563EB; font-size: 17px; }
+.edit-text { margin-left: 7px; color: #2563EB; font-size: 13px; font-weight: 700; }
+.game-button { min-height: 58px; margin-top: 10px; padding: 9px 12px; flex-direction: row; align-items: center; border-width: 1px; border-color: #DDD6FE; border-radius: 14px; background-color: #F5F3FF; transform: scale(1); transition-property: transform, background-color; transition-duration: 140ms; }
+.game-icon { width: 34px; height: 34px; padding-top: 7px; border-radius: 17px; background-color: #7C3AED; color: #FFFFFF; font-size: 15px; font-weight: 800; text-align: center; }
+.game-copy { flex: 1; margin-left: 10px; }
+.game-button-title { color: #5B21B6; font-size: 13px; font-weight: 800; }
+.game-button-subtitle { margin-top: 3px; color: #7C3AED; font-size: 9px; }
+.game-arrow { color: #7C3AED; font-size: 25px; }
+.interaction-active .interaction-label, .interaction-active .interaction-count { color: #DC2626; }
+.favorite-active .interaction-label, .favorite-active .interaction-count { color: #D97706; }
+.icon-burst { transform: scale(1.28) rotate(-8deg); transition-property: transform; transition-duration: 180ms; }
+.spark { position: absolute; width: 4px; height: 4px; border-radius: 2px; background-color: #F87171; opacity: 0.9; transform: scale(1.35); transition-property: opacity, transform; transition-duration: 300ms; }
+.favorite-spark { background-color: #FBBF24; }
+.spark-one { left: 1px; top: 2px; }
+.spark-two { right: 0; top: 4px; }
+.spark-three { right: 4px; bottom: 0; }
+.card, .state-card { margin: 10px 12px 0 12px; padding: 16px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.state-card { margin-top: 20px; }
+.state-title, .section-title { color: #121826; font-size: 17px; font-weight: 700; }
+.content { margin-top: 10px; color: #344054; font-size: 14px; line-height: 22px; }
+.supplement, .evaluation { margin-top: 14px; padding-top: 12px; border-top-width: 1px; border-top-color: #EEF2F6; }
+.supplement-label { color: #2563EB; font-size: 11px; font-weight: 700; }
+.center { text-align: center; }
+.locked { margin-top: 12px; padding: 14px; border-radius: 12px; background-color: #F8FAFC; }
+.lock-title { color: #344054; font-size: 14px; font-weight: 700; }
+.evaluation-score { margin-left: auto; color: #2563EB; font-size: 16px; font-weight: 700; }
+.primary-button { margin-top: 14px; min-height: 42px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.safe-bottom { height: 28px; }
+.badge-wrap { margin-left: 6px; flex-direction: row; align-items: center; }.badge-icon-image { width: 16px; height: 16px; }
+</style>

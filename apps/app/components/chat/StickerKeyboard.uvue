@@ -1,0 +1,67 @@
+<template>
+  <view class="keyboard">
+    <view class="keyboard-head">
+      <text class="keyboard-title">表情包</text>
+      <view class="close-button" hover-class="pressed" @click="emit('close')"><text class="close-symbol">⌄</text></view>
+    </view>
+    <view v-if="props.loading" class="sticker-grid">
+      <view v-for="index in 8" :key="index" class="sticker-cell"><view class="skeleton"></view></view>
+    </view>
+    <view v-else-if="props.stickers.length == 0" class="empty"><text>暂无可用表情</text></view>
+    <swiper v-else class="pages" :current="data.page" :duration="300" @change="changePage">
+      <swiper-item v-for="(items, pageIndex) in pages" :key="pageIndex">
+        <view class="sticker-grid">
+          <view v-for="sticker in items" :key="sticker.id" class="sticker-cell" hover-class="sticker-pressed" @click="choose(sticker)">
+            <image class="sticker-image" :src="stickerImageUrl(sticker)" mode="aspectFit"></image>
+          </view>
+        </view>
+      </swiper-item>
+    </swiper>
+    <view v-if="pages.length > 1 && !props.loading" class="dots">
+      <view v-for="(_, index) in pages" :key="index" class="dot" :class="index == data.page ? 'active-dot' : ''"></view>
+      <text class="page-status">{{ pageStatus }}</text>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { StickerAsset } from '@/services/messages.uts'
+
+const props = defineProps<{ stickers: StickerAsset[], loading: boolean, sending: boolean }>()
+const emit = defineEmits<{ close: [], send: [sticker: StickerAsset] }>()
+type KeyboardData = { page: number }
+const data = reactive({ page: 0 } as KeyboardData)
+const pages = computed((): StickerAsset[][] => {
+  const result: StickerAsset[][] = []
+  for (let index = 0; index < props.stickers.length; index += 8) result.push(props.stickers.slice(index, index + 8))
+  return result
+})
+const pageStatus = computed((): string => {
+  const currentPage: number = data.page + 1
+  return '第 ' + currentPage.toString() + ' 页，共 ' + pages.value.length.toString() + ' 页'
+})
+function stickerImageUrl(sticker: StickerAsset): string { return absoluteApiUrl(sticker.staticUrl) }
+function changePage(event: UniSwiperChangeEvent) { data.page = event.detail.current }
+function choose(sticker: StickerAsset) { if (!props.sending) emit('send', sticker) }
+</script>
+
+<style>
+.keyboard { height: 226px; padding: 10px 12px 12px 12px; border-top-width: 1px; border-top-color: #E5EAF2; background-color: #FFFFFF; }
+.keyboard-head { height: 28px; flex-direction: row; align-items: center; justify-content: space-between; }
+.keyboard-title { color: #121826; font-size: 14px; font-weight: 800; }
+.close-button { width: 30px; height: 28px; align-items: center; justify-content: center; border-radius: 14px; }
+.close-symbol { color: #667085; font-size: 20px; }
+.pages, .sticker-grid, .empty { height: 154px; }
+.sticker-grid { flex-direction: row; flex-wrap: wrap; }
+.sticker-cell { width: 25%; height: 77px; align-items: center; justify-content: center; border-radius: 12px; }
+.sticker-image { width: 64px; height: 64px; }
+.skeleton { width: 58px; height: 58px; border-radius: 16px; background-color: #F0F2F5; }
+.empty { align-items: center; justify-content: center; color: #98A2B3; font-size: 13px; }
+.dots { height: 28px; flex-direction: row; align-items: center; justify-content: center; }
+.dot { width: 7px; height: 7px; margin: 0 3px; border-radius: 4px; background-color: #D0D5DD; }
+.active-dot { width: 16px; background-color: #2563EB; }
+.page-status { position: absolute; opacity: 0; font-size: 1px; }
+.pressed { background-color: #F2F4F7; }
+.sticker-pressed { background-color: #EFF6FF; transform: scale(0.95); }
+</style>

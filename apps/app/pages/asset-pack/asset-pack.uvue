@@ -1,0 +1,225 @@
+<template>
+  <view class="page">
+    <view class="topbar"><AppBackButton @click="goBack" /><text class="title">卡包详情</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state"><text>正在打开卡包...</text></view>
+    <view v-else-if="data.errorMessage.length > 0 || data.response == null" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view class="hero">
+        <image v-if="pack.coverCard != null" class="hero-image" :src="assetUrl(pack.coverCard!.imageUrl)" mode="aspectFill"></image>
+        <view v-else class="hero-image hero-fallback"></view>
+        <view class="hero-shade"></view>
+        <button class="hero-story" hover-class="hero-story-pressed" :hover-stay-time="80" @click="data.storyOpen = true">卡包故事</button>
+        <view class="hero-copy"><text class="type-pill">{{ pack.packTypeLabel }}</text><text class="pack-name">{{ pack.name }}</text><text class="description">{{ pack.description }}</text></view>
+      </view>
+      <view class="pity">
+        <view class="pity-item"><text>稀有保底</text><strong class="pity-value">{{ pack.pity.rare }}/{{ pack.pity.rareLimit }}</strong></view>
+        <view class="pity-divider"></view>
+        <view class="pity-item"><text>史诗保底</text><strong class="pity-value">{{ pack.pity.epic }}/{{ pack.pity.epicLimit }}</strong></view>
+        <view class="pity-divider"></view>
+        <view class="pity-item"><text>传说保底</text><strong class="pity-value">{{ pack.pity.legend }}/{{ pack.pity.legendLimit }}</strong></view>
+      </view>
+      <view class="content-card">
+        <view class="section-head"><text class="section-title">卡包内容</text><text class="owned-note">{{ ownedCount }}/{{ pack.cards.length }} 已拥有</text></view>
+        <view class="card-grid">
+          <view v-for="card in pack.cards" :key="card.id" class="card-item" hover-class="card-item-pressed" :hover-stay-time="100" @click="openCard(card)">
+            <view class="card-image-wrap">
+              <image class="card-image" :class="card.owned ? '' : 'card-locked'" :src="assetUrl(card.thumbnailUrl.length > 0 ? card.thumbnailUrl : card.imageUrl)" mode="aspectFill"></image>
+              <view v-if="card.owned" class="card-owned-dot">✓</view>
+            </view>
+            <text class="card-name">{{ card.name }}</text>
+            <text class="rarity" :class="rarityClass(card.rarity)">{{ rarityLabel(card.rarity) }}{{ card.starLevel != null ? ' · ' + card.starLevel!.toString() + '星' : '' }}</text>
+          </view>
+        </view>
+        <view class="probability">
+          <view class="probability-head">
+            <view><text class="section-title">卡包概率</text><text class="probability-note">{{ pack.probabilityNotice }}</text></view>
+            <text class="shield-icon">🛡</text>
+          </view>
+          <view class="prob-grid">
+            <view v-for="item in probabilities" :key="item.rarity" class="prob-item"><text class="prob-label">{{ rarityLabel(item.rarity) }}</text><strong class="prob-value">{{ item.value }}%</strong></view>
+          </view>
+        </view>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+    <view v-if="data.response != null" class="draw-bar">
+      <view class="draw-meta-row">
+        <view class="balance"><image class="balance-icon" src="/static/tasks/shell.png" mode="aspectFit"></image><text class="balance-label">贝壳余额</text><text class="balance-text">{{ data.response!.balance }}</text></view>
+        <button class="draw-story" hover-class="draw-button-pressed" :hover-stay-time="80" @click="data.storyOpen = true">卡包故事</button>
+      </view>
+      <view class="draw-actions">
+        <button class="draw draw-secondary" :disabled="data.drawing || singleDisabled" hover-class="draw-button-pressed" :hover-stay-time="80" @click="confirmDraw('single')">{{ data.drawing ? '抽取中...' : singleText }}</button>
+        <button class="draw draw-primary" :disabled="data.drawing || tenDisabled" hover-class="draw-button-pressed" :hover-stay-time="80" @click="confirmDraw('ten')">{{ data.drawing ? '抽取中...' : tenText }}</button>
+      </view>
+    </view>
+    <view v-if="data.detail != null" class="detail-mask" @click="closeCard"><view class="detail" @click.stop>
+      <image class="detail-image" :src="assetUrl(data.detail!.imageUrl)" mode="aspectFit"></image>
+      <text class="detail-no">NO.{{ data.detail!.cardNo }} · {{ rarityLabel(data.detail!.rarity) }}</text>
+      <text class="detail-name">{{ data.detail!.name }}</text>
+      <text class="detail-story">{{ data.detail!.story.length > 0 ? data.detail!.story : '这张卡牌还没有公开故事。' }}</text>
+      <button class="close" hover-class="close-pressed" :hover-stay-time="80" @click="closeCard">关闭</button>
+    </view></view>
+    <view v-if="data.order != null" class="result-mask"><view class="results">
+      <text class="result-title">{{ data.order!.usedFreeDraw ? '免费抽取完成' : '抽取完成' }}</text>
+      <text class="result-subtitle">获得 {{ data.order!.results.length }} 张卡牌</text>
+      <scroll-view class="result-scroll" direction="vertical">
+        <view class="result-grid">
+          <view v-for="card in data.order!.results" :key="card.drawIndex" class="result-item">
+            <view class="result-image-wrap">
+              <image class="result-image" :src="assetUrl(card.thumbnailUrl.length > 0 ? card.thumbnailUrl : card.imageUrl)" mode="aspectFill"></image>
+              <view v-if="card.firstObtained" class="new-dot"><text class="new-dot-text">NEW</text></view>
+            </view>
+            <text class="result-name">{{ card.name }}</text>
+            <text class="rarity" :class="rarityClass(card.rarity)">{{ rarityLabel(card.rarity) }}</text>
+          </view>
+        </view>
+      </scroll-view>
+      <button class="result-close" hover-class="result-close-pressed" :hover-stay-time="80" @click="closeResults">收下卡牌</button>
+    </view></view>
+    <view v-if="data.storyOpen" class="story-mask" @click="closeStory"><view class="letter" @click.stop>
+      <view class="letter-header">
+        <view class="letter-meta">
+          <text class="letter-eyebrow">卡包故事</text>
+          <text class="letter-title">{{ pack.name }}</text>
+          <text class="letter-description">{{ pack.description }}</text>
+        </view>
+        <view class="letter-close" hover-class="letter-close-pressed" :hover-stay-time="80" @click="closeStory"><text class="letter-close-text">×</text></view>
+      </view>
+      <scroll-view class="letter-scroll" direction="vertical">
+        <text class="letter-content">{{ storyText(pack.packStory) }}</text>
+      </scroll-view>
+      <view class="letter-footer-close" hover-class="letter-footer-close-pressed" :hover-stay-time="80" @click="closeStory"><text class="letter-footer-close-text">关闭故事</text></view>
+    </view></view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { AssetDrawOrder, AssetPack, AssetPackCard, AssetPackResponse } from '@/domain/dto/digital-asset.uts'
+import { drawAssetPack, loadAssetPack } from '@/services/digital-assets.uts'
+type ProbabilityItem = { rarity: string, value: number }
+type PackData = { id: string, response: AssetPackResponse | null, loading: boolean, drawing: boolean, errorMessage: string, detail: AssetPackCard | null, order: AssetDrawOrder | null, storyOpen: boolean }
+const data = reactive({ id: '', response: null, loading: false, drawing: false, errorMessage: '', detail: null, order: null, storyOpen: false } as PackData)
+const emptyPack = { id:'',name:'',coverUrl:'',coverCard:null,description:'',packStory:'',packType:'',packTypeLabel:'',singlePrice:0,tenPrice:0,dailyFreeDraws:0,freeDrawsRemaining:0,saleStartAt:null,saleEndAt:null,enabled:false,status:'',sortOrder:0,probabilityNotice:'',rarityProbabilities:{} as UTSJSONObject,pity:{rare:0,epic:0,legend:0,rareLimit:0,epicLimit:0,legendLimit:0},previewCards:[],cards:[] } as AssetPack
+const pack = computed<AssetPack>(() => data.response == null ? emptyPack : data.response!.pack)
+const ownedCount = computed<number>(() => pack.value.cards.filter((item) => item.owned).length)
+function probabilityValue(key: string): number { const value = pack.value.rarityProbabilities[key] as number | null; return value ?? 0 }
+const probabilities = computed<ProbabilityItem[]>(() => [{rarity:'normal',value:probabilityValue('normal')},{rarity:'rare',value:probabilityValue('rare')},{rarity:'epic',value:probabilityValue('epic')},{rarity:'legend',value:probabilityValue('legend')}])
+const singleDisabled = computed<boolean>(() => data.response == null || (pack.value.freeDrawsRemaining <= 0 && data.response!.balance < pack.value.singlePrice))
+const tenDisabled = computed<boolean>(() => data.response == null || data.response!.balance < pack.value.tenPrice)
+const singleText = computed<string>(() => pack.value.freeDrawsRemaining > 0 ? '免费单抽 (' + pack.value.freeDrawsRemaining.toString() + ')' : singleDisabled.value ? '贝壳不足' : '单抽 ' + pack.value.singlePrice.toString())
+const tenText = computed<string>(() => tenDisabled.value ? '贝壳不足' : '十连 ' + pack.value.tenPrice.toString())
+function assetUrl(url: string): string { return absoluteApiUrl(url) }
+function rarityLabel(value: string): string { return value == 'normal' ? '普通' : value == 'rare' ? '稀有' : value == 'epic' ? '史诗' : '传说' }
+function rarityClass(value: string): string { return value == 'normal' ? 'normal' : value == 'rare' ? 'rare' : value == 'epic' ? 'epic' : 'legend' }
+function storyText(value: string): string { const text = value.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim(); return text.length > 0 ? text : '暂无卡包故事' }
+function goBack() { uni.navigateBack() }
+function openCard(card: AssetPackCard) { data.detail = card }
+function closeCard() { data.detail = null }
+function closeStory() { data.storyOpen = false }
+function requestId(): string { return Date.now().toString() + '-' + Math.floor(Math.random() * 1000000).toString() }
+function performDraw(mode: string) { if (data.drawing) return; data.drawing = true; drawAssetPack(data.id, mode, requestId(), (response) => { data.order = response.order; if (data.response != null) data.response!.balance = response.balance; data.drawing = false; loadAssetPack(data.id, (fresh) => { data.response = fresh }, (_) => {}) }, (error) => { data.drawing = false; uni.showToast({ title:error.message, icon:'none' }) }) }
+function confirmDraw(mode: string) { const free = mode == 'single' && pack.value.freeDrawsRemaining > 0; const cost = mode == 'ten' ? pack.value.tenPrice : pack.value.singlePrice; uni.showModal({ title: free ? '确认免费抽取' : '确认抽取', content: free ? '使用今日免费次数抽取一张卡牌？' : '本次将消耗 ' + cost.toString() + ' 贝壳。', cancelText:'取消', confirmText:'抽取', success:(result) => { if (result.confirm) performDraw(mode) } }) }
+function closeResults() { data.order = null }
+function reload() { if (data.loading || data.id.length == 0) return; data.loading = true; data.errorMessage = ''; loadAssetPack(data.id, (response) => { data.response = response; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }
+onLoad((options: OnLoadOptions) => { data.id = options['id'] ?? ''; reload() })
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}
+.topbar{height:96px;padding:48px 14px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}
+.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px;border-radius:20px}
+.back-pressed{background-color:#EEF2F6}
+.title{color:#121826;font-size:17px;font-weight:800}
+.scroll{flex:1}
+/* Hero：与 H5 一致的渐变遮罩 */
+.hero{height:300px;margin:12px 16px 0;overflow:hidden;border-radius:24px;background-color:#0F172A;position:relative}
+.hero-image{width:100%;height:300px;opacity:.78}
+.hero-fallback{background-color:#1F2937}
+.hero-shade{position:absolute;left:0;right:0;top:0;bottom:0;background-image:linear-gradient(180deg,rgba(15,23,42,0) 40%,rgba(15,23,42,.85) 100%)}
+.hero-story{position:absolute;right:12px;top:12px;padding:0 14px;height:34px;border-radius:11px;background-color:rgba(255,255,255,.94);color:#92400E;font-size:9px;font-weight:800;box-shadow:0 4px 10px rgba(0,0,0,.15);transition-property:opacity,transform;transition-duration:120ms}
+.hero-story-pressed{opacity:.78;transform:scale(.96)}
+.hero-copy{position:absolute;left:18px;right:18px;bottom:18px}
+.type-pill{align-self:flex-start;padding:5px 10px;border-radius:10px;background-color:rgba(255,255,255,.2);color:#FFF;font-size:9px;font-weight:800;letter-spacing:0.4px}
+.pack-name{margin-top:10px;color:#FFF;font-size:25px;font-weight:900;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.description{margin-top:6px;color:#E2E8F0;font-size:11px;line-height:17px;lines:2;overflow:hidden;text-overflow:ellipsis}
+/* 保底统计 */
+.pity{margin:0 16px 12px;flex-direction:row;align-items:center;padding:11px 0;overflow:hidden;border-radius:0 0 18px 18px;background-color:#111827}
+.pity-item{flex:1;align-items:center;color:#94A3B8;font-size:8px}
+.pity-value{margin-top:4px;color:#FFF;font-size:12px;font-weight:800}
+.pity-divider{width:1px;height:24px;background-color:#334155}
+/* 内容卡 */
+.content-card{margin:12px 16px;padding:15px 12px;border-width:1px;border-color:#E5EAF2;border-radius:19px;background-color:#FFF}
+.section-head{flex-direction:row;align-items:center;justify-content:space-between}
+.section-title{color:#121826;font-size:14px;font-weight:900}
+.owned-note{color:#667085;font-size:9px}
+.card-grid,.result-grid,.prob-grid{margin-top:12px;flex-direction:row;flex-wrap:wrap}
+.card-item{width:33.33%;align-items:center;padding:5px;transition-property:transform;transition-duration:120ms}
+.card-item-pressed{transform:scale(.95)}
+.card-image-wrap{position:relative;width:88px;height:123px}
+.card-image{width:88px;height:123px;border-radius:10px}
+.card-locked{opacity:.38}
+.card-owned-dot{position:absolute;right:4px;top:4px;width:18px;height:18px;align-items:center;justify-content:center;border-radius:9px;background-color:#10B981;color:#FFF;font-size:11px;font-weight:900}
+.card-name{max-width:90px;margin-top:6px;color:#344054;font-size:9px;font-weight:700;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rarity{margin-top:3px;font-size:8px;font-weight:800}
+.normal{color:#2563EB}.rare{color:#7C3AED}.epic{color:#D97706}.legend{color:#DB2777}
+/* 概率 */
+.probability{margin-top:16px;padding-top:16px;border-top-width:1px;border-top-color:#E5EAF2}
+.probability-head{flex-direction:row;align-items:center;justify-content:space-between}
+.probability-note{margin-top:3px;color:#98A2B3;font-size:8px}
+.shield-icon{color:#2563EB;font-size:18px}
+.prob-item{flex:1;margin:0 3px;padding:9px 2px;align-items:center;border-radius:10px;background-color:#F8FAFC;color:#667085;font-size:8px}
+.prob-value{margin-top:4px;color:#121826;font-size:14px;font-weight:900}
+/* 底部操作条：H5 双按钮+故事按钮风格 */
+.draw-bar{position:fixed;left:0;right:0;bottom:0;padding:9px 14px 25px;border-top-width:1px;border-top-color:#E5EAF2;background-color:#FFF}
+.draw-meta-row{height:32px;flex-direction:row;align-items:center;justify-content:space-between}
+.balance{flex:1;flex-direction:row;align-items:center}
+.balance-icon{width:18px;height:18px;margin-right:5px}
+.balance-label{margin-right:6px;color:#667085;font-size:9px}
+.balance-text{color:#344054;font-size:11px;font-weight:800}
+.draw-actions{width:100%;margin-top:7px;flex-direction:row}
+.draw{flex:1;height:44px;margin:0 3px;padding:0;border-radius:12px;font-size:11px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.draw-secondary{background-color:#EEF2FF;color:#4338CA}
+.draw-primary{background-color:#2563EB;color:#FFF}
+.draw-story{width:82px;height:30px;padding:0;border-radius:10px;border-width:1px;border-color:#FCD34D;background-color:#FFFBEB;color:#B45309;font-size:9px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.draw-button-pressed{opacity:.82;transform:scale(.97);box-shadow:0 2px 6px rgba(37,99,235,.18)}
+.draw-button-pressed:disabled{opacity:.55;transform:none}
+/* 详情/结果弹窗 */
+.detail-mask,.result-mask{position:fixed;left:0;right:0;top:0;bottom:0;align-items:center;justify-content:center;background-color:rgba(15,23,42,.82)}
+.detail,.results{width:88%;max-height:82%;padding:20px;align-items:center;border-radius:22px;background-color:#FFF}
+.detail-image{width:225px;height:315px}
+.detail-no{margin-top:12px;color:#667085;font-size:10px;font-weight:800}
+.detail-name{margin-top:5px;color:#121826;font-size:20px;font-weight:900}
+.detail-story{margin-top:12px;color:#667085;font-size:11px;line-height:19px;text-align:center}
+.close,.result-close{width:100%;margin-top:16px;height:42px;border-radius:13px;background-color:#2563EB;background-image:linear-gradient(135deg,#2563EB 0%,#4F46E5 100%);color:#FFF;font-size:12px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.close-pressed,.result-close-pressed{opacity:.82;transform:scale(.97)}
+.results{height:78%}
+.result-title{color:#121826;font-size:21px;font-weight:900}
+.result-subtitle{margin-top:5px;color:#667085;font-size:10px}
+.result-scroll{flex:1;width:100%;margin-top:12px}
+.result-item{width:33.33%;align-items:center;padding:5px}
+.result-image-wrap{position:relative;width:76px;height:106px}
+.result-image{width:76px;height:106px;border-radius:9px}
+.result-name{max-width:80px;margin-top:4px;color:#344054;font-size:8px;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.new-dot{position:absolute;right:0;top:0;padding:2px 4px;border-radius:5px;background-color:#EF4444}
+.new-dot-text{color:#FFF;font-size:6px;font-weight:900}
+/* 卡包故事 modal：与 H5 AssetPackStoryModal 对齐 */
+.story-mask{position:fixed;left:0;right:0;top:0;bottom:0;align-items:center;justify-content:center;padding:36px 18px;background-color:rgba(15,23,42,.74)}
+.letter{width:100%;max-width:520px;height:400px;padding:20px 18px 16px;border-radius:20px;background-color:#FFFBEB;overflow:hidden}
+.letter-header{flex-direction:row;align-items:flex-start;justify-content:space-between;padding-bottom:14px;border-bottom-width:1px;border-bottom-color:rgba(180,83,9,.18)}
+.letter-meta{flex:1;padding-right:10px}
+.letter-eyebrow{color:#B45309;font-size:9px;font-weight:800;letter-spacing:1px}
+.letter-title{margin-top:4px;color:#111827;font-size:20px;font-weight:900;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.letter-description{margin-top:5px;color:#92400E;font-size:10px;line-height:15px;font-style:italic;lines:2;overflow:hidden;text-overflow:ellipsis}
+.letter-close{width:34px;height:34px;align-items:center;justify-content:center;border-radius:17px;background-color:#1F2937;color:#FFF;font-size:22px;font-weight:300;line-height:22px;transition-property:opacity,transform;transition-duration:120ms}
+.letter-close-text{color:#FFF;font-size:22px;line-height:22px}
+.letter-close-pressed{opacity:.7;transform:scale(.9)}
+.letter-scroll{flex:1;margin-top:12px}
+.letter-content{color:#1F2937;font-size:13px;line-height:24px}
+.letter-footer-close{height:42px;margin-top:12px;align-items:center;justify-content:center;border-radius:12px;background-color:#1F2937}
+.letter-footer-close-text{color:#FFF;font-size:12px;font-weight:800}
+.letter-footer-close-pressed{opacity:.78}
+.state{margin:16px;padding:34px;align-items:center;border-radius:18px;background-color:#FFF;color:#667085}
+.error{color:#B42318}
+.retry{width:100%;margin-top:14px;height:42px;border-radius:12px;background-color:#2563EB;color:#FFF;font-size:12px}
+.safe-bottom{height:150px}
+</style>

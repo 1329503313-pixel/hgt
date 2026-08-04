@@ -1,0 +1,174 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading && data.soups.length == 0" class="state-card">
+      <text class="state-title">正在加载{{ title }}...</text>
+    </view>
+    <view v-else-if="data.errorMessage.length > 0 && data.soups.length == 0" class="state-card">
+      <text class="state-title">加载失败</text>
+      <text class="state-message">{{ data.errorMessage }}</text>
+      <button class="retry-button" @click="reload">重新加载</button>
+    </view>
+    <view v-else-if="!data.loading && data.soups.length == 0" class="state-card empty-card">
+      <view class="empty-icon" :class="emptyIconClass">
+        <text class="empty-icon-symbol" :class="data.emptyPulse ? 'empty-symbol-up' : ''">{{ emptySymbol }}</text>
+        <view class="empty-pulse" :class="data.emptyPulse ? 'empty-pulse-out' : ''"></view>
+      </view>
+      <text class="state-title">{{ emptyText }}</text>
+      <text class="state-message">去首页发现一碗好汤吧</text>
+      <button class="retry-button" @click="goHome">返回首页</button>
+    </view>
+    <scroll-view v-else class="list" direction="vertical" @scrolltolower="loadMore">
+      <view class="content-heading">
+        <text class="content-title">{{ sectionTitle }}</text>
+        <text class="content-count">{{ data.total }} 碗</text>
+      </view>
+      <view class="soup-grid list-enter" :class="data.listVisible ? 'list-visible' : ''">
+        <view class="soup-column">
+          <SoupCard v-for="soup in leftSoups" :key="soup.id" :soup="soup" :compact="true" />
+        </view>
+        <view class="soup-column right-column">
+          <SoupCard v-for="soup in rightSoups" :key="soup.id" :soup="soup" :compact="true" />
+        </view>
+      </view>
+      <view class="footer"><text class="footer-text">{{ footerText }}</text></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import SoupCard from '@/components/business/SoupCard.uvue'
+import { SoupSummary } from '@/domain/dto/soup.uts'
+import { loadMyInteractionSoups } from '@/services/soups.uts'
+
+type InteractionData = {
+  mode: string,
+  soups: SoupSummary[],
+  loading: boolean,
+  hasMore: boolean,
+  total: number,
+  emptyPulse: boolean,
+  listVisible: boolean,
+  errorMessage: string
+}
+const data = reactive({
+  mode: 'favorites',
+  soups: [] as SoupSummary[],
+  loading: false,
+  hasMore: true,
+  total: 0,
+  emptyPulse: false,
+  listVisible: false,
+  errorMessage: ''
+} as InteractionData)
+const title = computed((): string => {
+  if (data.mode == 'published') return '我的作品'
+  if (data.mode == 'evaluations') return '我的评价'
+  return data.mode == 'likes' ? '我的点赞' : '我的收藏'
+})
+const sectionTitle = computed((): string => {
+  if (data.mode == 'published') return '我发布的海龟汤'
+  if (data.mode == 'evaluations') return '我评价过的海龟汤'
+  return data.mode == 'likes' ? '我点赞的海龟汤' : '我收藏的海龟汤'
+})
+const emptyText = computed((): string => {
+  if (data.mode == 'published') return '还没有发布海龟汤'
+  if (data.mode == 'evaluations') return '还没有评价海龟汤'
+  return data.mode == 'likes' ? '还没有点赞海龟汤' : '还没有收藏海龟汤'
+})
+const emptySymbol = computed((): string => {
+  if (data.mode == 'published') return '汤'
+  if (data.mode == 'evaluations') return '评'
+  return data.mode == 'likes' ? '♥' : '★'
+})
+const emptyIconClass = computed((): string => {
+  if (data.mode == 'likes') return 'empty-like'
+  if (data.mode == 'evaluations') return 'empty-evaluation'
+  if (data.mode == 'published') return 'empty-published'
+  return 'empty-favorite'
+})
+const leftSoups = computed((): SoupSummary[] => data.soups.filter((_: SoupSummary, index: number): boolean => index % 2 == 0))
+const rightSoups = computed((): SoupSummary[] => data.soups.filter((_: SoupSummary, index: number): boolean => index % 2 == 1))
+const footerText = computed((): string => {
+  if (data.loading) return '加载中...'
+  if (data.hasMore) return '继续上滑加载'
+  return data.total > 0 ? '共 ' + data.total.toString() + ' 碗' : '没有更多了'
+})
+
+function fetchSoups(append: boolean) {
+  if (data.loading || (append && !data.hasMore)) return
+  data.loading = true
+  data.errorMessage = ''
+  const offset = append ? data.soups.length : 0
+  loadMyInteractionSoups(data.mode, offset, (response) => {
+    data.listVisible = append
+    data.soups = append ? data.soups.concat(response.soups) : response.soups
+    data.hasMore = data.mode == 'evaluations' ? false : response.hasMore
+    data.total = data.mode == 'evaluations' ? data.soups.length : (response.total ?? data.soups.length)
+    data.loading = false
+    if (!append && data.soups.length > 0) {
+      setTimeout(() => { data.listVisible = true }, 30)
+    } else if (!append && data.soups.length == 0) {
+      setTimeout(() => {
+        data.emptyPulse = true
+        setTimeout(() => { data.emptyPulse = false }, 700)
+      }, 80)
+    }
+  }, (error) => {
+    data.loading = false
+    data.errorMessage = error.message
+    if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' })
+  })
+}
+function reload() {
+  data.soups = []
+  data.hasMore = true
+  fetchSoups(false)
+}
+function loadMore() { fetchSoups(true) }
+function goHome() { uni.switchTab({ url: '/pages/home/home' }) }
+
+onLoad((options) => {
+  const requestedMode = options['mode']
+  if (requestedMode == 'likes' || requestedMode == 'published' || requestedMode == 'evaluations') data.mode = requestedMode
+  else data.mode = 'favorites'
+  uni.setNavigationBarTitle({ title: title.value })
+  fetchSoups(false)
+})
+onShow(() => {
+  if (data.soups.length > 0) reload()
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.list { flex: 1; }
+.state-card { margin: 12px 16px; padding: 24px 18px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.empty-card { align-items: center; }
+.empty-icon { position: relative; width: 58px; height: 58px; align-items: center; justify-content: center; border-radius: 29px; background-color: #EAF2FF; }
+.empty-like { background-color: #FEF2F2; }
+.empty-favorite { background-color: #FFFBEB; }
+.empty-published { background-color: #EFF6FF; }
+.empty-evaluation { background-color: #F5F3FF; }
+.empty-icon-symbol { z-index: 2; color: #F59E0B; font-size: 25px; font-weight: 700; transform: translateY(0) scale(1); transition-property: transform; transition-duration: 320ms; }
+.empty-like .empty-icon-symbol { color: #EF4444; }
+.empty-published .empty-icon-symbol { color: #2563EB; }
+.empty-evaluation .empty-icon-symbol { color: #7C3AED; }
+.empty-symbol-up { transform: translateY(-3px) scale(1.08); }
+.empty-pulse { position: absolute; left: 4px; top: 4px; width: 50px; height: 50px; border-width: 1px; border-color: #FCD34D; border-radius: 25px; opacity: 0.55; transform: scale(0.8); transition-property: opacity, transform; transition-duration: 650ms; }
+.empty-like .empty-pulse { border-color: #FCA5A5; }
+.empty-published .empty-pulse { border-color: #93C5FD; }
+.empty-evaluation .empty-pulse { border-color: #C4B5FD; }
+.empty-pulse-out { opacity: 0; transform: scale(1.35); }
+.list-enter { opacity: 0; transform: translateY(12px); transition-property: opacity, transform; transition-duration: 360ms; }
+.list-visible { opacity: 1; transform: translateY(0); }
+.content-heading { margin: 14px 16px 4px 16px; flex-direction: row; align-items: center; justify-content: space-between; }
+.content-title { color: #121826; font-size: 16px; font-weight: 700; }
+.content-count { color: #98A2B3; font-size: 11px; }
+.soup-grid { padding-left: 12px; padding-right: 12px; flex-direction: row; align-items: flex-start; }
+.soup-column { flex: 1; }
+.right-column { margin-left: 8px; }
+.state-title { margin-top: 10px; color: #121826; font-size: 17px; font-weight: 700; }
+.state-message, .footer-text { margin-top: 6px; color: #667085; font-size: 12px; }
+.retry-button { width: 100%; margin-top: 16px; min-height: 42px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.footer { align-items: center; padding: 18px 16px 28px 16px; }
+</style>

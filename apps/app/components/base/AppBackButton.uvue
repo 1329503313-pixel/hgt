@@ -1,0 +1,15 @@
+<template>
+  <view class="app-back" hover-class="app-back-pressed" :hover-stay-time="80" @click="emit('click')">
+    <image class="app-back-icon" src="/static/messages/back.png" mode="aspectFit"></image>
+  </view>
+</template>
+
+<script setup lang="uts">
+const emit = defineEmits<{ click: [] }>()
+</script>
+
+<style>
+.app-back { width: 40px; height: 40px; align-items: center; justify-content: center; border-radius: 20px; }
+.app-back-icon { width: 24px; height: 24px; }
+.app-back-pressed { background-color: #F2F4F7; opacity: 0.72; }
+</style>

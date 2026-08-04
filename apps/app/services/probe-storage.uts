@@ -1,0 +1,19 @@
+const PROBE_KEY = 'hgt-p0-non-sensitive-probe'
+
+export function writeStorageProbe(value: string): string {
+  uni.setStorageSync(PROBE_KEY, {
+    value: value,
+    writtenAt: Date.now()
+  })
+  return '已写入非敏感探针数据'
+}
+
+export function readStorageProbe(): string {
+  const stored = uni.getStorageSync(PROBE_KEY)
+  return JSON.stringify(stored)
+}
+
+export function clearStorageProbe(): string {
+  uni.removeStorageSync(PROBE_KEY)
+  return '已清理探针数据'
+}

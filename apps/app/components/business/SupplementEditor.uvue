@@ -1,0 +1,41 @@
+<template>
+  <view class="supplement-box">
+    <view class="supplement-head">
+      <text class="supplement-title">{{ title }}</text>
+      <view class="add-button" hover-class="button-pressed" @click="$emit('add')"><text class="add-text">＋ 追加</text></view>
+    </view>
+    <view v-for="(item, index) in items" :key="index.toString()" class="supplement-item">
+      <text class="item-label">{{ title }} {{ index + 1 }}</text>
+      <textarea class="item-field" :value="item" :data-index="index" maxlength="5000" :placeholder="'请输入' + title + (index + 1).toString()" @input="inputItem" />
+      <view class="remove-button" hover-class="button-pressed" @click="$emit('remove', index)"><text class="remove-text">删除{{ title }} {{ index + 1 }}</text></view>
+    </view>
+    <text v-if="items.length == 0" class="empty-text">可按需要追加，空白补充项不会保存。</text>
+  </view>
+</template>
+
+<script setup lang="uts">
+defineProps<{ title: string, items: string[] }>()
+const emit = defineEmits<{
+  add: [],
+  change: [index: number, value: string],
+  remove: [index: number]
+}>()
+function inputItem(event: UniInputEvent) {
+  const index = event.currentTarget!!.dataset['index'] as number
+  emit('change', index, event.detail.value)
+}
+</script>
+
+<style>
+.supplement-box { margin-top: 10px; padding: 12px; border-width: 1px; border-color: #E5EAF2; border-radius: 14px; background-color: #F8FAFC; }
+.supplement-head { min-height: 40px; flex-direction: row; align-items: center; justify-content: space-between; }
+.supplement-title, .item-label { color: #667085; font-size: 11px; font-weight: 700; }
+.add-button { padding: 9px 12px; border-width: 1px; border-color: #DCE3EE; border-radius: 10px; background-color: #FFFFFF; transform: scale(1); }
+.add-text { color: #2563EB; font-size: 11px; font-weight: 700; }
+.button-pressed { transform: scale(0.96); opacity: 0.75; }
+.supplement-item { margin-top: 10px; padding-top: 10px; border-top-width: 1px; border-top-color: #E5EAF2; }
+.item-field { width: 100%; height: 116px; margin-top: 6px; padding: 10px; border-width: 1px; border-color: #DCE3EE; border-radius: 11px; background-color: #FFFFFF; color: #344054; font-size: 13px; line-height: 20px; }
+.remove-button { min-height: 39px; margin-top: 7px; align-items: center; justify-content: center; border-width: 1px; border-color: #FECACA; border-radius: 10px; background-color: #FFFFFF; transform: scale(1); }
+.remove-text { color: #D92D20; font-size: 11px; font-weight: 700; }
+.empty-text { margin-top: 7px; color: #98A2B3; font-size: 10px; line-height: 16px; }
+</style>

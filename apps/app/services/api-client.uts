@@ -1,0 +1,167 @@
+import { apiUrl } from '@/config/runtime.uts'
+
+export type ApiError = {
+  statusCode: number,
+  message: string
+}
+
+function logRequest(method: string, url: string): void {
+  console.log('[HGT API] ' + method + ' ' + url)
+}
+
+function logResponse(method: string, url: string, statusCode: number): void {
+  console.log('[HGT API] ' + method + ' ' + url + ' -> ' + statusCode.toString())
+}
+
+function logFailure(method: string, url: string, message: string): void {
+  console.error('[HGT API] ' + method + ' ' + url + ' -> ' + message)
+}
+
+export function apiGet<T>(
+  path: string,
+  decode: (json: string) => T,
+  success: (data: T) => void,
+  fail: (error: ApiError) => void
+) {
+  const url = apiUrl(path)
+  logRequest('GET', url)
+  uni.request({
+    url: url,
+    method: 'GET',
+    withCredentials: true,
+    timeout: 15000,
+    success: (response) => {
+      logResponse('GET', url, response.statusCode)
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        success(decode(JSON.stringify(response.data)))
+        return
+      }
+      const error: ApiError = {
+        statusCode: response.statusCode,
+        message: response.statusCode == 401 ? '登录状态已失效' : '请求失败（' + response.statusCode.toString() + '）'
+      }
+      fail(error)
+    },
+    fail: (requestError) => {
+      logFailure('GET', url, requestError.errMsg)
+      const error: ApiError = {
+        statusCode: 0,
+        message: requestError.errMsg.length > 0 ? requestError.errMsg : '网络连接失败'
+      }
+      fail(error)
+    }
+  })
+}
+
+export function apiPost<T>(
+  path: string,
+  data: UTSJSONObject,
+  decode: (json: string) => T,
+  success: (data: T) => void,
+  fail: (error: ApiError) => void
+) {
+  const url = apiUrl(path)
+  logRequest('POST', url)
+  uni.request({
+    url: url,
+    method: 'POST',
+    data: data,
+    header: {
+      'Content-Type': 'application/json'
+    },
+    withCredentials: true,
+    timeout: 15000,
+    success: (response) => {
+      logResponse('POST', url, response.statusCode)
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        success(decode(JSON.stringify(response.data)))
+        return
+      }
+      const responseData = response.data as UTSJSONObject
+      const serverMessage = responseData['error'] as string | null
+      const error: ApiError = {
+        statusCode: response.statusCode,
+        message: serverMessage ?? (response.statusCode == 401 ? '账号或密码错误' : '请求失败（' + response.statusCode.toString() + '）')
+      }
+      fail(error)
+    },
+    fail: (requestError) => {
+      logFailure('POST', url, requestError.errMsg)
+      const error: ApiError = {
+        statusCode: 0,
+        message: requestError.errMsg.length > 0 ? requestError.errMsg : '网络连接失败'
+      }
+      fail(error)
+    }
+  })
+}
+
+export function apiPatch<T>(
+  path: string,
+  data: UTSJSONObject,
+  decode: (json: string) => T,
+  success: (data: T) => void,
+  fail: (error: ApiError) => void
+) {
+  const url = apiUrl(path)
+  logRequest('PATCH', url)
+  uni.request({
+    url: url,
+    method: 'PATCH',
+    data: data,
+    header: { 'Content-Type': 'application/json' },
+    withCredentials: true,
+    timeout: 15000,
+    success: (response) => {
+      logResponse('PATCH', url, response.statusCode)
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        success(decode(JSON.stringify(response.data)))
+        return
+      }
+      fail({ statusCode: response.statusCode, message: response.statusCode == 401 ? '登录状态已失效' : '请求失败（' + response.statusCode.toString() + '）' })
+    },
+    fail: (requestError) => {
+      logFailure('PATCH', url, requestError.errMsg)
+      fail({ statusCode: 0, message: requestError.errMsg.length > 0 ? requestError.errMsg : '网络连接失败' })
+    }
+  })
+}
+
+export function apiPut<T>(
+  path: string,
+  data: UTSJSONObject,
+  decode: (json: string) => T,
+  success: (data: T) => void,
+  fail: (error: ApiError) => void
+) {
+  const url = apiUrl(path)
+  logRequest('PUT', url)
+  uni.request({
+    url: url,
+    method: 'PUT',
+    data: data,
+    header: { 'Content-Type': 'application/json' },
+    withCredentials: true,
+    timeout: 15000,
+    success: (response) => {
+      logResponse('PUT', url, response.statusCode)
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        success(decode(JSON.stringify(response.data)))
+        return
+      }
+      const responseData = response.data as UTSJSONObject
+      const serverMessage = responseData['error'] as string | null
+      fail({
+        statusCode: response.statusCode,
+        message: serverMessage ?? (response.statusCode == 401 ? '登录状态已失效' : '请求失败（' + response.statusCode.toString() + '）')
+      })
+    },
+    fail: (requestError) => {
+      logFailure('PUT', url, requestError.errMsg)
+      fail({
+        statusCode: 0,
+        message: requestError.errMsg.length > 0 ? requestError.errMsg : '网络连接失败'
+      })
+    }
+  })
+}

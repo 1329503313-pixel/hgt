@@ -1,0 +1,257 @@
+<template>
+  <view class="page">
+    <view class="header">
+      <text class="headline">海龟汤</text>
+      <view class="session-pill" hover-class="header-action-pressed" @click="openAccount"><text class="session-text">{{ sessionLabel }}</text></view>
+    </view>
+    <view class="search-row">
+      <view class="search-shell">
+        <input class="search-input" v-model="data.keywordInput" placeholder="搜索海龟汤或用户昵称..." confirm-type="search" @confirm="submitSearch" />
+        <view class="search-icon" hover-class="round-action-pressed" @click="submitSearch"><text class="search-symbol">⌕</text></view>
+      </view>
+      <view class="filter-shell" hover-class="round-action-pressed" @click="toggleFilters">
+        <view class="filter-button" :class="data.filtersOpen ? 'filter-button-active' : ''"><text class="filter-symbol">☷</text></view>
+        <view v-if="activeFilterCount > 0" class="filter-badge"><text class="filter-badge-text">{{ activeFilterCount }}</text></view>
+      </view>
+    </view>
+    <view v-if="data.filtersOpen" class="filter-panel">
+      <view class="filter-heading"><text class="filter-title">筛选海龟汤</text><text class="reset-link" @click="resetFilters">重置</text></view>
+      <text class="filter-label">类型</text>
+      <scroll-view class="option-scroll" direction="horizontal" :show-scrollbar="false">
+        <view class="option-row">
+          <view v-for="item in typeOptions" :key="item.value" class="filter-option" :class="data.draftType == item.value ? 'filter-option-active' : ''" hover-class="filter-option-pressed" @click="data.draftType = item.value"><text class="option-text" :class="data.draftType == item.value ? 'option-text-active' : ''">{{ item.label }}</text></view>
+        </view>
+      </scroll-view>
+      <text class="filter-label">难度</text>
+      <view class="option-row wrap-row">
+        <view v-for="item in difficultyOptions" :key="item.value" class="filter-option quarter-option" :class="data.draftDifficulty == item.value ? 'filter-option-active' : ''" hover-class="filter-option-pressed" @click="data.draftDifficulty = item.value"><text class="option-text" :class="data.draftDifficulty == item.value ? 'option-text-active' : ''">{{ item.label }}</text></view>
+      </view>
+      <text class="filter-label">评分</text>
+      <view class="option-row wrap-row">
+        <view v-for="item in ratingOptions" :key="item.value" class="filter-option quarter-option" :class="data.draftMinRating == item.value ? 'filter-option-active' : ''" hover-class="filter-option-pressed" @click="data.draftMinRating = item.value"><text class="option-text" :class="data.draftMinRating == item.value ? 'option-text-active' : ''">{{ item.label }}</text></view>
+      </view>
+      <text class="filter-label">公开情况</text>
+      <view class="option-row">
+        <view v-for="item in publicOptions" :key="item.value" class="filter-option public-option" :class="data.draftBottomPublic == item.value ? 'filter-option-active' : ''" hover-class="filter-option-pressed" @click="data.draftBottomPublic = item.value"><text class="option-text" :class="data.draftBottomPublic == item.value ? 'option-text-active' : ''">{{ item.label }}</text></view>
+      </view>
+      <button class="apply-button" @click="applyFilters">应用筛选</button>
+    </view>
+    <view v-if="data.errorMessage.length > 0" class="state-card">
+      <text class="state-title">加载失败</text>
+      <text class="state-message">{{ data.errorMessage }}</text>
+      <button class="retry-button" @click="reload">重新加载</button>
+    </view>
+    <view v-else-if="data.loading && data.soups.length == 0" class="state-card">
+      <text class="state-title">正在准备海龟汤...</text>
+      <text class="state-message">从本地服务读取公开内容</text>
+    </view>
+    <view v-else-if="!data.loading && data.soups.length == 0" class="state-card">
+      <text class="state-title">没有找到结果</text>
+      <text class="state-message">换个关键词再试试</text>
+    </view>
+    <scroll-view v-else class="list" direction="vertical" @scrolltolower="loadMore">
+      <view class="banner-wrap"><image class="banner" src="/static/home-banner.webp" mode="aspectFill"></image></view>
+      <view class="masonry">
+        <view class="masonry-column">
+          <SoupCard v-for="soup in leftSoups" :key="soup.id" :soup="soup" :compact="true" />
+        </view>
+        <view class="masonry-column right-column">
+          <SoupCard v-for="soup in rightSoups" :key="soup.id" :soup="soup" :compact="true" />
+        </view>
+      </view>
+      <view class="footer"><text class="footer-text">{{ footerText }}</text></view>
+    </scroll-view>
+    <view class="create-button" hover-class="create-button-pressed" @click="startCreate"><text class="create-icon">＋</text></view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import SoupCard from '@/components/business/SoupCard.uvue'
+import { SoupSummary } from '@/domain/dto/soup.uts'
+import { loadSoups } from '@/services/soups.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+
+type HomeData = {
+  soups: SoupSummary[],
+  keywordInput: string,
+  keyword: string,
+  type: string,
+  difficulty: string,
+  minRating: string,
+  bottomPublic: string,
+  draftType: string,
+  draftDifficulty: string,
+  draftMinRating: string,
+  draftBottomPublic: string,
+  filtersOpen: boolean,
+  loading: boolean,
+  hasMore: boolean,
+  total: number,
+  errorMessage: string
+}
+const pageSize = 10
+const data = reactive({
+  soups: [] as SoupSummary[],
+  keywordInput: '',
+  keyword: '',
+  type: '',
+  difficulty: '',
+  minRating: '',
+  bottomPublic: '',
+  draftType: '',
+  draftDifficulty: '',
+  draftMinRating: '',
+  draftBottomPublic: '',
+  filtersOpen: false,
+  loading: false,
+  hasMore: true,
+  total: 0,
+  errorMessage: ''
+} as HomeData)
+type FilterOption = { label: string, value: string }
+const typeOptions = [
+  { label: '全部类型', value: '' },
+  { label: '本格清汤', value: '本格清汤' },
+  { label: '本格红汤', value: '本格红汤' },
+  { label: '本格黑汤', value: '本格黑汤' },
+  { label: '变格清汤', value: '变格清汤' },
+  { label: '变格红汤', value: '变格红汤' },
+  { label: '变格黑汤', value: '变格黑汤' },
+  { label: '纯机制汤', value: '纯机制汤' },
+  { label: '其他', value: '其他' }
+] as FilterOption[]
+const difficultyOptions = [{ label: '全部', value: '' }, { label: '简单', value: '简单' }, { label: '普通', value: '普通' }, { label: '困难', value: '困难' }, { label: '地狱', value: '地狱' }] as FilterOption[]
+const ratingOptions = [{ label: '全部', value: '' }, { label: '2分以上', value: '2' }, { label: '3分以上', value: '3' }, { label: '4分以上', value: '4' }] as FilterOption[]
+const publicOptions = [{ label: '全部', value: '' }, { label: '汤面公开', value: 'surface' }, { label: '汤底公开', value: 'bottom' }] as FilterOption[]
+
+const sessionLabel = computed((): string => {
+  if (!sessionState.restored || sessionState.restoring) return '恢复会话中'
+  return sessionState.user == null ? '游客模式' : sessionState.user!.nickname
+})
+const footerText = computed((): string => {
+  if (data.loading) return '加载中...'
+  if (data.hasMore) return '继续上滑加载'
+  return data.total > 0 ? '已展示全部 ' + data.total.toString() + ' 碗' : '没有更多了'
+})
+const leftSoups = computed((): SoupSummary[] => data.soups.filter((_: SoupSummary, index: number): boolean => index % 2 == 0))
+const rightSoups = computed((): SoupSummary[] => data.soups.filter((_: SoupSummary, index: number): boolean => index % 2 == 1))
+const activeFilterCount = computed((): number => {
+  let count = 0
+  if (data.type.length > 0) count++
+  if (data.difficulty.length > 0) count++
+  if (data.minRating.length > 0) count++
+  if (data.bottomPublic.length > 0) count++
+  return count
+})
+
+function fetchSoups(append: boolean) {
+  if (data.loading || (append && !data.hasMore)) return
+  data.loading = true
+  data.errorMessage = ''
+  const offset = append ? data.soups.length : 0
+  loadSoups(data.keyword, data.type, data.difficulty, data.minRating, data.bottomPublic, offset, pageSize, (response) => {
+    data.soups = append ? data.soups.concat(response.soups) : response.soups
+    data.hasMore = response.hasMore
+    data.total = response.total ?? data.soups.length
+    data.loading = false
+  }, (error) => {
+    data.loading = false
+    data.errorMessage = error.message
+  })
+}
+function submitSearch() {
+  data.keyword = data.keywordInput.trim()
+  data.soups = []
+  data.hasMore = true
+  fetchSoups(false)
+}
+function reload() { fetchSoups(false) }
+function loadMore() { fetchSoups(true) }
+function openAccount() { uni.switchTab({ url: '/pages/mine/mine' }) }
+function toggleFilters() {
+  if (!data.filtersOpen) {
+    data.draftType = data.type
+    data.draftDifficulty = data.difficulty
+    data.draftMinRating = data.minRating
+    data.draftBottomPublic = data.bottomPublic
+  }
+  data.filtersOpen = !data.filtersOpen
+}
+function applyFilters() {
+  data.type = data.draftType
+  data.difficulty = data.draftDifficulty
+  data.minRating = data.draftMinRating
+  data.bottomPublic = data.draftBottomPublic
+  data.filtersOpen = false
+  data.soups = []
+  data.hasMore = true
+  fetchSoups(false)
+}
+function resetFilters() {
+  data.draftType = ''
+  data.draftDifficulty = ''
+  data.draftMinRating = ''
+  data.draftBottomPublic = ''
+}
+function startCreate() {
+  if (sessionState.user == null) {
+    uni.navigateTo({ url: '/pages/auth/auth' })
+    return
+  }
+  uni.navigateTo({ url: '/pages/soup-editor/soup-editor' })
+}
+onLoad(() => {
+  if (!sessionState.restored) restoreSession()
+  fetchSoups(false)
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F5F7FA; }
+.header { flex-direction: row; align-items: center; justify-content: space-between; padding: 50px 16px 10px 16px; background-color: #FFFFFF; border-bottom-width: 1px; border-bottom-color: #EEF2F6; }
+.headline { color: #111827; font-size: 22px; font-weight: 800; }
+.session-pill { max-width: 104px; padding: 9px 13px; border-radius: 12px; background-color: #2563EB; transform: scale(1); transition-property: transform; transition-duration: 140ms; }
+.session-text { color: #FFFFFF; font-size: 12px; font-weight: 700; }
+.header-action-pressed { transform: scale(0.95); }
+.search-row { flex-direction: row; padding: 12px 16px 8px 16px; }
+.search-shell { flex: 1; height: 44px; flex-direction: row; align-items: center; border-width: 1px; border-color: #E5E7EB; border-radius: 14px; background-color: #FFFFFF; }
+.search-input { flex: 1; height: 42px; padding-left: 12px; color: #111827; font-size: 13px; }
+.search-icon { width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 13px; transform: scale(1); transition-property: transform, background-color; transition-duration: 140ms; }
+.search-symbol { color: #2563EB; font-size: 24px; font-weight: 700; }
+.filter-button { width: 44px; height: 44px; margin-left: 8px; align-items: center; justify-content: center; border-width: 1px; border-color: #E5E7EB; border-radius: 22px; background-color: #FFFFFF; transform: scale(1); transition-property: transform, background-color; transition-duration: 140ms; }
+.filter-button-active { border-color: #93C5FD; background-color: #EFF6FF; }
+.filter-symbol { color: #2563EB; font-size: 22px; }
+.filter-badge { position: absolute; right: -3px; top: -4px; min-width: 19px; height: 19px; padding-top: 2px; border-radius: 10px; background-color: #2563EB; color: #FFFFFF; font-size: 10px; font-weight: 800; text-align: center; }
+.round-action-pressed { transform: scale(0.92); background-color: #EFF6FF; }
+.filter-panel { margin: 0 16px 10px 16px; padding: 14px; border-width: 1px; border-color: #E5EAF2; border-radius: 16px; background-color: #FFFFFF; }
+.filter-heading { flex-direction: row; align-items: center; justify-content: space-between; }
+.filter-title { color: #121826; font-size: 15px; font-weight: 800; }
+.reset-link { padding: 8px 2px; color: #2563EB; font-size: 11px; font-weight: 700; }
+.filter-label { margin-top: 12px; margin-bottom: 7px; color: #667085; font-size: 10px; font-weight: 700; }
+.option-scroll { width: 100%; height: 38px; }
+.option-row { flex-direction: row; }
+.wrap-row { flex-wrap: wrap; }
+.filter-option { min-width: 76px; min-height: 34px; margin-right: 7px; margin-bottom: 7px; padding: 8px 10px; align-items: center; justify-content: center; border-width: 1px; border-color: #DCE3EE; border-radius: 11px; background-color: #FFFFFF; transform: scale(1); }
+.quarter-option { min-width: 63px; }
+.public-option { flex: 1; }
+.filter-option-active { border-color: #2563EB; background-color: #EFF6FF; }
+.filter-option-pressed { transform: scale(0.95); }
+.option-text { color: #475467; font-size: 10px; font-weight: 600; }
+.option-text-active { color: #2563EB; font-weight: 800; }
+.apply-button { min-height: 42px; margin-top: 7px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; font-weight: 700; }
+.list { flex: 1; }
+.banner-wrap { padding: 4px 16px 10px 16px; }
+.banner { width: 100%; height: 174px; border-radius: 18px; background-color: #111827; }
+.masonry { flex-direction: row; align-items: flex-start; padding: 0 10px; }
+.masonry-column { flex: 1; }
+.right-column { margin-left: 10px; }
+.state-card { margin: 12px 16px; padding: 24px 18px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.state-title { color: #121826; font-size: 17px; font-weight: 700; }
+.state-message, .footer-text { margin-top: 6px; color: #667085; font-size: 12px; }
+.retry-button { margin-top: 14px; min-height: 42px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.footer { align-items: center; padding: 18px 16px 28px 16px; }
+.create-button { position: absolute; right: 18px; bottom: 18px; width: 52px; height: 52px; align-items: center; justify-content: center; border-radius: 26px; background-color: #2563EB; box-shadow: 0 8px 18px rgba(37, 99, 235, 0.28); transform: scale(1); transition-property: transform; transition-duration: 140ms; }
+.create-button-pressed { transform: scale(0.92); }
+.create-icon { color: #FFFFFF; font-size: 30px; font-weight: 400; }
+.filter-shell { position: relative; width: 50px; height: 50px; margin-left: 5px; align-items: center; justify-content: center; transform: scale(1); transition-property: transform; transition-duration: 140ms; }.filter-button { margin-left: 0; }.filter-badge { right: 0; top: 0; min-width: 20px; height: 20px; padding: 0 4px; align-items: center; justify-content: center; border-width: 2px; border-color: #FFFFFF; }.filter-badge-text { color: #FFFFFF; font-size: 9px; font-weight: 800; line-height: 16px; text-align: center; }
+</style>

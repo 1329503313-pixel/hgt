@@ -10,7 +10,8 @@
 
 | 层 | 技术 |
 |---|------|
-| 前端 | React 19 + TypeScript + Vite + Tailwind CSS + react-router-dom v7 |
+| Web 前端 | React 19 + TypeScript + Vite + Tailwind CSS + react-router-dom v7 |
+| APP 前端（规划） | uni-app x + Vue 3 + UTS + `.uvue`，目标 Android/iOS |
 | 后端 | Express 5 + TypeScript + mysql2 (裸 SQL，无 ORM) |
 | 数据库 | MySQL 8 + InnoDB |
 | 认证 | JWT (httpOnly cookie, 30天)，bypass session store |
@@ -29,48 +30,18 @@ hgt/
 │   │   ├── config.ts     # 环境变量配置
 │   │   ├── game.ts       # AI 玩汤：DeepSeek 推理游戏 API
 │   │   └── types.ts      # PublicUser 等共享类型
-│   └── web/src/          # Vite + React SPA
-│       ├── App.tsx        # 路由定义 + 全局 Toast/Modal
-│       ├── main.tsx       # Vite 入口
-│       ├── api.ts         # fetch 封装 (自动 JSON, credentials: include)
-│       ├── context/
-│       │   └── AppContext.tsx  # 全局状态 (user, toast, 表单, 导出预览)
-│       ├── components/
-│       │   ├── AuthModal.tsx       # 登录/注册弹窗 + 导出预览
-│       │   ├── SoupEditor.tsx      # 创建/编辑海龟汤表单
-│       │   ├── EvalEditor.tsx      # 评价编辑器
-│       │   ├── SoupCard.tsx        # 瀑布流卡片组件
-│       │   ├── MasonryList.tsx     # Masonry 布局 + 无限滚动
-│       │   ├── ContentCard.tsx     # 富文本 / 补充内容卡片
-│       │   ├── FormWidgets.tsx     # 表单小组件
-│       │   ├── Modal.tsx           # 通用模态框
-│       │   ├── Lists.tsx           # 列表组件
-│       │   ├── SoupLinkList.tsx    # 汤面链接列表
-│       │   ├── PageTopBar.tsx      # 页面顶栏（标题+头像+通知红点）
-│       │   ├── BottomNav.tsx       # 底部导航栏 (首页/我的)
-│       │   ├── GameModal.tsx       # AI 玩汤：聊天式推理游戏界面
-│       │   └── admin/              # 管理后台组件
-│       │       ├── AdminTopBar.tsx
-│       │       ├── UserManagement.tsx
-│       │       ├── SoupManagement.tsx
-│       │       └── EvaluationManagement.tsx
-│       ├── pages/
-│       │   ├── HomePage.tsx         # 首页：搜索+筛选+瀑布流+浮动导出按钮
-│       │   ├── DetailPage.tsx       # 海龟汤详情：汤面/汤底/手册/雷达图/评价
-│       │   ├── MinePage.tsx         # 「我的」个人中心
-│       │   ├── MySoupsPage.tsx      # 我的作品
-│       │   ├── MyFavoritesPage.tsx  # 我的收藏
-│       │   ├── MyEvaluationsPage.tsx# 我的评价
-│       │   ├── MyLikesPage.tsx      # 我的点赞
-│       │   ├── MessagesPage.tsx     # 消息中心
-│       │   ├── NotificationsPage.tsx# 通知列表
-│       │   ├── RequestsPage.tsx     # 查看申请处理
-│       │   └── AdminPage.tsx        # 管理后台
-│       ├── layouts/
-│       │   └── MainLayout.tsx       # 主布局（含 BottomNav）
-│       ├── shared/
-│       │   └── types.ts             # 前端共享类型定义
-│       └── RadarChart.tsx           # Chart.js 六维雷达图组件
+│   ├── web/src/          # Vite + React SPA
+│   │   ├── App.tsx        # 路由定义 + 全局 Toast/Modal
+│   │   ├── main.tsx       # Vite 入口
+│   │   ├── api.ts         # fetch 封装 (自动 JSON, credentials: include)
+│   │   ├── context/
+│   │   │   └── AppContext.tsx  # 全局状态 (user, toast, 表单, 导出预览)
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── layouts/
+│   │   ├── shared/
+│   │   └── RadarChart.tsx # Chart.js 六维雷达图组件
+│   └── app/              # 规划中的 uni-app x Android/iOS 客户端
 ├── packages/
 │   └── shared/src/index.ts         # 共享类型 (SoupSummary, Evaluation 等)
 ├── Dockerfile                       # 多阶段构建
@@ -78,6 +49,12 @@ hgt/
 ├── .env.example
 └── PRD_海龟汤评价管理系统.md        # 产品需求文档
 ```
+
+APP 端的架构、目录、迁移步骤和验收标准统一见：
+
+- `docs/uni-app-x_APP技术方案.md`
+
+APP 不复用 React/Tailwind UI 代码，只复用服务端协议、领域语义、设计 token 与统一交互规则。实际创建 `apps/app` 前必须先在该目录建立 `CLAUDE.md`。
 
 ## 启动与开发
 
@@ -109,6 +86,7 @@ npm run check                 # TypeScript 类型检查
 | `soup_access_grants` | 已授权的汤底访问 |
 | `notifications` | 通知 (user_id + type + is_read) |
 | `game_sessions` | AI 游戏存档 (soup_id + user_id 唯一) |
+| `android_app_releases` | Android APP 发布版本（版本号、APK、更新说明、启停状态） |
 
 ### 迁移策略
 

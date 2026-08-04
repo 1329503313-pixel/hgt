@@ -1,6 +1,9 @@
 node_modules
 .env
 .DS_Store
+.idea/
+.vscode/
+*.swp
 npm-debug.log*
 apps/web/dist/
 mysql-data
@@ -19,3 +22,22 @@ apps/server/dist/
 playwright-report/
 test-results/
 .e2e-artifacts/
+docs/
+artifacts/
+.local/
+# Agent working memory; not part of the product source.
+task_plan.md
+findings.md
+progress.md
+.planning/
+.plan-attestation
+
+# Local Android toolchain and signing material.
+local.properties
+signing.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+# Contains local OSS credentials by explicit project-owner choice.
+scripts/build-android-local.sh

@@ -1,0 +1,10 @@
+import { ShellTaskCenter, ShellTransactionsResponse } from '@/domain/dto/shell.uts'
+import { apiGet, ApiError } from '@/services/api-client.uts'
+
+export function loadShellTaskCenter(success: (data: ShellTaskCenter) => void, fail: (error: ApiError) => void) {
+  apiGet<ShellTaskCenter>('/api/me/shells', (json: string): ShellTaskCenter => JSON.parse<ShellTaskCenter>(json)!, success, fail)
+}
+
+export function loadShellTransactions(offset: number, success: (data: ShellTransactionsResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<ShellTransactionsResponse>('/api/me/shell-transactions?limit=20&offset=' + offset.toString(), (json: string): ShellTransactionsResponse => JSON.parse<ShellTransactionsResponse>(json)!, success, fail)
+}

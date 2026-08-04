@@ -1,0 +1,158 @@
+<template>
+  <view class="card" :class="props.compact == true ? 'compact-card' : ''" hover-class="card-pressed" @click="openDetail">
+    <image v-if="coverUrl.length > 0" class="cover" :src="coverUrl" mode="aspectFill"></image>
+    <view v-else class="cover placeholder"><text class="cover-text">汤</text></view>
+    <view class="body">
+      <view class="row">
+        <text class="title">{{ soup.title }}</text>
+        <text v-if="props.compact == true" class="heat">♥ {{ soup.heatValue }}</text>
+        <text v-else class="difficulty">{{ soup.difficulty }}</text>
+      </view>
+      <view class="identity" @click.stop="openCreator">
+        <text class="avatar-mini">{{ soup.creatorName.length > 0 ? soup.creatorName.substring(0, 1) : '汤' }}</text>
+        <text class="creator">{{ soup.isOriginal ? soup.creatorName : '佚名' }}</text>
+        <text class="level">Lv{{ soup.creatorLevel }}</text>
+        <view v-if="soup.creatorEquippedBadge != null" class="badge-wrap"><image class="badge-icon" :src="badgeUrl" mode="aspectFit"></image><text class="badge">{{ soup.creatorEquippedBadge!.name }}</text></view>
+      </view>
+      <view v-if="props.compact == true" class="tags">
+        <text class="tag type-tag">{{ soup.type }}</text>
+        <text v-if="soup.isOriginal" class="tag original-tag">原创汤</text>
+        <text class="tag public-tag">{{ soup.isBottomPublic ? '汤底公开' : '汤面公开' }}</text>
+      </view>
+      <text class="summary">{{ soup.summary.length > 0 ? soup.summary : '暂无摘要，点开看看汤面留下的第一道线索。' }}</text>
+      <view class="meta-row">
+        <text class="score">✣ {{ scoreText }}</text>
+        <text class="metric">♡ {{ soup.likeCount }}</text>
+        <text class="metric">☆ {{ soup.favoriteCount }}</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { absoluteApiUrl, soupThumbnailUrl } from '@/config/runtime.uts'
+import { SoupSummary } from '@/domain/dto/soup.uts'
+
+const props = defineProps<{ soup: SoupSummary, compact?: boolean }>()
+const coverUrl = computed((): string => soupThumbnailUrl(props.soup.id, props.soup.coverImage))
+const badgeUrl = computed((): string => props.soup.creatorEquippedBadge == null ? '' : absoluteApiUrl(props.soup.creatorEquippedBadge!.iconUrl))
+const scoreText = computed((): string => props.soup.averageTotal == null ? '暂无评分' : props.soup.averageTotal!.toFixed(1) + ' 分')
+
+function openDetail() {
+  uni.navigateTo({ url: '/pages/soup-detail/soup-detail?id=' + encodeURIComponent(props.soup.id) })
+}
+function openCreator() {
+  if (props.soup.creatorId.length > 0) uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(props.soup.creatorId) })
+}
+</script>
+
+<style>
+.card {
+  margin: 7px 16px;
+  overflow: hidden;
+  border-width: 1px;
+  border-color: #E5EAF2;
+  border-radius: 18px;
+  background-color: #FFFFFF;
+  transform: scale(1);
+  transition-property: transform, border-color;
+  transition-duration: 150ms;
+}
+.card-pressed { transform: scale(0.985); border-color: #BFDBFE; }
+.compact-card { margin: 5px 0; border-radius: 16px; }
+.cover {
+  width: 100%;
+  height: 132px;
+}
+.placeholder {
+  align-items: center;
+  justify-content: center;
+  background-color: #DBEAFE;
+}
+.cover-text {
+  color: #2563EB;
+  font-size: 34px;
+  font-weight: 700;
+}
+.body {
+  padding: 14px;
+}
+.compact-card .body { padding: 10px; }
+.row,
+.identity,
+.meta-row {
+  flex-direction: row;
+  align-items: center;
+}
+.row {
+  justify-content: space-between;
+}
+.title {
+  flex: 1;
+  color: #121826;
+  font-size: 18px;
+  font-weight: 700;
+}
+.compact-card .title { font-size: 15px; }
+.heat { margin-left: 4px; color: #EF4444; font-size: 11px; font-weight: 700; }
+.difficulty {
+  margin-left: 10px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  background-color: #FFF7ED;
+  color: #C2410C;
+  font-size: 11px;
+}
+.summary {
+  margin-top: 8px;
+  color: #667085;
+  font-size: 13px;
+}
+.compact-card .summary { font-size: 12px; line-height: 18px; }
+.identity {
+  margin-top: 12px;
+}
+.compact-card .identity { margin-top: 7px; }
+.avatar-mini { width: 18px; height: 18px; padding-top: 2px; margin-right: 4px; border-radius: 9px; background-color: #EAF2FF; color: #2563EB; font-size: 9px; font-weight: 700; text-align: center; }
+.creator {
+  color: #344054;
+  font-size: 12px;
+  font-weight: 600;
+}
+.level {
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background-color: #F59E0B;
+  color: #FFFFFF;
+  font-size: 10px;
+}
+.badge {
+  margin-left: 6px;
+  color: #7C3AED;
+  font-size: 11px;
+  font-weight: 700;
+}
+.compact-card .badge { max-width: 62px; font-size: 9px; }
+.tags { flex-direction: row; flex-wrap: wrap; margin-top: 8px; }
+.tag { margin-right: 4px; margin-bottom: 4px; padding: 3px 6px; border-radius: 5px; font-size: 9px; font-weight: 700; }
+.type-tag { background-color: #EFF6FF; color: #2563EB; }
+.original-tag { background-color: #ECFDF5; color: #059669; }
+.public-tag { background-color: #F5F3FF; color: #7C3AED; }
+.meta-row {
+  margin-top: 10px;
+}
+.meta {
+  margin-right: 10px;
+  color: #98A2B3;
+  font-size: 11px;
+}
+.score {
+  color: #2563EB;
+  font-size: 11px;
+  font-weight: 700;
+}
+.metric { margin-left: auto; color: #667085; font-size: 11px; }
+.compact-card .cover { height: 92px; }
+.badge-wrap { margin-left: 4px; flex-direction: row; align-items: center; }.badge-icon { width: 14px; height: 14px; }
+</style>

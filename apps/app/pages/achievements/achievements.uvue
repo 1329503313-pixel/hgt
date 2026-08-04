@@ -1,0 +1,103 @@
+<template>
+  <view class="page">
+    <view class="topbar"><AppBackButton @click="goBack" /><text class="title">我的成就</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state"><text>正在整理徽章收藏...</text></view>
+    <view v-else-if="data.errorMessage.length > 0" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view class="summary">
+        <view><text class="summary-label">徽章收藏</text><text class="summary-note">记录每一次社区成长</text></view>
+        <view class="summary-count"><text class="summary-number">{{ unlockedCount }}</text><text class="summary-unit">枚已获得</text></view>
+      </view>
+      <view v-if="data.collection != null && data.collection!.equippedBadge != null" class="equipped-card">
+        <image class="equipped-icon" :src="badgeImage(data.collection!.equippedBadge!.iconUrl)" mode="aspectFill"></image>
+        <view class="equipped-copy"><text class="equipped-label">当前装备</text><text class="equipped-name">{{ data.collection!.equippedBadge!.name }}</text></view>
+        <button class="unequip" :disabled="data.saving" @click="unequip">卸下</button>
+      </view>
+      <view class="section">
+        <view class="section-head"><text class="section-title">成就徽章</text><text class="section-note">点击查看进度与装备</text></view>
+        <view class="badge-grid">
+          <view v-for="item in systemBadges" :key="item.series" class="badge-item" hover-class="badge-pressed" @click="openSystemBadge(item)">
+            <view class="icon-position-shell"><view class="icon-shell" :class="[item.earned ? tierClass(item.tier) : 'locked-shell', item.equipped ? 'equipped-shell' : '']"><image class="badge-icon" :class="item.earned ? '' : 'locked-icon'" :src="item.icon" mode="aspectFill"></image></view><view v-if="item.equipped" class="equipped-dot"><text class="equipped-dot-text">✓</text></view></view>
+            <text class="badge-name">{{ item.name }}</text><text class="badge-tier" :class="item.earned ? tierTextClass(item.tier) : 'locked-text'">{{ item.earned ? tierLabel(item.tier) : '未获得' }}</text>
+          </view>
+        </view>
+      </view>
+      <view v-if="achievementBadges.length > 0" class="section"><text class="section-title">特别成就</text><view class="badge-grid"><view v-for="item in achievementBadges" :key="item.key" class="badge-item" @click="openSpecialBadge(item)"><view class="icon-shell" :class="[tierClass(item.tier), isEquipped(item.key) ? 'equipped-shell' : '']"><image class="badge-icon" :src="badgeImage(item.iconUrl)" mode="aspectFill"></image></view><text class="badge-name">{{ item.name }}</text><text class="badge-tier" :class="tierTextClass(item.tier)">{{ tierLabel(item.tier) }}</text></view></view></view>
+      <view v-if="activityBadges.length > 0" class="section"><text class="section-title">活动徽章</text><view class="badge-grid"><view v-for="item in activityBadges" :key="item.key" class="badge-item" @click="openSpecialBadge(item)"><view class="icon-shell" :class="tierClass(item.tier)"><image class="badge-icon" :src="badgeImage(item.iconUrl)" mode="aspectFill"></image></view><text class="badge-name">{{ item.name }}</text><text class="badge-tier" :class="tierTextClass(item.tier)">{{ tierLabel(item.tier) }}</text></view></view></view>
+      <view v-if="limitedBadges.length > 0" class="section"><text class="section-title">限定徽章</text><view class="badge-grid"><view v-for="item in limitedBadges" :key="item.key" class="badge-item" @click="openSpecialBadge(item)"><view class="icon-shell" :class="tierClass(item.tier)"><image class="badge-icon" :src="badgeImage(item.iconUrl)" mode="aspectFill"></image></view><text class="badge-name">{{ item.name }}</text><text class="badge-tier" :class="tierTextClass(item.tier)">{{ tierLabel(item.tier) }}</text></view></view></view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+    <view v-if="data.detail != null" class="detail-mask" @click="closeDetail">
+      <view class="detail-card" @click.stop>
+        <image class="detail-icon" :class="data.detail!.earned ? '' : 'locked-icon'" :src="data.detail!.icon" mode="aspectFill"></image>
+        <text class="detail-name">{{ data.detail!.name }}</text><text class="detail-tier" :class="tierTextClass(data.detail!.tier)">{{ tierLabel(data.detail!.tier) }}</text>
+        <text class="detail-description">{{ data.detail!.description }}</text>
+        <view v-if="data.detail!.target > 0" class="progress-row"><view class="progress-track"><view class="progress-fill" :style="{ width: progressWidth(data.detail!) }"></view></view><text class="progress-copy">{{ data.detail!.current }}/{{ data.detail!.target }}</text></view>
+        <text class="requirement">{{ data.detail!.requirement }}</text>
+        <button v-if="data.detail!.earned" class="equip-button" :class="data.detail!.equipped ? 'equipped-button' : ''" :disabled="data.saving" @click="toggleEquip">{{ data.saving ? '处理中...' : data.detail!.equipped ? '卸下徽章' : '装备徽章' }}</button>
+        <button class="close-button" @click="closeDetail">关闭</button>
+      </view>
+    </view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { AchievementStats, BadgeCollectionResponse, SpecialAchievementBadge } from '@/domain/dto/achievement.uts'
+import { equipAchievementBadge, loadAchievementStats, loadBadgeCollection } from '@/services/achievements.uts'
+import { restoreSession } from '@/stores/session.uts'
+type BadgeSeries = { series: string, names: string[], tiers: string[], targets: number[], fileSeries: string, description: string }
+type DisplayBadge = { series: string, key: string, name: string, tier: string, icon: string, description: string, requirement: string, current: number, target: number, earned: boolean, equipped: boolean }
+type AchievementData = { stats: AchievementStats | null, collection: BadgeCollectionResponse | null, loading: boolean, saving: boolean, errorMessage: string, detail: DisplayBadge | null }
+const catalog = [
+  { series: 'publish', names: ['熬汤新秀','熬汤达人','熬汤大师'], tiers: ['normal','rare','epic'], targets: [1,10,50], fileSeries: 'publish', description: '持续分享原创海龟汤' },
+  { series: 'insight', names: ['灵光乍现','洞察之眼','全知全能'], tiers: ['normal','rare','epic'], targets: [10,100,1000], fileSeries: 'insight', description: '在 AI 玩汤中命中关键点' },
+  { series: 'favorite', names: ['私藏一汤','藏汤百味','万汤宝库'], tiers: ['normal','rare','epic'], targets: [3,20,100], fileSeries: 'favorite', description: '收藏值得反复回味的作品' },
+  { series: 'like', names: ['一点心意','热情汤客','点赞如潮'], tiers: ['normal','rare','epic'], targets: [3,20,100], fileSeries: 'like', description: '为喜欢的作品送出点赞' },
+  { series: 'login', names: ['三日来客','一月常客','百日不辍'], tiers: ['normal','rare','epic'], targets: [3,20,100], fileSeries: 'login', description: '累计登录社区' },
+  { series: 'creatorLike', names: ['小有名气','我是明星','人气王'], tiers: ['normal','rare','epic'], targets: [10,100,1000], fileSeries: 'creator-like', description: '原创作品累计获得点赞' },
+  { series: 'creatorFavorite', names: ['值得珍藏','收藏达人','镇馆之汤'], tiers: ['normal','rare','epic'], targets: [10,100,1000], fileSeries: 'creator-favorite', description: '原创作品累计获得收藏' },
+  { series: 'receivedComment', names: ['初有回响','热议之汤','话题之王'], tiers: ['normal','rare','epic'], targets: [5,50,300], fileSeries: 'received-comment', description: '原创作品累计获得有效评论' },
+  { series: 'commenter', names: ['初次开麦','评论达人','妙语连珠'], tiers: ['normal','rare','epic'], targets: [5,50,300], fileSeries: 'commenter', description: '累计发布有效评论' },
+  { series: 'aiClear', names: ['初识汤灵','汤灵搭档','AI破局王'], tiers: ['normal','rare','epic'], targets: [1,10,50], fileSeries: 'ai-clear', description: '累计通关 AI 玩汤' },
+  { series: 'heat', names: ['热力小子','炽热瞩目','狂热巅峰','登峰造极'], tiers: ['normal','rare','epic','legend'], targets: [10000,100000,300000,1000000], fileSeries: 'heat', description: '单篇原创作品达到热力目标' },
+  { series: 'collectionValue', names: ['收藏家','大收藏家','收藏之王','收藏之神'], tiers: ['normal','rare','epic','legend'], targets: [100,500,1500,5000], fileSeries: 'collection-value', description: '累计获得收藏值' },
+  { series: 'cardCollector', names: ['卡牌爱好者','卡牌收集者','卡牌大师','袖里乾坤'], tiers: ['normal','rare','epic','legend'], targets: [20,100,300,1000], fileSeries: 'card-collector', description: '累计收集不同卡牌' },
+  { series: 'legendCard', names: ['传说降临I','传说降临II','传说降临III'], tiers: ['normal','rare','epic'], targets: [1,10,50], fileSeries: 'legend-card', description: '累计获得传说卡牌' },
+  { series: 'threeStarEpic', names: ['金色传说！'], tiers: ['epic'], targets: [1], fileSeries: 'three-star-epic', description: '获得一张三星史诗卡牌' },
+  { series: 'threeStarLegend', names: ['炫彩传说！'], tiers: ['legend'], targets: [1], fileSeries: 'three-star-legend', description: '获得一张三星传说卡牌' },
+  { series: 'packCompletion', names: ['整套收集I','整套收集II','整套收集III','整套收集IV'], tiers: ['normal','rare','epic','legend'], targets: [1,3,5,10], fileSeries: 'pack-complete', description: '集齐完整卡包' },
+  { series: 'packAllThreeStar', names: ['满星收藏家'], tiers: ['legend'], targets: [1], fileSeries: 'pack-all-three-star', description: '集齐一套三星卡包' },
+  { series: 'shellWealth', names: ['小有积蓄','贝壳大亨','百万富翁','亿万富豪'], tiers: ['normal','rare','epic','legend'], targets: [500,5000,50000,1000000], fileSeries: 'shell-wealth', description: '累计获得贝壳' },
+  { series: 'shellBalance', names: ['贝壳为王'], tiers: ['epic'], targets: [10000], fileSeries: 'shell-balance', description: '当前持有贝壳达到目标' },
+  { series: 'excellentAuthor', names: ['优秀作者'], tiers: ['epic'], targets: [1], fileSeries: 'excellent-author', description: '获得平台优秀作者认证' }
+] as BadgeSeries[]
+const data = reactive({ stats: null, collection: null, loading: false, saving: false, errorMessage: '', detail: null } as AchievementData)
+function hasKey(key: string): boolean { return data.collection != null && data.collection!.badgeKeys.indexOf(key) >= 0 }
+function currentFor(series: string): number { const s = data.stats; if (s == null) return 0; if (series == 'publish') return s!.soupCount; if (series == 'insight') return s!.criticalHitCount; if (series == 'favorite') return s!.favoriteCount; if (series == 'like') return s!.likeCount; if (series == 'login') return s!.loginDayCount; if (series == 'creatorLike') return s!.receivedLikeCount; if (series == 'creatorFavorite') return s!.receivedFavoriteCount; if (series == 'receivedComment') return s!.receivedCommentCount; if (series == 'commenter') return s!.writtenCommentCount; if (series == 'aiClear') return s!.aiCompletionCount; if (series == 'heat') return s!.maxOriginalSoupHeat; if (series == 'collectionValue') return s!.totalCollectionValue; if (series == 'cardCollector') return s!.unlockedCardCount; if (series == 'legendCard') return s!.legendaryCardDrawCount; if (series == 'threeStarEpic') return s!.epicThreeStarCount; if (series == 'threeStarLegend') return s!.legendThreeStarCount; if (series == 'packCompletion') return s!.completePackCount; if (series == 'packAllThreeStar') return s!.completeThreeStarPackCount; if (series == 'shellWealth') return s!.totalShellEarned; if (series == 'shellBalance') return s!.shellBalance; if (series == 'excellentAuthor') return hasKey('excellentAuthor:epic') ? 1 : 0; return 0 }
+function isEquipped(key: string): boolean { return data.collection != null && data.collection!.equippedBadge != null && data.collection!.equippedBadge!.key == key }
+function displaySeries(item: BadgeSeries): DisplayBadge { let index = 0; for (let i = 0; i < item.tiers.length; i++) { if (hasKey(item.series + ':' + item.tiers[i])) index = i; else break }; const earned = hasKey(item.series + ':' + item.tiers[index]); const key = item.series + ':' + item.tiers[index]; return { series: item.series, key, name: item.names[index], tier: item.tiers[index], icon: '/static/badges/' + item.fileSeries + '-' + item.tiers[index] + '.png', description: item.description, requirement: '目标进度 ' + item.targets[index].toString(), current: currentFor(item.series), target: item.targets[index], earned, equipped: isEquipped(key) } as DisplayBadge }
+const systemBadges = computed<DisplayBadge[]>(() => catalog.map(displaySeries))
+const achievementBadges = computed<SpecialAchievementBadge[]>(() => data.collection == null ? [] as SpecialAchievementBadge[] : data.collection!.legendaryBadges.filter((item) => item.badgeType == 'achievement'))
+const activityBadges = computed<SpecialAchievementBadge[]>(() => data.collection == null ? [] as SpecialAchievementBadge[] : data.collection!.legendaryBadges.filter((item) => item.badgeType == 'activity'))
+const limitedBadges = computed<SpecialAchievementBadge[]>(() => data.collection == null ? [] as SpecialAchievementBadge[] : data.collection!.legendaryBadges.filter((item) => item.badgeType == 'limited'))
+const unlockedCount = computed<number>(() => data.collection == null ? 0 : data.collection!.badgeKeys.length)
+function badgeImage(url: string): string { return url.startsWith('/badges/') ? '/static' + url : absoluteApiUrl(url) }
+function tierLabel(tier: string): string { return tier == 'normal' ? '普通' : tier == 'rare' ? '稀有' : tier == 'epic' ? '史诗' : '传说' }
+function tierClass(tier: string): string { return tier == 'normal' ? 'tier-normal' : tier == 'rare' ? 'tier-rare' : tier == 'epic' ? 'tier-epic' : 'tier-legend' }
+function tierTextClass(tier: string): string { return tier == 'normal' ? 'text-normal' : tier == 'rare' ? 'text-rare' : tier == 'epic' ? 'text-epic' : 'text-legend' }
+function progressWidth(item: DisplayBadge): string { if (item.target <= 0) return '0%'; return Math.min(100, Math.round(item.current * 100 / item.target)).toString() + '%' }
+function goBack() { uni.navigateBack() }
+function closeDetail() { if (!data.saving) data.detail = null }
+function openSystemBadge(item: DisplayBadge) { data.detail = item }
+function openSpecialBadge(item: SpecialAchievementBadge) { data.detail = { series: 'special', key: item.key, name: item.name, tier: item.tier, icon: badgeImage(item.iconUrl), description: item.description, requirement: item.requirement ?? '特别徽章', current: 0, target: 0, earned: true, equipped: isEquipped(item.key) } as DisplayBadge }
+function saveEquipped(key: string | null) { if (data.saving) return; data.saving = true; equipAchievementBadge(key, (response) => { if (data.collection != null) data.collection!.equippedBadge = response.equippedBadge; data.saving = false; data.detail = null; restoreSession(); uni.showToast({ title: key == null ? '已卸下徽章' : '已装备徽章', icon: 'none' }) }, (error) => { data.saving = false; uni.showToast({ title: error.message, icon: 'none' }) }) }
+function toggleEquip() { if (data.detail == null) return; saveEquipped(data.detail!.equipped ? null : data.detail!.key) }
+function unequip() { saveEquipped(null) }
+function reload() { if (data.loading) return; data.loading = true; data.errorMessage = ''; loadAchievementStats((stats) => { data.stats = stats; loadBadgeCollection((collection) => { data.collection = collection; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }, (error) => { data.loading = false; data.errorMessage = error.message }) }
+onLoad(() => reload())
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}.topbar{height:96px;padding:48px 14px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px}.title{color:#121826;font-size:17px;font-weight:800}.scroll{flex:1}.summary{margin:12px 16px 8px;padding:16px;flex-direction:row;align-items:center;justify-content:space-between;border-width:1px;border-color:#FCD34D;border-radius:18px;background-color:#FFFBEB}.summary-label{color:#B45309;font-size:13px;font-weight:800}.summary-note{margin-top:4px;color:#92400E;font-size:9px}.summary-count{align-items:flex-end}.summary-number{color:#D97706;font-size:26px;font-weight:900}.summary-unit{color:#92400E;font-size:9px}.equipped-card{margin:8px 16px;padding:12px;flex-direction:row;align-items:center;border-radius:17px;background-color:#1D4ED8}.equipped-icon{width:48px;height:48px;border-radius:13px}.equipped-copy{flex:1;margin-left:11px}.equipped-label{color:#BFDBFE;font-size:9px}.equipped-name{margin-top:3px;color:#FFF;font-size:14px;font-weight:800}.unequip{width:58px;height:32px;padding:0;border-radius:10px;background-color:#FFF;color:#2563EB;font-size:10px}.section{margin:9px 16px;padding:15px 10px;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF}.section-head{margin:0 4px 12px;flex-direction:row;align-items:center;justify-content:space-between}.section-title{margin:0 4px 12px;color:#121826;font-size:14px;font-weight:800}.section-head .section-title{margin:0}.section-note{color:#98A2B3;font-size:9px}.badge-grid{flex-direction:row;flex-wrap:wrap}.badge-item{width:25%;align-items:center;padding:7px 2px;transition-property:transform,opacity;transition-duration:150ms}.badge-pressed{transform:scale(.94);opacity:.72}.icon-shell{width:61px;height:61px;padding:2px;border-width:2px;border-radius:17px}.badge-icon{width:53px;height:53px;border-radius:14px}.locked-shell{border-color:#E5E7EB;background-color:#F3F4F6}.locked-icon{opacity:.32}.tier-normal{border-color:#93C5FD;background-color:#EFF6FF}.tier-rare{border-color:#C4B5FD;background-color:#F5F3FF}.tier-epic{border-color:#FCD34D;background-color:#FFFBEB}.tier-legend{border-color:#F472B6;background-color:#FDF2F8}.equipped-shell{border-width:3px;border-color:#2563EB}.equipped-dot{position:absolute;right:-3px;top:-3px;width:18px;height:18px;align-items:center;justify-content:center;border-radius:9px;background-color:#2563EB;color:#FFF;font-size:9px}.badge-name{max-width:80px;margin-top:6px;color:#344054;font-size:10px;font-weight:700;text-align:center;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge-tier{margin-top:3px;font-size:9px;font-weight:800}.text-normal{color:#2563EB}.text-rare{color:#7C3AED}.text-epic{color:#D97706}.text-legend{color:#DB2777}.locked-text{color:#98A2B3}.state{margin:16px;padding:35px;align-items:center;border-radius:18px;background-color:#FFF;color:#667085}.error{color:#B42318}.retry{width:100%;margin-top:14px;background-color:#2563EB;color:#FFF}.detail-mask{position:fixed;left:0;right:0;top:0;bottom:0;align-items:center;justify-content:center;background-color:rgba(15,23,42,.68)}.detail-card{width:86%;padding:24px 20px 18px;align-items:center;border-radius:24px;background-color:#FFF;transform:scale(1);transition-property:transform,opacity;transition-duration:220ms}.detail-icon{width:96px;height:96px;border-radius:24px}.detail-name{margin-top:13px;color:#121826;font-size:20px;font-weight:900}.detail-tier{margin-top:5px;font-size:11px;font-weight:800}.detail-description{margin-top:12px;color:#475467;font-size:12px;text-align:center}.progress-row{width:100%;margin-top:17px;flex-direction:row;align-items:center}.progress-track{flex:1;height:8px;border-radius:4px;background-color:#E5E7EB;overflow:hidden}.progress-fill{height:8px;border-radius:4px;background-color:#2563EB}.progress-copy{margin-left:9px;color:#667085;font-size:9px}.requirement{margin-top:10px;color:#98A2B3;font-size:10px}.equip-button{width:100%;margin-top:18px;border-radius:13px;background-color:#2563EB;color:#FFF;font-size:13px;font-weight:800}.equipped-button{background-color:#EEF2FF;color:#4338CA}.close-button{width:100%;margin-top:8px;border-radius:13px;background-color:#F2F4F7;color:#475467;font-size:12px}.safe-bottom{height:28px}
+.icon-position-shell{position:relative;width:67px;height:67px;align-items:center;justify-content:center}.equipped-dot{right:0;top:0}.equipped-dot-text{color:#FFF;font-size:9px;font-weight:900}
+</style>

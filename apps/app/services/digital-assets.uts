@@ -1,0 +1,50 @@
+import { AssetDrawHistoryResponse, AssetDrawResponse, AssetPackResponse, AssetStoreResponse, CardCabinetResponse } from '@/domain/dto/digital-asset.uts'
+import { apiGet, apiPatch, apiPost, ApiError } from '@/services/api-client.uts'
+
+function decodeAssetStore(json: string): AssetStoreResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const packs = root['packs'] as UTSJSONObject[] | null
+  if (packs != null) {
+    packs.forEach((pack) => {
+      if (pack['previewCards'] == null) pack['previewCards'] = [] as UTSJSONObject[]
+      // 商城列表接口只返回预览卡，不返回完整 cards。
+      if (pack['cards'] == null) pack['cards'] = [] as UTSJSONObject[]
+    })
+  }
+  return JSON.parse<AssetStoreResponse>(JSON.stringify(root))!
+}
+
+function decodeAssetPack(json: string): AssetPackResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const pack = root['pack'] as UTSJSONObject | null
+  if (pack != null) {
+    // 卡包详情接口返回完整 cards，不重复返回 previewCards。
+    if (pack['previewCards'] == null) pack['previewCards'] = [] as UTSJSONObject[]
+    if (pack['cards'] == null) pack['cards'] = [] as UTSJSONObject[]
+  }
+  return JSON.parse<AssetPackResponse>(JSON.stringify(root))!
+}
+
+export function loadAssetStore(success: (data: AssetStoreResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<AssetStoreResponse>('/api/asset-store/packs', (json: string): AssetStoreResponse => decodeAssetStore(json), success, fail)
+}
+
+export function loadAssetPack(id: string, success: (data: AssetPackResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<AssetPackResponse>('/api/asset-store/packs/' + encodeURIComponent(id), (json: string): AssetPackResponse => decodeAssetPack(json), success, fail)
+}
+
+export function drawAssetPack(id: string, mode: string, requestId: string, success: (data: AssetDrawResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<AssetDrawResponse>('/api/asset-store/packs/' + encodeURIComponent(id) + '/draw', { mode, requestId } as UTSJSONObject, (json: string): AssetDrawResponse => JSON.parse<AssetDrawResponse>(json)!, success, fail)
+}
+
+export function loadCardCabinet(success: (data: CardCabinetResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<CardCabinetResponse>('/api/me/card-cabinet', (json: string): CardCabinetResponse => JSON.parse<CardCabinetResponse>(json)!, success, fail)
+}
+
+export function loadAssetDrawHistory(success: (data: AssetDrawHistoryResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<AssetDrawHistoryResponse>('/api/me/asset-draw-history', (json: string): AssetDrawHistoryResponse => JSON.parse<AssetDrawHistoryResponse>(json)!, success, fail)
+}
+
+export function saveCardShowcase(cardIds: string[], success: (data: CardCabinetResponse) => void, fail: (error: ApiError) => void) {
+  apiPatch<CardCabinetResponse>('/api/me/card-showcase', { cardIds } as UTSJSONObject, (json: string): CardCabinetResponse => JSON.parse<CardCabinetResponse>(json)!, success, fail)
+}

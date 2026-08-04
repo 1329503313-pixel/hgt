@@ -1,0 +1,9 @@
+export type ProbeUser = {
+  id: string,
+  username: string,
+  nickname: string
+}
+
+export type AuthProbeResponse = {
+  user: ProbeUser | null
+}

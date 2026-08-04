@@ -1,0 +1,155 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading" class="state-card"><text class="state-title">正在准备评价...</text></view>
+    <view v-else-if="data.errorMessage.length > 0 && data.title.length == 0" class="state-card"><text class="state-title">加载失败</text><text class="state-message">{{ data.errorMessage }}</text><button class="primary-button" @click="load">重新加载</button></view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view class="intro-card">
+        <text class="eyebrow">TURTLE SOUP · REVIEW</text>
+        <text class="title">编辑评价</text>
+        <text class="soup-title">《{{ data.title }}》</text>
+        <text class="intro">总评分范围为 1～5 分；六维评分可选，填写时范围为 0.5～5 分。</text>
+      </view>
+
+      <view class="form-card">
+        <view class="field-block">
+          <view class="label-row"><text class="required">*</text><text class="label">总评分</text><text class="value">{{ scoreLabel(data.total) }}</text></view>
+          <slider :value="scoreNumber(data.total)" min="1" max="5" step="0.5" activeColor="#2563EB" backgroundColor="#DCE6F5" block-color="#2563EB" @change="changeTotal" />
+          <text class="hint">1 较差 · 2 能玩 · 3 推荐 · 4 精品 · 5 神作</text>
+        </view>
+
+        <view v-for="item in dimensions" :key="item.key" class="field-block dimension-block">
+          <view class="label-row"><text class="label">{{ item.label }}</text><text class="description">{{ item.description }}</text><text class="value">{{ dimensionLabel(item.key) }}</text></view>
+          <slider :data-key="item.key" :value="dimensionNumber(item.key)" min="0" max="5" step="0.5" activeColor="#2563EB" backgroundColor="#DCE6F5" block-color="#2563EB" @change="changeDimension" />
+        </view>
+
+        <view class="field-block content-block">
+          <view class="label-row"><text class="label">评价内容</text><text class="counter">剩余 {{ 500 - data.content.length }} 字</text></view>
+          <textarea class="textarea" v-model="data.content" maxlength="500" placeholder="说说你对这条海龟汤的看法（选填）" />
+        </view>
+        <text v-if="data.errorMessage.length > 0" class="submit-error">{{ data.errorMessage }}</text>
+        <button class="primary-button save-button" :disabled="data.saving" @click="submit">{{ data.saving ? '正在保存...' : '保存评价' }}</button>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { EvaluationSummary } from '@/domain/dto/soup.uts'
+import { loadSoupDetail, saveSoupEvaluation } from '@/services/soups.uts'
+import { sessionState } from '@/stores/session.uts'
+
+type DimensionOption = { key: string, label: string, description: string }
+type EditorData = { id: string, title: string, total: string, writing: string, logic: string, share: string, mechanism: string, twist: string, depth: string, content: string, loading: boolean, saving: boolean, errorMessage: string }
+const data = reactive({ id: '', title: '', total: '3', writing: '', logic: '', share: '', mechanism: '', twist: '', depth: '', content: '', loading: true, saving: false, errorMessage: '' } as EditorData)
+const dimensions: DimensionOption[] = [
+  { key: 'writing', label: '文笔', description: '汤面、汤底的文字表达' },
+  { key: 'logic', label: '逻辑', description: '线索与答案是否闭环' },
+  { key: 'share', label: '分享性', description: '分享给其他玩家的意愿' },
+  { key: 'mechanism', label: '机制', description: '机制的可玩性与新意' },
+  { key: 'twist', label: '反转', description: '答案带来的反转程度' },
+  { key: 'depth', label: '深度', description: '故事立意与思考空间' }
+]
+
+function scoreNumber(value: string): number { const parsed = parseFloat(value); return isNaN(parsed) ? 0 : parsed }
+function scoreLabel(value: string): string { return value.length == 0 ? '未评分' : value + ' 分' }
+function dimensionValue(key: string): string {
+  if (key == 'writing') return data.writing
+  if (key == 'logic') return data.logic
+  if (key == 'share') return data.share
+  if (key == 'mechanism') return data.mechanism
+  if (key == 'twist') return data.twist
+  return data.depth
+}
+function dimensionNumber(key: string): number { return scoreNumber(dimensionValue(key)) }
+function dimensionLabel(key: string): string { const value = dimensionValue(key); return value.length == 0 || value == '0' ? '可选' : value + ' 分' }
+function setDimension(key: string, value: string) {
+  if (key == 'writing') data.writing = value
+  else if (key == 'logic') data.logic = value
+  else if (key == 'share') data.share = value
+  else if (key == 'mechanism') data.mechanism = value
+  else if (key == 'twist') data.twist = value
+  else data.depth = value
+}
+function numberText(value: number | null): string { return value == null ? '' : value!.toString() }
+function fillEvaluation(item: EvaluationSummary) {
+  data.total = item.total.toString()
+  data.writing = numberText(item.writing)
+  data.logic = numberText(item.logic)
+  data.share = numberText(item.share)
+  data.mechanism = numberText(item.mechanism)
+  data.twist = numberText(item.twist)
+  data.depth = numberText(item.depth)
+  data.content = item.content ?? ''
+}
+function load() {
+  if (data.id.length == 0) return
+  data.loading = true
+  data.errorMessage = ''
+  loadSoupDetail(data.id, (response) => {
+    data.title = response.soup.title
+    if (sessionState.user != null) {
+      const own = response.soup.evaluations.find((item: EvaluationSummary): boolean => item.reviewerId == sessionState.user!.id)
+      if (own != null) fillEvaluation(own!)
+    }
+    data.loading = false
+  }, (error) => { data.loading = false; data.errorMessage = error.message })
+}
+function changeTotal(event: UniSliderChangeEvent) { data.total = event.detail.value.toString() }
+function changeDimension(event: UniSliderChangeEvent) { const key = event.currentTarget!!.dataset['key'] as string; const value = event.detail.value; setDimension(key, value == 0 ? '' : value.toString()) }
+function optionalScore(value: string): number | null { return value.length == 0 || value == '0' ? null : parseFloat(value) }
+function submit() {
+  if (data.saving) return
+  const total = scoreNumber(data.total)
+  if (total < 1 || total > 5) { data.errorMessage = '总评分必须在 1～5 分之间'; return }
+  const body: UTSJSONObject = {}
+  body['total'] = total
+  body['writing'] = optionalScore(data.writing)
+  body['logic'] = optionalScore(data.logic)
+  body['share'] = optionalScore(data.share)
+  body['mechanism'] = optionalScore(data.mechanism)
+  body['twist'] = optionalScore(data.twist)
+  body['depth'] = optionalScore(data.depth)
+  body['content'] = data.content.trim()
+  data.saving = true
+  data.errorMessage = ''
+  saveSoupEvaluation(data.id, body, () => {
+    data.saving = false
+    uni.showToast({ title: '评价已保存', icon: 'none' })
+    setTimeout(() => { uni.navigateBack() }, 450)
+  }, (error) => {
+    data.saving = false
+    data.errorMessage = error.message
+    if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' })
+  })
+}
+onLoad((options) => {
+  data.id = options['id'] ?? ''
+  if (data.id.length == 0) { data.loading = false; data.errorMessage = '缺少海龟汤 ID'; return }
+  load()
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.scroll { flex: 1; }
+.intro-card, .form-card, .state-card { margin: 12px; padding: 16px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.eyebrow { color: #2563EB; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+.title { margin-top: 6px; color: #121826; font-size: 24px; font-weight: 800; }
+.soup-title { margin-top: 8px; color: #344054; font-size: 15px; font-weight: 700; }
+.intro, .hint, .state-message { margin-top: 7px; color: #667085; font-size: 12px; line-height: 18px; }
+.field-block { padding: 4px 0 15px 0; }
+.dimension-block, .content-block { padding-top: 15px; border-top-width: 1px; border-top-color: #EEF2F6; }
+.label-row { min-height: 24px; flex-direction: row; align-items: center; }
+.required { margin-right: 3px; color: #D92D20; font-size: 14px; font-weight: 800; }
+.label { color: #121826; font-size: 14px; font-weight: 800; }
+.description { flex: 1; margin-left: 7px; color: #667085; font-size: 10px; }
+.value { margin-left: auto; color: #2563EB; font-size: 12px; font-weight: 800; }
+.counter { margin-left: auto; color: #98A2B3; font-size: 10px; }
+.textarea { width: 100%; height: 112px; margin-top: 9px; padding: 12px; border-width: 1px; border-color: #D0D5DD; border-radius: 13px; background-color: #F8FAFC; color: #121826; font-size: 13px; }
+.primary-button { width: 100%; min-height: 44px; margin-top: 15px; border-radius: 13px; background-color: #2563EB; color: #FFFFFF; font-size: 14px; font-weight: 700; }
+.save-button { margin-top: 4px; }
+.submit-error { margin: 4px 0; color: #D92D20; font-size: 12px; }
+.state-title { color: #121826; font-size: 17px; font-weight: 700; }
+.safe-bottom { height: 28px; }
+</style>

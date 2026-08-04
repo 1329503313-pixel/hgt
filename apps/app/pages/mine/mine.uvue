@@ -1,0 +1,143 @@
+<template>
+  <MineDashboard />
+</template>
+
+<script setup lang="uts">
+import MineDashboard from '@/components/business/MineDashboard.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { ContentCounts } from '@/domain/dto/user.uts'
+import { loadContentCounts } from '@/services/account.uts'
+import { logoutSession, restoreSession, sessionState } from '@/stores/session.uts'
+
+type MineData = {
+  counts: ContentCounts | null,
+  loadingCounts: boolean,
+  loggingOut: boolean,
+  errorMessage: string
+}
+const data = reactive({
+  counts: null,
+  loadingCounts: false,
+  loggingOut: false,
+  errorMessage: ''
+} as MineData)
+const avatarUrl = computed((): string => sessionState.user == null ? '' : absoluteApiUrl(sessionState.user!.avatar))
+const avatarText = computed((): string => {
+  if (sessionState.user == null || sessionState.user!.nickname.length == 0) return '汤'
+  return sessionState.user!.nickname.substring(0, 1)
+})
+
+function openAuth() { uni.navigateTo({ url: '/pages/auth/auth' }) }
+function openMessages() { uni.switchTab({ url: '/pages/messages/messages' }) }
+function openSettings() { uni.navigateTo({ url: '/pages/account-settings/account-settings' }) }
+function openTasks() { uni.navigateTo({ url: '/pages/shell-tasks/shell-tasks' }) }
+function openRankings() { uni.navigateTo({ url: '/pages/rankings/rankings' }) }
+function openAchievements() { uni.navigateTo({ url: '/pages/achievements/achievements' }) }
+function openAssetStore() { uni.navigateTo({ url: '/pages/asset-store/asset-store' }) }
+function openMyProfile() { if (sessionState.user != null) uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(sessionState.user!.id) }) }
+function openInteractions(mode: string) { uni.navigateTo({ url: '/pages/my-interactions/my-interactions?mode=' + mode }) }
+function loadCounts() {
+  if (sessionState.user == null || data.loadingCounts) return
+  data.loadingCounts = true
+  data.errorMessage = ''
+  loadContentCounts((response) => {
+    data.counts = response
+    data.loadingCounts = false
+  }, (error) => {
+    data.loadingCounts = false
+    data.errorMessage = error.message
+  })
+}
+function confirmLogout() {
+  if (data.loggingOut) return
+  uni.showModal({
+    title: '退出登录',
+    content: '确认退出当前账号？',
+    cancelText: '取消',
+    confirmText: '退出',
+    success: (result) => {
+      if (!result.confirm) return
+      data.loggingOut = true
+      logoutSession(() => {
+        data.loggingOut = false
+        data.counts = null
+        uni.showToast({ title: '已退出登录', icon: 'none' })
+      }, (error) => {
+        data.loggingOut = false
+        data.errorMessage = error.message
+      })
+    }
+  })
+}
+
+onLoad(() => {
+  if (!sessionState.restored) restoreSession()
+})
+onShow(() => {
+  // 数据由 MineDashboard 在页面显示时统一刷新。
+})
+watch((): string => sessionState.user == null ? '' : sessionState.user!.id, (userId: string) => {
+  if (userId.length == 0) data.counts = null
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.header { padding: 56px 16px 12px 16px; }
+.eyebrow { color: #2563EB; font-size: 11px; font-weight: 700; }
+.headline { margin-top: 3px; color: #121826; font-size: 24px; font-weight: 700; }
+.scroll { flex: 1; }
+.state-card { margin: 10px 16px; padding: 24px 18px; border-width: 1px; border-color: #E5EAF2; border-radius: 20px; background-color: #FFFFFF; }
+.guest-card { align-items: center; }
+.guest-icon { width: 64px; height: 64px; padding-top: 13px; border-radius: 32px; background-color: #DBEAFE; color: #2563EB; font-size: 26px; font-weight: 700; text-align: center; }
+.state-title { margin-top: 12px; color: #121826; font-size: 17px; font-weight: 700; }
+.muted { margin-top: 7px; color: #667085; font-size: 12px; }
+.primary-button { width: 100%; margin-top: 18px; min-height: 44px; border-radius: 13px; background-color: #2563EB; color: #FFFFFF; font-size: 14px; }
+.profile-card { flex-direction: row; align-items: center; margin: 8px 16px; padding: 18px; border-radius: 20px; background-color: #2563EB; }
+.avatar { width: 64px; height: 64px; border-radius: 32px; }
+.avatar-placeholder { align-items: center; justify-content: center; background-color: #DBEAFE; }
+.avatar-text { color: #2563EB; font-size: 23px; font-weight: 700; }
+.profile-copy { flex: 1; margin-left: 14px; }
+.identity-row { flex-direction: row; align-items: center; }
+.nickname { color: #FFFFFF; font-size: 21px; font-weight: 700; }
+.level { margin-left: 8px; padding: 3px 7px; border-radius: 9px; background-color: #F59E0B; color: #FFFFFF; font-size: 10px; }
+.username { margin-top: 5px; color: #DBEAFE; font-size: 12px; }
+.badge { margin-top: 7px; color: #FDE68A; font-size: 11px; font-weight: 700; }
+.stats-card { flex-direction: row; margin: 10px 16px; padding: 16px 8px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.stat { flex: 1; align-items: center; }
+.stat-value { color: #121826; font-size: 20px; font-weight: 700; }
+.stat-label { margin-top: 5px; color: #667085; font-size: 11px; }
+.menu-card { margin: 10px 16px; padding: 16px 10px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.menu-heading { margin-left: 6px; margin-bottom: 12px; color: #121826; font-size: 16px; font-weight: 800; }
+.feature-grid { flex-direction: row; flex-wrap: wrap; }
+.feature-item { width: 33.33%; align-items: center; padding: 8px 2px; transform: scale(1); transition-property: transform, opacity; transition-duration: 140ms; }
+.feature-pressed { transform: scale(0.94); opacity: 0.75; }
+.feature-title { margin-top: 7px; color: #344054; font-size: 11px; font-weight: 700; }
+.menu-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 13px 4px; border-bottom-width: 1px; border-bottom-color: #EEF2F6; transform: scale(1); transition-property: transform, background-color; transition-duration: 140ms; }
+.menu-pressed { transform: scale(0.98); background-color: #F8FAFC; }
+.menu-leading { flex-direction: row; align-items: center; }
+.menu-icon { width: 48px; height: 48px; align-items: center; justify-content: center; border-radius: 16px; }
+.neutral-icon { background-color: #EAF2FF; }
+.favorite-menu-icon { background-color: #FFFBEB; }
+.like-menu-icon { background-color: #FEF2F2; }
+.settings-icon { background-color: #F2F4F7; }
+.evaluation-icon { background-color: #ECFDF5; }
+.message-icon { background-color: #EFF6FF; }
+.task-icon { background-color: #ECFDF3; }
+.ranking-icon { background-color: #F4F3FF; }
+.achievement-icon { background-color: #FFFBEB; }
+.store-icon { background-color: #EEF2FF; }
+.feature-icon-image { width: 25px; height: 25px; }
+.menu-icon-text { color: #2563EB; font-size: 16px; font-weight: 700; }
+.favorite-menu-text { color: #F59E0B; }
+.like-menu-text { color: #EF4444; }
+.evaluation-text { color: #059669; }
+.message-text { color: #2563EB; }
+.task-text { color: #039855; }
+.menu-title { color: #344054; font-size: 14px; font-weight: 600; }
+.menu-state { color: #98A2B3; font-size: 11px; }
+.menu-arrow { color: #98A2B3; font-size: 22px; }
+.error { margin: 4px 20px; color: #D92D20; font-size: 12px; }
+.logout-button { margin: 12px 16px; min-height: 44px; border-width: 1px; border-color: #FECACA; border-radius: 13px; background-color: #FFFFFF; color: #D92D20; font-size: 14px; }
+.safe-bottom { height: 28px; }
+</style>

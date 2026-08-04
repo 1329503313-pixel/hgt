@@ -1,0 +1,88 @@
+<template>
+  <view class="page">
+    <view class="topbar"><AppBackButton @click="goBack" /><text class="topbar-title">任务中心</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state-card"><text>正在加载任务...</text></view>
+    <view v-else-if="data.errorMessage.length > 0" class="state-card"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <scroll-view v-else-if="data.center != null" class="scroll" direction="vertical">
+      <view class="balance-card">
+        <view class="balance-header"><text class="balance-label">当前贝壳余额</text><view class="detail-button" hover-class="pressed" @click="openTransactions"><text class="detail-button-text">贝壳明细 ›</text></view></view><view class="balance-value-row"><image class="balance-icon" src="/static/tasks/shell.png" mode="aspectFit"></image><text class="balance-value">{{ data.center!.balance }}</text></view>
+        <view class="today-row"><text class="today-label">今日获取进度</text><text class="today-value">{{ data.center!.earnedToday }} / {{ data.center!.dailyLimit }}</text></view>
+        <view class="progress-track"><view class="progress-fill white-fill" :style="{ width: todayWidth }"></view></view>
+        <text class="balance-note">每日实际最多获得 {{ data.center!.dailyLimit }} 贝壳，任务奖励自动到账</text>
+      </view>
+      <view class="summary-grid">
+        <view class="summary-card summary-card-left">
+          <view class="summary-icon summary-icon-blue"><image class="summary-icon-image" src="/static/tasks/growth.png" mode="aspectFit"></image></view>
+          <view class="summary-value-row"><text class="level">Lv{{ data.center!.levelProgress.level }}</text><text class="summary-value">{{ data.center!.levelProgress.isMaxLevel ? '满级' : Math.round(data.center!.levelProgress.progressPercent).toString() + '%' }}</text></view>
+          <text class="summary-label">当前成长等级</text>
+        </view>
+        <view class="summary-card">
+          <view class="summary-icon summary-icon-green"><text class="summary-check">✓</text></view>
+          <view class="summary-value-row"><text class="summary-value">{{ completedCount }}</text><text class="summary-total">/ {{ data.center!.tasks.length }}</text></view>
+          <text class="summary-label">已完成任务</text>
+        </view>
+      </view>
+      <view class="growth-card">
+        <view class="experience-head"><view><text class="experience-label">累计经验值</text><view class="experience-row"><text class="experience">{{ data.center!.levelProgress.experience }}</text><text class="experience-unit">EXP</text></view></view><view class="exp-today"><text class="exp-today-label">今日获得</text><text class="exp-today-value">+{{ data.center!.earnedExperienceToday }} EXP</text></view></view>
+        <view class="growth-copy"><text>{{ data.center!.levelProgress.isMaxLevel ? '已达到最高等级' : '距 Lv' + (data.center!.levelProgress.level + 1).toString() + ' 还需 ' + data.center!.levelProgress.remainingExperience.toString() + ' EXP' }}</text><text class="growth-count">{{ data.center!.levelProgress.isMaxLevel ? 'MAX' : data.center!.levelProgress.currentLevelExperience.toString() + ' / ' + data.center!.levelProgress.experienceForNextLevel.toString() }}</text></view>
+        <view class="progress-track growth-track"><view class="progress-fill growth-fill" :style="{ width: levelWidth }"></view></view>
+      </view>
+      <view class="task-card">
+        <view class="task-card-head"><view class="task-heading-row"><view class="task-heading-icon"><text class="task-heading-check">✓</text></view><view><text class="task-heading">任务列表</text><text class="task-reset">{{ data.activeTab == 'daily' ? '北京时间 00:00 重置' : '基础任务一次 · 邀请任务不限次' }}</text></view></view><view class="tabs"><view class="tab" :class="data.activeTab == 'daily' ? 'active-tab' : ''" hover-class="tab-pressed" @click="data.activeTab = 'daily'"><text>每日任务</text></view><view class="tab" :class="data.activeTab == 'beginner' ? 'active-tab' : ''" hover-class="tab-pressed" @click="data.activeTab = 'beginner'"><text>新手任务</text></view></view></view>
+        <view v-for="task in visibleTasks" :key="task.type" class="task-row">
+          <view class="task-icon" :class="task.completed ? 'task-done' : ''"><image class="task-icon-image" :src="taskIcon(task)" mode="aspectFit"></image></view>
+          <view class="task-copy"><view class="task-title-row"><text class="task-name">{{ task.name }}</text><text class="reward">+{{ task.reward }} 贝壳</text><text class="exp">+{{ task.experienceReward }} EXP</text></view><text class="task-description">{{ task.description }}</text><view class="progress-track task-track"><view class="progress-fill" :class="task.completed ? 'done-fill' : ''" :style="{ width: taskWidth(task) }"></view></view></view>
+          <view class="task-tail"><text class="task-count">{{ task.progress }}/{{ taskTarget(task) }}</text><text class="actual">实得 {{ task.actualReward }} 贝壳</text><text class="actual-exp">+{{ task.actualExperience }} EXP</text></view>
+        </view>
+      </view>
+      <text class="footer-note">{{ data.activeTab == 'daily' ? '任务完成后自动到账 · 经验不受每日贝壳上限影响' : '新手任务奖励不占每日贝壳上限' }}</text>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { BeginnerTask, ShellTask, ShellTaskCenter } from '@/domain/dto/shell.uts'
+import { loadShellTaskCenter } from '@/services/shells.uts'
+
+type DisplayTask = { type: string, name: string, description: string, reward: number, progress: number, completed: boolean, actualReward: number, experienceReward: number, actualExperience: number, target: number, dailyLimit: number }
+type TaskData = { center: ShellTaskCenter | null, activeTab: string, loading: boolean, errorMessage: string }
+const data = reactive({ center: null as ShellTaskCenter | null, activeTab: 'daily', loading: false, errorMessage: '' } as TaskData)
+const todayWidth = computed<string>(() => data.center == null ? '0%' : Math.min(100, Math.round(data.center!.earnedToday / Math.max(1, data.center!.dailyLimit) * 100)).toString() + '%')
+const levelWidth = computed<string>(() => data.center == null ? '0%' : data.center!.levelProgress.progressPercent.toString() + '%')
+const completedCount = computed<number>(() => data.center == null ? 0 : data.center!.tasks.filter((task: ShellTask): boolean => task.completed).length)
+const visibleTasks = computed<DisplayTask[]>(() => {
+  if (data.center == null) return [] as DisplayTask[]
+  if (data.activeTab == 'daily') return data.center!.tasks.map((task: ShellTask): DisplayTask => ({ ...task, target: 0 } as DisplayTask))
+  return data.center!.beginnerTasks.map((task: BeginnerTask): DisplayTask => ({ ...task, dailyLimit: 0 } as DisplayTask))
+})
+function taskTarget(task: DisplayTask): number { return task.dailyLimit > 0 ? task.dailyLimit : Math.max(1, task.target) }
+function taskWidth(task: DisplayTask): string { return Math.min(100, Math.round(task.progress / taskTarget(task) * 100)).toString() + '%' }
+function taskIcon(task: DisplayTask): string {
+  if (task.completed) return '/static/tasks/check.png'
+  if (task.type == 'daily_login') return '/static/tasks/calendar.png'
+  if (task.type == 'publish_soup' || task.type == 'publish_evaluation' || task.type == 'complete_ten_draws') return '/static/tasks/content.png'
+  if (task.type == 'upload_avatar' || task.type == 'equip_badge' || task.type == 'bind_email' || task.type == 'change_profile_background') return '/static/tasks/profile.png'
+  return '/static/tasks/social.png'
+}
+function goBack() { uni.navigateBack() }
+function openTransactions() { uni.navigateTo({ url: '/pages/shell-transactions/shell-transactions' }) }
+function reload() { if (data.loading) return; data.loading = true; data.errorMessage = ''; loadShellTaskCenter((response) => { data.center = response; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }
+onLoad(() => { reload() })
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }.topbar { height: 96px; padding: 48px 14px 8px 14px; flex-direction: row; align-items: center; justify-content: space-between; background-color: #FFFFFF; }.back { width: 40px; height: 40px; align-items: center; justify-content: center; color: #344054; font-size: 32px; }.topbar-title { color: #121826; font-size: 17px; font-weight: 800; }.scroll { flex: 1; }.state-card { margin: 16px; padding: 28px; align-items: center; border-radius: 18px; background-color: #FFFFFF; color: #667085; }.error { color: #B42318; }.retry { width: 100%; margin-top: 14px; background-color: #2563EB; color: #FFFFFF; }.balance-card { margin: 12px 16px 14px; padding: 20px; border-radius: 24px; background-color: #2563EB; background-image: linear-gradient(135deg,#0EA5E9 0%,#2563EB 55%,#4338CA 100%); }.balance-label { color: #DBEAFE; font-size: 12px; font-weight: 700; }.balance-value-row { margin-top: 7px; flex-direction: row; align-items: center; }.balance-icon { width: 31px; height: 31px; margin-right: 8px; }.balance-value { color: #FFFFFF; font-size: 36px; font-weight: 900; }.today-row, .growth-copy { margin-top: 24px; flex-direction: row; justify-content: space-between; color: #EAF2FF; font-size: 11px; font-weight: 700; }.progress-track { height: 8px; overflow: hidden; border-radius: 4px; background-color: #E8EEF7; }.balance-card .progress-track { margin-top: 9px; background-color: rgba(255,255,255,0.22); }.progress-fill { height: 8px; border-radius: 4px; background-color: #2563EB; }.white-fill { background-color: #FFFFFF; }.balance-note { margin-top: 10px; color: #BFDBFE; font-size: 10px; line-height: 16px; }.summary-grid { margin: 0 16px 12px; flex-direction: row; }.summary-card { flex: 1; min-height: 132px; padding: 15px; justify-content: space-between; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }.summary-card:first-child { margin-right: 10px; }.summary-icon { width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 15px; }.summary-icon image { width: 23px; height: 23px; }.summary-icon text { font-size: 21px; font-weight: 900; }.summary-icon-blue { background-color: #EFF6FF; color: #2563EB; }.summary-icon-green { background-color: #ECFDF3; color: #12B76A; }.summary-value-row { margin-top: 13px; flex-direction: row; align-items: center; }.summary-value { color: #121826; font-size: 24px; font-weight: 900; }.summary-total { margin-left: 4px; color: #98A2B3; font-size: 12px; font-weight: 700; }.summary-label { margin-top: 4px; color: #667085; font-size: 10px; font-weight: 700; }.level { margin-right: 7px; padding: 3px 7px; border-radius: 8px; background-color: #F59E0B; color: #FFFFFF; font-size: 9px; font-weight: 800; }.growth-card { margin: 0 16px 14px; padding: 17px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }.experience-head, .experience-row { flex-direction: row; align-items: center; justify-content: space-between; }.experience-label { color: #667085; font-size: 10px; font-weight: 700; }.experience-row { margin-top: 5px; justify-content: flex-start; }.experience { color: #121826; font-size: 26px; font-weight: 900; }.experience-unit { margin-left: 5px; color: #667085; font-size: 11px; font-weight: 700; }.exp-today { padding: 7px 10px; align-items: flex-end; border-radius: 12px; background-color: #F4F3FF; color: #7C3AED; font-size: 9px; font-weight: 700; }.exp-today text:last-child { margin-top: 2px; font-size: 10px; font-weight: 800; }.growth-copy { margin-top: 14px; color: #667085; }.growth-count { color: #121826; }.growth-track { margin-top: 8px; }.growth-fill { background-color: #7C3AED; }.task-card { margin: 0 16px; overflow: hidden; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }.task-card-head { padding: 15px 14px 0; border-bottom-width: 1px; border-bottom-color: #E5EAF2; }.task-heading-row { flex-direction: row; align-items: center; }.task-heading-icon { width: 30px; height: 30px; margin-right: 8px; align-items: center; justify-content: center; border-radius: 10px; background-color: #EFF6FF; color: #2563EB; font-size: 15px; font-weight: 900; }.task-heading { color: #121826; font-size: 15px; font-weight: 900; }.task-reset { margin-top: 2px; color: #98A2B3; font-size: 8px; }.tabs { margin-top: 10px; flex-direction: row; }.tab { min-width: 86px; height: 38px; padding: 0 14px; align-items: center; justify-content: center; border-top-left-radius: 11px; border-top-right-radius: 11px; color: #667085; font-size: 11px; font-weight: 800; }.active-tab { background-color: #EFF6FF; color: #2563EB; }.tab-pressed { opacity: 0.7; }.task-row { min-height: 102px; padding: 15px 12px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #F0F2F5; }.task-icon { width: 45px; height: 45px; align-items: center; justify-content: center; border-radius: 15px; background-color: #EFF6FF; }.task-done { background-color: #ECFDF3; }.task-icon-image { width: 26px; height: 26px; }.task-copy { flex: 1; min-width: 0; margin-left: 10px; }.task-title-row { flex-direction: row; align-items: center; flex-wrap: wrap; }.task-name { max-width: 112px; color: #121826; font-size: 13px; font-weight: 900; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.reward, .exp { margin-left: 4px; padding: 2px 6px; border-radius: 8px; background-color: #FFFAEB; color: #B54708; font-size: 8px; font-weight: 800; }.exp { background-color: #F4F3FF; color: #6938EF; }.task-description { margin-top: 5px; color: #667085; font-size: 9px; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.task-track { margin-top: 9px; }.done-fill { background-color: #12B76A; }.task-tail { width: 70px; margin-left: 7px; align-items: flex-end; }.task-count { color: #344054; font-size: 11px; font-weight: 900; }.actual { margin-top: 5px; color: #98A2B3; font-size: 8px; }.actual-exp { margin-top: 2px; color: #7C3AED; font-size: 8px; font-weight: 700; }.footer-note { margin: 12px 20px; color: #667085; font-size: 9px; text-align: center; }.safe-bottom { height: 28px; }.pressed { opacity: 0.7; }
+.balance-header { flex-direction: row; align-items: center; justify-content: space-between; }
+.detail-button { padding: 6px 10px; border-radius: 13px; background-color: rgba(255,255,255,0.15); color: #FFFFFF; font-size: 10px; font-weight: 700; }
+.detail-button-text { color: #FFFFFF; font-size: 10px; font-weight: 700; }
+.today-label, .today-value { color: #EAF2FF; font-size: 11px; font-weight: 700; }
+.summary-check { color: #12B76A; font-size: 21px; font-weight: 900; }
+.task-heading-check { color: #2563EB; font-size: 15px; font-weight: 900; }
+.summary-card-left { margin-right: 10px; }
+.summary-icon-image { width: 23px; height: 23px; }
+.summary-icon-green { font-size: 21px; font-weight: 900; }
+.exp-today-label { color: #7C3AED; font-size: 9px; font-weight: 700; }
+.exp-today-value { margin-top: 2px; color: #7C3AED; font-size: 10px; font-weight: 800; }
+</style>

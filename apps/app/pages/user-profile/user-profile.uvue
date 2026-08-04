@@ -1,0 +1,48 @@
+<template>
+  <view class="page">
+    <view class="topbar"><AppBackButton @click="goBack" /><text class="title">用户主页</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state"><text>正在加载用户主页...</text></view>
+    <view v-else-if="data.errorMessage.length > 0" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <scroll-view v-else-if="data.profile != null" class="scroll" direction="vertical">
+      <view class="hero">
+        <image v-if="backgroundUrl.length > 0" class="hero-bg" :src="backgroundUrl" mode="aspectFill"></image>
+        <view class="hero-mask">
+          <image v-if="avatarUrl.length > 0" class="avatar" :src="avatarUrl" mode="aspectFill"></image><view v-else class="avatar avatar-empty"><text>{{ data.profile!.nickname.substring(0,1) }}</text></view>
+          <view class="identity"><view class="name-row"><text class="name">{{ data.profile!.nickname }}</text><text class="level">Lv{{ data.profile!.level }}</text></view><view v-if="data.profile!.equippedBadge != null" class="badge-row"><image class="badge-icon" :src="badgeUrl" mode="aspectFit"></image><text class="badge-name" :class="'badge-' + data.profile!.equippedBadge!.tier">{{ data.profile!.equippedBadge!.name }}</text></view></view>
+          <view v-if="!data.profile!.isSelf" class="actions"><view class="action" :class="data.profile!.isFollowing ? 'action-followed' : ''" @click="toggleFollow"><text>{{ data.profile!.isFollowing ? '✓' : '+' }}</text></view><view class="action" :class="data.profile!.isFollowing ? '' : 'action-disabled'" @click="openMessage"><text>✉</text></view></view>
+        </view>
+        <view class="stats"><view class="stat"><text class="stat-value">{{ data.profile!.receivedLikeCount }}</text><text class="stat-label">获赞</text></view><view class="stat stat-border" @click="openFollows('following')"><text class="stat-value">{{ data.profile!.followingCount }}</text><text class="stat-label">关注</text></view><view class="stat stat-border" @click="openFollows('followers')"><text class="stat-value">{{ data.profile!.followerCount }}</text><text class="stat-label">粉丝</text></view></view>
+      </view>
+      <view class="cabinet"><view class="section-head"><text class="section-title">收藏陈列</text><text class="section-meta">{{ data.cabinet == null ? '' : data.cabinet!.user.totalCollectionValue.toString() + ' 收藏值' }}</text></view><view class="showcase"><view v-for="card in showcase" :key="card.id" class="card"><image class="card-image" :src="assetUrl(card.thumbnailUrl.length > 0 ? card.thumbnailUrl : card.imageUrl)" mode="aspectFill"></image><text class="card-name">{{ card.name }}</text></view><text v-if="showcase.length == 0" class="empty">暂未陈列卡牌</text></view></view>
+      <view class="soups"><view class="section-head"><text class="section-title">发布 {{ data.soups.length }}</text></view><view class="soup-grid"><view v-for="soup in data.soups" :key="soup.id" class="soup" @click="openSoup(soup.id)"><image v-if="soup.coverImage != null" class="soup-cover" :src="coverUrl(soup.id,soup.coverImage)" mode="aspectFill"></image><view v-else class="soup-cover soup-placeholder"><text>汤</text></view><view class="soup-caption"><text class="soup-title">{{ soup.title }}</text><text class="heat">🔥 {{ soup.heatValue }}</text></view></view></view><text v-if="data.soups.length == 0" class="empty">还没有公开作品</text></view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl, soupThumbnailUrl } from '@/config/runtime.uts'
+import { OwnedAssetCard, CardCabinet } from '@/domain/dto/digital-asset.uts'
+import { SocialProfile } from '@/domain/dto/social.uts'
+import { SoupSummary } from '@/domain/dto/soup.uts'
+import { createConversation, loadUserCardCabinet, loadUserProfile, toggleUserFollow } from '@/services/social.uts'
+type ProfileData={id:string,profile:SocialProfile|null,soups:SoupSummary[],cabinet:CardCabinet|null,loading:boolean,busy:boolean,errorMessage:string}
+const data=reactive({id:'',profile:null,soups:[],cabinet:null,loading:false,busy:false,errorMessage:''} as ProfileData)
+const avatarUrl=computed<string>(()=>data.profile==null?'':absoluteApiUrl(data.profile!.avatar))
+const backgroundUrl=computed<string>(()=>data.profile==null?'':absoluteApiUrl(data.profile!.profileBackgroundUrl))
+const badgeUrl=computed<string>(()=>data.profile==null||data.profile!.equippedBadge==null?'':absoluteApiUrl(data.profile!.equippedBadge!.iconUrl))
+const showcase=computed<OwnedAssetCard[]>(()=>data.cabinet==null?[] as OwnedAssetCard[]:data.cabinet!.showcase)
+function assetUrl(url:string):string{return absoluteApiUrl(url)}
+function coverUrl(id:string,url:string|null):string{return soupThumbnailUrl(id,url)}
+function goBack(){uni.navigateBack()}
+function openFollows(type:string){uni.navigateTo({url:'/pages/user-follows/user-follows?id='+encodeURIComponent(data.id)+'&type='+type})}
+function openSoup(id:string){uni.navigateTo({url:'/pages/soup-detail/soup-detail?id='+encodeURIComponent(id)})}
+function toggleFollow(){if(data.busy||data.profile==null)return;data.busy=true;toggleUserFollow(data.id,(response)=>{data.busy=false;data.profile!.isFollowing=response.isFollowing;data.profile!.followerCount=Math.max(0,data.profile!.followerCount+(response.isFollowing?1:-1))},(error)=>{data.busy=false;uni.showToast({title:error.message,icon:'none'})})}
+function openMessage(){if(data.profile==null||!data.profile!.isFollowing){uni.showToast({title:'关注后可发起私信',icon:'none'});return}createConversation(data.id,(response)=>{uni.navigateTo({url:'/pages/private-chat/private-chat?id='+encodeURIComponent(response.id)})},(error)=>{uni.showToast({title:error.message,icon:'none'})})}
+function reload(){if(data.loading||data.id.length==0)return;data.loading=true;data.errorMessage='';loadUserProfile(data.id,(response)=>{data.profile=response.profile;data.soups=response.soups;loadUserCardCabinet(data.id,(cabinetResponse)=>{data.cabinet=cabinetResponse.cabinet;data.loading=false},(error)=>{data.loading=false;data.errorMessage=error.message})},(error)=>{data.loading=false;data.errorMessage=error.message})}
+onLoad((options)=>{data.id=options['id']??'';reload()})
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}.topbar{height:96px;padding:48px 14px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px}.title{color:#121826;font-size:17px;font-weight:800}.scroll{flex:1}.hero,.cabinet,.soups{margin:12px 16px 0;overflow:hidden;border-radius:18px;background-color:#FFF}.hero{height:190px}.hero-bg{position:absolute;width:100%;height:118px}.hero-mask{height:118px;padding:16px;flex-direction:row;align-items:center;background-color:rgba(15,23,42,.36)}.avatar{width:64px;height:64px;border-width:2px;border-color:#FFF;border-radius:32px}.avatar-empty{align-items:center;justify-content:center;background-color:#60A5FA;color:#FFF;font-size:24px;font-weight:900}.identity{flex:1;min-width:0;margin-left:12px}.name-row,.badge-row,.actions{flex-direction:row;align-items:center}.name{max-width:145px;color:#FFF;font-size:20px;font-weight:900;lines:1}.level{margin-left:7px;padding:2px 6px;border-radius:7px;background-color:#F59E0B;color:#FFF;font-size:9px}.badge-row{margin-top:6px}.badge-icon{width:18px;height:18px}.badge-name{margin-left:4px;color:#A5B4FC;font-size:11px;font-weight:900}.badge-rare{color:#C4B5FD}.badge-epic{color:#FCD34D}.badge-legend{color:#F9A8D4}.action{width:38px;height:38px;margin-left:7px;align-items:center;justify-content:center;border-width:1px;border-color:#FFF;border-radius:19px;background-color:rgba(255,255,255,.18);color:#FFF;font-size:18px}.action-followed{background-color:#FFF;color:#2563EB}.action-disabled{opacity:.45}.stats{height:72px;flex-direction:row}.stat{flex:1;align-items:center;justify-content:center}.stat-border{border-left-width:1px;border-left-color:#E5EAF2}.stat-value{color:#121826;font-size:18px;font-weight:900}.stat-label{margin-top:3px;color:#667085;font-size:10px}.section-head{padding:14px 15px;flex-direction:row;align-items:center;justify-content:space-between;border-bottom-width:1px;border-bottom-color:#E5EAF2}.section-title{color:#121826;font-size:14px;font-weight:900}.section-meta{color:#0891B2;font-size:10px;font-weight:800}.showcase,.soup-grid{padding:8px;flex-direction:row;flex-wrap:wrap}.card{width:31.33%;margin:1%;overflow:hidden;border-radius:10px;background-color:#F8FAFC}.card-image{width:100%;height:125px}.card-name{padding:6px;color:#344054;font-size:9px;font-weight:800;lines:1}.soup{width:48%;margin:1%;overflow:hidden;border-radius:12px;background-color:#F2F4F7}.soup-cover{width:100%;height:96px}.soup-caption{padding:7px;flex-direction:row;justify-content:space-between}.soup-title{max-width:105px;color:#121826;font-size:10px;font-weight:800;lines:1}.heat{color:#EF4444;font-size:8px}.empty{width:100%;padding:38px;text-align:center;color:#98A2B3;font-size:11px}.state{margin:16px;padding:34px;align-items:center;border-radius:18px;background-color:#FFF;color:#667085}.error{color:#B42318}.retry{width:100%;margin-top:13px;background-color:#2563EB;color:#FFF}.safe-bottom{height:28px}
+.soup-placeholder{align-items:center;justify-content:center;background-color:#DBEAFE;color:#2563EB;font-size:25px;font-weight:900}
+</style>

@@ -1,0 +1,116 @@
+<template>
+  <view class="page">
+    <scroll-view class="scroll" direction="vertical">
+      <view class="hero">
+        <text class="eyebrow">汤汤解谜乐园</text>
+        <text class="title">{{ data.mode == 'login' ? '欢迎回来' : '创建账号' }}</text>
+        <text class="subtitle">{{ data.mode == 'login' ? '登录后同步收藏、评价与创作内容' : '注册后将自动登录当前设备' }}</text>
+      </view>
+
+      <view class="card">
+        <view class="mode-row">
+          <button class="mode-button" :class="data.mode == 'login' ? 'mode-active' : ''" @click="setMode('login')">登录</button>
+          <button class="mode-button" :class="data.mode == 'register' ? 'mode-active' : ''" @click="setMode('register')">注册</button>
+        </view>
+        <text class="label">账号</text>
+        <input class="input" v-model="data.username" placeholder="请输入账号" />
+        <text v-if="data.mode == 'register'" class="label">昵称</text>
+        <input v-if="data.mode == 'register'" class="input" v-model="data.nickname" placeholder="最多 8 个字符" />
+        <text class="label">密码</text>
+        <input class="input" v-model="data.password" password="true" placeholder="请输入密码" confirm-type="done" @confirm="submit" />
+        <text v-if="data.mode == 'register'" class="label">邀请码（选填）</text>
+        <input v-if="data.mode == 'register'" class="input" v-model="data.invitationCode" placeholder="5 位数字或大写字母" />
+        <text v-if="data.errorMessage.length > 0" class="error">{{ data.errorMessage }}</text>
+        <button class="submit-button" :disabled="data.submitting" @click="submit">{{ data.submitting ? '请稍候...' : submitLabel }}</button>
+        <text class="privacy">密码和服务端 token 不会写入普通 Storage。</text>
+      </view>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { loginSession, registerSession } from '@/stores/session.uts'
+import { ApiError } from '@/services/api-client.uts'
+
+type AuthData = {
+  mode: string,
+  username: string,
+  password: string,
+  nickname: string,
+  invitationCode: string,
+  submitting: boolean,
+  errorMessage: string
+}
+const data = reactive({
+  mode: 'login',
+  username: '',
+  password: '',
+  nickname: '',
+  invitationCode: '',
+  submitting: false,
+  errorMessage: ''
+} as AuthData)
+const submitLabel = computed((): string => data.mode == 'login' ? '登录' : '注册并登录')
+
+function setMode(mode: string) {
+  if (data.submitting) return
+  data.mode = mode
+  data.password = ''
+  data.errorMessage = ''
+}
+
+function submit() {
+  if (data.submitting) return
+  const username = data.username.trim()
+  if (username.length == 0 || data.password.length == 0) {
+    data.errorMessage = '请输入账号和密码'
+    return
+  }
+  if (data.mode == 'register' && data.password.length < 6) {
+    data.errorMessage = '密码至少 6 位'
+    return
+  }
+  if (data.mode == 'register' && data.nickname.trim().length == 0) {
+    data.errorMessage = '请输入昵称'
+    return
+  }
+  data.submitting = true
+  data.errorMessage = ''
+  const onSuccess = () => {
+    data.password = ''
+    data.submitting = false
+    uni.showToast({ title: data.mode == 'login' ? '登录成功' : '注册成功', icon: 'success' })
+    uni.switchTab({ url: '/pages/mine/mine' })
+  }
+  const onFail = (error: ApiError) => {
+    data.password = ''
+    data.submitting = false
+    data.errorMessage = error.message
+  }
+  if (data.mode == 'login') {
+    loginSession(username, data.password, onSuccess, onFail)
+  } else {
+    registerSession(username, data.password, data.nickname.trim(), data.invitationCode.trim().toUpperCase(), onSuccess, onFail)
+  }
+}
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.scroll { flex: 1; }
+.hero { padding: 28px 20px 18px 20px; }
+.eyebrow { color: #2563EB; font-size: 12px; font-weight: 700; }
+.title { margin-top: 7px; color: #121826; font-size: 28px; font-weight: 700; }
+.subtitle { margin-top: 7px; color: #667085; font-size: 13px; }
+.card { margin: 0 16px; padding: 18px; border-width: 1px; border-color: #E5EAF2; border-radius: 20px; background-color: #FFFFFF; }
+.mode-row { flex-direction: row; margin-bottom: 12px; padding: 3px; border-radius: 13px; background-color: #F2F4F7; }
+.mode-button { flex: 1; height: 38px; border-radius: 10px; background-color: transparent; color: #667085; font-size: 13px; }
+.mode-active { background-color: #FFFFFF; color: #2563EB; font-weight: 700; }
+.label { margin-top: 11px; margin-bottom: 6px; color: #344054; font-size: 12px; font-weight: 600; }
+.input { height: 46px; padding: 0 12px; border-width: 1px; border-color: #DCE3EE; border-radius: 13px; background-color: #FFFFFF; color: #121826; font-size: 14px; }
+.error { margin-top: 12px; color: #D92D20; font-size: 12px; }
+.submit-button { margin-top: 18px; min-height: 46px; border-radius: 13px; background-color: #2563EB; color: #FFFFFF; font-size: 14px; font-weight: 700; }
+.privacy { margin-top: 12px; color: #98A2B3; font-size: 11px; text-align: center; }
+.safe-bottom { height: 30px; }
+</style>

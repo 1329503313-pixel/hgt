@@ -1,0 +1,43 @@
+import { EquippedBadge, SoupSummary } from './soup.uts'
+import { CardCabinet } from './digital-asset.uts'
+
+export type ProfileBackgroundCrop = { x: number, y: number, zoom: number }
+
+export type SocialProfile = {
+  id: string,
+  nickname: string,
+  avatar: string | null,
+  role: string,
+  createdAt: string,
+  level: number,
+  equippedBadge: EquippedBadge | null,
+  receivedLikeCount: number,
+  followingCount: number,
+  followerCount: number,
+  isFollowing: boolean,
+  isSelf: boolean,
+  profileBackgroundUrl: string | null,
+  profileBackgroundMotionMp4Url: string | null,
+  profileBackgroundMotionWebmUrl: string | null,
+  profileBackgroundCrop: ProfileBackgroundCrop
+}
+
+export type SocialUser = {
+  id: string,
+  nickname: string,
+  avatar: string | null,
+  role: string,
+  createdAt: string,
+  level: number,
+  equippedBadge: EquippedBadge | null,
+  isFollowing: boolean,
+  isSelf: boolean,
+  isOnline: boolean,
+  isMutual: boolean
+}
+
+export type UserProfileResponse = { profile: SocialProfile, soups: SoupSummary[] }
+export type UserFollowsResponse = { users: SocialUser[] }
+export type FollowResponse = { isFollowing: boolean }
+export type ConversationCreatedResponse = { id: string }
+export type UserCardCabinetResponse = { cabinet: CardCabinet }

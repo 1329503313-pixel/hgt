@@ -1,0 +1,34 @@
+import { apiPost, ApiError } from './api-client.uts'
+import { AuthResponse, LogoutResponse } from '@/domain/dto/user.uts'
+
+export function login(
+  username: string,
+  password: string,
+  success: (data: AuthResponse) => void,
+  fail: (error: ApiError) => void
+) {
+  apiPost<AuthResponse>('/api/auth/login', {
+    username: username,
+    password: password
+  }, (json: string): AuthResponse => JSON.parse<AuthResponse>(json)!, success, fail)
+}
+
+export function register(
+  username: string,
+  password: string,
+  nickname: string,
+  invitationCode: string,
+  success: (data: AuthResponse) => void,
+  fail: (error: ApiError) => void
+) {
+  apiPost<AuthResponse>('/api/auth/register', {
+    username: username,
+    password: password,
+    nickname: nickname,
+    invitationCode: invitationCode
+  }, (json: string): AuthResponse => JSON.parse<AuthResponse>(json)!, success, fail)
+}
+
+export function logout(success: (data: LogoutResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<LogoutResponse>('/api/auth/logout', {}, (json: string): LogoutResponse => JSON.parse<LogoutResponse>(json)!, success, fail)
+}

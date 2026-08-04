@@ -1,0 +1,69 @@
+export type ProbeResult = {
+  ok: boolean,
+  statusCode: number,
+  detail: string
+}
+
+function normalizedBaseUrl(baseUrl: string): string {
+  let value = baseUrl.trim()
+  while (value.endsWith('/')) {
+    value = value.substring(0, value.length - 1)
+  }
+  return value
+}
+
+export function requestProbe(
+  baseUrl: string,
+  path: string,
+  method: string,
+  body: UTSJSONObject | null,
+  done: (result: ProbeResult) => void
+) {
+  const headers = {
+    'Content-Type': 'application/json'
+  }
+  uni.request({
+    url: normalizedBaseUrl(baseUrl) + path,
+    method: method,
+    data: body,
+    header: headers,
+    withCredentials: true,
+    timeout: 15000,
+    success: (response) => {
+      const result: ProbeResult = {
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        statusCode: response.statusCode,
+        detail: JSON.stringify(response.data)
+      }
+      done(result)
+    },
+    fail: (error) => {
+      const result: ProbeResult = {
+        ok: false,
+        statusCode: 0,
+        detail: error.errMsg
+      }
+      done(result)
+    }
+  })
+}
+
+export function loginProbe(
+  baseUrl: string,
+  username: string,
+  password: string,
+  done: (result: ProbeResult) => void
+) {
+  requestProbe(baseUrl, '/api/auth/login', 'POST', {
+    username: username,
+    password: password
+  }, done)
+}
+
+export function meProbe(baseUrl: string, done: (result: ProbeResult) => void) {
+  requestProbe(baseUrl, '/api/auth/me', 'GET', null, done)
+}
+
+export function logoutProbe(baseUrl: string, done: (result: ProbeResult) => void) {
+  requestProbe(baseUrl, '/api/auth/logout', 'POST', {}, done)
+}

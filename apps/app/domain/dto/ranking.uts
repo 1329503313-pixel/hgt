@@ -1,0 +1,6 @@
+export type HotSoupRank = { rank: number, id: string, title: string, author: string, heatValue: number }
+export type UserRank = { rank: number, id: string, nickname: string, avatar: string | null, achievementPoints: number }
+export type LevelRank = { rank: number, id: string, nickname: string, avatar: string | null, level: number, experience: number }
+export type CollectionRank = { rank: number, id: string, nickname: string, avatar: string | null, totalCollectionValue: number, unlockedCardCount: number, legendaryCardCount: number }
+export type RankingsResponse = { hotSoups: HotSoupRank[], hotSoupOwn: HotSoupRank | null, achievementUsers: UserRank[], achievementOwn: UserRank | null, levelUsers: LevelRank[], levelOwn: LevelRank | null }
+export type CollectionRankingsResponse = { ranking: CollectionRank[], own: CollectionRank | null }

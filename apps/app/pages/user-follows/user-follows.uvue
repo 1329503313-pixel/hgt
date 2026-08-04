@@ -1,0 +1,24 @@
+<template>
+  <view class="page"><view class="topbar"><AppBackButton @click="goBack" /><text class="title">{{ data.type == 'followers' ? '粉丝' : '关注' }}</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state"><text>正在加载...</text></view><view v-else-if="data.errorMessage.length>0" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <list-view v-else class="list"><list-item v-for="item in data.users" :key="item.id" class="row"><view class="avatar-wrap" @click="openProfile(item.id)"><image v-if="avatar(item).length>0" class="avatar" :src="avatar(item)" mode="aspectFill"></image><view v-else class="avatar avatar-empty"><text>{{ item.nickname.substring(0,1) }}</text></view><view v-if="item.isOnline" class="online"></view></view><view class="copy" @click="openProfile(item.id)"><view class="identity"><text class="name">{{ item.nickname }}</text><text class="level">Lv{{ item.level }}</text><view v-if="item.equippedBadge!=null" class="badge"><image class="badge-icon" :src="badgeIcon(item)" mode="aspectFit"></image><text class="badge-name" :class="'badge-'+item.equippedBadge!.tier">{{ item.equippedBadge!.name }}</text></view></view><text class="status" :class="item.isOnline?'status-online':''">{{ item.isOnline?'在线':'离线' }}{{ item.isMutual?' · 互相关注':'' }}</text></view><button v-if="!item.isSelf" class="follow" :class="item.isFollowing?'followed':''" @click="toggle(item)">{{ item.isFollowing?'已关注':'关注' }}</button></list-item><list-item v-if="data.users.length==0" class="empty"><text>暂无用户</text></list-item></list-view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { SocialUser } from '@/domain/dto/social.uts'
+import { loadUserFollows,toggleUserFollow } from '@/services/social.uts'
+type FollowsData={id:string,type:string,users:SocialUser[],loading:boolean,errorMessage:string}
+const data=reactive({id:'',type:'following',users:[],loading:false,errorMessage:''} as FollowsData)
+function goBack(){uni.navigateBack()}
+function avatar(item:SocialUser):string{return absoluteApiUrl(item.avatar)}
+function badgeIcon(item:SocialUser):string{return item.equippedBadge==null?'':absoluteApiUrl(item.equippedBadge!.iconUrl)}
+function openProfile(id:string){uni.navigateTo({url:'/pages/user-profile/user-profile?id='+encodeURIComponent(id)})}
+function toggle(item:SocialUser){toggleUserFollow(item.id,(response)=>{item.isFollowing=response.isFollowing},(error)=>{uni.showToast({title:error.message,icon:'none'})})}
+function reload(){if(data.loading||data.id.length==0)return;data.loading=true;data.errorMessage='';loadUserFollows(data.id,data.type,(response)=>{data.users=response.users;data.loading=false},(error)=>{data.loading=false;data.errorMessage=error.message})}
+onLoad((options)=>{data.id=options['id']??'';data.type=options['type']=='followers'?'followers':'following';reload()})
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}.topbar{height:96px;padding:48px 14px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px}.title{color:#121826;font-size:17px;font-weight:800}.list{flex:1;margin-top:12px;background-color:#FFF}.row{min-height:76px;padding:13px 16px;flex-direction:row;align-items:center;border-bottom-width:1px;border-bottom-color:#F0F2F5}.avatar-wrap{position:relative;width:46px;height:46px;margin-right:11px}.avatar{width:46px;height:46px;border-radius:23px}.avatar-empty{align-items:center;justify-content:center;background-color:#DBEAFE;color:#2563EB;font-size:17px;font-weight:800}.online{position:absolute;right:0;bottom:0;width:13px;height:13px;border-width:2px;border-color:#FFF;border-radius:7px;background-color:#12B76A}.copy{flex:1;min-width:0}.identity,.badge{flex-direction:row;align-items:center}.name{max-width:120px;color:#121826;font-size:14px;font-weight:900;lines:1}.level{margin-left:5px;padding:2px 5px;border-radius:7px;background-color:#F59E0B;color:#FFF;font-size:8px}.badge{margin-left:5px}.badge-icon{width:16px;height:16px}.badge-name{margin-left:3px;color:#2563EB;font-size:10px;font-weight:900}.badge-rare{color:#7C3AED}.badge-epic{color:#D97706}.badge-legend{color:#DB2777}.status{margin-top:5px;color:#98A2B3;font-size:10px}.status-online{color:#039855;font-weight:800}.follow{min-width:62px;height:34px;padding:0 10px;border-radius:9px;background-color:#2563EB;color:#FFF;font-size:10px;font-weight:800}.followed{background-color:#F2F4F7;color:#344054}.state,.empty{margin:16px;padding:34px;align-items:center;color:#667085}.error{color:#B42318}.retry{width:100%;margin-top:13px;background-color:#2563EB;color:#FFF}
+</style>

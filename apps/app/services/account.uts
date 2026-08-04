@@ -1,0 +1,18 @@
+import { apiGet, apiPatch, apiPost, ApiError } from './api-client.uts'
+import { AvatarResponse, ContentCounts, NicknameResponse, PasswordResponse } from '@/domain/dto/user.uts'
+
+export function loadContentCounts(success: (data: ContentCounts) => void, fail: (error: ApiError) => void) {
+  apiGet<ContentCounts>('/api/me/content-counts', (json: string): ContentCounts => JSON.parse<ContentCounts>(json)!, success, fail)
+}
+
+export function updateNickname(nickname: string, success: (data: NicknameResponse) => void, fail: (error: ApiError) => void) {
+  apiPatch<NicknameResponse>('/api/me/nickname', { nickname } as UTSJSONObject, (json: string): NicknameResponse => JSON.parse<NicknameResponse>(json)!, success, fail)
+}
+
+export function updateAvatar(avatar: string, success: (data: AvatarResponse) => void, fail: (error: ApiError) => void) {
+  apiPatch<AvatarResponse>('/api/me/avatar', { avatar } as UTSJSONObject, (json: string): AvatarResponse => JSON.parse<AvatarResponse>(json)!, success, fail)
+}
+
+export function updatePassword(newPassword: string, success: (data: PasswordResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<PasswordResponse>('/api/auth/password', { newPassword } as UTSJSONObject, (json: string): PasswordResponse => JSON.parse<PasswordResponse>(json)!, success, fail)
+}

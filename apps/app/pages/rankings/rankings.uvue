@@ -1,0 +1,53 @@
+<template>
+  <view class="page">
+    <view class="topbar"><AppBackButton @click="goBack" /><text class="title">排行榜</text><view class="back"></view></view>
+    <view class="periods"><view v-for="item in periods" :key="item.value" class="period" :class="data.period == item.value ? 'period-active' : ''" @click="changePeriod(item.value)"><text>{{ item.label }}</text></view></view>
+    <view class="categories">
+      <view v-for="item in categories" :key="item.value" class="category" :class="data.category == item.value ? 'category-active' : ''" @click="data.category = item.value"><image class="category-icon" :src="item.icon" mode="aspectFit"></image><text>{{ item.label }}</text></view>
+    </view>
+    <view v-if="data.loading" class="state"><text>正在加载榜单...</text></view>
+    <view v-else-if="data.errorMessage.length > 0" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <list-view v-else class="list">
+      <list-item class="list-header"><text class="list-title">{{ periodLabel }} · {{ categoryLabel }} Top 10</text><text class="rule">{{ data.period == 'all' ? '累计总值' : '周期增长' }}</text></list-item>
+      <list-item v-for="item in visibleRows" :key="item.id" class="row" hover-class="pressed" @click="openItem(item)">
+        <view class="rank" :class="rankClass(item.rank)"><text>{{ item.rank }}</text></view>
+        <view v-if="data.category != 'soups'" class="avatar-wrap"><image v-if="item.avatar.length > 0" class="avatar" :src="item.avatar" mode="aspectFill"></image><view v-else class="avatar avatar-placeholder"><text>{{ item.name.substring(0,1) }}</text></view></view>
+        <view class="copy"><view class="name-row"><text class="name">{{ item.name }}</text><text v-if="item.level >= 0" class="level">Lv{{ item.level }}</text></view><text class="detail">{{ item.detail }}</text></view>
+        <view class="metric"><text class="metric-value">{{ metricPrefix }}{{ item.value }}</text><text class="metric-label">{{ metricLabel }}</text></view>
+      </list-item>
+      <list-item v-if="visibleRows.length == 0" class="empty"><text>暂无榜单数据</text></list-item>
+      <list-item v-if="ownRow != null" class="own-row"><text>我的排名</text><text>第 {{ ownRow!.rank }} 名 · {{ ownRow!.name }}</text></list-item>
+    </list-view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { CollectionRank, CollectionRankingsResponse, HotSoupRank, LevelRank, RankingsResponse, UserRank } from '@/domain/dto/ranking.uts'
+import { loadCollectionRankings, loadRankings } from '@/services/rankings.uts'
+type SelectItem = { value: string, label: string, icon: string }
+type DisplayRank = { rank: number, id: string, name: string, detail: string, avatar: string, level: number, value: number }
+type RankingData = { period: string, category: string, base: RankingsResponse | null, collection: CollectionRankingsResponse | null, loading: boolean, errorMessage: string }
+const periods = [{ value: '7d', label: '7日排行榜', icon: '' }, { value: '30d', label: '30日排行榜', icon: '' }, { value: 'all', label: '永久排行榜', icon: '' }] as SelectItem[]
+const categories = [{ value: 'soups', label: '热门榜', icon: '/static/tasks/content.png' }, { value: 'users', label: '成就榜', icon: '/static/tasks/calendar.png' }, { value: 'level', label: '等级榜', icon: '/static/tasks/growth.png' }, { value: 'collection', label: '收藏榜', icon: '/static/tasks/profile.png' }] as SelectItem[]
+const data = reactive({ period: '7d', category: 'soups', base: null as RankingsResponse | null, collection: null as CollectionRankingsResponse | null, loading: false, errorMessage: '' } as RankingData)
+const periodLabel = computed<string>(() => data.period == '7d' ? '7日' : data.period == '30d' ? '30日' : '永久')
+const categoryLabel = computed<string>(() => data.category == 'soups' ? '热门海龟汤' : data.category == 'users' ? '用户成就' : data.category == 'level' ? '用户等级' : '卡牌收藏')
+const metricPrefix = computed<string>(() => data.period == 'all' ? '' : '+')
+const metricLabel = computed<string>(() => data.category == 'soups' ? '热力' : data.category == 'users' ? '成就点' : data.category == 'level' ? 'EXP' : '收藏值')
+function hotRow(item: HotSoupRank): DisplayRank { return { rank: item.rank, id: item.id, name: item.title, detail: item.author, avatar: '', level: -1, value: item.heatValue } as DisplayRank }
+function userRow(item: UserRank): DisplayRank { return { rank: item.rank, id: item.id, name: item.nickname, detail: '社区成就', avatar: absoluteApiUrl(item.avatar), level: -1, value: item.achievementPoints } as DisplayRank }
+function levelRow(item: LevelRank): DisplayRank { return { rank: item.rank, id: item.id, name: item.nickname, detail: '成长等级', avatar: absoluteApiUrl(item.avatar), level: item.level, value: item.experience } as DisplayRank }
+function collectionRow(item: CollectionRank): DisplayRank { return { rank: item.rank, id: item.id, name: item.nickname, detail: item.unlockedCardCount.toString() + ' 张卡牌', avatar: absoluteApiUrl(item.avatar), level: -1, value: item.totalCollectionValue } as DisplayRank }
+const visibleRows = computed<DisplayRank[]>(() => { if (data.base == null || data.collection == null) return [] as DisplayRank[]; if (data.category == 'soups') return data.base!.hotSoups.map(hotRow); if (data.category == 'users') return data.base!.achievementUsers.map(userRow); if (data.category == 'level') return data.base!.levelUsers.map(levelRow); return data.collection!.ranking.map(collectionRow) })
+const ownRow = computed<DisplayRank | null>(() => { if (data.base == null || data.collection == null) return null; if (data.category == 'soups') return data.base!.hotSoupOwn == null ? null : hotRow(data.base!.hotSoupOwn!); if (data.category == 'users') return data.base!.achievementOwn == null ? null : userRow(data.base!.achievementOwn!); if (data.category == 'level') return data.base!.levelOwn == null ? null : levelRow(data.base!.levelOwn!); return data.collection!.own == null ? null : collectionRow(data.collection!.own!) })
+function rankClass(rank: number): string { return rank == 1 ? 'rank-one' : rank == 2 ? 'rank-two' : rank == 3 ? 'rank-three' : '' }
+function goBack() { uni.navigateBack() }
+function openItem(item: DisplayRank) { if (data.category == 'soups') uni.navigateTo({ url: '/pages/soup-detail/soup-detail?id=' + encodeURIComponent(item.id) }); else uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(item.id) }) }
+function reload() { if (data.loading) return; data.loading = true; data.errorMessage = ''; loadRankings(data.period, (base) => { data.base = base; loadCollectionRankings(data.period, (collection) => { data.collection = collection; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }, (error) => { data.loading = false; data.errorMessage = error.message }) }
+function changePeriod(value: string) { if (data.period == value) return; data.period = value; reload() }
+onLoad(() => { reload() })
+</script>
+<style>
+.page { flex: 1; background-color: #F4F7FB; }.topbar { height: 96px; padding: 48px 14px 8px; flex-direction: row; align-items: center; justify-content: space-between; background-color: #FFFFFF; }.back { width: 40px; height: 40px; align-items: center; justify-content: center; color: #344054; font-size: 32px; }.title { color: #121826; font-size: 17px; font-weight: 800; }.periods { margin: 12px 16px 8px; padding: 4px; flex-direction: row; border-radius: 16px; background-color: #FFFFFF; }.period { flex: 1; height: 38px; align-items: center; justify-content: center; border-radius: 12px; color: #667085; font-size: 11px; font-weight: 700; }.period-active { background-color: #2563EB; color: #FFFFFF; }.categories { margin: 0 16px 10px; flex-direction: row; }.category { flex: 1; margin: 0 2px; padding: 9px 2px; align-items: center; border-width: 1px; border-color: #E5EAF2; border-radius: 13px; background-color: #FFFFFF; color: #667085; font-size: 10px; font-weight: 700; }.category-active { border-color: #93C5FD; background-color: #EFF6FF; color: #2563EB; }.category-icon { width: 20px; height: 20px; margin-bottom: 4px; }.list { flex: 1; margin: 0 16px; border-radius: 18px; background-color: #FFFFFF; }.list-header { padding: 15px 13px; flex-direction: row; align-items: center; justify-content: space-between; border-bottom-width: 1px; border-bottom-color: #E5EAF2; }.list-title { color: #121826; font-size: 14px; font-weight: 800; }.rule { color: #667085; font-size: 9px; }.row { min-height: 70px; padding: 11px 12px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #F0F2F5; }.rank { width: 29px; height: 29px; align-items: center; justify-content: center; border-radius: 15px; background-color: #F2F4F7; color: #667085; font-size: 11px; font-weight: 800; }.rank-one { background-color: #FEF0C7; color: #B54708; }.rank-two { background-color: #EAECF0; color: #475467; }.rank-three { background-color: #FFFAEB; color: #DC6803; }.avatar-wrap { margin-left: 9px; }.avatar { width: 39px; height: 39px; border-radius: 20px; }.avatar-placeholder { align-items: center; justify-content: center; background-color: #DBEAFE; color: #2563EB; font-weight: 800; }.copy { flex: 1; min-width: 0; margin-left: 10px; }.name-row { flex-direction: row; align-items: center; }.name { max-width: 155px; color: #121826; font-size: 13px; font-weight: 800; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.level { margin-left: 6px; padding: 2px 5px; border-radius: 7px; background-color: #F59E0B; color: #FFFFFF; font-size: 8px; }.detail { margin-top: 4px; color: #98A2B3; font-size: 9px; }.metric { margin-left: 7px; align-items: flex-end; }.metric-value { color: #2563EB; font-size: 14px; font-weight: 800; }.metric-label { margin-top: 3px; color: #98A2B3; font-size: 8px; }.own-row { padding: 14px; flex-direction: row; justify-content: space-between; background-color: #EFF6FF; color: #2563EB; font-size: 11px; font-weight: 800; }.empty, .state { margin: 16px; padding: 34px 16px; align-items: center; border-radius: 18px; background-color: #FFFFFF; color: #667085; }.error { color: #B42318; }.retry { width: 100%; margin-top: 13px; background-color: #2563EB; color: #FFFFFF; }.pressed { opacity: .72; }
+</style>

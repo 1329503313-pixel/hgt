@@ -1,0 +1,10 @@
+export type GiftMessageDisplay = {
+  giftSendId: string,
+  giftName: string,
+  iconUrl: string,
+  quantity: number,
+  senderName: string,
+  receiverName: string,
+  shellReward: number,
+  charmReward: number
+}

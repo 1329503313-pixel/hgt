@@ -1,0 +1,52 @@
+export type SocketProbeHandle = {
+  close: () => void
+}
+
+function socketBaseUrl(baseUrl: string): string {
+  let value = baseUrl.trim()
+  while (value.endsWith('/')) {
+    value = value.substring(0, value.length - 1)
+  }
+  if (value.startsWith('https://')) {
+    return 'wss://' + value.substring(8)
+  }
+  if (value.startsWith('http://')) {
+    return 'ws://' + value.substring(7)
+  }
+  return value
+}
+
+export function connectAuthenticatedCircleProbe(
+  baseUrl: string,
+  circleId: string,
+  onStatus: (status: string) => void
+): SocketProbeHandle {
+  const task = uni.connectSocket({
+    url: socketBaseUrl(baseUrl) + '/ws/circles?circleId=' + encodeURIComponent(circleId)
+  })
+
+  task.onOpen(() => {
+    onStatus('open')
+    task.send({
+      data: JSON.stringify({
+        type: 'ping'
+      })
+    })
+  })
+  task.onMessage((message) => {
+    onStatus('message: ' + message.data.toString())
+  })
+  task.onError((error) => {
+    onStatus('error: ' + error.errMsg)
+  })
+  task.onClose(() => {
+    onStatus('closed')
+  })
+
+  const handle: SocketProbeHandle = {
+    close: () => {
+      task.close({})
+    }
+  }
+  return handle
+}

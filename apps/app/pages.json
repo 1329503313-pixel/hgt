@@ -1,0 +1,282 @@
+{
+  "pages": [
+    {
+      "path": "pages/home/home",
+      "style": {
+        "navigationBarTitleText": "海龟汤",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/soup-detail/soup-detail",
+      "style": {
+        "navigationBarTitleText": "海龟汤详情",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/evaluation-editor/evaluation-editor",
+      "style": {
+        "navigationBarTitleText": "编辑评价",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/soup-editor/soup-editor",
+      "style": {
+        "navigationBarTitleText": "发布海龟汤",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/game/game",
+      "style": {
+        "navigationBarTitleText": "玩汤",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/circles/circles",
+      "style": {
+        "navigationBarTitleText": "圈子",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/circle-chat/circle-chat",
+      "style": {
+        "navigationBarTitleText": "圈子聊天",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/messages/messages",
+      "style": {
+        "navigationBarTitleText": "消息",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/private-chat/private-chat",
+      "style": {
+        "navigationBarTitleText": "私信",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/message-category/message-category",
+      "style": {
+        "navigationBarTitleText": "消息分类",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/notice-detail/notice-detail",
+      "style": {
+        "navigationBarTitleText": "通知详情",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/mine/mine",
+      "style": {
+        "navigationBarTitleText": "我的",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/auth/auth",
+      "style": {
+        "navigationBarTitleText": "账号"
+      }
+    },
+    {
+      "path": "pages/my-interactions/my-interactions",
+      "style": {
+        "navigationBarTitleText": "我的互动",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/account-settings/account-settings",
+      "style": {
+        "navigationBarTitleText": "账号设置",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/password-settings/password-settings",
+      "style": {
+        "navigationBarTitleText": "重置密码",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/shell-tasks/shell-tasks",
+      "style": {
+        "navigationBarTitleText": "任务中心",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/shell-transactions/shell-transactions",
+      "style": {
+        "navigationBarTitleText": "贝壳明细",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/rankings/rankings",
+      "style": {
+        "navigationBarTitleText": "排行榜",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/achievements/achievements",
+      "style": {
+        "navigationBarTitleText": "我的成就",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/asset-store/asset-store",
+      "style": {
+        "navigationBarTitleText": "商城",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/asset-pack/asset-pack",
+      "style": {
+        "navigationBarTitleText": "卡包详情",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/card-cabinet/card-cabinet",
+      "style": {
+        "navigationBarTitleText": "我的收藏柜",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/asset-draw-history/asset-draw-history",
+      "style": {
+        "navigationBarTitleText": "抽卡记录",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/user-profile/user-profile",
+      "style": {
+        "navigationBarTitleText": "用户主页",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/user-follows/user-follows",
+      "style": {
+        "navigationBarTitleText": "关注",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/online-soup-lobby/online-soup-lobby",
+      "style": {
+        "navigationBarTitleText": "在线玩汤",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/online-soup-room/online-soup-room",
+      "style": {
+        "navigationBarTitleText": "玩汤房间",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/online-soup-select/online-soup-select",
+      "style": {
+        "navigationBarTitleText": "选择海龟汤",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "HGT P0 技术探针",
+        "disableScroll": true
+      }
+    },
+    {
+      "path": "pages/platform-probe/platform-probe",
+      "style": {
+        "navigationBarTitleText": "原生组件探针",
+        "disableScroll": true
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "海龟汤",
+    "navigationBarBackgroundColor": "#FFFFFF",
+    "backgroundColor": "#F5F7FA"
+  },
+  "tabBar": {
+    "color": "#98A2B3",
+    "selectedColor": "#2563EB",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/home/home",
+        "text": "首页",
+        "iconPath": "static/tabbar/home.png",
+        "selectedIconPath": "static/tabbar/home-selected.png"
+      },
+      {
+        "pagePath": "pages/game/game",
+        "text": "玩汤",
+        "iconPath": "static/tabbar/game.png",
+        "selectedIconPath": "static/tabbar/game-selected.png"
+      },
+      {
+        "pagePath": "pages/circles/circles",
+        "text": "圈子",
+        "iconPath": "static/tabbar/circles.png",
+        "selectedIconPath": "static/tabbar/circles-selected.png"
+      },
+      {
+        "pagePath": "pages/messages/messages",
+        "text": "消息",
+        "iconPath": "static/tabbar/messages.png",
+        "selectedIconPath": "static/tabbar/messages-selected.png"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的",
+        "iconPath": "static/tabbar/mine.png",
+        "selectedIconPath": "static/tabbar/mine-selected.png"
+      }
+    ]
+  },
+  "uniIdRouter": {}
+}

@@ -1,0 +1,65 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading" class="state-card"><text class="state-text">正在加载{{ title }}...</text></view>
+    <view v-else-if="data.errorMessage.length > 0" class="state-card"><text class="state-title">加载失败</text><text class="state-text">{{ data.errorMessage }}</text><button class="primary-button" @click="reload">重新加载</button></view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view v-if="hasUnread && (data.mode == 'system' || data.mode == 'interactions')" class="toolbar"><view class="read-all" hover-class="pressed" @click="markVisibleRead"><text class="check-symbol">✓✓</text><text class="read-all-text">全部已读</text></view></view>
+      <view class="list-card">
+        <template v-if="data.mode == 'requests'">
+          <view v-for="item in data.requests" :key="item.id" class="row request-row">
+            <view class="request-avatar"><text>{{ item.requesterName.substring(0, 1) }}</text></view>
+            <view class="row-copy"><text class="row-title">{{ item.requesterName }} 申请查看汤底</text><text class="row-content">《{{ item.soupTitle }}》 · {{ statusText(item.status) }}</text><text class="row-date">{{ dateText(item.createdAt) }}</text></view>
+            <view v-if="item.status == 'pending'" class="decision-column"><button class="agree-button" @click="decide(item, 'approved')">同意</button><button class="reject-button" @click="decide(item, 'rejected')">拒绝</button></view>
+          </view>
+        </template>
+        <template v-else-if="data.mode == 'notices'">
+          <view v-for="item in data.notices" :key="item.id" class="row" hover-class="pressed" @click="openNotice(item)">
+            <view class="round-icon notice-bg"><image class="row-icon" src="/static/messages/notices.png" mode="aspectFit"></image></view>
+            <view class="row-copy"><view class="title-line"><text class="row-title">{{ item.title }}</text><view v-if="!item.isRead" class="unread-dot"></view></view><text class="row-content">{{ item.author }}</text></view><text class="row-date">{{ dateText(item.publishedAt) }}</text>
+          </view>
+        </template>
+        <template v-else>
+          <view v-for="item in visibleNotifications" :key="item.id" class="row" hover-class="pressed" @click="openNotification(item)">
+            <view class="round-icon" :class="notificationColor(item.type)"><text class="notification-symbol">{{ notificationSymbol(item.type) }}</text></view>
+            <view class="row-copy"><view class="title-line"><text class="row-title">{{ item.title }}</text><view v-if="!item.isRead" class="unread-dot"></view></view><text class="row-content">{{ item.content }}</text></view><text class="row-date">{{ dateText(item.createdAt) }}</text>
+          </view>
+        </template>
+        <view v-if="isEmpty" class="empty"><image class="empty-image" :src="emptyIcon" mode="aspectFit"></image><text class="empty-title">{{ emptyText }}</text></view>
+      </view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { NotificationItem, NoticeItem, ViewRequest, decideRequest, loadNotices, loadNotifications, loadRequests, markNotificationRead } from '@/services/messages.uts'
+import { ApiError } from '@/services/api-client.uts'
+
+const interactionTypes: string[] = ['soup_like', 'soup_favorite', 'soup_evaluation', 'user_follow']
+type CategoryData = { mode: string, notifications: NotificationItem[], requests: ViewRequest[], notices: NoticeItem[], loading: boolean, deciding: boolean, errorMessage: string }
+const data = reactive({ mode: 'system', notifications: [], requests: [], notices: [], loading: false, deciding: false, errorMessage: '' } as CategoryData)
+const title = computed((): string => data.mode == 'interactions' ? '互动消息' : data.mode == 'requests' ? '申请' : data.mode == 'notices' ? '通知' : '系统消息')
+const visibleNotifications = computed((): NotificationItem[] => data.notifications.filter((item: NotificationItem): boolean => item.type != 'view_request' && (data.mode == 'interactions' ? interactionTypes.includes(item.type) : !interactionTypes.includes(item.type))))
+const isEmpty = computed((): boolean => data.mode == 'requests' ? data.requests.length == 0 : data.mode == 'notices' ? data.notices.length == 0 : visibleNotifications.value.length == 0)
+const hasUnread = computed((): boolean => visibleNotifications.value.some((item: NotificationItem): boolean => !item.isRead))
+const emptyText = computed((): string => data.mode == 'requests' ? '暂无申请' : data.mode == 'notices' ? '暂无通知' : '暂无消息')
+const emptyIcon = computed((): string => data.mode == 'requests' ? '/static/messages/requests.png' : data.mode == 'notices' ? '/static/messages/notices.png' : data.mode == 'interactions' ? '/static/messages/interactions.png' : '/static/messages/system.png')
+function dateText(value: string): string { const date = new Date(value); return (date.getMonth() + 1).toString() + '/' + date.getDate().toString() }
+function statusText(status: string): string { if (status == 'approved') return '已同意'; if (status == 'rejected') return '已拒绝'; return '等待你的处理' }
+function notificationSymbol(type: string): string { if (type == 'soup_like') return '♥'; if (type == 'soup_favorite') return '★'; if (type == 'soup_evaluation') return '评'; return '盾' }
+function notificationColor(type: string): string { if (type == 'soup_like') return 'rose-bg'; if (type == 'soup_favorite') return 'amber-bg'; if (type == 'soup_evaluation') return 'green-bg'; return 'blue-bg' }
+function failLoad(error: ApiError) { data.loading = false; data.errorMessage = error.message }
+function reload() { if (data.loading) return; data.loading = true; data.errorMessage = ''; if (data.mode == 'requests') { loadRequests((response) => { data.requests = response.requests; data.loading = false }, failLoad); return }; if (data.mode == 'notices') { loadNotices((response) => { data.notices = response.notices; data.loading = false }, failLoad); return }; loadNotifications((response) => { data.notifications = response.notifications; data.loading = false }, failLoad) }
+function openNotification(item: NotificationItem) { if (!item.isRead) markNotificationRead(item.id, () => { item.isRead = true }, (error) => { data.errorMessage = error.message }); if (item.link != null && item.link!.startsWith('/soup/')) uni.navigateTo({ url: '/pages/soup-detail/soup-detail?id=' + encodeURIComponent(item.link!.substring(6)) }) }
+function openNotice(item: NoticeItem) { item.isRead = true; uni.navigateTo({ url: '/pages/notice-detail/notice-detail?id=' + encodeURIComponent(item.id) }) }
+function markVisibleRead() { visibleNotifications.value.filter((item: NotificationItem): boolean => !item.isRead).forEach((item: NotificationItem) => { markNotificationRead(item.id, () => { item.isRead = true }, (error) => { data.errorMessage = error.message }) }) }
+function decide(item: ViewRequest, decision: string) { if (data.deciding) return; data.deciding = true; decideRequest(item.id, decision, () => { item.status = decision; data.deciding = false; uni.showToast({ title: decision == 'approved' ? '已同意申请' : '已拒绝申请', icon: 'none' }) }, (error) => { data.deciding = false; data.errorMessage = error.message }) }
+onLoad((options) => { const mode = options['mode']; if (mode == 'interactions' || mode == 'requests' || mode == 'notices') data.mode = mode; uni.setNavigationBarTitle({ title: title.value }); reload() })
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }.scroll { flex: 1; }.state-card { margin: 12px 16px; padding: 28px 18px; align-items: center; border-radius: 18px; background-color: #FFFFFF; }.state-title { color: #121826; font-size: 17px; font-weight: 800; }.state-text { margin-top: 6px; color: #667085; font-size: 13px; }.primary-button { width: 100%; margin-top: 16px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.toolbar { margin: 12px 16px 0 16px; align-items: flex-end; }.read-all { padding: 8px 12px; flex-direction: row; align-items: center; border-radius: 14px; background-color: #FFFFFF; }.check-symbol { color: #2563EB; font-size: 13px; font-weight: 800; }.read-all-text { margin-left: 5px; color: #2563EB; font-size: 12px; font-weight: 700; }
+.list-card { margin: 12px 16px 24px 16px; overflow: hidden; border-radius: 18px; background-color: #FFFFFF; }.row { min-height: 76px; padding: 13px 14px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #F0F2F5; }.round-icon, .request-avatar { width: 44px; height: 44px; margin-right: 11px; align-items: center; justify-content: center; border-radius: 22px; }.row-icon { width: 23px; height: 23px; }.notification-symbol { font-size: 18px; font-weight: 800; }.blue-bg { background-color: #DBEAFE; color: #2563EB; }.rose-bg { background-color: #FEE2E2; color: #EF4444; }.amber-bg, .request-avatar { background-color: #FEF3C7; color: #D97706; }.green-bg { background-color: #D1FAE5; color: #059669; }.notice-bg { background-color: #EDE9FE; }.request-avatar { font-size: 16px; font-weight: 800; }
+.row-copy { flex: 1; min-width: 0; }.title-line { flex-direction: row; align-items: center; }.row-title { color: #121826; font-size: 14px; font-weight: 800; }.row-content { margin-top: 5px; color: #667085; font-size: 12px; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.row-date { margin-left: 8px; align-self: flex-start; color: #98A2B3; font-size: 10px; }.unread-dot { width: 7px; height: 7px; margin-left: 6px; border-radius: 4px; background-color: #EF4444; }.decision-column { margin-left: 8px; }.agree-button, .reject-button { width: 52px; height: 30px; margin: 2px 0; padding: 0; border-radius: 9px; font-size: 11px; }.agree-button { background-color: #2563EB; color: #FFFFFF; }.reject-button { background-color: #F2F4F7; color: #344054; }
+.empty { height: 240px; align-items: center; justify-content: center; }.empty-image { width: 42px; height: 42px; opacity: 0.65; }.empty-title { margin-top: 10px; color: #98A2B3; font-size: 13px; }.pressed { opacity: 0.7; }
+</style>

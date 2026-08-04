@@ -1,0 +1,57 @@
+import { GiftMessageDisplay } from '@/domain/dto/chat.uts'
+
+export function decodeGiftContent(content: string): GiftMessageDisplay | null {
+  if (!content.trim().startsWith('{')) return null
+  try {
+    const payload = JSON.parse(content) as UTSJSONObject
+    const giftSendId = payload['giftSendId'] as string | null
+    const gift = payload['gift'] as UTSJSONObject | null
+    const sender = payload['sender'] as UTSJSONObject | null
+    let receiver = payload['receiver'] as UTSJSONObject | null
+    if (receiver == null) receiver = payload['recipient'] as UTSJSONObject | null
+    if (giftSendId == null || sender == null || receiver == null) return null
+    let giftName = payload['giftName'] as string | null
+    let iconUrl = payload['iconUrl'] as string | null
+    if (gift != null) {
+      const nestedGiftName = gift!['name'] as string | null
+      const nestedIconUrl = gift!['iconUrl'] as string | null
+      if (giftName == null) giftName = nestedGiftName
+      if (iconUrl == null) iconUrl = nestedIconUrl
+    }
+    const senderName = sender['nickname'] as string | null
+    const receiverName = receiver['nickname'] as string | null
+    const quantity = payload['quantity'] as number | null
+    const shellReward = payload['shellReward'] as number | null
+    const charmReward = payload['charmReward'] as number | null
+    return {
+      giftSendId,
+      giftName: giftName ?? '礼物',
+      iconUrl: iconUrl ?? '',
+      quantity: quantity ?? 1,
+      senderName: senderName ?? '用户',
+      receiverName: receiverName ?? '用户',
+      shellReward: shellReward ?? 0,
+      charmReward: charmReward ?? 0
+    } as GiftMessageDisplay
+  } catch (_) {}
+  return null
+}
+
+export function readableGiftContent(content: string): string | null {
+  const gift = decodeGiftContent(content)
+  if (gift == null) return null
+  return '🎁 ' + gift!.senderName + ' 送给 ' + gift!.receiverName + '「' + gift!.giftName + '」×' + gift!.quantity.toString()
+    + '\n贝壳 +' + gift!.shellReward.toString() + ' · 魅力 +' + gift!.charmReward.toString()
+}
+
+export function normalizeGiftMessage(message: UTSJSONObject) {
+  if (message['giftDisplay'] == null) message['giftDisplay'] = null
+  const content = message['content'] as string | null
+  if (content == null) return
+  const gift = decodeGiftContent(content)
+  if (gift != null) {
+    message['type'] = 'gift'
+    message['giftDisplay'] = gift
+    message['content'] = '🎁 ' + gift!.senderName + ' 送给 ' + gift!.receiverName + '「' + gift!.giftName + '」×' + gift!.quantity.toString()
+  }
+}

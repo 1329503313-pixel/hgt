@@ -1,0 +1,566 @@
+<template>
+  <view class="page">
+    <view v-if="data.loading && data.detail == null" class="loading-card"><text>正在进入圈子...</text></view>
+    <view v-else-if="data.errorMessage.length > 0 && data.detail == null" class="state-card">
+      <text class="state-title">无法进入圈子</text>
+      <text class="state-message">{{ data.errorMessage }}</text>
+      <button class="retry-button" @click="reload">重新加载</button>
+      <button class="back-secondary" @click="goBack">返回圈子列表</button>
+    </view>
+    <view v-else-if="data.detail != null" class="chat-shell">
+      <view class="chat-header">
+        <AppBackButton @click="goBack" />
+        <view class="header-avatar-wrap"><image class="header-avatar" :src="circleAvatar" mode="aspectFill"></image><view v-if="data.detail!.circle.onlineCount > 0" class="online-dot"></view></view>
+        <view class="header-copy"><text class="header-name">{{ data.detail!.circle.name }}</text><view class="header-status-row"><view v-if="data.detail!.circle.onlineCount > 0" class="mini-dot"></view><text class="header-status">{{ data.detail!.circle.onlineCount }} 人在线 · {{ data.detail!.circle.memberCount }} 位成员</text></view></view>
+        <view class="member-button" hover-class="pressed" @click="openMembers"><text class="member-count">{{ memberCountText }}</text></view>
+      </view>
+
+      <view v-if="data.unreadMentionIds.length > 0" class="mention-notice" hover-class="pressed" @click="locateNextMention">
+        <text class="mention-notice-text">{{ data.unreadMentionIds.length }} 条消息提到了你</text><text class="mention-notice-action">查看 @</text>
+      </view>
+      <scroll-view class="message-scroll" direction="vertical" :scroll-top="data.scrollTop" :scroll-into-view="data.scrollIntoView" @scroll="handleScroll" @scrolltoupper="loadOlder" @scrolltolower="markAtBottom">
+        <view v-if="data.messages.hasMore" class="older-button" hover-class="pressed" @click="loadOlder"><text>{{ data.loadingOlder ? '加载中...' : '加载更早消息' }}</text></view>
+        <view v-for="message in data.messages.messages" :id="'circle-message-' + message.id" :key="message.id" class="message-anchor" :class="data.highlightedId == message.id ? 'message-highlighted' : ''">
+          <view v-if="message.recalledAt != null" class="recalled"><text class="recalled-text">{{ recalledText(message) }}</text></view>
+          <view v-else class="message-row" :class="isMine(message) ? 'mine-row' : ''">
+            <view class="avatar-wrap" @click="openSenderProfile(message)">
+              <image v-if="senderAvatar(message).length > 0" class="avatar" :src="senderAvatar(message)" mode="aspectFill"></image>
+              <view v-else class="avatar avatar-placeholder" :class="isMine(message) ? 'mine-avatar' : ''"><text>{{ senderInitial(message) }}</text></view>
+              <view v-if="message.sender != null && message.sender!.isOnline" class="message-online-dot"></view>
+            </view>
+            <view class="message-body" :class="isMine(message) ? 'mine-body' : ''">
+              <view class="identity-row" :class="isMine(message) ? 'mine-identity' : ''">
+                <text class="sender-name">{{ senderName(message) }}</text>
+                <text v-if="message.sender != null" class="level">Lv{{ message.sender!.level }}</text>
+                <view v-if="message.sender != null && message.sender!.equippedBadge != null" class="message-badge-wrap"><image class="message-badge-icon" :src="senderBadgeIcon(message)" mode="aspectFit"></image><text class="badge-name" :class="badgeClass(message)">{{ message.sender!.equippedBadge!.name }}</text></view>
+              </view>
+              <image v-if="message.type == 'sticker' && stickerUrl(message).length > 0" class="message-sticker" :src="stickerUrl(message)" mode="aspectFit" @longpress="openMessageActions(message)"></image>
+              <view v-else-if="message.type == 'sticker'" class="missing-sticker"><text>表情已下架</text></view>
+              <GiftMessageCard v-else-if="message.type == 'gift' && message.giftDisplay != null" :gift-name="message.giftDisplay!.giftName" :icon-url="message.giftDisplay!.iconUrl" :quantity="message.giftDisplay!.quantity" :sender-name="message.giftDisplay!.senderName" :receiver-name="message.giftDisplay!.receiverName" :shell-reward="message.giftDisplay!.shellReward" :charm-reward="message.giftDisplay!.charmReward" />
+              <view v-else class="bubble" :class="isMine(message) ? 'mine-bubble' : 'other-bubble'" @longpress="openMessageActions(message)">
+                <view v-if="message.replyTo != null" class="reply-quote" :class="isMine(message) ? 'mine-reply-quote' : ''" @click.stop="locateReply(message.replyTo!.id)">
+                  <text class="reply-name" :class="isMine(message) ? 'mine-reply-text' : ''">{{ message.replyTo!.sender == null ? '已注销用户' : message.replyTo!.sender!.nickname }}：</text>
+                  <text class="reply-summary" :class="isMine(message) ? 'mine-reply-text' : ''">{{ replySummary(message) }}</text>
+                </view>
+                <text class="bubble-text" :class="isMine(message) ? 'mine-bubble-text' : ''">{{ messageText(message) }}</text>
+              </view>
+              <text class="time" :class="isMine(message) ? 'mine-time' : ''">{{ timeText(message.createdAt) }}</text>
+            </view>
+          </view>
+        </view>
+        <view v-if="data.messages.messages.length == 0" class="empty-chat"><text class="empty-title">还没有消息</text><text class="empty-copy">发送第一句话，和圈友聊起来</text></view>
+      </scroll-view>
+
+      <view v-if="data.showScrollBottom && !data.showStickers" class="scroll-bottom" hover-class="pressed" @click="scrollToBottom"><image class="scroll-bottom-icon" src="/static/messages/chevron-down.png" mode="aspectFit"></image></view>
+      <view v-if="data.errorMessage.length > 0" class="send-error"><text>{{ data.errorMessage }}</text></view>
+      <view v-if="data.replyingTo != null" class="replying-bar">
+        <view class="replying-copy"><text class="replying-title">回复 {{ senderName(data.replyingTo!) }}</text><text class="replying-summary">{{ actionSummary(data.replyingTo!) }}</text></view>
+        <button class="replying-close" @click="cancelReply">×</button>
+      </view>
+      <view class="composer">
+        <input class="composer-input" v-model="data.draft" maxlength="1000" confirm-type="send" placeholder="和圈友聊点什么…" @focus="handleComposerFocus" @blur="keepLatestVisible" @confirm="sendText" />
+        <view class="icon-button" :class="data.showStickers ? 'icon-button-active' : ''" hover-class="pressed" @click="toggleStickers"><image class="composer-icon" src="/static/messages/smile.png" mode="aspectFit"></image></view>
+        <button class="send-button" :class="data.sending || data.draft.trim().length == 0 ? 'send-disabled' : ''" :disabled="data.sending || data.draft.trim().length == 0" @click="sendText"><text class="send-label">{{ data.sending ? '发送中' : '发送' }}</text></button>
+      </view>
+      <StickerKeyboard v-if="data.showStickers" :stickers="data.stickers" :loading="data.stickersLoading" :sending="data.sending" @close="closeStickers" @send="sendSticker" />
+      <view v-if="data.showMembers" class="member-mask" @click="closeMembers">
+        <view class="member-panel" @click.stop>
+          <view class="member-panel-header"><view><text class="member-panel-title">圈子成员</text><text class="member-panel-subtitle">{{ data.detail!.circle.memberCount }} 位成员 · {{ data.detail!.circle.onlineCount }} 人在线</text></view><button class="member-panel-close" @click="closeMembers">×</button></view>
+          <scroll-view class="member-list" direction="vertical">
+            <view v-for="member in sortedMembers" :key="member.id" class="member-row">
+              <view class="member-avatar-wrap" @click="openMemberProfile(member)">
+                <image v-if="memberAvatar(member).length > 0" class="member-avatar" :src="memberAvatar(member)" mode="aspectFill"></image>
+                <view v-else class="member-avatar member-avatar-placeholder"><text>{{ member.nickname.substring(0, 1) }}</text></view>
+                <view v-if="member.isOnline" class="member-online-dot"></view>
+              </view>
+              <view class="member-copy" @click="openMemberProfile(member)"><view class="member-name-row"><text class="member-name">{{ member.nickname }}</text><text class="member-level">Lv{{ member.level }}</text><view v-if="member.equippedBadge != null" class="member-badge-wrap"><image class="member-badge-icon" :src="memberBadgeIcon(member)" mode="aspectFit"></image><text class="member-badge" :class="memberBadgeClass(member)">{{ member.equippedBadge!.name }}</text></view></view><text class="member-state" :class="member.isOnline ? 'member-online' : ''">{{ member.isOnline ? '在线' : '离线' }}</text></view>
+              <button v-if="sessionState.user != null && member.id != sessionState.user!.id" class="mention-button" @click="mentionMember(member)">@他</button>
+            </view>
+          </scroll-view>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import StickerKeyboard from '@/components/chat/StickerKeyboard.uvue'
+import GiftMessageCard from '@/components/chat/GiftMessageCard.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { CircleDetailResponse, CircleMember, CircleMention, CircleMessage, CircleMessagesResponse } from '@/domain/dto/circle.uts'
+import { CircleRealtimeHandle, connectCircleRealtime } from '@/services/circle-realtime.uts'
+import { loadCircleDetail, loadCircleMessages, loadCircleUnreadMentions, markAllCircleMentionsRead, markCircleMentionRead, markCircleRead, recallCircleMessage, sendCircleMessage, sendCircleSticker } from '@/services/circles.uts'
+import { StickerAsset, loadStickers } from '@/services/messages.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+import { refreshUnreadState } from '@/stores/unread.uts'
+
+type CircleChatData = {
+  id: string,
+  initialMentionId: string,
+  detail: CircleDetailResponse | null,
+  messages: CircleMessagesResponse,
+  draft: string,
+  stickers: StickerAsset[],
+  stickersLoading: boolean,
+  showStickers: boolean,
+  showMembers: boolean,
+  showScrollBottom: boolean,
+  atBottom: boolean,
+  loading: boolean,
+  reconciling: boolean,
+  loadingOlder: boolean,
+  sending: boolean,
+  scrollTop: number,
+  scrollIntoView: string,
+  highlightedId: string,
+  highlightTimerId: number,
+  timerId: number,
+  realtime: CircleRealtimeHandle | null,
+  replyingTo: CircleMessage | null,
+  mentionedUsers: CircleMention[],
+  unreadMentionIds: string[],
+  errorMessage: string
+}
+
+const data = reactive({
+  id: '',
+  initialMentionId: '',
+  detail: null as CircleDetailResponse | null,
+  messages: { messages: [] as CircleMessage[], hasMore: false, nextCursor: null as string | null },
+  draft: '',
+  stickers: [] as StickerAsset[],
+  stickersLoading: false,
+  showStickers: false,
+  showMembers: false,
+  showScrollBottom: false,
+  atBottom: true,
+  loading: false,
+  reconciling: false,
+  loadingOlder: false,
+  sending: false,
+  scrollTop: 999999,
+  scrollIntoView: '',
+  highlightedId: '',
+  highlightTimerId: 0,
+  timerId: 0,
+  realtime: null as CircleRealtimeHandle | null,
+  replyingTo: null as CircleMessage | null,
+  mentionedUsers: [] as CircleMention[],
+  unreadMentionIds: [] as string[],
+  errorMessage: ''
+} as CircleChatData)
+
+const circleAvatar = computed<string>(() => data.detail == null ? '' : absoluteApiUrl(data.detail!.circle.avatar))
+const memberCountText = computed<string>(() => data.detail == null ? '0' : (data.detail!.circle.memberCount > 99 ? '99+' : data.detail!.circle.memberCount.toString()))
+const sortedMembers = computed<CircleMember[]>(() => {
+  if (data.detail == null) return [] as CircleMember[]
+  return [...data.detail!.members].sort((a: CircleMember, b: CircleMember): number => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0))
+})
+
+function goBack() { uni.navigateBack() }
+function isMine(message: CircleMessage): boolean { return message.sender != null && sessionState.user != null && message.sender!.id == sessionState.user!.id }
+function senderName(message: CircleMessage): string { return message.sender == null ? '已注销用户' : message.sender!.nickname }
+function senderInitial(message: CircleMessage): string { const name = senderName(message); return name.length == 0 ? '友' : name.substring(0, 1) }
+function senderAvatar(message: CircleMessage): string { return message.sender == null ? '' : absoluteApiUrl(message.sender!.avatar) }
+function senderBadgeIcon(message: CircleMessage): string { return message.sender == null || message.sender!.equippedBadge == null ? '' : absoluteApiUrl(message.sender!.equippedBadge!.iconUrl) }
+function timeText(value: string): string { const date = new Date(value); return date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0') }
+function recalledText(message: CircleMessage): string { return isMine(message) ? '你撤回了一条消息' : senderName(message) + '撤回了一条消息' }
+function messageText(message: CircleMessage): string { if (message.type == 'room_invite') return '[玩汤房间邀请]'; if (message.type == 'soup_share') return '[海龟汤分享]'; return message.content }
+function actionSummary(message: CircleMessage): string {
+  if (message.recalledAt != null) return '消息已撤回'
+  if (message.type == 'sticker') return '[表情] ' + (message.stickerName ?? '表情')
+  if (message.type == 'gift') return '[礼物] ' + message.content
+  if (message.type == 'room_invite') return '[玩汤房间邀请]'
+  if (message.type == 'soup_share') return '[海龟汤分享]'
+  return message.content
+}
+function replySummary(message: CircleMessage): string {
+  if (message.replyTo == null) return ''
+  if (message.replyTo!.recalledAt != null) return '消息已撤回'
+  if (message.replyTo!.type == 'sticker') return '[表情] ' + (message.replyTo!.stickerName ?? '表情')
+  if (message.replyTo!.type == 'gift') return '[礼物]'
+  if (message.replyTo!.type == 'room_invite') return '[玩汤房间邀请]'
+  if (message.replyTo!.type == 'soup_share') return '[海龟汤分享]'
+  return message.replyTo!.content
+}
+function badgeClass(message: CircleMessage): string {
+  if (message.sender == null || message.sender!.equippedBadge == null) return ''
+  const tier = message.sender!.equippedBadge!.tier
+  if (tier == 'legendary') return 'badge-legendary'
+  if (tier == 'epic') return 'badge-epic'
+  if (tier == 'rare') return 'badge-rare'
+  return 'badge-common'
+}
+function stickerUrl(message: CircleMessage): string { if (message.stickerId == null) return ''; const sticker = data.stickers.find((item: StickerAsset): boolean => item.id == message.stickerId); return sticker == null ? '' : absoluteApiUrl(sticker!.animatedUrl) }
+function updateBottomPosition() { data.scrollTop = data.scrollTop == 999999 ? 999998 : 999999 }
+function scrollToBottom() { data.atBottom = true; data.showScrollBottom = false; updateBottomPosition(); setTimeout(() => { updateBottomPosition() }, 48) }
+function closeStickers() { data.showStickers = false }
+function openMembers() { uni.hideKeyboard(); closeStickers(); data.showMembers = true }
+function closeMembers() { data.showMembers = false }
+function memberAvatar(member: CircleMember): string { return absoluteApiUrl(member.avatar) }
+function memberBadgeIcon(member: CircleMember): string { return member.equippedBadge == null ? '' : absoluteApiUrl(member.equippedBadge!.iconUrl) }
+function openMemberProfile(member: CircleMember) { closeMembers(); uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(member.id) }) }
+function openSenderProfile(message: CircleMessage) { if (message.sender != null) uni.navigateTo({ url: '/pages/user-profile/user-profile?id=' + encodeURIComponent(message.sender!.id) }) }
+function memberBadgeClass(member: CircleMember): string {
+  if (member.equippedBadge == null) return ''
+  const tier = member.equippedBadge!.tier
+  if (tier == 'legendary') return 'badge-legendary'
+  if (tier == 'epic') return 'badge-epic'
+  if (tier == 'rare') return 'badge-rare'
+  return 'badge-common'
+}
+function mentionMember(member: CircleMember) {
+  if (sessionState.user != null && member.id == sessionState.user!.id) return
+  const token = '@' + member.nickname
+  if (!data.draft.includes(token)) data.draft = (data.draft.trim().length > 0 ? data.draft.trimEnd() + ' ' : '') + token + ' '
+  if (!data.mentionedUsers.some((item: CircleMention): boolean => item.userId == member.id)) data.mentionedUsers.push({ userId: member.id, nickname: member.nickname } as CircleMention)
+  closeMembers()
+  uni.showToast({ title: '已@' + member.nickname, icon: 'none' })
+}
+function cancelReply() { data.replyingTo = null }
+function keepLatestVisible() { if (data.atBottom) scrollToBottom() }
+function handleComposerFocus() { closeStickers(); keepLatestVisible() }
+function markAtBottom() { data.atBottom = true; data.showScrollBottom = false }
+function handleScroll(event: UniScrollEvent) { if (event.detail.deltaY < -2) data.atBottom = false }
+
+function loadStickerData() {
+  if (data.stickersLoading || data.stickers.length > 0) return
+  data.stickersLoading = true
+  loadStickers((response) => {
+    const all: StickerAsset[] = []
+    response.series.forEach((series) => { all.push(...series.stickers) })
+    data.stickers = all
+    data.stickersLoading = false
+  }, (_) => { data.stickersLoading = false })
+}
+
+function applyLocalPresence(detail: CircleDetailResponse): CircleDetailResponse {
+  if (sessionState.user == null) return detail
+  detail.members.forEach((member: CircleMember) => {
+    if (member.id == sessionState.user!.id) member.isOnline = true
+  })
+  detail.circle.onlineCount = detail.members.filter((member: CircleMember): boolean => member.isOnline).length
+  return detail
+}
+
+function toggleStickers() { if (data.showStickers) { data.showStickers = false; return }; uni.hideKeyboard(); data.showStickers = true; loadStickerData(); updateBottomPosition() }
+
+function reload() {
+  if (data.id.length == 0 || data.loading || sessionState.user == null) return
+  data.loading = true
+  data.errorMessage = ''
+  loadStickerData()
+  loadCircleDetail(data.id, (detail) => {
+    data.detail = applyLocalPresence(detail)
+    loadCircleMessages(data.id, '', (messages) => {
+      data.messages = messages
+      data.loading = false
+      scrollToBottom()
+      markCircleRead(data.id, () => {}, (_) => {})
+      loadCircleUnreadMentions(data.id, (response) => {
+        data.unreadMentionIds = response.mentions.map((item): string => item.id)
+      }, (_) => {})
+    }, (error) => { data.loading = false; data.errorMessage = error.message })
+  }, (error) => { data.loading = false; data.errorMessage = error.message })
+}
+
+function reconcile() {
+  if (data.id.length == 0 || data.detail == null || data.reconciling || data.sending) return
+  data.reconciling = true
+  loadCircleMessages(data.id, '', (response) => {
+    const existingIds: string[] = data.messages.messages.map((item: CircleMessage): string => item.id)
+    response.messages.forEach((item: CircleMessage) => {
+      const index = data.messages.messages.findIndex((existing: CircleMessage): boolean => existing.id == item.id)
+      if (index >= 0) data.messages.messages[index] = item
+    })
+    const incoming = response.messages.filter((item: CircleMessage): boolean => !existingIds.includes(item.id))
+    if (incoming.length > 0) {
+      data.messages.messages = data.messages.messages.concat(incoming)
+      if (data.atBottom) scrollToBottom()
+      else data.showScrollBottom = true
+      markCircleRead(data.id, () => {}, (_) => {})
+      refreshUnreadState()
+    }
+    data.reconciling = false
+  }, (error) => { data.reconciling = false; data.errorMessage = error.message })
+}
+
+function stopReconcile() { if (data.timerId != 0) { clearInterval(data.timerId); data.timerId = 0 } }
+function startReconcile() { stopReconcile(); data.timerId = setInterval(() => { reconcile() }, 5000) }
+function stopRealtime() { if (data.realtime != null) { data.realtime!.close(); data.realtime = null } }
+function startRealtime() {
+  stopRealtime()
+  if (data.id.length == 0 || sessionState.user == null) return
+  data.realtime = connectCircleRealtime(data.id, (event: string) => {
+    if (event == 'circle_member_presence' || event == 'circle_member_joined') {
+      loadCircleDetail(data.id, (detail) => { data.detail = applyLocalPresence(detail) }, (_) => {})
+      return
+    }
+    if (event == 'disconnected') {
+      setTimeout(() => { if (data.detail != null && data.realtime != null) startRealtime() }, 2000)
+      return
+    }
+    if (event == 'connected') {
+      loadCircleDetail(data.id, (detail) => { data.detail = applyLocalPresence(detail) }, (_) => {})
+      reconcile()
+      return
+    }
+    if (event == 'circle_message_created' || event == 'circle_message_recalled') reconcile()
+  })
+}
+
+function loadOlder() {
+  if (!data.messages.hasMore || data.loadingOlder || data.messages.nextCursor == null) return
+  data.loadingOlder = true
+  const cursor = data.messages.nextCursor!
+  loadCircleMessages(data.id, cursor, (response) => {
+    data.messages.messages = response.messages.concat(data.messages.messages)
+    data.messages.hasMore = response.hasMore
+    data.messages.nextCursor = response.nextCursor
+    data.loadingOlder = false
+  }, (error) => { data.loadingOlder = false; data.errorMessage = error.message })
+}
+
+function highlightMessage(messageId: string) {
+  data.scrollIntoView = ''
+  data.highlightedId = messageId
+  nextTick(() => { data.scrollIntoView = 'circle-message-' + messageId })
+  if (data.highlightTimerId != 0) clearTimeout(data.highlightTimerId)
+  data.highlightTimerId = setTimeout(() => { data.highlightedId = ''; data.highlightTimerId = 0 }, 1800)
+}
+
+function locateOlderMessage(messageId: string) {
+  if (!data.messages.hasMore || data.messages.nextCursor == null) {
+    uni.showToast({ title: '未找到被回复的原消息', icon: 'none' })
+    return
+  }
+  data.loadingOlder = true
+  const cursor = data.messages.nextCursor!
+  loadCircleMessages(data.id, cursor, (response) => {
+    data.messages.messages = response.messages.concat(data.messages.messages)
+    data.messages.hasMore = response.hasMore
+    data.messages.nextCursor = response.nextCursor
+    data.loadingOlder = false
+    const found = data.messages.messages.some((item: CircleMessage): boolean => item.id == messageId)
+    if (found) highlightMessage(messageId)
+    else locateOlderMessage(messageId)
+  }, (error) => { data.loadingOlder = false; data.errorMessage = error.message })
+}
+
+function locateReply(messageId: string) {
+  if (messageId.length == 0 || data.loadingOlder) return
+  const existing = data.messages.messages.find((item: CircleMessage): boolean => item.id == messageId)
+  if (existing != null) {
+    highlightMessage(messageId)
+    return
+  }
+  locateOlderMessage(messageId)
+}
+
+function locateMention(messageId: string) {
+  if (messageId.length == 0) return
+  locateReply(messageId)
+  markCircleMentionRead(data.id, messageId, () => {}, (_) => {})
+  data.unreadMentionIds = data.unreadMentionIds.filter((item: string): boolean => item != messageId)
+  data.initialMentionId = ''
+}
+
+function locateNextMention() {
+  if (data.unreadMentionIds.length > 0) locateMention(data.unreadMentionIds[0])
+}
+
+function recallMessage(message: CircleMessage) {
+  recallCircleMessage(data.id, message.id, (response) => {
+    message.content = ''
+    message.stickerId = null
+    message.recalledAt = response.recalledAt
+    message.mentions = []
+    if (data.replyingTo != null && data.replyingTo!.id == message.id) data.replyingTo = null
+    data.messages.messages.forEach((item: CircleMessage) => {
+      if (item.replyTo != null && item.replyTo!.id == message.id) {
+        item.replyTo!.content = ''
+        item.replyTo!.stickerId = null
+        item.replyTo!.recalledAt = response.recalledAt
+      }
+    })
+  }, (error) => { data.errorMessage = error.message })
+}
+
+function openMessageActions(message: CircleMessage) {
+  if (message.recalledAt != null) return
+  const canRecall = isMine(message) && Date.now() - new Date(message.createdAt).getTime() <= 120000
+  const items: string[] = canRecall ? ['回复', '撤回'] : ['回复']
+  uni.showActionSheet({
+    itemList: items,
+    success: (result) => {
+      if (result.tapIndex == 0) {
+        data.replyingTo = message
+        closeStickers()
+        return
+      }
+      if (canRecall && result.tapIndex == 1) recallMessage(message)
+    }
+  })
+}
+
+function sendText() {
+  const content = data.draft.trim()
+  if (content.length == 0 || data.sending) return
+  data.sending = true
+  data.errorMessage = ''
+  const replyId = data.replyingTo == null ? '' : data.replyingTo!.id
+  const mentionIds = data.mentionedUsers.filter((item: CircleMention): boolean => content.includes('@' + item.nickname)).map((item: CircleMention): string => item.userId)
+  sendCircleMessage(data.id, content, replyId, mentionIds, (response) => {
+    if (!data.messages.messages.some((item: CircleMessage): boolean => item.id == response.message.id)) data.messages.messages.push(response.message)
+    data.draft = ''
+    data.replyingTo = null
+    data.mentionedUsers = []
+    data.sending = false
+    scrollToBottom()
+    markCircleRead(data.id, () => {}, (_) => {})
+  }, (error) => { data.sending = false; data.errorMessage = error.message })
+}
+
+function sendSticker(sticker: StickerAsset) {
+  if (data.sending) return
+  data.showStickers = false
+  data.sending = true
+  data.errorMessage = ''
+  const replyId = data.replyingTo == null ? '' : data.replyingTo!.id
+  sendCircleSticker(data.id, sticker.id, replyId, (response) => {
+    if (!data.messages.messages.some((item: CircleMessage): boolean => item.id == response.message.id)) data.messages.messages.push(response.message)
+    data.sending = false
+    data.replyingTo = null
+    scrollToBottom()
+    markCircleRead(data.id, () => {}, (_) => {})
+  }, (error) => { data.sending = false; data.errorMessage = error.message })
+}
+
+onLoad((options) => {
+  data.id = options['id'] ?? ''
+  data.initialMentionId = options['mentionId'] ?? ''
+  if (!sessionState.restored) restoreSession()
+  if (data.id.length > 0 && sessionState.user != null) reload()
+})
+onShow(() => { if (data.id.length > 0 && sessionState.user != null) { if (data.detail == null) reload(); else reconcile(); startRealtime(); startReconcile() } })
+onHide(() => { stopRealtime(); stopReconcile(); closeStickers() })
+onUnload(() => {
+  stopRealtime()
+  stopReconcile()
+  if (data.highlightTimerId != 0) clearTimeout(data.highlightTimerId)
+  if (data.id.length > 0 && data.unreadMentionIds.length > 0) markAllCircleMentionsRead(data.id, () => { refreshUnreadState() }, (_) => {})
+})
+watch((): string => sessionState.user == null ? '' : sessionState.user!.id, (userId: string) => { if (userId.length > 0 && data.detail == null) reload() })
+watch((): number => data.messages.messages.length, (count: number) => {
+  if (count > 0 && data.initialMentionId.length > 0 && !data.loading) {
+    const target = data.initialMentionId
+    nextTick(() => { locateMention(target) })
+  }
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.chat-shell { flex: 1; }
+.chat-header { height: 96px; padding: 48px 14px 8px 14px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #E5EAF2; background-color: #FFFFFF; }
+.back-button { width: 34px; height: 40px; margin-right: 7px; align-items: center; justify-content: center; }
+.back-image { width: 26px; height: 26px; }
+.header-avatar-wrap { position: relative; width: 40px; height: 40px; }
+.header-avatar { width: 40px; height: 40px; border-radius: 12px; background-color: #EAF2FF; }
+.online-dot, .message-online-dot { position: absolute; right: -1px; bottom: 0; width: 11px; height: 11px; border-width: 2px; border-color: #FFFFFF; border-radius: 6px; background-color: #12B76A; }
+.header-copy { flex: 1; min-width: 0; margin-left: 10px; }
+.header-name { color: #121826; font-size: 16px; font-weight: 800; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-status-row { margin-top: 3px; flex-direction: row; align-items: center; }
+.mini-dot { width: 6px; height: 6px; margin-right: 4px; border-radius: 3px; background-color: #12B76A; }
+.header-status { color: #667085; font-size: 10px; }
+.member-button { min-width: 32px; height: 32px; align-items: center; justify-content: center; border-radius: 16px; background-color: #EFF6FF; }
+.member-count { color: #2563EB; font-size: 10px; font-weight: 800; }
+.mention-notice { height: 38px; padding: 0 14px; flex-direction: row; align-items: center; justify-content: space-between; border-bottom-width: 1px; border-bottom-color: #FDE68A; background-color: #FFFBEB; }
+.mention-notice-text { color: #92400E; font-size: 11px; font-weight: 700; }
+.mention-notice-action { color: #2563EB; font-size: 11px; font-weight: 800; }
+.message-scroll { flex: 1; padding: 12px 14px; background-color: #F4F7FB; }
+.older-button { align-self: center; margin: 0 auto 12px auto; padding: 8px 14px; border-radius: 16px; background-color: #FFFFFF; color: #2563EB; font-size: 11px; }
+.message-row { margin-bottom: 14px; flex-direction: row; align-items: flex-start; }
+.message-anchor { border-radius: 16px; }
+.message-highlighted { background-color: #DBEAFE; }
+.mine-row { flex-direction: row-reverse; }
+.avatar-wrap { position: relative; width: 40px; height: 40px; }
+.avatar { width: 40px; height: 40px; border-radius: 20px; }
+.avatar-placeholder { align-items: center; justify-content: center; background-color: #DBEAFE; color: #2563EB; font-size: 15px; font-weight: 700; }
+.mine-avatar { background-color: #2563EB; color: #FFFFFF; }
+.message-online-dot { right: -1px; }
+.message-body { width: 78%; margin-left: 8px; margin-right: 8px; align-items: flex-start; }
+.mine-body { align-items: flex-end; }
+.identity-row { margin-bottom: 4px; padding: 0 2px; flex-direction: row; align-items: center; }
+.mine-identity { flex-direction: row-reverse; }
+.sender-name { max-width: 110px; color: #344054; font-size: 10px; font-weight: 700; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.level { margin-left: 5px; margin-right: 5px; padding: 2px 5px; border-radius: 7px; background-color: #F59E0B; color: #FFFFFF; font-size: 8px; }
+.badge-name { font-size: 9px; font-weight: 800; }
+.badge-common { color: #2563EB; }
+.badge-rare { color: #7C3AED; }
+.badge-epic { color: #D97706; }
+.badge-legendary { color: #E11D48; }
+.bubble { padding: 10px 12px; border-radius: 17px; }
+.bubble-text { color: #121826; font-size: 14px; line-height: 21px; }
+.mine-bubble { border-bottom-right-radius: 5px; background-color: #2563EB; }
+.mine-bubble-text { color: #FFFFFF; }
+.other-bubble { border-bottom-left-radius: 5px; background-color: #FFFFFF; }
+.reply-quote { width: 100%; margin-bottom: 7px; padding: 6px 8px; flex-direction: row; border-left-width: 2px; border-left-color: #93C5FD; border-radius: 7px; background-color: #F1F5F9; }
+.mine-reply-quote { border-left-color: #BFDBFE; background-color: rgba(255, 255, 255, 0.16); }
+.reply-name { color: #2563EB; font-size: 10px; font-weight: 700; }
+.reply-summary { flex: 1; color: #667085; font-size: 10px; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mine-reply-text { color: #EAF2FF; }
+.message-sticker { width: 142px; height: 142px; }
+.missing-sticker { padding: 10px 12px; border-radius: 13px; background-color: #EAECF0; color: #667085; font-size: 12px; }
+.time { margin-top: 4px; padding: 0 3px; color: #98A2B3; font-size: 9px; }
+.mine-time { text-align: right; }
+.recalled { margin-bottom: 10px; align-items: center; }
+.recalled-text { color: #98A2B3; font-size: 11px; }
+.empty-chat { align-items: center; padding: 80px 20px; }
+.empty-title { color: #344054; font-size: 14px; font-weight: 700; }
+.empty-copy { margin-top: 5px; color: #98A2B3; font-size: 12px; }
+.composer { min-height: 58px; padding: 8px 10px; flex-direction: row; align-items: center; border-top-width: 1px; border-top-color: #E5EAF2; background-color: #FFFFFF; }
+.replying-bar { min-height: 48px; padding: 7px 10px 7px 14px; flex-direction: row; align-items: center; border-top-width: 1px; border-top-color: #E5EAF2; background-color: #FFFFFF; }
+.replying-copy { flex: 1; min-width: 0; }
+.replying-title { color: #2563EB; font-size: 11px; font-weight: 700; }
+.replying-summary { margin-top: 2px; color: #667085; font-size: 10px; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replying-close { width: 36px; height: 36px; margin: 0; padding: 0; background-color: transparent; color: #667085; font-size: 24px; }
+.composer-input { flex: 1; height: 42px; padding: 0 12px; border-radius: 13px; background-color: #F4F7FB; color: #121826; font-size: 14px; }
+.icon-button { width: 42px; height: 42px; margin-left: 7px; align-items: center; justify-content: center; border-width: 1px; border-color: #D0D5DD; border-radius: 12px; background-color: #FFFFFF; }
+.icon-button-active { border-color: #2563EB; background-color: #EFF6FF; }
+.composer-icon { width: 25px; height: 25px; }
+.send-button { width: 58px; height: 40px; margin-left: 7px; padding: 0; align-items: center; justify-content: center; border-radius: 12px; background-color: #2563EB; }
+.send-label { color: #FFFFFF; font-size: 12px; font-weight: 700; }
+.send-disabled { background-color: #AFC6F7; }
+.scroll-bottom { position: absolute; right: 16px; bottom: 72px; width: 44px; height: 44px; align-items: center; justify-content: center; border-width: 1px; border-color: #E5EAF2; border-radius: 22px; background-color: #FFFFFF; }
+.scroll-bottom-icon { width: 23px; height: 23px; }
+.loading-card, .state-card { margin: 16px; padding: 26px 20px; align-items: center; border-radius: 18px; background-color: #FFFFFF; color: #667085; font-size: 14px; }
+.state-title { color: #121826; font-size: 18px; font-weight: 700; }
+.state-message, .send-error { margin-top: 7px; color: #B42318; font-size: 12px; }
+.retry-button { width: 100%; margin-top: 15px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; }
+.back-secondary { width: 100%; margin-top: 8px; border-width: 1px; border-color: #D0D5DD; border-radius: 12px; background-color: #FFFFFF; color: #344054; font-size: 13px; }
+.send-error { padding: 4px 14px; background-color: #FEF3F2; }
+.member-mask { position: absolute; left: 0; right: 0; top: 0; bottom: 0; justify-content: flex-end; background-color: rgba(15, 23, 42, 0.42); }
+.member-panel { height: 66%; padding-bottom: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; background-color: #FFFFFF; }
+.member-panel-header { min-height: 76px; padding: 16px 14px; flex-direction: row; align-items: center; justify-content: space-between; border-bottom-width: 1px; border-bottom-color: #E5EAF2; }
+.member-panel-title { color: #121826; font-size: 18px; font-weight: 800; }
+.member-panel-subtitle { margin-top: 4px; color: #667085; font-size: 11px; }
+.member-panel-close { width: 38px; height: 38px; margin: 0; padding: 0; border-radius: 19px; background-color: #F2F4F7; color: #667085; font-size: 24px; }
+.member-list { flex: 1; padding: 4px 14px 16px 14px; }
+.member-row { min-height: 66px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-color: #F2F4F7; }
+.member-avatar-wrap { position: relative; width: 44px; height: 44px; }
+.member-avatar { width: 44px; height: 44px; border-radius: 22px; background-color: #DBEAFE; }
+.member-avatar-placeholder { align-items: center; justify-content: center; color: #2563EB; font-size: 15px; font-weight: 800; }
+.member-online-dot { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; border-width: 2px; border-color: #FFFFFF; border-radius: 6px; background-color: #12B76A; }
+.member-copy { flex: 1; min-width: 0; margin-left: 11px; }
+.member-name-row { flex-direction: row; align-items: center; }
+.member-name { max-width: 150px; color: #121826; font-size: 14px; font-weight: 800; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-level { margin-left: 6px; padding: 2px 5px; border-radius: 7px; background-color: #F59E0B; color: #FFFFFF; font-size: 8px; font-weight: 700; }
+.member-state { margin-top: 3px; color: #98A2B3; font-size: 10px; }
+.member-online { color: #12B76A; font-weight: 700; }
+.mention-button { width: 52px; height: 32px; margin: 0; padding: 0; border-radius: 16px; background-color: #EFF6FF; color: #2563EB; font-size: 11px; font-weight: 800; }
+.pressed { opacity: 0.7; }
+.member-badge { max-width: 84px; margin-left: 5px; font-size: 10px; font-weight: 900; lines: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-badge-wrap,.member-badge-wrap { margin-left: 5px; flex-direction: row; align-items: center; }.message-badge-icon,.member-badge-icon { width: 15px; height: 15px; }
+</style>

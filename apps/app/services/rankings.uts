@@ -1,0 +1,4 @@
+import { CollectionRankingsResponse, RankingsResponse } from '@/domain/dto/ranking.uts'
+import { apiGet, ApiError } from '@/services/api-client.uts'
+export function loadRankings(period: string, success: (data: RankingsResponse) => void, fail: (error: ApiError) => void) { apiGet<RankingsResponse>('/api/rankings?period=' + period, (json: string): RankingsResponse => JSON.parse<RankingsResponse>(json)!, success, fail) }
+export function loadCollectionRankings(period: string, success: (data: CollectionRankingsResponse) => void, fail: (error: ApiError) => void) { apiGet<CollectionRankingsResponse>('/api/asset-rankings?period=' + period, (json: string): CollectionRankingsResponse => JSON.parse<CollectionRankingsResponse>(json)!, success, fail) }

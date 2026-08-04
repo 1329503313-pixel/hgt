@@ -1,0 +1,63 @@
+import { API_ORIGIN, WS_PREFIX } from '@/config/runtime.uts'
+
+export type CircleRealtimeHandle = {
+  close: () => void
+}
+
+function socketBaseUrl(): string {
+  if (API_ORIGIN.startsWith('https://')) return 'wss://' + API_ORIGIN.substring(8)
+  if (API_ORIGIN.startsWith('http://')) return 'ws://' + API_ORIGIN.substring(7)
+  return API_ORIGIN
+}
+
+export function connectCircleRealtime(circleId: string, onEvent: (event: string) => void): CircleRealtimeHandle {
+  let task: SocketTask | null = null
+  let stopped = false
+  let heartbeatId = 0
+  let lastResponseAt = Date.now()
+
+  const clearTimers = () => {
+    if (heartbeatId != 0) { clearInterval(heartbeatId); heartbeatId = 0 }
+  }
+
+  const connect = () => {
+    if (stopped) return
+    task = uni.connectSocket({ url: socketBaseUrl() + WS_PREFIX + '/circles?circleId=' + encodeURIComponent(circleId) })
+    task!.onOpen(() => {
+      lastResponseAt = Date.now()
+      onEvent('connected')
+      heartbeatId = setInterval(() => {
+        if (task == null) return
+        if (Date.now() - lastResponseAt > 75000) {
+          task!.close({})
+          return
+        }
+        task!.send({ data: JSON.stringify({ type: 'ping' }) })
+      }, 25000)
+    })
+    task!.onMessage((message) => {
+      lastResponseAt = Date.now()
+      try {
+        const payload = JSON.parse(message.data.toString()) as UTSJSONObject
+        const event = payload['event'] as string | null
+        if (event != null && event != 'pong') onEvent(event)
+      } catch (_) {}
+    })
+    task!.onError((_) => {})
+    task!.onClose(() => {
+      if (heartbeatId != 0) { clearInterval(heartbeatId); heartbeatId = 0 }
+      task = null
+      if (!stopped) onEvent('disconnected')
+    })
+  }
+
+  connect()
+  return {
+    close: () => {
+      stopped = true
+      clearTimers()
+      if (task != null) task!.close({})
+      task = null
+    }
+  } as CircleRealtimeHandle
+}

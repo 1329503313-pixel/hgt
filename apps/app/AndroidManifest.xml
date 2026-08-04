@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools"
+  package="com.caqis.hgt">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+  <!-- Local Android emulator development uses http://10.0.2.2:4000. -->
+  <application
+    android:usesCleartextTraffic="true"
+    tools:replace="android:usesCleartextTraffic" />
+</manifest>

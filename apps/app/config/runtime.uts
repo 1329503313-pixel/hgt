@@ -1,0 +1,168 @@
+// ============================================================
+// 服务端地址配置
+// ============================================================
+// 四种场景取值：
+//   1. Android 模拟器调试：'http://10.0.2.2:4000'（模拟器访问宿主机的特殊别名）
+//   2. iOS 模拟器调试：    'http://127.0.0.1:4000'
+//   3. 真机调试（任意平台）：'http://192.168.x.x:4000'（Mac 局域网 IP，端口 4000）
+//   4. 打包发布 / 真机默认：'https://hgt.caqis.com'
+//
+// 默认值会按当前平台和设备类型自动选择：模拟器走本地，真机走线上，其它场景手动覆盖。
+// 切换方式：
+//   - 真机调试：编辑下面 detectDefaultApiOrigin() 返回的 IP 后重编
+//   - 打包发布：覆盖 storage（setApiOrigin）或重编改 DEFAULT_API_ORIGIN
+// ============================================================
+
+// 模拟器访问宿主机的特殊别名（Android 模拟器专用，iOS 模拟器不需要）
+const ANDROID_EMULATOR_HOST = 'http://10.0.2.2:4000'
+const IOS_EMULATOR_HOST = 'http://127.0.0.1:4000'
+const PRODUCTION_API_ORIGIN = 'https://hgt.caqis.com'
+// 本地联调开关：true 时模拟器直接请求线上 API；完成联调后改回 false。
+const USE_PRODUCTION_API_FOR_SIMULATOR = false
+
+type RuntimeInfo = {
+  platform: string,
+  deviceBrand: string,
+  deviceModel: string
+}
+
+function lowerText(value: string | null): string {
+  return value == null ? '' : value.toLowerCase()
+}
+
+function readRuntimeInfo(): RuntimeInfo {
+  try {
+    const system = uni.getSystemInfoSync()
+    const device = uni.getDeviceInfo()
+    const platform = lowerText(system.platform)
+    const deviceBrand = lowerText(device.deviceBrand)
+    const deviceModel = lowerText(device.deviceModel)
+    return {
+      platform,
+      deviceBrand,
+      deviceModel
+    } as RuntimeInfo
+  } catch (_) {}
+  return {
+    platform: '',
+    deviceBrand: '',
+    deviceModel: ''
+  } as RuntimeInfo
+}
+
+function isAndroidEmulator(info: RuntimeInfo): boolean {
+  return info.deviceBrand.indexOf('generic') >= 0
+    || info.deviceModel.indexOf('emulator') >= 0
+    || info.deviceModel.indexOf('simulator') >= 0
+    || info.deviceModel.indexOf('android sdk built for') >= 0
+    || info.deviceModel.indexOf('sdk') >= 0
+}
+
+function isIosSimulator(info: RuntimeInfo): boolean {
+  return info.deviceModel.indexOf('simulator') >= 0
+}
+
+function resolveDefaultApiOrigin(info: RuntimeInfo): string {
+  if (info.platform == 'android') {
+    if (isAndroidEmulator(info) && USE_PRODUCTION_API_FOR_SIMULATOR) return PRODUCTION_API_ORIGIN
+    return isAndroidEmulator(info) ? ANDROID_EMULATOR_HOST : PRODUCTION_API_ORIGIN
+  }
+  if (info.platform == 'ios') {
+    if (isIosSimulator(info) && USE_PRODUCTION_API_FOR_SIMULATOR) return PRODUCTION_API_ORIGIN
+    return isIosSimulator(info) ? IOS_EMULATOR_HOST : PRODUCTION_API_ORIGIN
+  }
+  return PRODUCTION_API_ORIGIN
+}
+
+function normalizeLoopbackOverride(origin: string, info: RuntimeInfo): string {
+  if (origin == ANDROID_EMULATOR_HOST && !isAndroidEmulator(info)) return PRODUCTION_API_ORIGIN
+  if (origin == IOS_EMULATOR_HOST && !isIosSimulator(info)) return PRODUCTION_API_ORIGIN
+  return origin
+}
+
+function detectDefaultApiOrigin(): string {
+  return resolveDefaultApiOrigin(readRuntimeInfo())
+}
+
+const DEFAULT_API_ORIGIN = detectDefaultApiOrigin()
+
+// 存储 key：本地调试切换 / 打包发布切换都用这个
+const OVERRIDE_STORAGE_KEY = 'hgt_api_origin'
+
+function readOverrideOrigin(): string {
+  try {
+    const value = uni.getStorageSync(OVERRIDE_STORAGE_KEY) as string | null
+    if (value != null && value.length > 0) return value
+  } catch (_) {}
+  return ''
+}
+
+function resolveApiOrigin(): string {
+  const info = readRuntimeInfo()
+  // 默认模拟器访问宿主机；显式开启线上联调时优先使用生产 API。
+  if (info.platform == 'android' && isAndroidEmulator(info)) return USE_PRODUCTION_API_FOR_SIMULATOR ? PRODUCTION_API_ORIGIN : ANDROID_EMULATOR_HOST
+  if (info.platform == 'ios' && isIosSimulator(info)) return USE_PRODUCTION_API_FOR_SIMULATOR ? PRODUCTION_API_ORIGIN : IOS_EMULATOR_HOST
+  const override = readOverrideOrigin()
+  if (override.length > 0) return normalizeLoopbackOverride(override, info)
+  return DEFAULT_API_ORIGIN
+}
+
+// HTTP API 基础
+export const API_ORIGIN: string = resolveApiOrigin()
+export const API_PREFIX = '/api'
+export const API_BASE_URL = API_ORIGIN + API_PREFIX
+
+// WebSocket 路径（不在 /api 下）
+export const WS_PREFIX = '/ws'
+
+// 去掉 path 中的前导 /api，用于内部拼接避免双 /api
+function stripApiPrefix(path: string): string {
+  if (path.startsWith('/api/')) return path.substring(4)
+  if (path == '/api') return ''
+  return path
+}
+
+// HTTP API 请求：API_ORIGIN + API_PREFIX + path（path 可带或不带前导 /api）
+export function apiUrl(path: string): string {
+  return API_ORIGIN + API_PREFIX + stripApiPrefix(path)
+}
+
+// 绝对 URL 工具：按 path 前缀分流
+// - http(s):// 直接返回
+// - /api/* 走 API base
+// - 其他 /*（如 /stickers /circle-avatars /badges）走 origin
+export function absoluteApiUrl(path: string | null): string {
+  if (path == null || path.length == 0) return ''
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  if (path.startsWith('/api')) return apiUrl(path)
+  if (path.startsWith('/')) return API_ORIGIN + path
+  return ''
+}
+
+// 海龟汤封面缩略图：服务端路径固定为 /api/media/soups/:id/thumbnail
+export function soupThumbnailUrl(id: string, path: string | null): string {
+  if (path == null || path.length == 0) return ''
+  return apiUrl('/api/media/soups/' + encodeURIComponent(id) + '/thumbnail')
+}
+
+// ============================================================
+// 运行时切换 API 地址（供真机调试 / 打包发布前一次性切换）
+// ============================================================
+//
+// 用法（在控制台或 App.uvue 中调用一次，重启 APP 后生效）：
+//   import { setApiOrigin } from '@/config/runtime.uts'
+//   setApiOrigin('https://hgt.caqis.com')   // 切到线上
+//   setApiOrigin('http://192.168.x.x:4000') // 真机调试切到局域网
+//   clearApiOriginOverride()                // 恢复默认（本地）
+//
+export function setApiOrigin(origin: string): void {
+  uni.setStorageSync(OVERRIDE_STORAGE_KEY, origin)
+}
+
+export function clearApiOriginOverride(): void {
+  uni.removeStorageSync(OVERRIDE_STORAGE_KEY)
+}
+
+export function getApiOrigin(): string {
+  return resolveApiOrigin()
+}

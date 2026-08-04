@@ -1,0 +1,49 @@
+import { EquippedBadge } from './soup.uts'
+
+export type OnlineSoupHost = { id: string, nickname: string }
+export type OnlineSoupLobbyRoom = {
+  id: string, code: string, name: string, type: string, status: string,
+  host: OnlineSoupHost, soupTitle: string | null,
+  playerCount: number, playerCapacity: number, participantCount: number, participantCapacity: number,
+  hasPassword: boolean, viewerRole: string | null, createdAt: string
+}
+export type OnlineSoupRoomsResponse = { rooms: OnlineSoupLobbyRoom[] }
+export type OnlineSoupRoomResponse = { room: OnlineSoupLobbyRoom }
+export type OnlineSoupCreateResponse = { roomId: string, code: string }
+export type OnlineSoupJoinResponse = { roomId: string, role: string, joined: boolean }
+
+export type OnlineSoupMember = {
+  id: string, nickname: string, level: number, role: string, avatar: string | null,
+  equippedBadge: EquippedBadge | null, joinedAt: string
+}
+export type OnlineSoupVisibleSurface = { index: number, content: string }
+// 玩家视角只含基础汤面 + 已发布补充汤面；主持人视角额外包含汤底、补充汤底、手册和发布状态。
+export type OnlineSoupSelectedSoup = {
+  id: string, title: string, type: string, surface: string,
+  visibleSupplementalSurfaces: OnlineSoupVisibleSurface[],
+  supplementalSurfaces?: string[], bottom?: string, supplementalBottoms?: string[],
+  manual?: string | null, publishedSurfaceIndices?: number[], publishedBottomIndices?: number[]
+}
+export type OnlineSoupRoomState = {
+  id: string, code: string, name: string, type: string, status: string, hostOnline: boolean,
+  playerCount: number, playerCapacity: number, participantCapacity: number,
+  currentRoundId: string | null, soup: OnlineSoupSelectedSoup | null, createdAt: string
+}
+export type OnlineSoupMe = { role: string, isHost: boolean }
+export type OnlineSoupMessage = {
+  id: string, sequence: string, roundId: string | null, soupId: string | null,
+  senderId: string | null, senderName: string | null,
+  senderAvatar: string | null, senderLevel: number, senderEquippedBadge: EquippedBadge | null,
+  type: string, content: string, stickerId: string | null,
+  senderIsHost: boolean, contentIndex: number | null, questionNumber: number | null,
+  answer: string | null, roundEnded: boolean, allBottomsPublished: boolean,
+  createdAt: string, recalledAt: string | null
+}
+export type OnlineSoupSnapshot = {
+  room: OnlineSoupRoomState, me: OnlineSoupMe, members: OnlineSoupMember[],
+  messages: OnlineSoupMessage[], messagesHasMore: boolean, messagesNextCursor: string | null
+}
+export type OnlineSoupChoice = { id:string,title:string,type:string,author:string,summary:string,coverImage:string|null,source:string }
+export type OnlineSoupChoicesResponse = { soups:OnlineSoupChoice[],hasMore:boolean,nextPage:number|null }
+export type OnlineSoupOkResponse = { ok:boolean, ended?:boolean }
+export type OnlineSoupSendResponse = { id:string,questionNumber:number|null }

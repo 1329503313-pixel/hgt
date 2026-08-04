@@ -1,0 +1,163 @@
+<template>
+  <view class="dashboard">
+    <view class="topbar">
+      <text class="topbar-title">我的</text>
+      <view class="topbar-actions">
+        <view class="topbar-avatar" hover-class="tap-pressed" @click="openSettings">
+          <image v-if="avatarUrl.length > 0" class="topbar-avatar-image" :src="avatarUrl" mode="aspectFill"></image>
+          <text v-else class="topbar-avatar-text">{{ avatarText }}</text>
+        </view>
+        <view class="notice-shell" hover-class="tap-pressed" @click="openMessages">
+          <view class="notice-button"><image class="notice-icon" src="/static/mine/messages-square.png" mode="aspectFit"></image></view>
+          <view v-if="unreadCount > 0" class="notice-badge"><text class="notice-badge-text">{{ unreadText }}</text></view>
+        </view>
+      </view>
+    </view>
+
+    <view v-if="sessionState.restoring || !sessionState.restored" class="state-card"><text class="state-title">正在恢复会话...</text></view>
+    <view v-else-if="sessionState.user == null" class="state-card guest-card">
+      <text class="state-title">登录后查看个人主页</text><text class="state-copy">同步作品、收藏、点赞与成长记录</text>
+      <button class="login-button" @click="openAuth">登录 / 注册</button>
+    </view>
+
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view class="profile-card">
+        <image v-if="backgroundUrl.length > 0" class="profile-bg" :src="backgroundUrl" mode="aspectFill"></image>
+        <view class="profile-overlay">
+          <view class="profile-main" hover-class="tap-pressed" @click="openMyProfile">
+            <image v-if="avatarUrl.length > 0" class="avatar" :src="avatarUrl" mode="aspectFill"></image>
+            <view v-else class="avatar avatar-placeholder"><text class="avatar-text">{{ avatarText }}</text></view>
+            <view class="profile-copy">
+              <view class="identity-row"><text class="nickname">{{ sessionState.user!.nickname }}</text><text class="level">Lv{{ level }}</text></view>
+              <view class="asset-row"><image class="shell-icon" src="/static/tasks/shell.png" mode="aspectFit"></image><text class="asset-text">贝壳：{{ shellBalance }}</text><text class="asset-detail" @click.stop="openTransactions">明细</text></view>
+              <view v-if="profile != null && profile!.equippedBadge != null" class="badge-row"><image class="badge-icon" :src="badgeUrl" mode="aspectFit"></image><text class="badge-name">{{ profile!.equippedBadge!.name }}</text></view>
+            </view>
+          </view>
+          <view class="badge-action" hover-class="tap-pressed" @click="openAchievements"><text class="badge-action-text">＋</text></view>
+        </view>
+        <view class="stats-row">
+          <view class="stat"><text class="stat-value heat-value">♥ {{ heatValue }}</text><text class="stat-label">热力</text></view>
+          <view class="stat stat-border" hover-class="tap-pressed" @click="openInteractions('favorites')"><text class="stat-value favorite-value">♔ {{ favorites }}</text><text class="stat-label">收藏</text></view>
+          <view class="stat stat-border"><text class="stat-value">{{ receivedLikes }}</text><text class="stat-label">获赞</text></view>
+          <view class="stat stat-border" hover-class="tap-pressed" @click="openFollows('following')"><text class="stat-value">{{ following }}</text><text class="stat-label">关注</text></view>
+          <view class="stat stat-border" hover-class="tap-pressed" @click="openFollows('followers')"><text class="stat-value">{{ followers }}</text><text class="stat-label">粉丝</text></view>
+        </view>
+      </view>
+
+      <view class="summary-row">
+        <view class="summary-card">
+          <view class="summary-head"><text class="summary-label">等级成长</text><text class="summary-tail">差 {{ remainingExperience }} EXP</text></view>
+          <view class="summary-value-row"><text class="mini-level">Lv{{ level }}</text><text class="summary-value">{{ experience }}</text><text class="summary-unit">EXP</text></view>
+          <view class="progress-meta"><text class="progress-meta-text">{{ currentLevelExperience }} / {{ experienceForNextLevel }}</text><text class="progress-meta-text">{{ levelPercent }}%</text></view>
+          <view class="progress-track"><view class="level-progress" :style="{ width: levelProgressWidth }"></view></view>
+        </view>
+        <view class="summary-card right-summary" hover-class="tap-pressed" @click="openTransactions">
+          <view class="summary-head"><text class="summary-label">贝壳资产</text><text class="summary-tail">明细</text></view>
+          <view class="summary-value-row"><image class="summary-shell" src="/static/tasks/shell.png" mode="aspectFit"></image><text class="summary-value">{{ shellBalance }}</text><text class="summary-unit">贝壳</text></view>
+          <view class="progress-meta"><text class="progress-meta-text">今日 +{{ earnedToday }}</text><text class="progress-meta-text">{{ earnedToday }} / {{ dailyLimit }}</text></view>
+          <view class="progress-track shell-track"><view class="shell-progress" :style="{ width: shellProgressWidth }"></view></view>
+        </view>
+      </view>
+
+      <view class="feature-card"><view class="feature-grid">
+        <view class="feature-item" hover-class="tap-pressed" @click="openAssetStore"><view class="feature-icon store-bg"><image class="feature-icon-image" src="/static/mine/store.png" mode="aspectFit"></image></view><text class="feature-title">数字商城</text></view>
+        <view class="feature-item" hover-class="tap-pressed" @click="openCabinet"><view class="feature-icon cabinet-bg"><image class="feature-icon-image" src="/static/mine/bookmark.png" mode="aspectFit"></image></view><text class="feature-title">收藏柜</text></view>
+        <view class="feature-item" hover-class="tap-pressed" @click="openExcellentAuthor"><view class="feature-icon author-bg"><image class="feature-icon-image" src="/static/mine/medal.png" mode="aspectFit"></image></view><text class="feature-title">优秀作者</text></view>
+        <view class="feature-item" hover-class="tap-pressed" @click="openAchievements"><view class="feature-icon achievement-bg"><image class="feature-icon-image" src="/static/mine/trophy.png" mode="aspectFit"></image></view><text class="feature-title">我的成就</text></view>
+        <view class="feature-item" hover-class="tap-pressed" @click="openRankings"><view class="feature-icon ranking-bg"><image class="feature-icon-image" src="/static/mine/medal.png" mode="aspectFit"></image></view><text class="feature-title">排行榜</text></view>
+        <view class="feature-item" hover-class="tap-pressed" @click="openTasks"><view class="feature-icon task-bg"><image class="feature-icon-image" src="/static/mine/list-checks.png" mode="aspectFit"></image></view><text class="feature-title">任务中心</text></view>
+      </view></view>
+
+      <view class="content-card">
+        <view class="tabs">
+          <view class="tab" @click="setTab('published')"><text class="tab-text" :class="activeTab=='published'?'tab-text-active':''">发布 {{ published }}</text><view v-if="activeTab=='published'" class="tab-line"></view></view>
+          <view class="tab" @click="setTab('favorites')"><text class="tab-text" :class="activeTab=='favorites'?'tab-text-active':''">收藏 {{ favorites }}</text><view v-if="activeTab=='favorites'" class="tab-line"></view></view>
+          <view class="tab" @click="setTab('likes')"><text class="tab-text" :class="activeTab=='likes'?'tab-text-active':''">点赞 {{ likes }}</text><view v-if="activeTab=='likes'" class="tab-line"></view></view>
+        </view>
+        <view class="content-empty" @click="openInteractions(activeTab)"><text class="content-empty-text">{{ activeCount == 0 ? emptyText : '共 '+activeCount.toString()+' 条，点击查看全部' }}</text></view>
+      </view>
+      <text v-if="errorMessage.length > 0" class="error">{{ errorMessage }}</text>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { ShellTaskCenter } from '@/domain/dto/shell.uts'
+import { SocialProfile } from '@/domain/dto/social.uts'
+import { ContentCounts } from '@/domain/dto/user.uts'
+import { loadContentCounts } from '@/services/account.uts'
+import { loadMessageCounts } from '@/services/messages.uts'
+import { loadUserProfile } from '@/services/social.uts'
+import { loadShellTaskCenter } from '@/services/shells.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+
+type DashboardData = { profile: SocialProfile | null, counts: ContentCounts | null, shells: ShellTaskCenter | null, activeTab: string, heatValue: number, unreadCount: number, loading: boolean, errorMessage: string }
+const data = reactive({ profile:null, counts:null, shells:null, activeTab:'published', heatValue:0, unreadCount:0, loading:false, errorMessage:'' } as DashboardData)
+const profile = computed<SocialProfile | null>(()=>data.profile)
+const activeTab = computed<string>(()=>data.activeTab)
+const errorMessage = computed<string>(()=>data.errorMessage)
+const avatarUrl = computed<string>(()=>sessionState.user==null?'':absoluteApiUrl(sessionState.user!.avatar))
+const backgroundUrl = computed<string>(()=>data.profile==null?'':absoluteApiUrl(data.profile!.profileBackgroundUrl))
+const badgeUrl = computed<string>(()=>data.profile==null||data.profile!.equippedBadge==null?'':absoluteApiUrl(data.profile!.equippedBadge!.iconUrl))
+const avatarText = computed<string>(()=>sessionState.user==null||sessionState.user!.nickname.length==0?'汤':sessionState.user!.nickname.substring(0,1))
+const level = computed<number>(()=>data.shells==null?(sessionState.user?.level??0):data.shells!.levelProgress.level)
+const shellBalance = computed<number>(()=>data.shells?.balance??0)
+const earnedToday = computed<number>(()=>data.shells?.earnedToday??0)
+const dailyLimit = computed<number>(()=>data.shells?.dailyLimit??60)
+const experience = computed<number>(()=>data.shells?.levelProgress.experience??0)
+const remainingExperience = computed<number>(()=>data.shells?.levelProgress.remainingExperience??0)
+const currentLevelExperience = computed<number>(()=>data.shells?.levelProgress.currentLevelExperience??0)
+const experienceForNextLevel = computed<number>(()=>data.shells?.levelProgress.experienceForNextLevel??0)
+const levelPercent = computed<number>(()=>data.shells?.levelProgress.progressPercent??0)
+const levelProgressWidth = computed<string>(()=>levelPercent.value.toString()+'%')
+const shellPercent = computed<number>(()=>Math.min(100,Math.round(earnedToday.value/Math.max(1,dailyLimit.value)*100)))
+const shellProgressWidth = computed<string>(()=>shellPercent.value.toString()+'%')
+const receivedLikes = computed<number>(()=>data.profile?.receivedLikeCount??0)
+const heatValue = computed<number>(()=>data.heatValue)
+const unreadCount = computed<number>(()=>data.unreadCount)
+const unreadText = computed<string>(()=>data.unreadCount>99?'99+':data.unreadCount.toString())
+const following = computed<number>(()=>data.profile?.followingCount??0)
+const followers = computed<number>(()=>data.profile?.followerCount??0)
+const published = computed<number>(()=>data.counts?.published??0)
+const favorites = computed<number>(()=>data.counts?.favorites??0)
+const likes = computed<number>(()=>data.counts?.likes??0)
+const activeCount = computed<number>(()=>data.activeTab=='published'?published.value:data.activeTab=='favorites'?favorites.value:likes.value)
+const emptyText = computed<string>(()=>data.activeTab=='published'?'还没有发布作品':data.activeTab=='favorites'?'还没有收藏作品':'还没有点赞作品')
+
+function openAuth(){uni.navigateTo({url:'/pages/auth/auth'})}
+function openMessages(){uni.switchTab({url:'/pages/messages/messages'})}
+function openSettings(){uni.navigateTo({url:'/pages/account-settings/account-settings'})}
+function openTasks(){uni.navigateTo({url:'/pages/shell-tasks/shell-tasks'})}
+function openRankings(){uni.navigateTo({url:'/pages/rankings/rankings'})}
+function openAchievements(){uni.navigateTo({url:'/pages/achievements/achievements'})}
+function openAssetStore(){uni.navigateTo({url:'/pages/asset-store/asset-store'})}
+function openCabinet(){uni.navigateTo({url:'/pages/card-cabinet/card-cabinet'})}
+function openTransactions(){uni.navigateTo({url:'/pages/shell-transactions/shell-transactions'})}
+function openExcellentAuthor(){uni.showToast({title:'优秀作者申请请暂时使用网页版',icon:'none'})}
+function openMyProfile(){if(sessionState.user!=null)uni.navigateTo({url:'/pages/user-profile/user-profile?id='+encodeURIComponent(sessionState.user!.id)})}
+function openFollows(type:string){if(sessionState.user!=null)uni.navigateTo({url:'/pages/user-follows/user-follows?id='+encodeURIComponent(sessionState.user!.id)+'&type='+type})}
+function openInteractions(mode:string){uni.navigateTo({url:'/pages/my-interactions/my-interactions?mode='+mode})}
+function setTab(tab:string){data.activeTab=tab}
+function finishLoad(){data.loading=false}
+function reload(){
+  if(sessionState.user==null||data.loading)return
+  data.loading=true;data.errorMessage=''
+  let pending=4
+  const done=()=>{pending--;if(pending<=0)finishLoad()}
+  loadContentCounts((response)=>{data.counts=response;done()},(error)=>{data.errorMessage=error.message;done()})
+  loadShellTaskCenter((response)=>{data.shells=response;done()},(error)=>{data.errorMessage=error.message;done()})
+  loadUserProfile(sessionState.user!.id,(response)=>{data.profile=response.profile;let total=0;response.soups.forEach((soup)=>{total+=soup.heatValue});data.heatValue=total;done()},(error)=>{data.errorMessage=error.message;done()})
+  loadMessageCounts((response)=>{data.unreadCount=response.counts.total;done()},(_)=>{done()})
+}
+onLoad(()=>{if(!sessionState.restored)restoreSession()})
+onShow(()=>{reload()})
+watch(():string=>sessionState.user==null?'':sessionState.user!.id,(id:string)=>{if(id.length>0)reload();else{data.profile=null;data.counts=null;data.shells=null;data.heatValue=0;data.unreadCount=0}})
+</script>
+
+<style>
+.dashboard{flex:1;background-color:#F4F7FB}.topbar{height:96px;padding:48px 16px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}.topbar-title{color:#121826;font-size:17px;font-weight:900}.topbar-actions{flex-direction:row;align-items:center}.topbar-avatar,.notice-button{width:36px;height:36px;margin-left:6px;align-items:center;justify-content:center;border-radius:18px;background-color:#FFF}.notice-button{position:relative}.notice-badge{position:absolute;right:-2px;top:-3px;min-width:18px;height:18px;padding:0 4px;align-items:center;justify-content:center;border-width:2px;border-color:#FFF;border-radius:9px;background-color:#EF4444}.notice-badge-text{color:#FFF;font-size:8px;font-weight:900}.topbar-avatar-image{width:30px;height:30px;border-radius:15px}.topbar-avatar-text{color:#121826;font-size:11px;font-weight:900}.notice-icon{width:20px;height:20px}.scroll{flex:1}.state-card{margin:12px 16px;padding:28px 18px;align-items:center;border-radius:18px;background-color:#FFF}.state-title{color:#121826;font-size:15px;font-weight:900}.state-copy{margin-top:6px;color:#667085;font-size:10px}.login-button{width:100%;height:42px;margin-top:16px;padding:0;border-radius:11px;background-color:#2563EB;color:#FFF;font-size:11px;line-height:42px}.profile-card{height:184px;margin:12px 16px 0;overflow:hidden;border-radius:18px;background-color:#172554}.profile-bg{position:absolute;left:0;right:0;top:0;width:100%;height:126px}.profile-overlay{height:126px;padding:12px;flex-direction:row;align-items:center;background-color:rgba(15,23,42,.42)}.profile-main{flex:1;flex-direction:row;align-items:center}.avatar{width:58px;height:58px;border-width:2px;border-color:#FFF;border-radius:29px}.avatar-placeholder{align-items:center;justify-content:center;background-color:#DBEAFE}.avatar-text{color:#2563EB;font-size:21px;font-weight:900}.profile-copy{flex:1;min-width:0;margin-left:10px}.identity-row,.asset-row,.badge-row{flex-direction:row;align-items:center}.nickname{max-width:125px;color:#FFF;font-size:18px;font-weight:900;lines:1}.level{margin-left:6px;padding:3px 7px;border-radius:8px;background-color:#F59E0B;color:#FFF;font-size:9px;font-weight:800}.asset-row{margin-top:5px}.shell-icon{width:14px;height:14px}.asset-text{margin-left:3px;color:#FFF;font-size:10px;font-weight:800}.asset-detail{margin-left:6px;padding:2px 6px;border-radius:7px;background-color:rgba(255,255,255,.18);color:#FFF;font-size:8px}.badge-row{margin-top:5px}.badge-icon{width:16px;height:16px}.badge-name{margin-left:4px;color:#FDE68A;font-size:9px;font-weight:800}.badge-action{width:42px;height:42px;align-items:center;justify-content:center;border-width:1px;border-color:rgba(255,255,255,.6);border-radius:12px;background-color:rgba(255,255,255,.18)}.badge-action-text{color:#FFF;font-size:22px}.stats-row{height:58px;flex-direction:row;background-color:#FFF}.stat{flex:1;align-items:center;justify-content:center}.stat-border{border-left-width:1px;border-left-color:#EEF2F6}.stat-value{color:#121826;font-size:11px;font-weight:900}.heat-value{color:#F43F5E}.favorite-value{color:#F59E0B}.stat-label{margin-top:3px;color:#667085;font-size:8px}.summary-row{margin:10px 16px 0;flex-direction:row}.summary-card{flex:1;min-width:0;padding:12px;border-radius:16px;background-color:#FFF}.right-summary{margin-left:8px}.summary-head,.progress-meta{flex-direction:row;align-items:center;justify-content:space-between}.summary-label,.summary-tail{color:#667085;font-size:8px;font-weight:800}.summary-value-row{height:27px;margin-top:6px;flex-direction:row;align-items:center}.mini-level{padding:3px 6px;border-radius:7px;background-color:#F59E0B;color:#FFF;font-size:8px;font-weight:900}.summary-value{margin-left:5px;color:#121826;font-size:15px;font-weight:900}.summary-unit{margin-left:3px;color:#667085;font-size:7px;font-weight:800}.summary-shell{width:17px;height:17px}.progress-meta{margin-top:7px}.progress-meta-text{color:#667085;font-size:7px}.progress-track{height:5px;margin-top:5px;overflow:hidden;border-radius:3px;background-color:#E5E7EB}.level-progress{height:5px;border-radius:3px;background-color:#7C3AED}.shell-track{background-color:#FEF3C7}.shell-progress{height:5px;border-radius:3px;background-color:#F59E0B}.feature-card{margin:10px 16px 0;padding:10px 6px;border-radius:16px;background-color:#FFF}.feature-grid{flex-direction:row;flex-wrap:wrap}.feature-item{width:33.33%;align-items:center;padding:7px 2px}.feature-icon{width:38px;height:38px;align-items:center;justify-content:center;border-radius:12px}.feature-icon-image{width:20px;height:20px}.feature-title{margin-top:6px;color:#121826;font-size:9px;font-weight:800}.store-bg{background-color:#FFE4E6}.cabinet-bg{background-color:#E0E7FF}.author-bg{background-color:#FEF3C7}.achievement-bg{background-color:#EDE9FE}.ranking-bg{background-color:#FFEDD5}.task-bg{background-color:#E0F2FE}.content-card{height:180px;margin:10px 16px 0;overflow:hidden;border-radius:16px;background-color:#FFF}.tabs{height:44px;flex-direction:row;border-bottom-width:1px;border-bottom-color:#E5EAF2}.tab{flex:1;align-items:center;justify-content:center;position:relative}.tab-text{color:#667085;font-size:10px;font-weight:800}.tab-text-active{color:#121826}.tab-line{position:absolute;left:22px;right:22px;bottom:0;height:2px;border-radius:1px;background-color:#2563EB}.content-empty{flex:1;align-items:center;justify-content:center}.content-empty-text{color:#98A2B3;font-size:9px}.error{margin:8px 18px;color:#D92D20;font-size:9px}.safe-bottom{height:28px}
+.topbar-avatar,.notice-button{width:40px;height:40px;border-radius:20px}.notice-icon{width:22px;height:22px}.topbar-avatar-image{width:32px;height:32px;border-radius:16px}.nickname{font-size:17px}.asset-text{font-size:11px}.asset-detail{font-size:9px}.badge-name{font-size:10px}.stat-value{font-size:13px}.stat-label{font-size:10px}.summary-label{font-size:10px}.summary-tail{font-size:9px}.mini-level{font-size:9px}.summary-value{font-size:20px}.summary-unit{font-size:9px}.summary-shell{width:20px;height:20px}.progress-meta-text{font-size:9px}.feature-icon{width:42px;height:42px;border-radius:14px}.feature-icon-image{width:23px;height:23px}.feature-title{font-size:10px}.tab-text{font-size:11px}.content-empty-text{font-size:10px}.error{font-size:10px}.tap-pressed{opacity:.68}
+.notice-shell{position:relative;width:46px;height:46px;margin-left:3px;align-items:center;justify-content:center}.notice-button{width:40px;height:40px;margin-left:0;align-items:center;justify-content:center;border-radius:20px;background-color:#FFF}.notice-badge{right:0;top:0;min-width:20px;height:20px;border-radius:10px}.notice-badge-text{font-size:9px;line-height:16px;text-align:center}
+</style>

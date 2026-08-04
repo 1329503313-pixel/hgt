@@ -1,0 +1,21 @@
+export type GameLaunchState = {
+  pendingSoupId: string
+}
+
+export const gameLaunchState = reactive({
+  pendingSoupId: ''
+} as GameLaunchState)
+
+export function requestGameLaunch(soupId: string) {
+  gameLaunchState.pendingSoupId = soupId
+}
+
+export function consumeGameLaunch(): string {
+  const soupId: string = gameLaunchState.pendingSoupId
+  gameLaunchState.pendingSoupId = ''
+  return soupId
+}
+
+export function hasPendingGameLaunch(): boolean {
+  return gameLaunchState.pendingSoupId.length > 0
+}

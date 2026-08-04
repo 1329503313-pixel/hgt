@@ -1,0 +1,27 @@
+<template>
+  <view class="page"><view class="topbar"><AppBackButton @click="goBack" /><text class="title">抽卡记录</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state"><text>正在读取抽卡记录...</text></view><view v-else-if="data.errorMessage.length > 0" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <scroll-view v-else class="scroll" direction="vertical"><view v-if="data.orders.length == 0" class="state"><image class="empty-icon" src="/static/tasks/calendar.png" mode="aspectFit"></image><text>暂无抽卡记录</text></view>
+      <view v-for="order in data.orders" :key="order.id" class="order"><view class="order-head"><view><text class="pack-name">{{ order.packName }}</text><text class="order-meta">{{ formatTime(order.createdAt) }} · {{ order.drawMode == 'ten' ? '十连抽' : '单抽' }}</text></view><view class="cost"><image class="cost-icon" src="/static/tasks/shell.png" mode="aspectFit"></image><text>{{ order.usedFreeDraw ? '免费' : '-' + order.shellCost.toString() }}</text></view></view><view class="results"><view v-for="card in order.results" :key="card.drawIndex" class="result"><image class="result-image" :src="assetUrl(card.thumbnailUrl.length > 0 ? card.thumbnailUrl : card.imageUrl)" mode="aspectFill"></image><view v-if="card.firstObtained" class="new-dot"><text class="new-text">NEW</text></view><text class="result-rarity" :class="rarityClass(card.rarity)">{{ rarityLabel(card.rarity) }}</text></view></view></view><view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { AssetDrawOrder } from '@/domain/dto/digital-asset.uts'
+import { loadAssetDrawHistory } from '@/services/digital-assets.uts'
+type HistoryData={orders:AssetDrawOrder[],loading:boolean,errorMessage:string}
+const data=reactive({orders:[] as AssetDrawOrder[],loading:false,errorMessage:''} as HistoryData)
+function assetUrl(url:string):string{return absoluteApiUrl(url)}
+function rarityLabel(value:string):string{return value=='normal'?'普通':value=='rare'?'稀有':value=='epic'?'史诗':'传说'}
+function rarityClass(value:string):string{return value=='normal'?'normal':value=='rare'?'rare':value=='epic'?'epic':'legend'}
+function formatTime(value:string):string{const date=new Date(value);const month=(date.getMonth()+1).toString().padStart(2,'0');const day=date.getDate().toString().padStart(2,'0');const hour=date.getHours().toString().padStart(2,'0');const minute=date.getMinutes().toString().padStart(2,'0');return month+'-'+day+' '+hour+':'+minute}
+function goBack(){uni.navigateBack()}
+function reload(){if(data.loading)return;data.loading=true;data.errorMessage='';loadAssetDrawHistory((response)=>{data.orders=response.orders;data.loading=false},(error)=>{data.loading=false;data.errorMessage=error.message})}
+onLoad(()=>reload())
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}.topbar{height:96px;padding:48px 14px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px}.title{color:#121826;font-size:17px;font-weight:800}.scroll{flex:1}.order{margin:12px 16px;padding:14px;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF}.order-head{flex-direction:row;align-items:flex-start;justify-content:space-between}.pack-name{color:#121826;font-size:14px;font-weight:900}.order-meta{margin-top:5px;color:#98A2B3;font-size:9px}.cost{flex-direction:row;align-items:center;color:#2563EB;font-size:10px;font-weight:900}.cost-icon{width:16px;height:16px;margin-right:3px}.results{margin-top:12px;flex-direction:row;flex-wrap:wrap}.result{width:20%;padding:3px;align-items:center}.result-image{width:56px;height:79px;border-radius:7px}.result-rarity{margin-top:3px;font-size:7px;font-weight:800}.new-dot{position:absolute;right:0;top:0;padding:2px 3px;border-radius:5px;background-color:#EF4444}.new-text{margin:0;color:#FFF;font-size:6px}.normal{color:#2563EB}.rare{color:#7C3AED}.epic{color:#D97706}.legend{color:#DB2777}.state{margin:16px;padding:38px 18px;align-items:center;border-radius:18px;background-color:#FFF;color:#667085}.empty-icon{width:40px;height:40px;margin-bottom:12px}.error{color:#B42318}.retry{width:100%;margin-top:13px;background-color:#2563EB;color:#FFF}.safe-bottom{height:30px}
+.result{position:relative}
+</style>

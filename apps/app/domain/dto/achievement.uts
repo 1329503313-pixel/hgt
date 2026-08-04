@@ -1,0 +1,54 @@
+export type EquippedAchievementBadge = {
+  key: string,
+  iconUrl: string,
+  name: string,
+  tier: string
+}
+
+export type SpecialAchievementBadge = {
+  id: string,
+  key: string,
+  name: string,
+  description: string,
+  requirement: string | null,
+  iconUrl: string,
+  achievementPoints: number,
+  badgeType: string,
+  unlockedAt: string | null,
+  tier: string
+}
+
+export type BadgeCollectionResponse = {
+  badgeKeys: string[],
+  ownershipRates: UTSJSONObject,
+  legendaryBadges: SpecialAchievementBadge[],
+  equippedBadge: EquippedAchievementBadge | null
+}
+
+export type AchievementStats = {
+  soupCount: number,
+  favoriteCount: number,
+  evaluationCount: number,
+  likeCount: number,
+  criticalHitCount: number,
+  loginDayCount: number,
+  receivedLikeCount: number,
+  receivedFavoriteCount: number,
+  receivedCommentCount: number,
+  writtenCommentCount: number,
+  aiCompletionCount: number,
+  maxOriginalSoupHeat: number,
+  totalCollectionValue: number,
+  unlockedCardCount: number,
+  legendaryCardDrawCount: number,
+  epicThreeStarCount: number,
+  legendThreeStarCount: number,
+  completePackCount: number,
+  completeThreeStarPackCount: number,
+  totalShellEarned: number,
+  shellBalance: number
+}
+
+export type EquippedBadgeResponse = {
+  equippedBadge: EquippedAchievementBadge | null
+}

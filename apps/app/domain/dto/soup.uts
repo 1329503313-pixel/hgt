@@ -1,0 +1,136 @@
+export type EquippedBadge = {
+  key: string,
+  iconUrl: string,
+  name: string,
+  tier: string
+}
+
+export type RadarStats = {
+  writing: number | null,
+  logic: number | null,
+  share: number | null,
+  mechanism: number | null,
+  twist: number | null,
+  depth: number | null
+}
+
+export type SoupSummary = {
+  id: string,
+  title: string,
+  author: string,
+  type: string,
+  difficulty: string,
+  summary: string,
+  coverImage: string | null,
+  creatorId: string,
+  creatorName: string,
+  creatorAvatar: string | null,
+  creatorLevel: number,
+  creatorEquippedBadge: EquippedBadge | null,
+  isOriginal: boolean,
+  isBottomPublic: boolean,
+  enableAiGame: boolean | null,
+  viewCount: number,
+  likeCount: number,
+  favoriteCount: number,
+  createdAt: string,
+  evaluationCount: number,
+  averageTotal: number | null,
+  heatValue: number,
+  isLiked: boolean,
+  isFavorited: boolean,
+  radar: RadarStats
+}
+
+export type EvaluationSummary = {
+  id: string,
+  total: number,
+  reviewer: string,
+  reviewerId: string,
+  reviewerLevel: number,
+  writing: number | null,
+  logic: number | null,
+  share: number | null,
+  mechanism: number | null,
+  twist: number | null,
+  depth: number | null,
+  content: string | null,
+  createdAt: string
+}
+
+export type KeyFact = {
+  id: number,
+  content: string,
+  weight: number
+}
+
+export type SoupDetail = {
+  id: string,
+  title: string,
+  author: string,
+  type: string,
+  difficulty: string,
+  summary: string,
+  coverImage: string | null,
+  creatorId: string,
+  creatorName: string,
+  creatorAvatar: string | null,
+  creatorLevel: number,
+  creatorEquippedBadge: EquippedBadge | null,
+  isOriginal: boolean,
+  isSensitive: boolean | null,
+  isSurfacePublic: boolean,
+  isBottomPublic: boolean,
+  enableAiGame: boolean,
+  aiPrompt: string | null,
+  keyFacts: KeyFact[] | null,
+  keyFactsCustomized: boolean,
+  canEdit: boolean,
+  viewCount: number,
+  likeCount: number,
+  favoriteCount: number,
+  createdAt: string,
+  evaluationCount: number,
+  averageTotal: number | null,
+  heatValue: number,
+  radar: RadarStats,
+  surface: string,
+  supplementalSurfaces: string[],
+  bottom: string | null,
+  supplementalBottoms: string[] | null,
+  manual: string | null,
+  canViewFull: boolean,
+  isLiked: boolean,
+  isFavorited: boolean,
+  evaluations: EvaluationSummary[]
+}
+
+export type SoupsResponse = {
+  soups: SoupSummary[],
+  total: number | null,
+  hasMore: boolean
+}
+
+export type SoupDetailResponse = {
+  soup: SoupDetail
+}
+
+export type LikeResponse = {
+  isLiked: boolean,
+  likeCount: number
+}
+
+export type FavoriteResponse = {
+  isFavorited: boolean,
+  favoriteCount: number
+}
+
+export type SaveEvaluationResponse = {
+  id: string
+}
+
+export type SaveSoupResponse = {
+  id: string | null,
+  ok: boolean | null,
+  reviewStatus: string
+}

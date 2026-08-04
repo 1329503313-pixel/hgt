@@ -1,0 +1,23 @@
+import { GameSessionResponse, GameTurnResponse } from '@/domain/dto/game.uts'
+import { SoupsResponse } from '@/domain/dto/soup.uts'
+import { apiGet, apiPost, ApiError } from './api-client.uts'
+
+export function loadGameSoups(success: (data: SoupsResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<SoupsResponse>('/api/soups?limit=50&offset=0&includeTotal=1&order=desc', (json: string): SoupsResponse => JSON.parse<SoupsResponse>(json)!, success, fail)
+}
+
+export function startGame(soupId: string, success: (data: GameSessionResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<GameSessionResponse>('/api/game/' + encodeURIComponent(soupId) + '/start', {} as UTSJSONObject, (json: string): GameSessionResponse => JSON.parse<GameSessionResponse>(json)!, success, fail)
+}
+
+export function askGame(soupId: string, question: string, success: (data: GameTurnResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<GameTurnResponse>('/api/game/' + encodeURIComponent(soupId) + '/ask', { question } as UTSJSONObject, (json: string): GameTurnResponse => JSON.parse<GameTurnResponse>(json)!, success, fail)
+}
+
+export function requestGameHint(soupId: string, success: (data: GameTurnResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<GameTurnResponse>('/api/game/' + encodeURIComponent(soupId) + '/hint', {} as UTSJSONObject, (json: string): GameTurnResponse => JSON.parse<GameTurnResponse>(json)!, success, fail)
+}
+
+export function restartGame(soupId: string, success: (data: GameSessionResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<GameSessionResponse>('/api/game/' + encodeURIComponent(soupId) + '/restart', {} as UTSJSONObject, (json: string): GameSessionResponse => JSON.parse<GameSessionResponse>(json)!, success, fail)
+}

@@ -1,0 +1,33 @@
+import { OnlineSoupChoicesResponse, OnlineSoupCreateResponse, OnlineSoupJoinResponse, OnlineSoupOkResponse, OnlineSoupRoomResponse, OnlineSoupRoomsResponse, OnlineSoupSendResponse, OnlineSoupSnapshot } from '@/domain/dto/online-soup.uts'
+import { apiGet, apiPatch, apiPost, ApiError } from '@/services/api-client.uts'
+
+function decodeOnlineSoupSnapshot(json:string):OnlineSoupSnapshot{
+  const root=JSON.parse(json) as UTSJSONObject
+  const members=root['members'] as UTSJSONObject[]|null
+  if(members!=null)members.forEach((member)=>{if(member['level']==null)member['level']=1})
+  const messages=root['messages'] as UTSJSONObject[]|null
+  if(messages!=null)messages.forEach((message)=>{
+    if(message['senderLevel']==null)message['senderLevel']=1
+    if(message['senderIsHost']==null)message['senderIsHost']=false
+    if(message['roundEnded']==null)message['roundEnded']=false
+    if(message['allBottomsPublished']==null)message['allBottomsPublished']=false
+  })
+  return JSON.parse<OnlineSoupSnapshot>(JSON.stringify(root))!
+}
+
+export function loadOnlineSoupRooms(success:(data:OnlineSoupRoomsResponse)=>void,fail:(error:ApiError)=>void){apiGet<OnlineSoupRoomsResponse>('/api/online-soup/rooms',(json:string):OnlineSoupRoomsResponse=>JSON.parse<OnlineSoupRoomsResponse>(json)!,success,fail)}
+export function lookupOnlineSoupRoom(code:string,success:(data:OnlineSoupRoomResponse)=>void,fail:(error:ApiError)=>void){apiGet<OnlineSoupRoomResponse>('/api/online-soup/rooms/lookup/'+encodeURIComponent(code),(json:string):OnlineSoupRoomResponse=>JSON.parse<OnlineSoupRoomResponse>(json)!,success,fail)}
+export function createOnlineSoupRoom(name:string,type:string,password:string,success:(data:OnlineSoupCreateResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupCreateResponse>('/api/online-soup/rooms',{name,type,password} as UTSJSONObject,(json:string):OnlineSoupCreateResponse=>JSON.parse<OnlineSoupCreateResponse>(json)!,success,fail)}
+export function joinOnlineSoupRoom(id:string,password:string,role:string,success:(data:OnlineSoupJoinResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupJoinResponse>('/api/online-soup/rooms/'+encodeURIComponent(id)+'/join',{password,role} as UTSJSONObject,(json:string):OnlineSoupJoinResponse=>JSON.parse<OnlineSoupJoinResponse>(json)!,success,fail)}
+export function loadOnlineSoupRoom(id:string,success:(data:OnlineSoupSnapshot)=>void,fail:(error:ApiError)=>void){apiGet<OnlineSoupSnapshot>('/api/online-soup/rooms/'+encodeURIComponent(id),(json:string):OnlineSoupSnapshot=>decodeOnlineSoupSnapshot(json),success,fail)}
+export function loadEligibleOnlineSoups(source:string,q:string,page:number,success:(data:OnlineSoupChoicesResponse)=>void,fail:(error:ApiError)=>void){apiGet<OnlineSoupChoicesResponse>('/api/online-soup/soups/eligible?source='+encodeURIComponent(source)+'&q='+encodeURIComponent(q)+'&page='+page.toString()+'&limit=40',(json:string):OnlineSoupChoicesResponse=>JSON.parse<OnlineSoupChoicesResponse>(json)!,success,fail)}
+export function selectOnlineSoup(id:string,soupId:string,success:(data:OnlineSoupOkResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupOkResponse>('/api/online-soup/rooms/'+encodeURIComponent(id)+'/select-soup',{soupId} as UTSJSONObject,(json:string):OnlineSoupOkResponse=>JSON.parse<OnlineSoupOkResponse>(json)!,success,fail)}
+export function startOnlineSoupRound(id:string,success:(data:OnlineSoupOkResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupOkResponse>('/api/online-soup/rooms/'+encodeURIComponent(id)+'/start',{} as UTSJSONObject,(json:string):OnlineSoupOkResponse=>JSON.parse<OnlineSoupOkResponse>(json)!,success,fail)}
+export function sendOnlineSoupMessage(id:string,type:string,content:string,success:(data:OnlineSoupSendResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupSendResponse>('/api/online-soup/rooms/'+encodeURIComponent(id)+'/messages',{type,content} as UTSJSONObject,(json:string):OnlineSoupSendResponse=>JSON.parse<OnlineSoupSendResponse>(json)!,success,fail)}
+
+// 主持人控制：回答玩家问题、发布线索、补充汤面、汤底与结束本轮。
+export function answerOnlineSoupQuestion(roomId:string,messageId:string,answer:string|null,success:(data:OnlineSoupOkResponse)=>void,fail:(error:ApiError)=>void){apiPatch<OnlineSoupOkResponse>('/api/online-soup/rooms/'+encodeURIComponent(roomId)+'/questions/'+encodeURIComponent(messageId)+'/answer',{answer} as UTSJSONObject,(json:string):OnlineSoupOkResponse=>JSON.parse<OnlineSoupOkResponse>(json)!,success,fail)}
+export function publishOnlineSoupClue(roomId:string,content:string,success:(data:OnlineSoupOkResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupOkResponse>('/api/online-soup/rooms/'+encodeURIComponent(roomId)+'/clues',{content} as UTSJSONObject,(json:string):OnlineSoupOkResponse=>JSON.parse<OnlineSoupOkResponse>(json)!,success,fail)}
+export function publishOnlineSoupSurface(roomId:string,surfaceIndex:number,success:(data:OnlineSoupOkResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupOkResponse>('/api/online-soup/rooms/'+encodeURIComponent(roomId)+'/publish-surface',{surfaceIndex} as UTSJSONObject,(json:string):OnlineSoupOkResponse=>JSON.parse<OnlineSoupOkResponse>(json)!,success,fail)}
+export function publishOnlineSoupBottom(roomId:string,bottomIndex:number,success:(data:OnlineSoupOkResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupOkResponse>('/api/online-soup/rooms/'+encodeURIComponent(roomId)+'/publish-bottom',{bottomIndex} as UTSJSONObject,(json:string):OnlineSoupOkResponse=>JSON.parse<OnlineSoupOkResponse>(json)!,success,fail)}
+export function endOnlineSoupRound(roomId:string,success:(data:OnlineSoupOkResponse)=>void,fail:(error:ApiError)=>void){apiPost<OnlineSoupOkResponse>('/api/online-soup/rooms/'+encodeURIComponent(roomId)+'/end-round',{} as UTSJSONObject,(json:string):OnlineSoupOkResponse=>JSON.parse<OnlineSoupOkResponse>(json)!,success,fail)}

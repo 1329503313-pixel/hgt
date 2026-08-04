@@ -1,0 +1,197 @@
+<template>
+  <view class="page">
+    <view v-if="sessionState.restoring || !sessionState.restored" class="state-card"><text class="title">正在恢复会话...</text></view>
+    <view v-else-if="sessionState.user == null" class="state-card guest-card">
+      <text class="title">登录后管理账号设置</text>
+      <button class="primary-button" @click="openAuth">登录</button>
+    </view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view class="intro-card">
+        <text class="eyebrow">ACCOUNT SETTINGS</text>
+        <text class="headline">账号设置</text>
+        <text class="intro">管理头像、昵称和登录密码。</text>
+      </view>
+
+      <view class="card">
+        <text class="title">头像</text>
+        <view class="avatar-row">
+          <image v-if="avatarUrl.length > 0" class="avatar" :src="avatarUrl" mode="aspectFill"></image>
+          <view v-else class="avatar avatar-placeholder"><text class="avatar-text">{{ avatarText }}</text></view>
+          <view class="avatar-copy">
+            <button class="secondary-button" :disabled="data.avatarSaving" @click="chooseAvatar">{{ data.avatarSaving ? '上传中...' : '更换头像' }}</button>
+            <text class="hint">支持 JPG、PNG，最大 1MB</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="card">
+        <text class="title">昵称</text>
+        <view class="nickname-row">
+          <input class="field" v-model="data.nickname" maxlength="8" placeholder="请输入昵称" />
+          <button class="save-button" :disabled="data.nicknameSaving" @click="saveNickname">{{ data.nicknameSaving ? '保存中' : '保存' }}</button>
+        </view>
+        <text class="hint">1 至 8 个字符</text>
+      </view>
+
+      <view class="card password-card" hover-class="card-pressed" @click="openPassword">
+        <view class="password-icon"><text class="password-symbol">钥</text></view>
+        <view class="password-copy"><text class="title">重置密码</text><text class="hint">设置一个新的登录密码</text></view>
+        <text class="arrow">›</text>
+      </view>
+      <view v-if="data.errorMessage.length > 0" class="error-card"><text class="error-text">{{ data.errorMessage }}</text></view>
+      <button class="logout-button" :disabled="data.loggingOut" @click="confirmLogout">{{ data.loggingOut ? '正在退出...' : '退出登录' }}</button>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { updateAvatar, updateNickname } from '@/services/account.uts'
+import { logoutSession, restoreSession, sessionState } from '@/stores/session.uts'
+
+type SettingsData = {
+  nickname: string,
+  nicknameSaving: boolean,
+  avatarSaving: boolean,
+  loggingOut: boolean,
+  errorMessage: string
+}
+const data = reactive({
+  nickname: '',
+  nicknameSaving: false,
+  avatarSaving: false,
+  loggingOut: false,
+  errorMessage: ''
+} as SettingsData)
+const avatarUrl = computed((): string => sessionState.user == null ? '' : absoluteApiUrl(sessionState.user!.avatar))
+const avatarText = computed((): string => sessionState.user == null || sessionState.user!.nickname.length == 0 ? '汤' : sessionState.user!.nickname.substring(0, 1))
+
+function openAuth() { uni.navigateTo({ url: '/pages/auth/auth' }) }
+function openPassword() { uni.navigateTo({ url: '/pages/password-settings/password-settings' }) }
+function confirmLogout() {
+  if (data.loggingOut) return
+  uni.showModal({
+    title: '退出登录',
+    content: '确认退出当前账号？',
+    cancelText: '取消',
+    confirmText: '退出',
+    confirmColor: '#D92D20',
+    success: (result) => {
+      if (!result.confirm) return
+      data.loggingOut = true
+      data.errorMessage = ''
+      logoutSession(() => {
+        data.loggingOut = false
+        uni.showToast({ title: '已退出登录', icon: 'none' })
+        uni.switchTab({ url: '/pages/mine/mine' })
+      }, (error) => {
+        data.loggingOut = false
+        data.errorMessage = error.message
+      })
+    }
+  })
+}
+function saveNickname() {
+  if (sessionState.user == null || data.nicknameSaving) return
+  const nickname = data.nickname.trim()
+  if (nickname.length < 1 || nickname.length > 8) {
+    uni.showToast({ title: '昵称应为 1 至 8 个字符', icon: 'none' })
+    return
+  }
+  data.nicknameSaving = true
+  data.errorMessage = ''
+  updateNickname(nickname, (response) => {
+    data.nicknameSaving = false
+    sessionState.user!.nickname = response.nickname
+    data.nickname = response.nickname
+    uni.showToast({ title: '昵称已更新', icon: 'success' })
+  }, (error) => {
+    data.nicknameSaving = false
+    data.errorMessage = error.message
+    if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' })
+  })
+}
+function uploadAvatarData(path: string, base64: string) {
+  if (base64.length > 1400000) {
+    data.avatarSaving = false
+    uni.showToast({ title: '头像不能超过 1MB', icon: 'none' })
+    return
+  }
+  const lowerPath = path.toLowerCase()
+  const mime = lowerPath.endsWith('.png') ? 'image/png' : 'image/jpeg'
+  updateAvatar('data:' + mime + ';base64,' + base64, (response) => {
+    data.avatarSaving = false
+    sessionState.user!.avatar = response.avatar
+    uni.showToast({ title: '头像已更新', icon: 'success' })
+  }, (error) => {
+    data.avatarSaving = false
+    data.errorMessage = error.message
+    if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' })
+  })
+}
+function chooseAvatar() {
+  if (data.avatarSaving) return
+  data.errorMessage = ''
+  uni.chooseImage({
+    count: 1,
+    success: (result) => {
+      const path = result.tempFilePaths[0]
+      if (path == null) return
+      data.avatarSaving = true
+      uni.getFileSystemManager().readFile({
+        filePath: path,
+        encoding: 'base64',
+        success: (readResult) => uploadAvatarData(path, readResult.data as string),
+        fail: (error) => {
+          data.avatarSaving = false
+          data.errorMessage = error.errMsg
+        }
+      })
+    }
+  })
+}
+
+onLoad(() => {
+  if (!sessionState.restored) restoreSession()
+  if (sessionState.user != null) data.nickname = sessionState.user!.nickname
+})
+watch((): string => sessionState.user == null ? '' : sessionState.user!.nickname, (nickname: string) => {
+  if (!data.nicknameSaving) data.nickname = nickname
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.scroll { flex: 1; }
+.intro-card { margin: 12px 12px 0 12px; padding: 18px; border-radius: 18px; background-color: #2563EB; }
+.eyebrow { color: #BFDBFE; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+.headline { margin-top: 6px; color: #FFFFFF; font-size: 23px; font-weight: 800; }
+.intro { margin-top: 7px; color: #DBEAFE; font-size: 12px; }
+.card, .state-card { margin: 10px 12px 0 12px; padding: 16px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.guest-card { align-items: center; }
+.title { color: #121826; font-size: 15px; font-weight: 800; }
+.avatar-row, .nickname-row, .password-card { flex-direction: row; align-items: center; }
+.avatar-row { margin-top: 14px; }
+.avatar { width: 78px; height: 78px; border-radius: 39px; background-color: #DBEAFE; }
+.avatar-placeholder { align-items: center; justify-content: center; }
+.avatar-text { color: #2563EB; font-size: 26px; font-weight: 800; }
+.avatar-copy { margin-left: 16px; }
+.secondary-button { min-width: 112px; min-height: 42px; border-width: 1px; border-color: #DCE3EE; border-radius: 12px; background-color: #FFFFFF; color: #2563EB; font-size: 13px; font-weight: 700; }
+.hint { margin-top: 7px; color: #98A2B3; font-size: 10px; }
+.nickname-row { margin-top: 12px; }
+.field { flex: 1; height: 44px; padding: 0 12px; border-width: 1px; border-color: #DCE3EE; border-radius: 12px; background-color: #FFFFFF; color: #121826; font-size: 14px; }
+.save-button, .primary-button { min-height: 44px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; font-weight: 700; }
+.save-button { width: 82px; margin-left: 8px; }
+.primary-button { width: 100%; margin-top: 16px; }
+.password-card { min-height: 78px; transform: scale(1); transition-property: transform, background-color; transition-duration: 140ms; }
+.card-pressed { transform: scale(0.98); background-color: #F8FAFC; }
+.password-icon { width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 13px; background-color: #EFF6FF; }
+.password-symbol { color: #2563EB; font-size: 14px; font-weight: 800; }
+.password-copy { flex: 1; margin-left: 12px; }
+.arrow { color: #98A2B3; font-size: 27px; }
+.error-card { margin: 10px 12px; padding: 12px; border-radius: 12px; background-color: #FEF2F2; }
+.error-text { color: #D92D20; font-size: 12px; font-weight: 700; }
+.logout-button { height: 46px; margin: 16px 12px 0 12px; padding: 0; border-width: 1px; border-color: #FECACA; border-radius: 13px; background-color: #FFFFFF; color: #D92D20; font-size: 14px; font-weight: 700; line-height: 46px; }
+.safe-bottom { height: 28px; }
+</style>

@@ -1,0 +1,22 @@
+import { ConversationCreatedResponse, FollowResponse, UserCardCabinetResponse, UserFollowsResponse, UserProfileResponse } from '@/domain/dto/social.uts'
+import { apiGet, apiPost, ApiError } from '@/services/api-client.uts'
+
+export function loadUserProfile(id: string, success: (data: UserProfileResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<UserProfileResponse>('/api/users/' + encodeURIComponent(id) + '/profile', (json: string): UserProfileResponse => JSON.parse<UserProfileResponse>(json)!, success, fail)
+}
+
+export function loadUserFollows(id: string, type: string, success: (data: UserFollowsResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<UserFollowsResponse>('/api/users/' + encodeURIComponent(id) + '/follows?type=' + encodeURIComponent(type), (json: string): UserFollowsResponse => JSON.parse<UserFollowsResponse>(json)!, success, fail)
+}
+
+export function toggleUserFollow(id: string, success: (data: FollowResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<FollowResponse>('/api/users/' + encodeURIComponent(id) + '/follow', {} as UTSJSONObject, (json: string): FollowResponse => JSON.parse<FollowResponse>(json)!, success, fail)
+}
+
+export function createConversation(userId: string, success: (data: ConversationCreatedResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<ConversationCreatedResponse>('/api/conversations', { userId } as UTSJSONObject, (json: string): ConversationCreatedResponse => JSON.parse<ConversationCreatedResponse>(json)!, success, fail)
+}
+
+export function loadUserCardCabinet(id: string, success: (data: UserCardCabinetResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<UserCardCabinetResponse>('/api/users/' + encodeURIComponent(id) + '/card-cabinet?compact=true', (json: string): UserCardCabinetResponse => JSON.parse<UserCardCabinetResponse>(json)!, success, fail)
+}

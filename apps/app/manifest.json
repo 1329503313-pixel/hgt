@@ -1,0 +1,63 @@
+{
+	"name": "海龟汤",
+	"appid": "__UNI__0DD6146",
+	"description": "海龟汤原生 APP",
+	"versionName": "0.1.0",
+	"versionCode": "1",
+	"uni-app-x": {
+		"styleIsolationVersion": "2"
+	},
+	"vueVersion": "3",
+	"uniStatistics": {
+		"enable": false
+	},
+	"app": {
+		"distribute": {
+			"icons": {
+				"android": {
+					"hdpi": "static/app/icon-72.png",
+					"xhdpi": "static/app/icon-96.png",
+					"xxhdpi": "static/app/icon-144.png",
+					"xxxhdpi": "static/app/icon-192.png"
+				}
+			}
+		}
+	},
+	"app-android": {
+		"distribute": {
+			"modules": {},
+			"icons": {
+				"hdpi": "static/app/icon-72.png",
+				"xhdpi": "static/app/icon-96.png",
+				"xxhdpi": "static/app/icon-144.png",
+				"xxxhdpi": "static/app/icon-192.png"
+			},
+			"splashScreens": {
+				"default": {
+					"xhdpi": "static/app/splash-xhdpi.png"
+				}
+			},
+			"abiFilters": [
+				"x86_64",
+				"x86",
+				"arm64-v8a",
+				"armeabi-v7a"
+			]
+		}
+	},
+	"app-ios": {
+		"distribute": {
+			"modules": {},
+			"icons": {},
+			"splashScreens": {}
+		}
+	},
+	"web": {
+		"router": {
+			"mode": ""
+		},
+		"devServer": {
+			"https": false
+		}
+	}
+}

@@ -1,0 +1,44 @@
+import { apiGet, apiPost, apiPut, ApiError } from './api-client.uts'
+import { FavoriteResponse, LikeResponse, SaveEvaluationResponse, SaveSoupResponse, SoupDetailResponse, SoupsResponse } from '@/domain/dto/soup.uts'
+
+export function loadSoups(keyword: string, type: string, difficulty: string, minRating: string, bottomPublic: string, offset: number, limit: number, success: (data: SoupsResponse) => void, fail: (error: ApiError) => void) {
+  let path = '/api/soups?includeTotal=1&homeFeatured=1&offset=' + offset.toString() + '&limit=' + limit.toString()
+  if (keyword.trim().length > 0) path += '&keyword=' + encodeURIComponent(keyword.trim())
+  if (type.length > 0) path += '&type=' + encodeURIComponent(type)
+  if (difficulty.length > 0) path += '&difficulty=' + encodeURIComponent(difficulty)
+  if (minRating.length > 0) path += '&minRating=' + encodeURIComponent(minRating)
+  if (bottomPublic.length > 0) path += '&bottomPublic=' + encodeURIComponent(bottomPublic)
+  apiGet<SoupsResponse>(path, (json: string): SoupsResponse => JSON.parse<SoupsResponse>(json)!, success, fail)
+}
+
+export function loadSoupDetail(id: string, success: (data: SoupDetailResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<SoupDetailResponse>('/api/soups/' + encodeURIComponent(id), (json: string): SoupDetailResponse => JSON.parse<SoupDetailResponse>(json)!, success, fail)
+}
+
+export function toggleSoupLike(id: string, success: (data: LikeResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<LikeResponse>('/api/soups/' + encodeURIComponent(id) + '/like', {} as UTSJSONObject, (json: string): LikeResponse => JSON.parse<LikeResponse>(json)!, success, fail)
+}
+
+export function toggleSoupFavorite(id: string, success: (data: FavoriteResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<FavoriteResponse>('/api/soups/' + encodeURIComponent(id) + '/favorite', {} as UTSJSONObject, (json: string): FavoriteResponse => JSON.parse<FavoriteResponse>(json)!, success, fail)
+}
+
+export function saveSoupEvaluation(id: string, data: UTSJSONObject, success: (data: SaveEvaluationResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<SaveEvaluationResponse>('/api/soups/' + encodeURIComponent(id) + '/evaluations', data, (json: string): SaveEvaluationResponse => JSON.parse<SaveEvaluationResponse>(json)!, success, fail)
+}
+
+export function createSoup(data: UTSJSONObject, success: (data: SaveSoupResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<SaveSoupResponse>('/api/soups', data, (json: string): SaveSoupResponse => JSON.parse<SaveSoupResponse>(json)!, success, fail)
+}
+
+export function updateSoup(id: string, data: UTSJSONObject, success: (data: SaveSoupResponse) => void, fail: (error: ApiError) => void) {
+  apiPut<SaveSoupResponse>('/api/soups/' + encodeURIComponent(id), data, (json: string): SaveSoupResponse => JSON.parse<SaveSoupResponse>(json)!, success, fail)
+}
+
+export function loadMyInteractionSoups(mode: string, offset: number, success: (data: SoupsResponse) => void, fail: (error: ApiError) => void) {
+  let endpoint = '/api/me/favorites'
+  if (mode == 'likes') endpoint = '/api/me/likes'
+  if (mode == 'published') endpoint = '/api/me/soups'
+  if (mode == 'evaluations') endpoint = '/api/me/evaluations'
+  apiGet<SoupsResponse>(endpoint + '?offset=' + offset.toString(), (json: string): SoupsResponse => JSON.parse<SoupsResponse>(json)!, success, fail)
+}

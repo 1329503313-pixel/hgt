@@ -1,0 +1,157 @@
+<template>
+  <view class="page"><view class="topbar"><AppBackButton @click="goBack" /><text class="title">我的收藏柜</text><view class="back"></view></view>
+    <view v-if="data.loading" class="state"><text>正在整理收藏...</text></view><view v-else-if="data.errorMessage.length > 0 || data.cabinet == null" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
+    <scroll-view v-else class="scroll" direction="vertical">
+      <view class="cabinet-head">
+        <view class="cabinet-bg-circle cabinet-bg-circle-a"></view>
+        <view class="cabinet-bg-circle cabinet-bg-circle-b"></view>
+        <view class="cabinet-title-row"><text class="cabinet-label">我的收藏柜</text><button v-if="!data.editing" class="edit-button" hover-class="edit-button-pressed" :hover-stay-time="80" @click="startEditing">调整陈列卡</button><text v-else class="editing-note">按选择顺序陈列</text></view>
+        <view class="stats"><view class="stat-item"><text class="stat-label">收藏值</text><text class="stat-value">{{ data.cabinet!.user.totalCollectionValue }}</text></view><view class="stat-divider"></view><view class="stat-item"><text class="stat-label">卡数</text><text class="stat-value">{{ data.cabinet!.user.unlockedCardCount }} 张</text></view><view class="stat-divider"></view><view class="stat-item"><text class="stat-label">传说</text><text class="stat-value">{{ data.cabinet!.user.legendaryCardCount }} 张</text></view></view>
+        <view class="showcase"><view v-for="card in showcaseCards" :key="card.id" class="showcase-item" hover-class="showcase-item-pressed" :hover-stay-time="100" @click="data.editing ? toggleCard(card) : openDetail(card)"><image class="showcase-image" :src="assetUrl(card.thumbnailUrl.length > 0 ? card.thumbnailUrl : card.imageUrl)" mode="aspectFill"></image><view v-if="data.editing" class="selected-order"><text>{{ selectedOrder(card.id) }}</text></view></view><view v-for="index in emptyShowcase" :key="index" class="showcase-empty"></view></view>
+      </view>
+      <view v-if="data.cabinet!.cards.length == 0" class="empty">
+        <view class="empty-icon-wrap"><text class="empty-icon">卡</text></view>
+        <text class="empty-title">还没有获得卡片</text>
+        <text class="empty-copy">前往商城抽取你的第一张卡牌</text>
+        <button class="empty-button" hover-class="empty-button-pressed" :hover-stay-time="80" @click="openStore">前往商城</button>
+      </view>
+      <view v-else class="collection">
+        <scroll-view class="tabs" direction="horizontal" :show-scrollbar="false">
+          <view class="tab" :class="data.packId == 'all' ? 'tab-active' : ''" hover-class="tab-pressed" :hover-stay-time="80" @click="data.packId = 'all'"><text class="tab-title">全部</text><text class="tab-count">{{ data.cabinet!.cards.length }} 张</text></view>
+          <view v-for="pack in packTabs" :key="pack.id" class="tab" :class="data.packId == pack.id ? 'tab-active' : ''" hover-class="tab-pressed" :hover-stay-time="80" @click="data.packId = pack.id"><text class="tab-title">{{ pack.name }}</text><text class="tab-count">{{ pack.count }} 张</text></view>
+        </scroll-view>
+        <view class="collection-head"><text class="collection-title">{{ data.packId == 'all' ? '全部卡牌' : activePackName }}</text><button class="sort-button" hover-class="sort-button-pressed" :hover-stay-time="80" @click="toggleSort">{{ data.raritySort ? '按品质排序' : '按序号排序' }}</button></view>
+        <view class="grid">
+          <view v-for="card in visibleCards" :key="card.id" class="card" :class="isSelected(card.id) ? 'card-selected' : ''" hover-class="card-pressed" :hover-stay-time="100" @click="data.editing ? toggleCard(card) : openDetail(card)">
+            <image class="card-image" :src="assetUrl(card.thumbnailUrl.length > 0 ? card.thumbnailUrl : card.imageUrl)" mode="aspectFill"></image>
+            <view v-if="data.editing && isSelected(card.id)" class="card-check"><text>{{ selectedOrder(card.id) }}</text></view>
+            <view class="card-meta">
+              <text :class="rarityClass(card.rarity)" class="card-rarity">{{ rarityLabel(card.rarity) }}</text>
+              <text class="card-value">收藏值 {{ card.collectionValue }}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+      <view class="safe-bottom" :class="data.editing ? 'editing-bottom' : ''"></view>
+    </scroll-view>
+    <view v-if="data.editing" class="edit-bar">
+      <button class="cancel-button" :disabled="data.saving" hover-class="cancel-button-pressed" :hover-stay-time="80" @click="cancelEditing">取消</button>
+      <button class="save-button" :disabled="data.saving" hover-class="save-button-pressed" :hover-stay-time="80" @click="saveEditing">{{ data.saving ? '保存中...' : '保存陈列 (' + data.selected.length.toString() + '/6)' }}</button>
+    </view>
+    <view v-if="data.detail != null" class="mask" @click="closeDetail"><view class="detail" @click.stop>
+      <view class="detail-head"><view><text class="detail-no">NO.{{ data.detail!.cardNo }} · {{ rarityLabel(data.detail!.rarity) }}</text><text class="detail-name">{{ data.detail!.name }}</text></view><view class="x" hover-class="x-pressed" :hover-stay-time="80" @click="closeDetail"><text>×</text></view></view>
+      <image class="detail-image" :src="assetUrl(data.detail!.imageUrl)" mode="aspectFit"></image>
+      <view class="detail-stats"><text>{{ data.detail!.starLevel }} 星</text><text class="detail-dot">·</text><text>{{ data.detail!.collectionValue }} 收藏值</text><text class="detail-dot">·</text><text>累计 {{ data.detail!.totalObtained }} 张</text></view>
+      <text class="story">{{ data.detail!.story }}</text>
+    </view></view>
+  </view>
+</template>
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+import { CardCabinet, OwnedAssetCard } from '@/domain/dto/digital-asset.uts'
+import { loadCardCabinet, saveCardShowcase } from '@/services/digital-assets.uts'
+type PackTab = { id:string,name:string,count:number }
+type CabinetData = { cabinet:CardCabinet|null,loading:boolean,errorMessage:string,packId:string,raritySort:boolean,detail:OwnedAssetCard|null,editing:boolean,saving:boolean,selected:string[] }
+const data = reactive({cabinet:null,loading:false,errorMessage:'',packId:'all',raritySort:false,detail:null,editing:false,saving:false,selected:[] as string[]} as CabinetData)
+function assetUrl(url:string):string{return absoluteApiUrl(url)}
+function rarityLabel(value:string):string{return value=='normal'?'普通':value=='rare'?'稀有':value=='epic'?'史诗':'传说'}
+function rarityClass(value:string):string{return value=='normal'?'normal':value=='rare'?'rare':value=='epic'?'epic':'legend'}
+function rarityRank(value:string):number{return value=='legend'?4:value=='epic'?3:value=='rare'?2:1}
+const showcaseCards=computed<OwnedAssetCard[]>(()=>{if(data.cabinet==null)return[] as OwnedAssetCard[];if(!data.editing)return data.cabinet!.showcase;const result=[] as OwnedAssetCard[];data.selected.forEach((id)=>{const card=data.cabinet!.cards.find((item)=>item.id==id);if(card!=null)result.push(card!)});return result})
+const emptyShowcase=computed<number[]>(()=>{const count=Math.max(0,6-showcaseCards.value.length);const result=[] as number[];for(let index=0;index<count;index++)result.push(index);return result})
+const packTabs=computed<PackTab[]>(()=>{const result=[] as PackTab[];if(data.cabinet==null)return result;data.cabinet!.cards.forEach((card)=>card.packs.forEach((pack)=>{const existing=result.find((item)=>item.id==pack.id);if(existing==null)result.push({id:pack.id,name:pack.name,count:1} as PackTab);else existing!.count++}));return result})
+const activePackName=computed<string>(()=>{const item=packTabs.value.find((pack)=>pack.id==data.packId);return item==null?'全部卡牌':item!.name})
+const visibleCards=computed<OwnedAssetCard[]>(()=>{if(data.cabinet==null)return[] as OwnedAssetCard[];let cards=data.packId=='all'?data.cabinet!.cards:data.cabinet!.cards.filter((card)=>card.packs.some((pack)=>pack.id==data.packId));cards=[...cards];cards.sort((a,b)=>data.raritySort?rarityRank(b.rarity)-rarityRank(a.rarity):(a.cardNo==b.cardNo?0:a.cardNo>b.cardNo?1:-1));return cards})
+function isSelected(id:string):boolean{return data.selected.indexOf(id)>=0}
+function selectedOrder(id:string):number{return data.selected.indexOf(id)+1}
+function startEditing(){if(data.cabinet==null)return;data.selected=data.cabinet!.showcase.map((card)=>card.id);data.editing=true}
+function cancelEditing(){if(data.saving)return;data.editing=false;data.selected=[] as string[]}
+function toggleCard(card:OwnedAssetCard){const index=data.selected.indexOf(card.id);if(index>=0){data.selected.splice(index,1);return}if(data.selected.length>=6){uni.showToast({title:'最多陈列 6 张卡片',icon:'none'});return}data.selected.push(card.id)}
+function saveEditing(){if(data.saving)return;data.saving=true;saveCardShowcase(data.selected,(response)=>{data.cabinet=response.cabinet;data.saving=false;data.editing=false;data.selected=[] as string[];uni.showToast({title:'陈列已保存',icon:'none'})},(error)=>{data.saving=false;uni.showToast({title:error.message,icon:'none'})})}
+function goBack(){uni.navigateBack()} function openStore(){uni.navigateTo({url:'/pages/asset-store/asset-store'})} function toggleSort(){data.raritySort=!data.raritySort} function openDetail(card:OwnedAssetCard){data.detail=card} function closeDetail(){data.detail=null}
+function reload(){if(data.loading)return;data.loading=true;data.errorMessage='';loadCardCabinet((response)=>{data.cabinet=response.cabinet;data.loading=false},(error)=>{data.loading=false;data.errorMessage=error.message})} onLoad(()=>reload())
+</script>
+<style>
+.page{flex:1;background-color:#F4F7FB}
+.topbar{height:96px;padding:48px 14px 8px;flex-direction:row;align-items:center;justify-content:space-between;background-color:#FFF}
+.back{width:40px;height:40px;align-items:center;justify-content:center;color:#344054;font-size:32px;border-radius:20px}
+.back-pressed{background-color:#EEF2F6}
+.title{color:#121826;font-size:17px;font-weight:800}
+.scroll{flex:1}
+/* 收藏柜头部：与商城钱包一致的渐变风格 */
+.cabinet-head{margin:12px 16px;padding:16px;border-radius:22px;background-color:#3730A3;background-image:linear-gradient(135deg,#0EA5E9 0%,#2563EB 50%,#7C3AED 100%);overflow:hidden;position:relative}
+.cabinet-bg-circle{position:absolute;border-radius:50%;background-color:rgba(255,255,255,.08)}
+.cabinet-bg-circle-a{width:180px;height:180px;right:-50px;top:-70px}
+.cabinet-bg-circle-b{width:120px;height:120px;left:-40px;bottom:-40px;background-color:rgba(167,243,250,.06)}
+.cabinet-title-row{flex-direction:row;align-items:center;justify-content:space-between;position:relative;z-index:1}
+.cabinet-label{color:#DBEAFE;font-size:11px;font-weight:800}
+.edit-button{height:30px;padding:0 12px;border-radius:10px;background-color:#FFF;color:#172554;font-size:9px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.edit-button-pressed{opacity:.78;transform:scale(.96)}
+.editing-note{color:#A5F3FC;font-size:9px;font-weight:700}
+.stats{margin-top:10px;flex-direction:row;align-items:center;justify-content:space-between;position:relative;z-index:1}
+.stat-item{flex:1;align-items:center}
+.stat-label{color:#C7D2FE;font-size:9px}
+.stat-value{margin-top:3px;color:#FFF;font-size:14px;font-weight:900}
+.stat-divider{width:1px;height:22px;background-color:rgba(255,255,255,.18)}
+.showcase{margin-top:14px;flex-direction:row;flex-wrap:wrap;position:relative;z-index:1}
+.showcase-item{width:31%;height:128px;margin:1%;overflow:hidden;border-width:1.5px;border-color:rgba(255,255,255,.4);border-radius:10px;background-color:rgba(255,255,255,.06);transition-property:transform;transition-duration:120ms}
+.showcase-item-pressed{transform:scale(.96)}
+.showcase-image{width:100%;height:128px}
+.showcase-empty{width:31%;height:128px;margin:1%;border-width:1.5px;border-color:dashed;border-color:rgba(255,255,255,.3);border-radius:10px;background-color:rgba(255,255,255,.04)}
+.selected-order{position:absolute;right:4px;top:4px;width:20px;height:20px;align-items:center;justify-content:center;border-radius:10px;background-color:#F59E0B;color:#FFF;font-size:8px;font-weight:900}
+/* 卡牌集合 */
+.collection{margin:10px 16px;padding:13px 10px;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF}
+.tabs{height:65px;white-space:nowrap}
+.tab{display:flex;min-width:92px;height:54px;margin-right:7px;padding:8px 12px;align-items:center;border-width:1px;border-color:#E5EAF2;border-radius:12px;color:#344054;transition-property:background-color,border-color,opacity;transition-duration:120ms}
+.tab-pressed{opacity:.78;background-color:#F1F5F9}
+.tab-title{font-size:11px;font-weight:800}
+.tab-count{margin-top:3px;font-size:8px}
+.tab-active{border-color:#93C5FD;background-color:#EFF6FF;color:#2563EB}
+.collection-head{margin:10px 3px;flex-direction:row;align-items:center;justify-content:space-between}
+.collection-title{color:#121826;font-size:13px;font-weight:900}
+.sort-button{height:32px;padding:0 10px;border-radius:10px;background-color:#EFF6FF;color:#2563EB;font-size:9px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.sort-button-pressed{opacity:.78;transform:scale(.96)}
+.grid{flex-direction:row;flex-wrap:wrap}
+.card{width:33.33%;padding:5px;align-items:center;transition-property:transform;transition-duration:120ms}
+.card-pressed{transform:scale(.95)}
+.card-image{width:91px;height:127px;border-radius:10px}
+.card-meta{margin-top:5px;width:91px;flex-direction:row;justify-content:space-between;color:#475467;font-size:7px;font-weight:700}
+.card-rarity{font-size:8px;font-weight:800}
+.card-value{font-size:7px}
+.normal{color:#2563EB}.rare{color:#7C3AED}.epic{color:#D97706}.legend{color:#DB2777}
+.card-selected{border-width:2px;border-color:#2563EB;border-radius:12px;background-color:#EFF6FF}
+.card-check{position:absolute;right:4px;top:4px;width:20px;height:20px;align-items:center;justify-content:center;border-radius:10px;background-color:#2563EB;color:#FFF;font-size:8px;font-weight:900}
+/* 空状态 */
+.empty{margin:14px 16px;padding:38px 18px;align-items:center;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF}
+.empty-icon-wrap{width:62px;height:62px;align-items:center;justify-content:center;border-radius:20px;background-color:#EEF2FF}
+.empty-icon{color:#4F46E5;font-size:24px;font-weight:900}
+.empty-title{margin-top:14px;color:#121826;font-size:15px;font-weight:800}
+.empty-copy{margin-top:5px;color:#98A2B3;font-size:10px;line-height:16px;text-align:center}
+.empty-button{width:60%;height:40px;margin-top:14px;border-radius:12px;background-color:#2563EB;color:#FFF;font-size:12px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.empty-button-pressed{opacity:.78;transform:scale(.97)}
+/* 加载/错误状态 */
+.state{margin:16px;padding:34px;align-items:center;border-radius:18px;background-color:#FFF;color:#667085}
+.error{color:#B42318}
+.retry{width:100%;margin-top:14px;border-radius:12px;background-color:#2563EB;color:#FFF}
+.safe-bottom{height:28px}
+.editing-bottom{height:100px}
+/* 详情弹窗 */
+.mask{position:fixed;left:0;right:0;top:0;bottom:0;padding:50px 18px 24px;align-items:center;justify-content:center;background-color:rgba(15,23,42,.88)}
+.detail{width:100%;max-height:780px;padding:18px;align-items:center;border-radius:22px;background-color:#FFF}
+.detail-head{width:100%;flex-direction:row;align-items:center;justify-content:space-between}
+.detail-no{color:#0891B2;font-size:10px;font-weight:800}
+.detail-name{margin-top:4px;color:#121826;font-size:20px;font-weight:900}
+.x{width:38px;height:38px;align-items:center;justify-content:center;border-radius:19px;background-color:#F2F4F7;color:#344054;font-size:24px;transition-property:opacity,transform;transition-duration:120ms}
+.x-pressed{opacity:.7;transform:scale(.9)}
+.detail-image{width:250px;height:350px;margin-top:12px}
+.detail-stats{width:100%;margin-top:12px;padding:13px 4px;flex-direction:row;justify-content:space-around;border-radius:13px;background-color:#F8FAFC;color:#344054;font-size:10px;font-weight:800}
+.detail-dot{margin:0 4px;color:#CBD5E1}
+.story{margin-top:12px;color:#667085;font-size:10px;line-height:17px}
+/* 编辑模式底部按钮 */
+.edit-bar{position:fixed;left:0;right:0;bottom:0;padding:11px 16px 26px;flex-direction:row;border-top-width:1px;border-top-color:#E5EAF2;background-color:#FFF}
+.cancel-button{width:30%;height:44px;border-radius:12px;background-color:#F2F4F7;color:#475467;font-size:11px;transition-property:opacity,transform;transition-duration:120ms}
+.cancel-button-pressed{opacity:.78;transform:scale(.97)}
+.save-button{flex:1;height:44px;margin-left:9px;border-radius:12px;background-color:#2563EB;background-image:linear-gradient(135deg,#2563EB 0%,#4F46E5 100%);color:#FFF;font-size:11px;font-weight:800;transition-property:opacity,transform;transition-duration:120ms}
+.save-button-pressed{opacity:.85;transform:scale(.97)}
+</style>

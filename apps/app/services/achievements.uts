@@ -1,0 +1,14 @@
+import { AchievementStats, BadgeCollectionResponse, EquippedBadgeResponse } from '@/domain/dto/achievement.uts'
+import { apiGet, apiPatch, ApiError } from '@/services/api-client.uts'
+
+export function loadAchievementStats(success: (data: AchievementStats) => void, fail: (error: ApiError) => void) {
+  apiGet<AchievementStats>('/api/me/stats', (json: string): AchievementStats => JSON.parse<AchievementStats>(json)!, success, fail)
+}
+
+export function loadBadgeCollection(success: (data: BadgeCollectionResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<BadgeCollectionResponse>('/api/me/badge-collection', (json: string): BadgeCollectionResponse => JSON.parse<BadgeCollectionResponse>(json)!, success, fail)
+}
+
+export function equipAchievementBadge(badgeKey: string | null, success: (data: EquippedBadgeResponse) => void, fail: (error: ApiError) => void) {
+  apiPatch<EquippedBadgeResponse>('/api/me/equipped-badge', { badgeKey } as UTSJSONObject, (json: string): EquippedBadgeResponse => JSON.parse<EquippedBadgeResponse>(json)!, success, fail)
+}

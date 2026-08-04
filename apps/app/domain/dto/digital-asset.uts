@@ -1,0 +1,133 @@
+export type AssetCard = {
+  id: string,
+  cardNo: string,
+  name: string,
+  rarity: string,
+  imageUrl: string,
+  thumbnailUrl: string,
+  story: string,
+  releaseAt: string | null,
+  status: string
+}
+
+export type AssetPity = {
+  rare: number,
+  epic: number,
+  legend: number,
+  rareLimit: number,
+  epicLimit: number,
+  legendLimit: number
+}
+
+export type AssetPackCard = {
+  id: string,
+  cardNo: string,
+  name: string,
+  rarity: string,
+  imageUrl: string,
+  thumbnailUrl: string,
+  story: string,
+  releaseAt: string | null,
+  status: string,
+  actualProbability: number,
+  owned: boolean,
+  starLevel: number | null
+}
+
+export type AssetPack = {
+  id: string,
+  name: string,
+  coverUrl: string,
+  coverCard: AssetCard | null,
+  description: string,
+  packStory: string,
+  packType: string,
+  packTypeLabel: string,
+  singlePrice: number,
+  tenPrice: number,
+  dailyFreeDraws: number,
+  freeDrawsRemaining: number,
+  saleStartAt: string | null,
+  saleEndAt: string | null,
+  enabled: boolean,
+  status: string,
+  sortOrder: number,
+  probabilityNotice: string,
+  rarityProbabilities: UTSJSONObject,
+  pity: AssetPity,
+  previewCards: AssetCard[],
+  cards: AssetPackCard[]
+}
+
+export type AssetStoreResponse = { balance: number, packs: AssetPack[] }
+export type AssetPackResponse = { balance: number, pack: AssetPack }
+
+export type AssetDrawResult = {
+  id: string,
+  cardNo: string,
+  name: string,
+  rarity: string,
+  imageUrl: string,
+  thumbnailUrl: string,
+  story: string,
+  releaseAt: string | null,
+  status: string,
+  drawIndex: number,
+  pityType: string | null,
+  starBefore: number | null,
+  starAfter: number,
+  firstObtained: boolean,
+  starUpgraded: boolean,
+  fullStarDuplicate: boolean,
+  shellRefund: number
+}
+
+export type AssetDrawOrder = {
+  id: string,
+  requestId: string,
+  packId: string,
+  packName: string,
+  packCoverUrl: string,
+  drawMode: string,
+  shellCost: number,
+  usedFreeDraw: boolean,
+  createdAt: string,
+  results: AssetDrawResult[]
+}
+
+export type AssetDrawResponse = { order: AssetDrawOrder, balance: number }
+export type AssetDrawHistoryResponse = { orders: AssetDrawOrder[] }
+export type CardPackRef = { id: string, name: string, packType: string, coverUrl: string }
+
+export type OwnedAssetCard = {
+  id: string,
+  cardNo: string,
+  name: string,
+  rarity: string,
+  imageUrl: string,
+  thumbnailUrl: string,
+  story: string,
+  releaseAt: string | null,
+  status: string,
+  starLevel: number,
+  duplicateProgress: number,
+  nextStarRequirement: number | null,
+  totalObtained: number,
+  collectionValue: number,
+  firstObtainedAt: string | null,
+  lastObtainedAt: string | null,
+  displayOrder: number | null,
+  packs: CardPackRef[]
+}
+
+export type CardCabinetUser = {
+  id: string,
+  nickname: string,
+  avatar: string | null,
+  totalCollectionValue: number,
+  unlockedCardCount: number,
+  legendaryCardCount: number
+}
+
+export type CardCabinet = { user: CardCabinetUser, showcase: OwnedAssetCard[], cards: OwnedAssetCard[] }
+export type CardCabinetResponse = { cabinet: CardCabinet }

@@ -1,0 +1,29 @@
+def signingPropertiesPath = project.findProperty('hgtSigningProperties')
+if (signingPropertiesPath != null) {
+    def signingPropertiesFile = file(signingPropertiesPath)
+    if (!signingPropertiesFile.exists()) {
+        throw new GradleException("签名配置不存在：${signingPropertiesFile}")
+    }
+
+    def signingProperties = new Properties()
+    signingPropertiesFile.withInputStream { signingProperties.load(it) }
+
+    android {
+        signingConfigs {
+            hgtRelease {
+                storeFile new File(signingPropertiesFile.parentFile, signingProperties['storeFile'])
+                storePassword signingProperties['storePassword']
+                keyAlias signingProperties['keyAlias']
+                keyPassword signingProperties['keyPassword']
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+            }
+        }
+        buildTypes {
+            release {
+                signingConfig signingConfigs.hgtRelease
+            }
+        }
+    }
+}

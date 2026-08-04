@@ -1,0 +1,294 @@
+<template>
+  <view class="page">
+    <view class="status-bar-safe"></view>
+    <view class="tab-row">
+      <button class="tab-button" @click="data.tab = 'list'">list-view</button>
+      <button class="tab-button" @click="data.tab = 'waterflow'">waterflow</button>
+      <button class="tab-button" @click="data.tab = 'canvas'">canvas</button>
+      <button class="tab-button" @click="data.tab = 'keyboard'">键盘/截图</button>
+    </view>
+
+    <list-view v-if="data.tab == 'list'" class="probe-content" direction="vertical">
+      <list-item v-for="item in data.items" :key="'list-' + item">
+        <view class="list-card">
+          <text class="item-title">长列表项目 {{ item }}</text>
+          <text class="item-body">用于验证回收列表、滚动和 200 项稳定性。</text>
+        </view>
+      </list-item>
+    </list-view>
+
+    <waterflow v-else-if="data.tab == 'waterflow'" class="probe-content" cross-axis-count="2" cross-axis-gap="8">
+      <flow-item v-for="item in data.items" :key="'water-' + item" :type="1">
+        <view class="water-card" :style="{ height: (90 + item % 4 * 24).toString() + 'px' }">
+          <text class="item-title">瀑布流 {{ item }}</text>
+          <text class="item-body">高度 {{ 90 + item % 4 * 24 }}px</text>
+        </view>
+      </flow-item>
+    </waterflow>
+
+    <view v-else-if="data.tab == 'canvas'" class="probe-content canvas-panel">
+      <canvas id="radar-canvas" class="radar-canvas"></canvas>
+      <button class="action-button" @click="drawRadar">绘制六维雷达图</button>
+      <text class="probe-status">{{ data.canvasStatus }}</text>
+    </view>
+
+    <view v-else class="probe-content keyboard-panel">
+      <view id="snapshot-card" class="snapshot-card">
+        <text class="item-title">截图目标</text>
+        <text class="item-body">用于验证 UniElement.takeSnapshot。</text>
+      </view>
+      <input class="input" v-model="data.keyboardText" placeholder="点击验证软键盘" />
+      <text class="probe-status">键盘高度：{{ data.keyboardHeight }}px</text>
+      <view class="button-row">
+        <button class="action-button" @click="hideKeyboard">隐藏键盘</button>
+        <button class="action-button" @click="takeSnapshot">执行截图</button>
+      </view>
+      <text class="probe-status">{{ data.snapshotStatus }}</text>
+    </view>
+    <view class="safe-bottom"></view>
+  </view>
+</template>
+
+<script setup lang="uts">
+type ProbeData = {
+  tab: string,
+  items: number[],
+  canvasStatus: string,
+  keyboardText: string,
+  keyboardHeight: number,
+  snapshotStatus: string
+}
+
+const items = [] as number[]
+for (let index = 1; index <= 200; index++) {
+  items.push(index)
+}
+
+const initialData: ProbeData = {
+  tab: 'list',
+  items: items,
+  canvasStatus: '尚未绘制',
+  keyboardText: '',
+  keyboardHeight: 0,
+  snapshotStatus: '尚未截图'
+}
+const data = reactive(initialData)
+const instance = getCurrentInstance()!.proxy!
+
+function drawRadar() {
+  uni.createCanvasContextAsync({
+    id: 'radar-canvas',
+    component: instance,
+    success: (canvasContext: CanvasContext) => {
+      const context = canvasContext.getContext('2d')!
+      const canvas = context.canvas
+      const dpr = uni.getDeviceInfo().devicePixelRatio ?? 1
+      const canvasWidth = canvas.offsetWidth
+      const canvasHeight = canvas.offsetHeight
+      canvas.width = canvasWidth * dpr
+      canvas.height = canvasHeight * dpr
+      context.scale(dpr, dpr)
+      const centerX = 140
+      const centerY = 130
+      const radius = 92
+      const values = [0.82, 0.65, 0.9, 0.72, 0.88, 0.76]
+
+      context.clearRect(0, 0, canvasWidth, canvasHeight)
+      context.strokeStyle = '#CBD5E1'
+      context.lineWidth = 1
+      for (let ring = 1; ring <= 5; ring++) {
+        context.beginPath()
+        for (let index = 0; index < 6; index++) {
+          const angle = -Math.PI / 2 + index * Math.PI / 3
+          const ringRadius = radius * ring / 5
+          const x = centerX + Math.cos(angle) * ringRadius
+          const y = centerY + Math.sin(angle) * ringRadius
+          if (index == 0) {
+            context.moveTo(x, y)
+          } else {
+            context.lineTo(x, y)
+          }
+        }
+        context.closePath()
+        context.stroke()
+      }
+
+      context.beginPath()
+      for (let index = 0; index < 6; index++) {
+        const angle = -Math.PI / 2 + index * Math.PI / 3
+        const x = centerX + Math.cos(angle) * radius * values[index]
+        const y = centerY + Math.sin(angle) * radius * values[index]
+        if (index == 0) {
+          context.moveTo(x, y)
+        } else {
+          context.lineTo(x, y)
+        }
+      }
+      context.closePath()
+      context.fillStyle = 'rgba(37, 99, 235, 0.25)'
+      context.strokeStyle = '#2563EB'
+      context.lineWidth = 2
+      context.fill()
+      context.stroke()
+      data.canvasStatus = '绘制完成'
+    },
+    fail: (error) => {
+      data.canvasStatus = '绘制失败: ' + error.errMsg
+    }
+  })
+}
+
+function hideKeyboard() {
+  uni.hideKeyboard()
+}
+
+function takeSnapshot() {
+  const element = instance.$page.getElementById('snapshot-card')
+  if (element == null) {
+    data.snapshotStatus = '未找到截图元素'
+    return
+  }
+  element.takeSnapshot({
+    success: (result) => {
+      data.snapshotStatus = '截图成功: ' + result.tempFilePath
+    },
+    fail: (error) => {
+      data.snapshotStatus = '截图失败: ' + error.errMsg
+    }
+  })
+}
+
+onLoad(() => {
+  uni.onKeyboardHeightChange((result) => {
+    data.keyboardHeight = result.height
+  })
+})
+
+onUnload(() => {
+  uni.offKeyboardHeightChange()
+})
+
+defineExpose({
+  data,
+  drawRadar,
+  takeSnapshot
+})
+</script>
+
+<style>
+.page {
+  flex: 1;
+  background-color: #F5F7FA;
+}
+
+.status-bar-safe {
+  height: 0px;
+}
+
+.tab-row {
+  flex-direction: row;
+  padding: 10px 8px;
+  background-color: #FFFFFF;
+}
+
+.tab-button {
+  flex: 1;
+  min-height: 40px;
+  margin: 0 3px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background-color: #EFF6FF;
+  color: #2563EB;
+  font-size: 11px;
+}
+
+.probe-content {
+  flex: 1;
+}
+
+.list-card {
+  margin: 6px 16px;
+  padding: 14px;
+  border-radius: 12px;
+  background-color: #FFFFFF;
+}
+
+.water-card {
+  margin: 6px;
+  padding: 12px;
+  border-radius: 12px;
+  background-color: #FFFFFF;
+}
+
+.item-title {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.item-body {
+  margin-top: 6px;
+  color: #6B7280;
+  font-size: 12px;
+}
+
+.canvas-panel {
+  align-items: center;
+  padding: 24px 16px;
+}
+
+.radar-canvas {
+  width: 280px;
+  height: 260px;
+  border-radius: 16px;
+  background-color: #FFFFFF;
+}
+
+.keyboard-panel {
+  padding: 24px 16px;
+}
+
+.snapshot-card {
+  padding: 24px;
+  border-radius: 16px;
+  background-color: #DBEAFE;
+}
+
+.input {
+  height: 48px;
+  margin-top: 16px;
+  padding: 0 12px;
+  border-width: 1px;
+  border-color: #E5E7EB;
+  border-radius: 10px;
+  background-color: #FFFFFF;
+  color: #111827;
+  font-size: 14px;
+}
+
+.button-row {
+  flex-direction: row;
+  margin-top: 12px;
+}
+
+.action-button {
+  min-height: 44px;
+  margin-top: 12px;
+  margin-right: 8px;
+  border-radius: 10px;
+  background-color: #2563EB;
+  color: #FFFFFF;
+  font-size: 13px;
+}
+
+.probe-status {
+  margin-top: 12px;
+  color: #374151;
+  font-size: 13px;
+}
+
+.safe-bottom {
+  height: var(--uni-safe-area-inset-bottom);
+  background-color: #F5F7FA;
+}
+</style>

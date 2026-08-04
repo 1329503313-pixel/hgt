@@ -1,0 +1,51 @@
+export type LevelProgress = {
+  level: number,
+  experience: number,
+  currentLevelExperience: number,
+  experienceForNextLevel: number,
+  remainingExperience: number,
+  progressPercent: number,
+  isMaxLevel: boolean
+}
+
+export type ShellTask = {
+  type: string,
+  name: string,
+  description: string,
+  reward: number,
+  dailyLimit: number,
+  progress: number,
+  completed: boolean,
+  actualReward: number,
+  experienceReward: number,
+  actualExperience: number
+}
+
+export type BeginnerTask = {
+  type: string,
+  name: string,
+  description: string,
+  reward: number,
+  progress: number,
+  target: number,
+  completed: boolean,
+  actualReward: number,
+  experienceReward: number,
+  actualExperience: number,
+  repeatable: boolean | null,
+  completedCount: number | null
+}
+
+export type ShellTaskCenter = {
+  balance: number,
+  earnedToday: number,
+  earnedExperienceToday: number,
+  dailyLimit: number,
+  theoreticalMaximum: number,
+  levelProgress: LevelProgress,
+  tasks: ShellTask[],
+  beginnerTasks: BeginnerTask[]
+}
+
+export type ShellTransaction = { id: string, type: string, typeLabel: string, amount: number, balanceAfter: number, remark: string | null, createdAt: string }
+export type ShellTransactionsResponse = { transactions: ShellTransaction[], total: number, hasMore: boolean }

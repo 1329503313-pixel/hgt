@@ -1,0 +1,24 @@
+export type GameMessage = {
+  role: string,
+  content: string
+}
+
+export type RevealedSupplements = {
+  surfaces: number[],
+  bottoms: number[]
+}
+
+export type GameSessionResponse = {
+  sessionId: string | null,
+  messages: GameMessage[],
+  progress: number,
+  completed: boolean,
+  revealedSupplements: RevealedSupplements
+}
+
+export type GameTurnResponse = {
+  answer: string,
+  progress: number,
+  completed: boolean,
+  revealedSupplements: RevealedSupplements
+}

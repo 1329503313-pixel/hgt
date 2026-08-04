@@ -1,0 +1,43 @@
+import { EquippedBadge } from './soup.uts'
+
+export type AccountUser = {
+  id: string,
+  username: string,
+  nickname: string,
+  avatar: string | null,
+  role: string,
+  createdAt: string,
+  level: number,
+  equippedBadge: EquippedBadge | null
+}
+
+export type MeResponse = {
+  user: AccountUser | null
+}
+
+export type AuthResponse = {
+  user: AccountUser,
+  token: string
+}
+
+export type ContentCounts = {
+  published: number,
+  favorites: number,
+  likes: number
+}
+
+export type LogoutResponse = {
+  ok: boolean
+}
+
+export type NicknameResponse = {
+  nickname: string
+}
+
+export type AvatarResponse = {
+  avatar: string
+}
+
+export type PasswordResponse = {
+  ok: boolean
+}

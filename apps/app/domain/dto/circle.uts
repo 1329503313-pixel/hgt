@@ -1,0 +1,128 @@
+export type CircleMentionSummary = {
+  id: string,
+  content: string
+}
+
+export type CircleLatestMessage = {
+  id: string,
+  senderName: string,
+  content: string,
+  type: string,
+  createdAt: string
+}
+
+export type CircleSummary = {
+  id: string,
+  name: string,
+  avatar: string,
+  isJoined: boolean,
+  memberCount: number,
+  onlineCount: number,
+  unreadCount: number,
+  unreadMention: CircleMentionSummary | null,
+  latestMessage: CircleLatestMessage | null,
+  createdAt: string,
+  updatedAt: string
+}
+
+export type CirclesResponse = {
+  circles: CircleSummary[]
+}
+
+export type JoinCircleResponse = {
+  joined: boolean
+}
+
+import { EquippedBadge } from './soup.uts'
+import { GiftMessageDisplay } from './chat.uts'
+
+export type CircleMember = {
+  id: string,
+  nickname: string,
+  avatar: string | null,
+  level: number,
+  equippedBadge: EquippedBadge | null,
+  isOnline: boolean,
+  joinedAt: string
+}
+
+export type CircleDetail = {
+  id: string,
+  name: string,
+  avatar: string,
+  memberCount: number,
+  onlineCount: number,
+  createdAt: string,
+  updatedAt: string
+}
+
+export type CircleDetailResponse = {
+  circle: CircleDetail,
+  members: CircleMember[]
+}
+
+export type CircleMessageSender = {
+  id: string,
+  nickname: string,
+  avatar: string | null,
+  level: number,
+  equippedBadge: EquippedBadge | null,
+  isOnline: boolean
+}
+
+export type CircleMention = {
+  userId: string,
+  nickname: string
+}
+
+export type CircleMessageReply = {
+  id: string,
+  sequence: number,
+  sender: CircleMessageSender | null,
+  content: string,
+  type: string,
+  stickerId: string | null,
+  stickerName: string | null,
+  recalledAt: string | null
+}
+
+export type CircleMessage = {
+  id: string,
+  sequence: number,
+  circleId: string,
+  sender: CircleMessageSender | null,
+  content: string,
+  type: string,
+  stickerId: string | null,
+  stickerName: string | null,
+  giftDisplay: GiftMessageDisplay | null,
+  mentions: CircleMention[],
+  replyTo: CircleMessageReply | null,
+  createdAt: string,
+  recalledAt: string | null
+}
+
+export type CircleMessagesResponse = {
+  messages: CircleMessage[],
+  hasMore: boolean,
+  nextCursor: string | null
+}
+
+export type SendCircleMessageResponse = {
+  message: CircleMessage
+}
+
+export type RecallCircleMessageResponse = {
+  ok: boolean,
+  messageId: string,
+  recalledAt: string
+}
+
+export type CircleUnreadMention = {
+  id: string,
+  sequence: number
+}
+
+export type CircleUnreadMentionsResponse = {
+  mentions: CircleUnreadMention[]
+}

@@ -1,0 +1,351 @@
+<template>
+  <view class="page">
+    <view v-if="data.activeSoup == null" class="lobby">
+      <view class="header">
+        <text class="eyebrow">AI TURTLE SOUP</text>
+        <text class="headline">玩汤</text>
+        <text class="subtitle">选择一碗已开放 AI 主持的海龟汤，开始推理。</text>
+        <view class="online-entry" hover-class="pressed" @click="openOnlineSoup"><view><text class="online-title">多人在线玩汤</text><text class="online-copy">创建或加入实时推理房间</text></view><text class="online-arrow">›</text></view>
+      </view>
+      <view v-if="sessionState.user == null && sessionState.restored" class="state-card">
+        <text class="state-title">登录后开始 AI 玩汤</text>
+        <text class="muted">游戏进度会自动保存到当前账号</text>
+        <button class="primary-button" @click="openAuth">登录 / 注册</button>
+      </view>
+      <view v-else-if="data.loadingSoups" class="state-card"><text class="state-title">正在寻找可玩的汤...</text></view>
+      <view v-else-if="data.errorMessage.length > 0" class="state-card">
+        <text class="state-title">加载失败</text><text class="muted">{{ data.errorMessage }}</text>
+        <button class="primary-button" @click="loadLobby">重新加载</button>
+      </view>
+      <view v-else-if="gameSoups.length == 0" class="state-card"><text class="state-title">暂时没有开放 AI 玩汤的作品</text><text class="muted">作者开启 AI 玩汤后会显示在这里</text></view>
+      <scroll-view v-else class="soup-list" direction="vertical">
+        <view v-for="soup in gameSoups" :key="soup.id" class="soup-card" hover-class="card-pressed" @click="openGame(soup)">
+          <image v-if="coverFor(soup).length > 0" class="cover" :src="coverFor(soup)" mode="aspectFill"></image>
+          <view v-else class="cover cover-placeholder"><text class="cover-text">汤</text></view>
+          <view class="soup-copy">
+            <text class="soup-title">{{ soup.title }}</text>
+            <text class="soup-summary">{{ soup.summary.length > 0 ? soup.summary : '等待你揭开故事真相' }}</text>
+            <view class="meta-row"><text class="tag">{{ soup.type }}</text><text class="tag difficulty">{{ soup.difficulty }}</text><text class="play-label">开始推理 ›</text></view>
+          </view>
+        </view>
+        <view class="safe-bottom"></view>
+      </scroll-view>
+    </view>
+
+    <view v-else class="game-shell">
+      <view class="game-header">
+        <AppBackButton @click="closeGame" />
+        <view class="game-title-copy"><text class="game-title">{{ data.activeSoup!.title }}</text><text class="game-mode">AI 主持 · 进度自动保存</text></view>
+        <view class="restart-button" hover-class="pressed" @click="confirmRestart"><text class="restart-text">重开</text></view>
+      </view>
+      <view class="surface-card">
+        <text class="surface-label">汤面</text>
+        <text class="surface-text">{{ data.activeSurface.length > 0 ? data.activeSurface : (data.activeSoup!.summary.length > 0 ? data.activeSoup!.summary : '正在读取汤面...') }}</text>
+        <view class="progress-head"><text class="progress-label">推理进度</text><text class="progress-value">{{ data.progress }}%</text></view>
+        <view class="progress-track"><view class="progress-fill" :style="{ width: progressWidth }"></view></view>
+        <view v-if="data.completed" class="complete-banner"><text class="complete-text">🎉 恭喜通关！返回详情即可查看完整汤底。</text></view>
+      </view>
+      <scroll-view class="messages" direction="vertical" :scroll-into-view="data.scrollTarget">
+        <view class="message-list">
+          <view v-for="(message, index) in data.messages" :key="index.toString()" :id="'game-message-' + index.toString()" class="message-row" :class="message.role == 'user' ? 'mine-row' : ''">
+            <view class="bubble" :class="message.role == 'user' ? 'mine-bubble' : 'assistant-bubble'">
+              <text class="bubble-text" :class="message.role == 'user' ? 'mine-text' : ''">{{ displayMessage(message) }}</text>
+            </view>
+          </view>
+          <view v-if="data.turnLoading" class="message-row"><view class="bubble assistant-bubble"><text class="thinking">主持人正在判断...</text></view></view>
+          <view id="game-message-bottom" class="message-bottom"></view>
+        </view>
+      </scroll-view>
+      <view v-if="data.errorMessage.length > 0" class="inline-error"><text class="inline-error-text">{{ data.errorMessage }}</text></view>
+      <view v-if="!data.completed" class="input-bar">
+        <view class="hint-button" :class="data.progress < 20 ? 'hint-disabled' : ''" hover-class="pressed" @click="requestHint"><text class="hint-symbol">💡</text></view>
+        <input class="question-input" v-model="data.question" maxlength="500" confirm-type="send" placeholder="输入你的推理或提问…" :disabled="data.turnLoading" @confirm="sendQuestion" />
+        <button class="send-button" :disabled="data.turnLoading || data.question.trim().length == 0" @click="sendQuestion">{{ data.turnLoading ? '思考中' : '发送' }}</button>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import AppBackButton from '@/components/base/AppBackButton.uvue'
+import { soupThumbnailUrl } from '@/config/runtime.uts'
+import { GameMessage } from '@/domain/dto/game.uts'
+import { SoupSummary } from '@/domain/dto/soup.uts'
+import { askGame, loadGameSoups, requestGameHint, restartGame, startGame } from '@/services/game.uts'
+import { loadSoupDetail } from '@/services/soups.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+import { consumeGameLaunch, hasPendingGameLaunch } from '@/stores/game-launch.uts'
+
+type GameData = {
+  soups: SoupSummary[],
+  activeSoup: SoupSummary | null,
+  activeSurface: string,
+  messages: GameMessage[],
+  progress: number,
+  completed: boolean,
+  loadingSoups: boolean,
+  turnLoading: boolean,
+  question: string,
+  scrollTarget: string,
+  errorMessage: string
+}
+const data = reactive({
+  soups: [] as SoupSummary[],
+  activeSoup: null,
+  activeSurface: '',
+  messages: [] as GameMessage[],
+  progress: 0,
+  completed: false,
+  loadingSoups: false,
+  turnLoading: false,
+  question: '',
+  scrollTarget: '',
+  errorMessage: ''
+} as GameData)
+const gameSoups = computed((): SoupSummary[] => data.soups.filter((item: SoupSummary): boolean => item.enableAiGame == true))
+const progressWidth = computed((): string => Math.max(3, data.progress).toString() + '%')
+
+function coverFor(soup: SoupSummary): string { return soupThumbnailUrl(soup.id, soup.coverImage) }
+function openAuth() { uni.navigateTo({ url: '/pages/auth/auth' }) }
+function openOnlineSoup() { if (sessionState.user == null) { openAuth(); return }; uni.navigateTo({ url: '/pages/online-soup-lobby/online-soup-lobby' }) }
+function scrollBottom() {
+  data.scrollTarget = ''
+  setTimeout(() => { data.scrollTarget = 'game-message-bottom' }, 40)
+}
+function displayMessage(message: GameMessage): string {
+  if (message.role != 'assistant' || !message.content.trim().startsWith('{')) return message.content
+  try {
+    const parsed = JSON.parse(message.content) as UTSJSONObject
+    return (parsed['answer'] as string | null) ?? message.content
+  } catch (_) {
+    return message.content
+  }
+}
+function loadLobby() {
+  if (sessionState.user == null) return
+  data.loadingSoups = true
+  data.errorMessage = ''
+  loadGameSoups((response) => {
+    data.soups = response.soups
+    data.loadingSoups = false
+  }, (error) => {
+    data.loadingSoups = false
+    data.errorMessage = error.message
+  })
+}
+function openGame(soup: SoupSummary) {
+  if (data.turnLoading) return
+  data.activeSoup = soup
+  data.activeSurface = ''
+  data.turnLoading = true
+  data.errorMessage = ''
+  loadSoupDetail(soup.id, (response) => {
+    data.activeSurface = response.soup.surface
+  }, (_) => {})
+  startGame(soup.id, (response) => {
+    data.messages = response.messages
+    data.progress = response.progress
+    data.completed = response.completed
+    data.turnLoading = false
+    scrollBottom()
+  }, (error) => {
+    data.turnLoading = false
+    data.errorMessage = error.message
+  })
+}
+function openPendingGame() {
+  const soupId = consumeGameLaunch()
+  if (soupId.length == 0) return
+  data.turnLoading = true
+  data.errorMessage = ''
+  loadSoupDetail(soupId, (response) => {
+    const detail = response.soup
+    const soup = {
+      id: detail.id,
+      title: detail.title,
+      author: detail.author,
+      type: detail.type,
+      difficulty: detail.difficulty,
+      summary: detail.summary,
+      coverImage: detail.coverImage,
+      creatorId: detail.creatorId,
+      creatorName: detail.creatorName,
+      creatorAvatar: detail.creatorAvatar,
+      creatorLevel: detail.creatorLevel,
+      creatorEquippedBadge: detail.creatorEquippedBadge,
+      isOriginal: detail.isOriginal,
+      isBottomPublic: detail.isBottomPublic,
+      enableAiGame: detail.enableAiGame,
+      viewCount: detail.viewCount,
+      likeCount: detail.likeCount,
+      favoriteCount: detail.favoriteCount,
+      createdAt: detail.createdAt,
+      evaluationCount: detail.evaluationCount,
+      averageTotal: detail.averageTotal,
+      heatValue: detail.heatValue,
+      isLiked: detail.isLiked,
+      isFavorited: detail.isFavorited,
+      radar: detail.radar
+    } as SoupSummary
+    data.activeSurface = detail.surface
+    data.activeSoup = soup
+    startGame(soupId, (gameResponse) => {
+      data.messages = gameResponse.messages
+      data.progress = gameResponse.progress
+      data.completed = gameResponse.completed
+      data.turnLoading = false
+      scrollBottom()
+    }, (error) => {
+      data.turnLoading = false
+      data.errorMessage = error.message
+    })
+  }, (error) => {
+    data.turnLoading = false
+    data.errorMessage = error.message
+  })
+}
+function closeGame() {
+  if (data.turnLoading) return
+  data.activeSoup = null
+  data.activeSurface = ''
+  data.messages = []
+  data.errorMessage = ''
+}
+function appendTurn(question: string, answer: string, progress: number, completed: boolean) {
+  data.messages.push({ role: 'user', content: question } as GameMessage)
+  data.messages.push({ role: 'assistant', content: answer } as GameMessage)
+  data.progress = progress
+  data.completed = completed
+  data.turnLoading = false
+  scrollBottom()
+}
+function sendQuestion() {
+  if (data.activeSoup == null || data.turnLoading) return
+  const question = data.question.trim()
+  if (question.length == 0) return
+  data.question = ''
+  data.turnLoading = true
+  data.errorMessage = ''
+  askGame(data.activeSoup!.id, question, (response) => {
+    appendTurn(question, response.answer, response.progress, response.completed)
+  }, (error) => {
+    data.turnLoading = false
+    data.question = question
+    data.errorMessage = error.message
+  })
+}
+function requestHint() {
+  if (data.activeSoup == null || data.turnLoading) return
+  if (data.progress < 20) {
+    uni.showToast({ title: '推理进度达到 20% 后可获取提示', icon: 'none' })
+    return
+  }
+  data.turnLoading = true
+  data.errorMessage = ''
+  requestGameHint(data.activeSoup!.id, (response) => {
+    appendTurn('🔔 请求提示', response.answer, response.progress, response.completed)
+  }, (error) => {
+    data.turnLoading = false
+    data.errorMessage = error.message
+  })
+}
+function confirmRestart() {
+  if (data.activeSoup == null || data.turnLoading) return
+  uni.showModal({
+    title: '重新开始 AI 玩汤',
+    content: '当前推理进度将被清空，确认重新开始？',
+    cancelText: '取消',
+    confirmText: '重新开始',
+    success: (result) => {
+      if (!result.confirm || data.activeSoup == null) return
+      data.turnLoading = true
+      restartGame(data.activeSoup!.id, (response) => {
+        data.messages = response.messages
+        data.progress = response.progress
+        data.completed = response.completed
+        data.turnLoading = false
+        scrollBottom()
+      }, (error) => {
+        data.turnLoading = false
+        data.errorMessage = error.message
+      })
+    }
+  })
+}
+
+onLoad(() => {
+  if (!sessionState.restored) restoreSession()
+})
+onShow(() => {
+  if (hasPendingGameLaunch()) openPendingGame()
+  else if (sessionState.user != null && data.soups.length == 0) loadLobby()
+})
+watch((): string => sessionState.user == null ? '' : sessionState.user!.id, (userId: string) => {
+  if (userId.length > 0) loadLobby()
+  else data.soups = []
+})
+</script>
+
+<style>
+.page, .lobby, .game-shell { flex: 1; background-color: #F4F7FB; }
+.header { padding: 52px 16px 14px 16px; background-color: #FFFFFF; border-bottom-width: 1px; border-bottom-color: #EEF2F6; }
+.eyebrow { color: #7C3AED; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+.headline { margin-top: 4px; color: #121826; font-size: 24px; font-weight: 800; }
+.subtitle, .muted { margin-top: 6px; color: #667085; font-size: 11px; }
+.state-card { margin: 12px 16px; padding: 22px 18px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.state-title { color: #121826; font-size: 16px; font-weight: 800; }
+.primary-button { height: 42px; margin-top: 15px; padding: 0; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 800; line-height: 42px; }
+.soup-list { flex: 1; padding-top: 4px; }
+.soup-card { min-height: 118px; margin: 8px 12px 0 12px; padding: 10px; flex-direction: row; border-width: 1px; border-color: #E5EAF2; border-radius: 17px; background-color: #FFFFFF; transform: scale(1); transition-property: transform, background-color; transition-duration: 140ms; }
+.card-pressed { transform: scale(0.98); background-color: #F8FAFC; }
+.cover { width: 98px; height: 98px; border-radius: 13px; background-color: #EAF2FF; }
+.cover-placeholder { align-items: center; justify-content: center; }
+.cover-text { color: #2563EB; font-size: 27px; font-weight: 800; }
+.soup-copy { flex: 1; margin-left: 12px; }
+.soup-title { color: #121826; font-size: 16px; font-weight: 800; }
+.soup-summary { margin-top: 7px; color: #667085; font-size: 11px; line-height: 17px; }
+.meta-row { margin-top: auto; flex-direction: row; align-items: center; }
+.tag { margin-right: 6px; padding: 4px 7px; border-radius: 8px; background-color: #EAF2FF; color: #2563EB; font-size: 9px; }
+.difficulty { background-color: #FFF7ED; color: #C2410C; }
+.play-label { margin-left: auto; color: #7C3AED; font-size: 10px; font-weight: 800; }
+.safe-bottom { height: 24px; }
+.game-header { height: 96px; padding: 48px 14px 8px 14px; flex-direction: row; align-items: center; background-color: #FFFFFF; border-bottom-width: 1px; border-bottom-color: #EEF2F6; }
+.back-button { width: 36px; height: 36px; align-items: center; justify-content: center; border-radius: 18px; background-color: #F2F4F7; transform: scale(1); }
+.back-symbol { color: #344054; font-size: 31px; line-height: 31px; }
+.game-title-copy { flex: 1; margin-left: 10px; }
+.game-title { color: #121826; font-size: 15px; font-weight: 800; }
+.game-mode { margin-top: 3px; color: #98A2B3; font-size: 9px; }
+.restart-button { padding: 9px 11px; border-radius: 10px; background-color: #FFF7ED; transform: scale(1); }
+.restart-text { color: #C2410C; font-size: 10px; font-weight: 800; }
+.pressed { transform: scale(0.94); opacity: 0.75; }
+.surface-card { margin: 8px 10px 0 10px; padding: 12px; border-width: 1px; border-color: #E5EAF2; border-radius: 15px; background-color: #FFFFFF; }
+.surface-label { color: #7C3AED; font-size: 10px; font-weight: 800; }
+.surface-text { margin-top: 6px; color: #344054; font-size: 12px; line-height: 18px; }
+.progress-head { margin-top: 10px; flex-direction: row; justify-content: space-between; }
+.progress-label { color: #667085; font-size: 10px; font-weight: 700; }
+.progress-value { color: #2563EB; font-size: 11px; font-weight: 800; }
+.progress-track { height: 8px; margin-top: 5px; overflow: hidden; border-radius: 4px; background-color: #E5E7EB; }
+.progress-fill { height: 8px; border-radius: 4px; background-color: #2563EB; transition-property: width; transition-duration: 500ms; }
+.complete-banner { margin-top: 9px; padding: 9px; border-radius: 9px; background-color: #ECFDF5; }
+.complete-text { color: #047857; font-size: 10px; font-weight: 700; }
+.messages { flex: 1; }
+.message-list { padding: 10px; }
+.message-row { width: 100%; margin-bottom: 9px; align-items: flex-start; }
+.mine-row { align-items: flex-end; }
+.bubble { max-width: 320px; padding: 10px 12px; border-radius: 15px; }
+.assistant-bubble { border-width: 1px; border-color: #E5EAF2; background-color: #FFFFFF; }
+.mine-bubble { background-color: #2563EB; }
+.bubble-text { color: #344054; font-size: 13px; line-height: 20px; }
+.mine-text { color: #FFFFFF; }
+.thinking { color: #98A2B3; font-size: 11px; }
+.message-bottom { height: 4px; }
+.inline-error { padding: 7px 12px; background-color: #FEF2F2; }
+.inline-error-text { color: #D92D20; font-size: 10px; }
+.input-bar { min-height: 62px; padding: 8px 10px; flex-direction: row; align-items: center; border-top-width: 1px; border-top-color: #E5EAF2; background-color: #FFFFFF; }
+.hint-button { width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 12px; background-color: #FFFBEB; transform: scale(1); }
+.hint-disabled { opacity: 0.45; }
+.hint-symbol { font-size: 18px; }
+.question-input { flex: 1; height: 42px; margin-left: 7px; padding: 0 10px; border-width: 1px; border-color: #DCE3EE; border-radius: 12px; background-color: #F8FAFC; color: #121826; font-size: 12px; }
+.send-button { width: 64px; height: 42px; margin-left: 7px; padding: 0; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 800; line-height: 42px; }
+.online-entry{margin-top:14px;padding:13px 14px;flex-direction:row;align-items:center;justify-content:space-between;border-radius:15px;background-color:#0B2147}.online-title{color:#FFF;font-size:13px;font-weight:900}.online-copy{margin-top:4px;color:#93C5FD;font-size:9px}.online-arrow{color:#BFDBFE;font-size:26px}
+</style>

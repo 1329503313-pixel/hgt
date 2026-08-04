@@ -1,0 +1,320 @@
+<template>
+  <view class="page">
+    <scroll-view class="scroll" direction="vertical">
+      <view class="intro-card">
+        <text class="eyebrow">内容创作 · SOUP EDITOR</text>
+        <text class="headline">{{ editing ? '编辑海龟汤' : '发布海龟汤' }}</text>
+        <text class="intro">完善汤面、汤底与展示信息，带给玩家完整的推理体验。</text>
+      </view>
+
+      <view v-if="data.loading" class="form-card loading-card">
+        <text class="section-title">正在读取作品...</text>
+        <text class="hint loading-hint">请稍候</text>
+      </view>
+      <view v-else-if="data.editReady" class="form-card">
+        <text class="section-title">基础信息</text>
+        <text class="label"><text class="required">*</text> 标题</text>
+        <input class="field" v-model="data.title" maxlength="100" placeholder="请输入标题" />
+
+        <text class="label"><text class="required">*</text> 类型</text>
+        <view class="choice-grid">
+          <view v-for="item in soupTypes" :key="item" class="choice" :class="data.type == item ? 'choice-active' : ''" hover-class="choice-pressed" @click="data.type = item">
+            <text class="choice-text" :class="data.type == item ? 'choice-text-active' : ''">{{ item }}</text>
+          </view>
+        </view>
+
+        <text class="label"><text class="required">*</text> 难度</text>
+        <view class="choice-row">
+          <view v-for="item in difficulties" :key="item" class="choice difficulty-choice" :class="data.difficulty == item ? 'choice-active' : ''" hover-class="choice-pressed" @click="data.difficulty = item">
+            <text class="choice-text" :class="data.difficulty == item ? 'choice-text-active' : ''">{{ item }}</text>
+          </view>
+        </view>
+
+        <view class="switch-row">
+          <view class="switch-copy"><text class="switch-title">原创作品</text><text class="hint">非原创作品将以“佚名”展示作者</text></view>
+          <switch :checked="data.isOriginal" color="#2563EB" @change="changeOriginal" />
+        </view>
+        <view class="switch-row">
+          <view class="switch-copy"><text class="switch-title">涉及黄赌毒暴恐</text><text class="hint">涉及敏感内容时请主动标记</text></view>
+          <switch :checked="data.isSensitive" color="#D92D20" @change="changeSensitive" />
+        </view>
+
+        <text class="label">摘要</text>
+        <textarea class="field summary-field" v-model="data.summary" maxlength="40" placeholder="最多 40 个字" />
+        <text class="counter">{{ data.summary.length }}/40</text>
+      </view>
+
+      <view v-if="!data.loading && data.editReady" class="form-card">
+        <text class="section-title">故事内容</text>
+        <text class="label"><text class="required">*</text> 汤面</text>
+        <textarea class="field content-field" v-model="data.surface" maxlength="5000" placeholder="请输入汤面" />
+        <SupplementEditor title="补充汤面" :items="data.supplementalSurfaces" @add="addSurface" @change="changeSurface" @remove="removeSurface" />
+
+        <text class="label gap-label"><text class="required">*</text> 汤底</text>
+        <textarea class="field content-field" v-model="data.bottom" maxlength="10000" placeholder="请输入汤底" />
+        <SupplementEditor title="补充汤底" :items="data.supplementalBottoms" @add="addBottom" @change="changeBottom" @remove="removeBottom" />
+
+        <text class="label gap-label">主持人手册</text>
+        <textarea class="field manual-field" v-model="data.manual" maxlength="10000" placeholder="选填，记录主持过程中的提示与注意事项" />
+      </view>
+
+      <view v-if="!data.loading && data.editReady" class="form-card">
+        <text class="section-title">公开设置</text>
+        <view class="switch-row top-switch">
+          <view class="switch-copy"><text class="switch-title">公开汤面</text><text class="hint">其他用户可以在列表和详情中看到作品</text></view>
+          <switch :checked="data.isSurfacePublic" color="#2563EB" @change="changeSurfacePublic" />
+        </view>
+        <view class="switch-row">
+          <view class="switch-copy"><text class="switch-title">公开汤底和主持人手册</text><text class="hint">其他用户无需申请即可查看完整内容</text></view>
+          <switch :checked="data.isBottomPublic" color="#2563EB" @change="changeBottomPublic" />
+        </view>
+        <view class="terms-row" hover-class="terms-pressed" @click="toggleTerms">
+          <view class="checkbox" :class="data.termsAccepted ? 'checkbox-active' : ''"><text class="checkmark">{{ data.termsAccepted ? '✓' : '' }}</text></view>
+          <text class="terms-text">我已阅读并同意用户使用条款，确认内容原创或已获得合法授权。</text>
+        </view>
+      </view>
+
+      <view v-if="data.errorMessage.length > 0" class="error-card"><text class="error-text">{{ data.errorMessage }}</text></view>
+      <button v-if="!data.loading && data.editReady" class="submit-button" :disabled="data.saving" @click="submit">{{ submitLabel }}</button>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import SupplementEditor from '@/components/business/SupplementEditor.uvue'
+import { KeyFact, SaveSoupResponse } from '@/domain/dto/soup.uts'
+import { ApiError } from '@/services/api-client.uts'
+import { createSoup, loadSoupDetail, updateSoup } from '@/services/soups.uts'
+import { restoreSession, sessionState } from '@/stores/session.uts'
+
+type EditorData = {
+  title: string,
+  type: string,
+  difficulty: string,
+  summary: string,
+  isOriginal: boolean,
+  isSensitive: boolean,
+  surface: string,
+  supplementalSurfaces: string[],
+  bottom: string,
+  supplementalBottoms: string[],
+  manual: string,
+  isSurfacePublic: boolean,
+  isBottomPublic: boolean,
+  termsAccepted: boolean,
+  id: string,
+  coverImage: string,
+  enableAiGame: boolean,
+  aiPrompt: string,
+  keyFacts: KeyFact[],
+  keyFactsCustomized: boolean,
+  editReady: boolean,
+  loading: boolean,
+  saving: boolean,
+  errorMessage: string
+}
+
+const soupTypes = ['本格清汤', '本格红汤', '本格黑汤', '变格清汤', '变格红汤', '变格黑汤', '纯机制汤', '其他']
+const difficulties = ['简单', '普通', '困难', '地狱']
+const data = reactive({
+  title: '',
+  type: '本格清汤',
+  difficulty: '普通',
+  summary: '',
+  isOriginal: true,
+  isSensitive: false,
+  surface: '',
+  supplementalSurfaces: [] as string[],
+  bottom: '',
+  supplementalBottoms: [] as string[],
+  manual: '',
+  isSurfacePublic: true,
+  isBottomPublic: false,
+  termsAccepted: false,
+  id: '',
+  coverImage: '',
+  enableAiGame: false,
+  aiPrompt: '',
+  keyFacts: [] as KeyFact[],
+  keyFactsCustomized: false,
+  editReady: true,
+  loading: false,
+  saving: false,
+  errorMessage: ''
+} as EditorData)
+const editing = computed((): boolean => data.id.length > 0)
+const submitLabel = computed((): string => {
+  if (data.saving) return editing.value ? '正在保存...' : '正在发布...'
+  return editing.value ? '保存修改' : '发布海龟汤'
+})
+
+function boolFromSwitch(event: UniSwitchChangeEvent): boolean { return event.detail.value }
+function changeOriginal(event: UniSwitchChangeEvent) { data.isOriginal = boolFromSwitch(event) }
+function changeSensitive(event: UniSwitchChangeEvent) { data.isSensitive = boolFromSwitch(event) }
+function changeSurfacePublic(event: UniSwitchChangeEvent) { data.isSurfacePublic = boolFromSwitch(event) }
+function changeBottomPublic(event: UniSwitchChangeEvent) { data.isBottomPublic = boolFromSwitch(event) }
+function toggleTerms() { data.termsAccepted = !data.termsAccepted }
+function addSurface() { data.supplementalSurfaces.push('') }
+function addBottom() { data.supplementalBottoms.push('') }
+function changeSurface(index: number, value: string) { data.supplementalSurfaces[index] = value }
+function changeBottom(index: number, value: string) { data.supplementalBottoms[index] = value }
+function removeSurface(index: number) { data.supplementalSurfaces.splice(index, 1) }
+function removeBottom(index: number) { data.supplementalBottoms.splice(index, 1) }
+function trimmedItems(items: string[]): string[] {
+  return items.map((item: string): string => item.trim()).filter((item: string): boolean => item.length > 0)
+}
+function validate(): string {
+  if (data.title.trim().length == 0) return '请输入标题'
+  if (data.surface.trim().length == 0) return '请输入汤面'
+  if (data.bottom.trim().length == 0) return '请输入汤底'
+  if (!data.termsAccepted) return '请先阅读并同意用户使用条款'
+  return ''
+}
+function loadEditingSoup() {
+  if (data.id.length == 0) return
+  data.editReady = false
+  data.loading = true
+  data.errorMessage = ''
+  loadSoupDetail(data.id, (response) => {
+    const soup = response.soup
+    if (!soup.canEdit) {
+      data.loading = false
+      data.errorMessage = '没有编辑权限'
+      return
+    }
+    data.title = soup.title
+    data.type = soup.type
+    data.difficulty = soup.difficulty
+    data.summary = soup.summary
+    data.isOriginal = soup.isOriginal
+    data.isSensitive = soup.isSensitive ?? false
+    data.surface = soup.surface
+    data.supplementalSurfaces = soup.supplementalSurfaces
+    data.bottom = soup.bottom ?? ''
+    data.supplementalBottoms = soup.supplementalBottoms ?? []
+    data.manual = soup.manual ?? ''
+    data.isSurfacePublic = soup.isSurfacePublic
+    data.isBottomPublic = soup.isBottomPublic
+    data.coverImage = soup.coverImage ?? ''
+    data.enableAiGame = soup.enableAiGame
+    data.aiPrompt = soup.aiPrompt ?? ''
+    data.keyFacts = soup.keyFacts ?? []
+    data.keyFactsCustomized = soup.keyFactsCustomized
+    data.termsAccepted = true
+    data.editReady = true
+    data.loading = false
+  }, (error) => {
+    data.loading = false
+    data.errorMessage = error.message
+    if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' })
+  })
+}
+function submit() {
+  if (data.saving) return
+  const validation = validate()
+  if (validation.length > 0) {
+    data.errorMessage = validation
+    uni.showToast({ title: validation, icon: 'none' })
+    return
+  }
+  if (sessionState.user == null) {
+    uni.navigateTo({ url: '/pages/auth/auth' })
+    return
+  }
+  data.saving = true
+  data.errorMessage = ''
+  const payload = {
+    title: data.title.trim(),
+    author: data.isOriginal ? sessionState.user!.nickname : '佚名',
+    type: data.type,
+    difficulty: data.difficulty,
+    summary: data.summary.trim(),
+    coverImage: data.coverImage,
+    isOriginal: data.isOriginal,
+    isSensitive: data.isSensitive,
+    surface: data.surface.trim(),
+    supplementalSurfaces: trimmedItems(data.supplementalSurfaces),
+    bottom: data.bottom.trim(),
+    supplementalBottoms: trimmedItems(data.supplementalBottoms),
+    manual: data.manual.trim(),
+    isSurfacePublic: data.isSurfacePublic,
+    isBottomPublic: data.isBottomPublic,
+    enableAiGame: data.enableAiGame,
+    aiPrompt: data.aiPrompt,
+    keyFacts: data.keyFacts,
+    keyFactsCustomized: data.keyFactsCustomized
+  } as UTSJSONObject
+  const saveSuccess = (response: SaveSoupResponse) => {
+    data.saving = false
+    if (response.reviewStatus == 'pending') uni.showToast({ title: '作品已提交审核', icon: 'none' })
+    else uni.showToast({ title: editing.value ? '保存成功' : '发布成功', icon: 'success' })
+    const savedId = editing.value ? data.id : (response.id ?? '')
+    if (savedId.length > 0) {
+      if (editing.value) uni.navigateBack()
+      else uni.redirectTo({ url: '/pages/soup-detail/soup-detail?id=' + encodeURIComponent(savedId) })
+    } else {
+      uni.navigateBack()
+    }
+  }
+  const saveFail = (error: ApiError) => {
+    data.saving = false
+    data.errorMessage = error.message
+    if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' })
+  }
+  if (editing.value) updateSoup(data.id, payload, saveSuccess, saveFail)
+  else createSoup(payload, saveSuccess, saveFail)
+}
+
+onLoad((options) => {
+  if (!sessionState.restored) restoreSession()
+  data.id = options['id'] ?? ''
+  if (data.id.length > 0) {
+    uni.setNavigationBarTitle({ title: '编辑海龟汤' })
+    loadEditingSoup()
+  }
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #F4F7FB; }
+.scroll { flex: 1; }
+.intro-card { margin: 12px 12px 0 12px; padding: 18px; border-radius: 18px; background-color: #2563EB; }
+.eyebrow { color: #BFDBFE; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+.headline { margin-top: 6px; color: #FFFFFF; font-size: 23px; font-weight: 800; }
+.intro { margin-top: 7px; color: #DBEAFE; font-size: 12px; line-height: 19px; }
+.form-card { margin: 10px 12px 0 12px; padding: 16px; border-width: 1px; border-color: #E5EAF2; border-radius: 18px; background-color: #FFFFFF; }
+.section-title { color: #121826; font-size: 17px; font-weight: 800; }
+.label { margin-top: 16px; margin-bottom: 7px; color: #475467; font-size: 12px; font-weight: 700; }
+.required { color: #D92D20; }
+.field { width: 100%; min-height: 44px; padding: 10px 12px; border-width: 1px; border-color: #DCE3EE; border-radius: 12px; background-color: #FFFFFF; color: #121826; font-size: 14px; }
+.summary-field { height: 82px; }
+.content-field { height: 190px; line-height: 22px; }
+.manual-field { height: 140px; line-height: 22px; }
+.counter { margin-top: 5px; color: #98A2B3; font-size: 10px; text-align: right; }
+.choice-grid, .choice-row { flex-direction: row; flex-wrap: wrap; }
+.choice { width: 48%; min-height: 40px; margin-right: 2%; margin-bottom: 8px; align-items: center; justify-content: center; border-width: 1px; border-color: #DCE3EE; border-radius: 12px; background-color: #FFFFFF; transform: scale(1); transition-property: transform, background-color; transition-duration: 120ms; }
+.difficulty-choice { width: 23%; margin-right: 2%; }
+.choice-active { border-color: #2563EB; background-color: #EFF6FF; }
+.choice-pressed { transform: scale(0.96); }
+.choice-text { color: #475467; font-size: 12px; font-weight: 600; }
+.choice-text-active { color: #2563EB; font-weight: 800; }
+.switch-row { min-height: 68px; flex-direction: row; align-items: center; justify-content: space-between; border-bottom-width: 1px; border-bottom-color: #EEF2F6; }
+.top-switch { margin-top: 8px; }
+.switch-copy { flex: 1; padding-right: 12px; }
+.switch-title { color: #344054; font-size: 13px; font-weight: 700; }
+.hint { margin-top: 4px; color: #98A2B3; font-size: 10px; line-height: 15px; }
+.gap-label { margin-top: 22px; }
+.terms-row { margin-top: 16px; min-height: 52px; flex-direction: row; align-items: center; padding: 10px; border-radius: 12px; background-color: #F8FAFC; }
+.terms-pressed { background-color: #EFF6FF; }
+.checkbox { width: 22px; height: 22px; align-items: center; justify-content: center; border-width: 1px; border-color: #CBD5E1; border-radius: 6px; background-color: #FFFFFF; }
+.checkbox-active { border-color: #2563EB; background-color: #2563EB; }
+.checkmark { color: #FFFFFF; font-size: 14px; font-weight: 800; }
+.terms-text { flex: 1; margin-left: 9px; color: #667085; font-size: 11px; line-height: 17px; }
+.error-card { margin: 10px 12px 0 12px; padding: 12px; border-radius: 12px; background-color: #FEF2F2; }
+.error-text { color: #D92D20; font-size: 12px; font-weight: 700; }
+.submit-button { margin: 14px 12px 0 12px; min-height: 48px; border-radius: 14px; background-color: #2563EB; color: #FFFFFF; font-size: 15px; font-weight: 700; }
+.safe-bottom { height: 28px; }
+.loading-card { min-height: 120px; justify-content: center; }
+.loading-hint { margin-top: 8px; }
+</style>

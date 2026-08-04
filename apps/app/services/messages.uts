@@ -1,0 +1,87 @@
+import { apiGet, apiPatch, apiPost, ApiError } from './api-client.uts'
+import { EquippedBadge } from '@/domain/dto/soup.uts'
+import { normalizeGiftMessage } from '@/services/chat-content.uts'
+import { GiftMessageDisplay } from '@/domain/dto/chat.uts'
+
+function normalizeConversationUser(user: UTSJSONObject) {
+  if (user['level'] == null) user['level'] = 1
+  if (user['isOnline'] == null) user['isOnline'] = false
+}
+
+function normalizePrivateMessage(message: UTSJSONObject) { normalizeGiftMessage(message) }
+
+function normalizeConversation(conversation: UTSJSONObject) {
+  if (conversation['unreadCount'] == null) conversation['unreadCount'] = 0
+  if (conversation['updatedAt'] == null) conversation['updatedAt'] = ''
+  const user = conversation['otherUser'] as UTSJSONObject | null
+  if (user != null) normalizeConversationUser(user)
+  const latest = conversation['lastMessage'] as UTSJSONObject | null
+  if (latest != null) normalizePrivateMessage(latest)
+}
+
+function decodeConversations(json: string): ConversationsResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const conversations = root['conversations'] as UTSJSONObject[] | null
+  if (conversations != null) conversations.forEach((conversation) => { normalizeConversation(conversation) })
+  return JSON.parse<ConversationsResponse>(JSON.stringify(root))!
+}
+
+function decodeChat(json: string): ChatResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const conversation = root['conversation'] as UTSJSONObject | null
+  if (conversation != null) normalizeConversation(conversation)
+  const messages = root['messages'] as UTSJSONObject[] | null
+  if (messages != null) messages.forEach((message) => { normalizePrivateMessage(message) })
+  return JSON.parse<ChatResponse>(JSON.stringify(root))!
+}
+
+function decodeSentMessage(json: string): SendMessageResponse {
+  const root = JSON.parse(json) as UTSJSONObject
+  const message = root['message'] as UTSJSONObject | null
+  if (message != null) normalizePrivateMessage(message)
+  return JSON.parse<SendMessageResponse>(JSON.stringify(root))!
+}
+
+export type MessageCounts = { system: number, interactions: number, requests: number, notices: number, privateMessages: number, circleMessages: number, circleMentions: number, total: number }
+export type CountsResponse = { counts: MessageCounts }
+export type NotificationItem = { id: string, type: string, title: string, content: string, link: string | null, isRead: boolean, createdAt: string }
+export type NotificationsResponse = { notifications: NotificationItem[] }
+export type ConversationUser = { id: string, nickname: string, avatar: string | null, level: number, equippedBadge: EquippedBadge | null, isOnline: boolean }
+export type ConversationMessage = { content: string, type: string, stickerId: string | null, stickerName: string | null, giftDisplay: GiftMessageDisplay | null, isMine: boolean, createdAt: string, recalledAt: string | null }
+export type Conversation = {
+  id: string,
+  otherUser: ConversationUser,
+  lastMessage: ConversationMessage | null,
+  unreadCount: number,
+  updatedAt: string
+}
+export type ConversationsResponse = { conversations: Conversation[] }
+export type PrivateMessage = { id: string, senderId: string, content: string, type: string, stickerId: string | null, stickerName: string | null, giftDisplay: GiftMessageDisplay | null, isMine: boolean, isRead: boolean, createdAt: string, recalledAt: string | null }
+export type ChatResponse = { conversation: Conversation, messages: PrivateMessage[], hasMore: boolean, nextCursor: string | null }
+export type SendMessageResponse = { id: string, createdAt: string, message: PrivateMessage | null }
+export type RecallResponse = { messageId: string, recalledAt: string }
+export type StickerAsset = { id: string, name: string, text: string, staticUrl: string, animatedUrl: string, width: number, height: number }
+export type StickerSeries = { id: string, name: string, characterName: string, stickers: StickerAsset[] }
+export type StickersResponse = { series: StickerSeries[] }
+export type ViewRequest = { id: string, applicationType: string, soupId: string, soupTitle: string, requesterId: string, requesterName: string, ownerId: string, status: string, createdAt: string, handledAt: string | null, handledBy: string | null }
+export type RequestsResponse = { total: number, requests: ViewRequest[] }
+export type NoticeItem = { id: string, title: string, author: string, publishedAt: string, updatedAt: string, expiresAt: string | null, isRead: boolean }
+export type NoticesResponse = { total: number, notices: NoticeItem[] }
+export type NoticeDetail = { id: string, title: string, author: string, content: string, publishedAt: string, updatedAt: string, expiresAt: string | null, isRead: boolean }
+export type NoticeDetailResponse = { notice: NoticeDetail }
+
+export function loadMessageCounts(success: (data: CountsResponse) => void, fail: (error: ApiError) => void) { apiGet<CountsResponse>('/api/messages/unread-counts', (json: string): CountsResponse => JSON.parse<CountsResponse>(json)!, success, fail) }
+export function loadNotifications(success: (data: NotificationsResponse) => void, fail: (error: ApiError) => void) { apiGet<NotificationsResponse>('/api/notifications', (json: string): NotificationsResponse => JSON.parse<NotificationsResponse>(json)!, success, fail) }
+export function loadConversations(success: (data: ConversationsResponse) => void, fail: (error: ApiError) => void) { apiGet<ConversationsResponse>('/api/conversations', (json: string): ConversationsResponse => decodeConversations(json), success, fail) }
+export function loadStickers(success: (data: StickersResponse) => void, fail: (error: ApiError) => void) { apiGet<StickersResponse>('/api/stickers', (json: string): StickersResponse => JSON.parse<StickersResponse>(json)!, success, fail) }
+export function loadRequests(success: (data: RequestsResponse) => void, fail: (error: ApiError) => void) { apiGet<RequestsResponse>('/api/access-requests', (json: string): RequestsResponse => JSON.parse<RequestsResponse>(json)!, success, fail) }
+export function decideRequest(id: string, decision: string, success: () => void, fail: (error: ApiError) => void) { let body: UTSJSONObject = {}; body['decision'] = decision; apiPost<UTSJSONObject>('/api/access-requests/' + encodeURIComponent(id) + '/decision', body, (json: string): UTSJSONObject => JSON.parse(json) as UTSJSONObject, () => success(), fail) }
+export function loadNotices(success: (data: NoticesResponse) => void, fail: (error: ApiError) => void) { apiGet<NoticesResponse>('/api/notices', (json: string): NoticesResponse => JSON.parse<NoticesResponse>(json)!, success, fail) }
+export function loadNoticeDetail(id: string, success: (data: NoticeDetailResponse) => void, fail: (error: ApiError) => void) { apiGet<NoticeDetailResponse>('/api/notices/' + encodeURIComponent(id), (json: string): NoticeDetailResponse => JSON.parse<NoticeDetailResponse>(json)!, success, fail) }
+export function loadChat(id: string, before: string, success: (data: ChatResponse) => void, fail: (error: ApiError) => void) { let path = '/api/conversations/' + encodeURIComponent(id) + '/messages?limit=50'; if (before.length > 0) path += '&before=' + encodeURIComponent(before); apiGet<ChatResponse>(path, (json: string): ChatResponse => decodeChat(json), success, fail) }
+export function sendPrivateMessage(id: string, content: string, success: (data: SendMessageResponse) => void, fail: (error: ApiError) => void) { let body: UTSJSONObject = {}; body['content'] = content; apiPost<SendMessageResponse>('/api/conversations/' + encodeURIComponent(id) + '/messages', body, (json: string): SendMessageResponse => decodeSentMessage(json), success, fail) }
+export function sendPrivateSticker(id: string, stickerId: string, success: (data: SendMessageResponse) => void, fail: (error: ApiError) => void) { let body: UTSJSONObject = {}; body['stickerId'] = stickerId; apiPost<SendMessageResponse>('/api/conversations/' + encodeURIComponent(id) + '/messages', body, (json: string): SendMessageResponse => decodeSentMessage(json), success, fail) }
+export function markConversationRead(id: string, success: () => void, fail: (error: ApiError) => void) { apiPatch<UTSJSONObject>('/api/conversations/' + encodeURIComponent(id) + '/read', {} as UTSJSONObject, (json: string): UTSJSONObject => JSON.parse(json) as UTSJSONObject, (_) => success(), fail) }
+export function recallPrivateMessage(conversationId: string, messageId: string, success: (data: RecallResponse) => void, fail: (error: ApiError) => void) { apiPatch<RecallResponse>('/api/conversations/' + encodeURIComponent(conversationId) + '/messages/' + encodeURIComponent(messageId) + '/recall', {} as UTSJSONObject, (json: string): RecallResponse => JSON.parse<RecallResponse>(json)!, success, fail) }
+export function markNotificationRead(id: string, success: () => void, fail: (error: ApiError) => void) { apiPatch<UTSJSONObject>('/api/notifications/' + encodeURIComponent(id) + '/read', {} as UTSJSONObject, (json: string): UTSJSONObject => JSON.parse(json) as UTSJSONObject, (_) => success(), fail) }
+export function markAllNotificationsRead(success: () => void, fail: (error: ApiError) => void) { apiPatch<UTSJSONObject>('/api/notifications/read-all', {} as UTSJSONObject, (json: string): UTSJSONObject => JSON.parse(json) as UTSJSONObject, (_) => success(), fail) }

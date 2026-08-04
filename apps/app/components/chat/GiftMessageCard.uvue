@@ -1,0 +1,32 @@
+<template>
+  <view class="gift-card">
+    <view class="gift-visual">
+      <image v-if="iconUrl.length > 0" class="gift-icon" :src="resolvedIconUrl" mode="aspectFit"></image>
+      <text v-else class="gift-placeholder">礼</text>
+    </view>
+    <view class="gift-copy">
+      <text class="gift-action">{{ senderName }} 送给 {{ receiverName }}</text>
+      <view class="gift-name-row"><text class="gift-name">{{ giftName }}</text><text class="gift-quantity">×{{ quantity }}</text></view>
+      <text class="gift-reward">贝壳 +{{ shellReward }} · 魅力 +{{ charmReward }}</text>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { absoluteApiUrl } from '@/config/runtime.uts'
+
+const props = defineProps<{
+  giftName: string,
+  iconUrl: string,
+  quantity: number,
+  senderName: string,
+  receiverName: string,
+  shellReward: number,
+  charmReward: number
+}>()
+const resolvedIconUrl = computed<string>(() => absoluteApiUrl(props.iconUrl))
+</script>
+
+<style>
+.gift-card{width:244px;min-height:104px;padding:13px;flex-direction:row;align-items:center;border-width:1px;border-color:#FCD34D;border-radius:17px;background-color:#FFFBEB}.gift-visual{width:68px;height:68px;align-items:center;justify-content:center;border-radius:16px;background-color:#FEF3C7}.gift-icon{width:58px;height:58px}.gift-placeholder{color:#D97706;font-size:25px;font-weight:900}.gift-copy{flex:1;min-width:0;margin-left:11px}.gift-action{color:#92400E;font-size:9px;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gift-name-row{margin-top:5px;flex-direction:row;align-items:center}.gift-name{max-width:108px;color:#7C2D12;font-size:14px;font-weight:900;lines:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gift-quantity{margin-left:5px;color:#D97706;font-size:11px;font-weight:900}.gift-reward{margin-top:7px;color:#B45309;font-size:9px;font-weight:700}
+</style>

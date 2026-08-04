@@ -1,0 +1,66 @@
+import { apiGet } from '@/services/api-client.uts'
+import { AccountUser, MeResponse } from '@/domain/dto/user.uts'
+import { login, logout, register } from '@/services/auth.uts'
+import { ApiError } from '@/services/api-client.uts'
+
+export type SessionState = {
+  user: AccountUser | null,
+  restoring: boolean,
+  restored: boolean
+}
+
+export const sessionState = reactive({
+  user: null as AccountUser | null,
+  restoring: false,
+  restored: false
+} as SessionState)
+
+export function restoreSession() {
+  if (sessionState.restoring) return
+  sessionState.restoring = true
+  apiGet<MeResponse>('/api/auth/me', (json: string): MeResponse => JSON.parse<MeResponse>(json)!, (response) => {
+    sessionState.user = response.user
+    sessionState.restoring = false
+    sessionState.restored = true
+  }, (_) => {
+    sessionState.user = null
+    sessionState.restoring = false
+    sessionState.restored = true
+  })
+}
+
+export function loginSession(
+  username: string,
+  password: string,
+  success: () => void,
+  fail: (error: ApiError) => void
+) {
+  login(username, password, (response) => {
+    sessionState.user = response.user
+    sessionState.restored = true
+    success()
+  }, fail)
+}
+
+export function registerSession(
+  username: string,
+  password: string,
+  nickname: string,
+  invitationCode: string,
+  success: () => void,
+  fail: (error: ApiError) => void
+) {
+  register(username, password, nickname, invitationCode, (response) => {
+    sessionState.user = response.user
+    sessionState.restored = true
+    success()
+  }, fail)
+}
+
+export function logoutSession(success: () => void, fail: (error: ApiError) => void) {
+  logout((_) => {
+    sessionState.user = null
+    sessionState.restored = true
+    success()
+  }, fail)
+}

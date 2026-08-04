@@ -1,0 +1,26 @@
+<template>
+  <view class="page">
+    <view class="card">
+      <text class="eyebrow">P1 导航入口</text>
+      <text class="title">{{ title }}</text>
+      <text class="description">{{ description }}</text>
+      <text class="status">功能将在后续阶段接入</text>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+defineProps<{
+  title: string,
+  description: string
+}>()
+</script>
+
+<style>
+.page { flex: 1; justify-content: center; padding: 24px; background-color: #F4F7FB; }
+.card { padding: 28px 22px; border-width: 1px; border-color: #E5EAF2; border-radius: 22px; background-color: #FFFFFF; }
+.eyebrow { color: #2563EB; font-size: 11px; font-weight: 700; }
+.title { margin-top: 8px; color: #121826; font-size: 26px; font-weight: 700; }
+.description { margin-top: 10px; color: #667085; font-size: 14px; line-height: 22px; }
+.status { margin-top: 20px; padding: 9px 12px; border-radius: 12px; background-color: #EAF2FF; color: #2563EB; font-size: 12px; font-weight: 600; }
+</style>

@@ -1,0 +1,332 @@
+<template>
+  <view class="page">
+    <scroll-view class="content" direction="vertical">
+      <view class="hero">
+        <text class="title">HGT P0 技术探针</text>
+        <text class="subtitle">账号和密码仅保存在页面内存，不写入 Storage。</text>
+      </view>
+
+      <view class="card">
+        <text class="section-title">服务端连接</text>
+        <text class="label">Base URL</text>
+        <input class="input" v-model="data.baseUrl" placeholder="默认已自动带入，可改为局域网地址" />
+        <text class="label">测试账号</text>
+        <input class="input" v-model="data.username" placeholder="账号" />
+        <input class="input" v-model="data.password" password="true" placeholder="密码" />
+        <view class="button-row">
+          <button class="button primary-button" @click="runLogin">登录并接收 Cookie</button>
+          <button class="button" @click="runMe">验证 Cookie</button>
+        </view>
+        <view class="button-row">
+          <input class="input compact-input" v-model="data.circleId" placeholder="已加入的圈子 ID" />
+          <button class="button" @click="runSocket">验证鉴权 WSS</button>
+          <button class="button" @click="closeSocket">关闭 WSS</button>
+          <button class="button danger-button" @click="runLogout">登出</button>
+        </view>
+        <text class="result">{{ data.networkResult }}</text>
+        <text class="result">{{ data.socketResult }}</text>
+      </view>
+
+      <view class="card">
+        <text class="section-title">Storage（非敏感数据）</text>
+        <input class="input" v-model="data.storageValue" placeholder="输入测试值" />
+        <view class="button-row">
+          <button class="button" @click="writeStorage">写入</button>
+          <button class="button" @click="readStorage">读取</button>
+          <button class="button" @click="clearStorage">清理</button>
+        </view>
+        <text class="result">{{ data.storageResult }}</text>
+      </view>
+
+      <view class="card">
+        <text class="section-title">上传契约</text>
+        <text class="hint">现有服务端使用 JSON data URL 上传头像。选择只读取；点击上传后会修改当前测试账号头像。</text>
+        <button class="button" @click="chooseUploadImage">选择图片并读取</button>
+        <button class="button danger-button" @click="uploadSelectedAvatar">上传到测试账号</button>
+        <text class="result">{{ data.uploadResult }}</text>
+      </view>
+
+      <button class="navigation-button" @click="openPlatformProbe">打开原生组件探针</button>
+      <view class="safe-bottom"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { getApiOrigin } from '@/config/runtime.uts'
+import { loginProbe, logoutProbe, meProbe, requestProbe, ProbeResult } from '@/services/probe-api.uts'
+import { connectAuthenticatedCircleProbe, SocketProbeHandle } from '@/services/probe-socket.uts'
+import { clearStorageProbe, readStorageProbe, writeStorageProbe } from '@/services/probe-storage.uts'
+
+type PageData = {
+  baseUrl: string,
+  username: string,
+  password: string,
+  networkResult: string,
+  socketResult: string,
+  circleId: string,
+  storageValue: string,
+  storageResult: string,
+  uploadResult: string
+}
+
+const initialData: PageData = {
+  baseUrl: getApiOrigin(),
+  username: '',
+  password: '',
+  networkResult: '尚未测试',
+  socketResult: '尚未测试',
+  circleId: '',
+  storageValue: 'probe-' + Date.now().toString(),
+  storageResult: '尚未测试',
+  uploadResult: '尚未测试'
+}
+const data = reactive(initialData)
+
+let socketHandle: SocketProbeHandle | null = null
+let selectedAvatarDataUrl = ''
+
+function showNetworkResult(prefix: string, result: ProbeResult) {
+  data.networkResult = prefix + ': HTTP ' + result.statusCode.toString() + ' / ' + result.detail
+}
+
+function runLogin() {
+  if (data.username.length == 0 || data.password.length == 0) {
+    data.networkResult = '请输入测试账号和密码'
+    return
+  }
+  loginProbe(data.baseUrl, data.username, data.password, (result) => {
+    data.password = ''
+    showNetworkResult('登录', result)
+  })
+}
+
+function runMe() {
+  meProbe(data.baseUrl, (result) => {
+    showNetworkResult('Cookie 会话', result)
+  })
+}
+
+function runLogout() {
+  logoutProbe(data.baseUrl, (result) => {
+    showNetworkResult('登出', result)
+  })
+}
+
+function runSocket() {
+  if (data.circleId.trim().length == 0) {
+    data.socketResult = '请输入当前测试账号已加入的圈子 ID'
+    return
+  }
+  if (socketHandle != null) {
+    data.socketResult = '连接已存在，请先关闭'
+    return
+  }
+  data.socketResult = 'connecting'
+  socketHandle = connectAuthenticatedCircleProbe(data.baseUrl, data.circleId.trim(), (status) => {
+    data.socketResult = status
+    if (status.startsWith('closed:') || status.startsWith('error:')) {
+      socketHandle = null
+    }
+  })
+}
+
+function closeSocket() {
+  socketHandle?.close()
+  socketHandle = null
+}
+
+function writeStorage() {
+  data.storageResult = writeStorageProbe(data.storageValue)
+}
+
+function readStorage() {
+  data.storageResult = readStorageProbe()
+}
+
+function clearStorage() {
+  data.storageResult = clearStorageProbe()
+}
+
+function chooseUploadImage() {
+  uni.chooseImage({
+    count: 1,
+    success: (result) => {
+      const path = result.tempFilePaths[0]
+      if (path == null) {
+        data.uploadResult = '未取得图片路径'
+        return
+      }
+      const fileSystem = uni.getFileSystemManager()
+      fileSystem.readFile({
+        filePath: path,
+        encoding: 'base64',
+        success: (readResult) => {
+          const base64 = readResult.data as string
+          selectedAvatarDataUrl = 'data:image/jpeg;base64,' + base64
+          data.uploadResult = '读取成功，base64 长度 ' + base64.length.toString() + '；等待明确上传'
+        },
+        fail: (error) => {
+          data.uploadResult = '读取失败: ' + error.errMsg
+        }
+      })
+    },
+    fail: (error) => {
+      data.uploadResult = '选择失败: ' + error.errMsg
+    }
+  })
+}
+
+function uploadSelectedAvatar() {
+  if (selectedAvatarDataUrl.length == 0) {
+    data.uploadResult = '请先选择图片'
+    return
+  }
+  data.uploadResult = '正在上传到当前测试账号...'
+  requestProbe(data.baseUrl, '/api/me/avatar', 'PATCH', {
+    avatar: selectedAvatarDataUrl
+  }, (result) => {
+    data.uploadResult = '头像上传: HTTP ' + result.statusCode.toString() + ' / ' + result.detail
+    if (result.ok) {
+      selectedAvatarDataUrl = ''
+    }
+  })
+}
+
+function openPlatformProbe() {
+  uni.navigateTo({
+    url: '/pages/platform-probe/platform-probe'
+  })
+}
+
+onUnload(() => {
+  socketHandle?.close()
+  socketHandle = null
+})
+
+defineExpose({
+  data,
+  runLogin,
+  runMe,
+  runSocket,
+  writeStorage,
+  readStorage
+})
+</script>
+
+<style>
+.page {
+  flex: 1;
+  background-color: #F5F7FA;
+}
+
+.content {
+  flex: 1;
+}
+
+.hero {
+  padding: 20px 16px 12px 16px;
+}
+
+.title {
+  color: #111827;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.subtitle {
+  margin-top: 8px;
+  color: #6B7280;
+  font-size: 13px;
+}
+
+.card {
+  margin: 8px 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background-color: #FFFFFF;
+}
+
+.section-title {
+  margin-bottom: 12px;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.label {
+  margin-top: 6px;
+  margin-bottom: 6px;
+  color: #374151;
+  font-size: 13px;
+}
+
+.input {
+  height: 44px;
+  margin-bottom: 10px;
+  padding: 0 12px;
+  border-width: 1px;
+  border-color: #E5E7EB;
+  border-radius: 10px;
+  background-color: #F9FAFB;
+  color: #111827;
+  font-size: 14px;
+}
+
+.compact-input {
+  flex: 1;
+  min-width: 160px;
+  margin-right: 8px;
+}
+
+.button-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.button {
+  min-height: 44px;
+  margin-right: 8px;
+  margin-bottom: 8px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background-color: #EFF6FF;
+  color: #2563EB;
+  font-size: 13px;
+}
+
+.primary-button {
+  background-color: #2563EB;
+  color: #FFFFFF;
+}
+
+.danger-button {
+  background-color: #FEF2F2;
+  color: #DC2626;
+}
+
+.result {
+  margin-top: 8px;
+  color: #374151;
+  font-size: 12px;
+}
+
+.hint {
+  margin-bottom: 12px;
+  color: #6B7280;
+  font-size: 12px;
+}
+
+.navigation-button {
+  min-height: 48px;
+  margin: 12px 16px;
+  border-radius: 12px;
+  background-color: #111827;
+  color: #FFFFFF;
+  font-size: 15px;
+}
+
+.safe-bottom {
+  height: var(--uni-safe-area-inset-bottom);
+}
+</style>

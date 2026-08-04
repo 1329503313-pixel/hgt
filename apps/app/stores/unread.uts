@@ -1,0 +1,75 @@
+import { loadMessageCounts } from '@/services/messages.uts'
+import { sessionState } from '@/stores/session.uts'
+
+export type UnreadState = {
+  circleMessages: number,
+  circleMentions: number,
+  circlesPageVisible: boolean,
+  loading: boolean,
+  timerId: number
+}
+
+export const unreadState = reactive({
+  circleMessages: 0,
+  circleMentions: 0,
+  circlesPageVisible: false,
+  loading: false,
+  timerId: 0
+} as UnreadState)
+
+function safeTabBarCall(fn: () => void): void {
+  // tabBar 在 onLaunch 时还未就绪，调用会抛 UniError(errCode=100)，吞掉避免阻塞后续流程
+  try { fn() } catch (_) {}
+}
+
+function renderCircleTabHint(): void {
+  // 延后到下一帧，避开 tabBar 初始化窗口
+  setTimeout(() => {
+    if (unreadState.circlesPageVisible || sessionState.user == null) {
+      safeTabBarCall(() => { uni.removeTabBarBadge({ index: 2 }) })
+      safeTabBarCall(() => { uni.hideTabBarRedDot({ index: 2 }) })
+      return
+    }
+    if (unreadState.circleMentions > 0) {
+      safeTabBarCall(() => { uni.hideTabBarRedDot({ index: 2 }) })
+      safeTabBarCall(() => { uni.setTabBarBadge({ index: 2, text: '@' }) })
+      return
+    }
+    safeTabBarCall(() => { uni.removeTabBarBadge({ index: 2 }) })
+    if (unreadState.circleMessages > 0) safeTabBarCall(() => { uni.showTabBarRedDot({ index: 2 }) })
+    else safeTabBarCall(() => { uni.hideTabBarRedDot({ index: 2 }) })
+  }, 50)
+}
+
+export function refreshUnreadState() {
+  if (unreadState.loading) return
+  if (sessionState.user == null) {
+    unreadState.circleMessages = 0
+    unreadState.circleMentions = 0
+    renderCircleTabHint()
+    return
+  }
+  unreadState.loading = true
+  loadMessageCounts((response) => {
+    unreadState.circleMessages = response.counts.circleMessages
+    unreadState.circleMentions = response.counts.circleMentions
+    unreadState.loading = false
+    renderCircleTabHint()
+  }, (_) => { unreadState.loading = false })
+}
+
+export function setCirclesPageVisible(visible: boolean) {
+  unreadState.circlesPageVisible = visible
+  renderCircleTabHint()
+  if (!visible) refreshUnreadState()
+}
+
+export function startUnreadPolling() {
+  if (unreadState.timerId != 0) return
+  refreshUnreadState()
+  unreadState.timerId = setInterval(() => { refreshUnreadState() }, 15000)
+}
+
+export function stopUnreadPolling() {
+  if (unreadState.timerId != 0) { clearInterval(unreadState.timerId); unreadState.timerId = 0 }
+}
