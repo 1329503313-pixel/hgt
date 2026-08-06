@@ -13,7 +13,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
 import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgressListener } from "./game.js";
-import { reviewSoupContent, SoupReviewUnavailableError } from "./soupReview.js";
+import { reviewSoupContent, SoupReviewUnavailableError, type SoupReviewResult } from "./soupReview.js";
 import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
 import {
@@ -41,7 +41,7 @@ import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
-import { normalizeExistingSoupCover } from "./soupInput.js";
+import { hasSoupReviewContentChanged, normalizeExistingSoupCover } from "./soupInput.js";
 import {
   evaluationCountsTowardScore,
   scoringEvaluationJoin,
@@ -4686,8 +4686,14 @@ app.post("/api/soups", async (req, res) => {
     return sendError(res, 429, `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧`);
   }
 
-  let review;
-  if (isSuperAdminRole(user.role)) {
+  const reviewContentChanged = hasSoupReviewContentChanged(soup, next);
+  let review: SoupReviewResult;
+  if (!reviewContentChanged) {
+    review = {
+      decision: String(soup.review_status) as SoupReviewResult["decision"],
+      reason: soup.review_reason == null ? null : String(soup.review_reason)
+    };
+  } else if (isSuperAdminRole(user.role)) {
     review = { decision: "approved" as const, reason: null };
   } else {
     try {
@@ -5103,8 +5109,10 @@ app.put("/api/soups/:id", async (req, res) => {
     await connection.query(
       `UPDATE soups
        SET title = ?, author = ?, type = ?, difficulty = ?, summary = ?, cover_image = ?, cover_thumbnail = ?, is_original = ?, is_sensitive = ?, surface = ?, supplemental_surfaces = ?, bottom = ?, supplemental_bottoms = ?, host_manual = ?,
-           is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + 1,
-           reviewed_at = NULL, reviewed_by = NULL, ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
+           is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + ?,
+           reviewed_at = CASE WHEN ? THEN NULL ELSE reviewed_at END,
+           reviewed_by = CASE WHEN ? THEN NULL ELSE reviewed_by END,
+           ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
        WHERE id = ?`,
       [
         next.title,
@@ -5126,6 +5134,9 @@ app.put("/api/soups/:id", async (req, res) => {
         enableAiGame,
         review.decision,
         review.reason,
+        reviewContentChanged ? 1 : 0,
+        reviewContentChanged,
+        reviewContentChanged,
         aiPrompt,
         keyFacts,
         keyFactsHash,
@@ -5133,7 +5144,10 @@ app.put("/api/soups/:id", async (req, res) => {
         req.params.id
       ]
     );
-    if (review.decision === "approved" && next.isSurfacePublic) {
+    const becamePublishable = review.decision === "approved"
+      && next.isSurfacePublic
+      && (String(soup.review_status) !== "approved" || !bool(soup.is_surface_public));
+    if (becamePublishable) {
       const creatorId = String(soup.creator_id);
       await awardShellTask(creatorId, "publish_soup", `publish:${creatorId}:${req.params.id}`, {
         relatedType: "soup",

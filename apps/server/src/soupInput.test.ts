@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeExistingSoupCover } from "./soupInput.js";
+import { hasSoupReviewContentChanged, normalizeExistingSoupCover } from "./soupInput.js";
 
 test("编辑海龟汤时将当前 OSS 封面转换为站内封面标记", () => {
   const body = {
@@ -23,4 +23,11 @@ test("编辑海龟汤时不改写新上传封面或无关地址", () => {
 
   assert.equal(normalizeExistingSoupCover(dataImage, "soup-1", "https://oss.example/current.webp"), dataImage);
   assert.equal(normalizeExistingSoupCover(unrelatedUrl, "soup-1", "https://oss.example/current.webp"), unrelatedUrl);
+});
+
+test("仅修改封面等非审核内容时不触发重新审核", () => {
+  const existing = { title: "标题", surface: "汤面", bottom: "汤底" };
+
+  assert.equal(hasSoupReviewContentChanged(existing, { ...existing }), false);
+  assert.equal(hasSoupReviewContentChanged(existing, { ...existing, bottom: "新汤底" }), true);
 });
