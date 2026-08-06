@@ -4686,14 +4686,8 @@ app.post("/api/soups", async (req, res) => {
     return sendError(res, 429, `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧`);
   }
 
-  const reviewContentChanged = hasSoupReviewContentChanged(soup, next);
   let review: SoupReviewResult;
-  if (!reviewContentChanged) {
-    review = {
-      decision: String(soup.review_status) as SoupReviewResult["decision"],
-      reason: soup.review_reason == null ? null : String(soup.review_reason)
-    };
-  } else if (isSuperAdminRole(user.role)) {
+  if (isSuperAdminRole(user.role)) {
     review = { decision: "approved" as const, reason: null };
   } else {
     try {
@@ -5076,8 +5070,14 @@ app.put("/api/soups/:id", async (req, res) => {
   if (next.isOriginal && !next.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const duplicate = await findDuplicateSoup(next, req.params.id);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
-  let review;
-  if (isSuperAdminRole(user.role)) {
+  let review: SoupReviewResult;
+  const reviewContentChanged = hasSoupReviewContentChanged(soup as { title: unknown; surface: unknown; bottom: unknown }, next);
+  if (!reviewContentChanged) {
+    review = {
+      decision: String(soup.review_status) as SoupReviewResult["decision"],
+      reason: soup.review_reason == null ? null : String(soup.review_reason)
+    };
+  } else if (isSuperAdminRole(user.role)) {
     review = { decision: "approved" as const, reason: null };
   } else {
     try {
