@@ -22,7 +22,8 @@ apps/server/dist/
 playwright-report/
 test-results/
 .e2e-artifacts/
-docs/
+docs/*
+!docs/APP视觉与图标对齐执行说明.md
 artifacts/
 .local/
 # Agent working memory; not part of the product source.

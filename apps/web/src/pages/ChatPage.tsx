@@ -318,10 +318,10 @@ export default function ChatPage() {
                   ? <img className="h-full w-full object-cover" src={sender.avatar} alt={`${sender.nickname}头像`} />
                   : (sender?.nickname || "用").slice(0, 1)}
               </button>
-              <div className={`flex max-w-[78%] flex-col ${message.type === "soup_share" ? "w-[78%]" : ""} ${message.isMine ? "items-end" : "items-start"}`}>
-                <MessageActionMenu actions={recallActions} className={message.type === "soup_share" ? "w-full" : "max-w-full"}>
+              <div className={`flex max-w-[78%] flex-col ${message.type === "soup_share" || message.type === "room_invite" ? "w-[78%]" : ""} ${message.isMine ? "items-end" : "items-start"}`}>
+                <MessageActionMenu actions={recallActions} className={message.type === "soup_share" || message.type === "room_invite" ? "w-full" : "max-w-full"}>
                   {message.type === "room_invite" && message.roomInvite ? (
-                    <OnlineSoupRoomInviteCard invite={message.roomInvite} />
+                    <OnlineSoupRoomInviteCard invite={message.roomInvite} align={message.isMine ? "right" : "left"} />
                   ) : message.type === "soup_share" && message.soupShare ? (
                     <SoupShareCard soup={message.soupShare} align={message.isMine ? "right" : "left"} />
                   ) : message.type === "gift" && message.gift ? (

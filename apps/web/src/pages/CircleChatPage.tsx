@@ -530,7 +530,7 @@ export default function CircleChatPage() {
                   >
                     {message.type === "room_invite" && message.roomInvite ? (
                       <div>
-                        <OnlineSoupRoomInviteCard invite={message.roomInvite} />
+                        <OnlineSoupRoomInviteCard invite={message.roomInvite} align={mine ? "right" : "left"} />
                         {message.replyTo && <ReplyQuote reply={message.replyTo} mine={false} onLocate={() => void openReplyTarget(message.replyTo!.id)} />}
                       </div>
                     ) : message.type === "soup_share" && message.soupShare ? (

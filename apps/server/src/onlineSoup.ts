@@ -546,6 +546,35 @@ router.get("/rooms/:roomId/invite-preview", async (req, res) => {
   });
 });
 
+router.get("/rooms/:roomId/invite-status", async (req, res) => {
+  const inviteToken = String(req.query.inviteToken ?? "");
+  if (!validRoomInviteToken(req.params.roomId, inviteToken)) {
+    return fail(res, 403, "玩汤房间邀请无效");
+  }
+  const room = await roomById(req.params.roomId);
+  if (!room) return fail(res, 404, "房间不存在", "ROOM_CLOSED");
+  const [[counts]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT SUM(CASE WHEN member_role = 'player' AND is_active = 1 THEN 1 ELSE 0 END) AS player_count
+     FROM online_soup_members WHERE room_id = ?`,
+    [room.id]
+  );
+  const playerCount = Number(counts.player_count ?? 0);
+  res.json({
+    invite: {
+      roomId: String(room.id),
+      inviteToken,
+      roomName: String(room.name),
+      roomCode: String(room.room_code),
+      soupTitle: room.soup_title ? String(room.soup_title) : null,
+      status: String(room.status),
+      playerCount,
+      playerCapacity: PLAYER_CAPACITY,
+      participantCount: playerCount + 1,
+      participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY
+    }
+  });
+});
+
 router.get("/rooms/:roomId/invite", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
