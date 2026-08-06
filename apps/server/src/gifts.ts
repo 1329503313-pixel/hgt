@@ -734,9 +734,6 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     );
     const current = rows[0];
     if (!current) return sendError(res, 404, "礼物不存在");
-    if (Number(current.sent_count) > 0 || Number(current.inventory_grant_count) > 0) {
-      return sendError(res, 409, "已进入流通的礼物不可编辑，只能下架");
-    }
     let optimizedIcon = String(current.icon_image);
     if (parsed.data.iconImage) {
       const nextIcon = await storeGiftIcon(parsed.data.iconImage, req.params.id);

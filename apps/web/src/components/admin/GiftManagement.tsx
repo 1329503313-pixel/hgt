@@ -153,9 +153,6 @@ export function GiftManagement() {
   }
 
   function beginEdit(gift: AdminGift) {
-    if (gift.sentCount > 0 || gift.inventoryGrantCount > 0) {
-      return showToast("已进入流通的礼物不可编辑，只能下架");
-    }
     setForm({
       name: gift.name,
       description: gift.description,
@@ -212,9 +209,6 @@ export function GiftManagement() {
   }
 
   async function remove(gift: AdminGift) {
-    if (gift.sentCount > 0 || gift.inventoryGrantCount > 0) {
-      return showToast("已进入流通的礼物不可删除，只能下架");
-    }
     if (!window.confirm(`确认删除礼物「${gift.name}」？`)) return;
     try {
       await api(`/api/admin/gifts/${gift.id}`, { method: "DELETE" });
@@ -250,8 +244,8 @@ export function GiftManagement() {
                 <div className="flex flex-wrap gap-2">
                   <button className="btn btn-primary px-3" onClick={() => beginGrant(gift)}><Gift size={15} />赠送</button>
                   <button className="btn btn-secondary px-3" onClick={() => void toggleStatus(gift)}><Power size={15} />{gift.status === "active" ? "下架" : "上架"}</button>
-                  <button className="btn btn-secondary px-3" disabled={gift.sentCount > 0 || gift.inventoryGrantCount > 0} onClick={() => beginEdit(gift)}><Edit3 size={15} />编辑</button>
-                  <button className="btn bg-red-50 px-3 text-red-600 hover:bg-red-100 disabled:opacity-40" disabled={gift.sentCount > 0 || gift.inventoryGrantCount > 0} onClick={() => void remove(gift)}><Trash2 size={15} />删除</button>
+                  <button className="btn btn-secondary px-3" onClick={() => beginEdit(gift)}><Edit3 size={15} />编辑</button>
+                  <button className="btn bg-red-50 px-3 text-red-600 hover:bg-red-100" onClick={() => void remove(gift)}><Trash2 size={15} />删除</button>
                 </div>
               </div>
             ))}
@@ -343,6 +337,12 @@ export function GiftManagement() {
       {activeTab === "config" && editing && <Modal onClose={() => !saving && setEditing(null)}>
         <div className="space-y-4">
           <div><h2 className="text-xl font-black text-ink">{editing === "new" ? "新增礼物" : "编辑礼物"}</h2><p className="mt-1 text-sm text-muted">支付货币暂时固定为贝壳，明珠字段仅作为未来能力预留。</p></div>
+          {editing !== "new" && (editing.sentCount > 0 || editing.inventoryGrantCount > 0) && (
+            <div className="rounded-xl bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-800">
+              <strong className="block">该礼物已进入流通</strong>
+              名称、价格、奖励在送礼时已写入历史流水，编辑后新送礼将使用新值，历史记录不受影响；但<strong>修改图标会影响历史礼物卡片显示</strong>，请知悉。
+            </div>
+          )}
           <label className="block space-y-1"><span className="label">礼物名称</span><input className="field" maxLength={100} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></label>
           <label className="block space-y-1"><span className="label">礼物描述</span><textarea className="field min-h-20" maxLength={500} value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></label>
           <div className="space-y-2"><span className="label">礼物图标</span><div className="flex items-center gap-3">{(form.iconImage || (editing !== "new" && editing.iconUrl)) && <img className="h-20 w-20 rounded-2xl bg-slate-50 object-contain" src={form.iconImage || (editing !== "new" ? editing.iconUrl : "")} alt="礼物图标预览" />}<label className="btn btn-secondary cursor-pointer"><ImagePlus size={17} />选择图片<input className="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={readIcon} /></label></div><p className="text-xs text-muted">最大 5MB，任意比例会等比缩放并补透明边，最终为正方形。</p></div>
