@@ -31,7 +31,7 @@ export default function SiteContentPage() {
         <article className="site-content-article">
           <header className="site-content-heading">
             <div className="site-content-heading-mark">
-              <img src="/favicon.svg" alt="" aria-hidden="true" />
+              <img src="/logo.png" alt="" aria-hidden="true" />
             </div>
             <div>
               <span>{document.eyebrow}</span>

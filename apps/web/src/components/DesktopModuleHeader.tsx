@@ -74,7 +74,7 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
       </div>
       <div className="home-desktop-nav">
         <button type="button" className="home-desktop-brand" onClick={() => navigate("/")} aria-label="返回首页">
-          <img className="home-desktop-brand-mark" src="/favicon.svg" alt="" aria-hidden="true" />
+          <img className="home-desktop-brand-mark" src="/logo.png" alt="" aria-hidden="true" />
           <span>汤汤解谜乐园</span>
         </button>
         <nav className="home-desktop-nav-links" aria-label="主导航">
