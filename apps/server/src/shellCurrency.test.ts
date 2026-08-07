@@ -11,7 +11,7 @@ import {
   SHELL_DAILY_LIMIT,
   SHELL_TASKS
 } from "./shellCurrency.js";
-import { calculateExperienceAdjustment, experienceProgress, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
+import { calculateExperienceAdjustment, experienceProgress, LEVEL_THRESHOLDS, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
 import { calculateInviteMilestoneDelta } from "./inviteRewards.js";
 import { CURRENCY_DEFINITIONS, CURRENCY_TYPES, isCurrencyType } from "./currency.js";
 
@@ -27,10 +27,18 @@ test("后端货币类型包含贝壳和明珠", () => {
 });
 
 test("等级门槛按累计经验计算并在 Lv40 封顶", () => {
+  assert.deepEqual(LEVEL_THRESHOLDS, [
+    0, 10, 100, 250, 450, 800, 1_200, 1_800, 2_600, 3_600,
+    4_800, 6_000, 7_500, 9_500, 12_000, 15_000, 19_000, 24_000,
+    30_000, 37_000, 45_000, 54_000, 64_000, 75_000, 87_000,
+    100_000, 120_000, 150_000, 190_000, 240_000, 300_000,
+    400_000, 550_000, 750_000, 1_000_000, 1_350_000, 2_000_000,
+    3_000_000, 4_500_000, 6_500_000, 10_000_000
+  ]);
   assert.equal(levelForExperience(0), 0);
   assert.equal(levelForExperience(9), 0);
   assert.equal(levelForExperience(10), 1);
-  assert.equal(levelForExperience(99_999_999), 39);
+  assert.equal(levelForExperience(MAX_EXPERIENCE - 1), 39);
   assert.equal(levelForExperience(MAX_EXPERIENCE), 40);
   assert.equal(levelForExperience(MAX_EXPERIENCE + 1), 40);
 });

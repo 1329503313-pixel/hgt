@@ -2373,7 +2373,7 @@ async function backfillHistoricalTaskExperience() {
     await connection.query(`
       UPDATE users user
       LEFT JOIN (
-        SELECT user_id, LEAST(100000000, COALESCE(SUM(experience_reward), 0)) AS total_experience
+        SELECT user_id, LEAST(10000000, COALESCE(SUM(experience_reward), 0)) AS total_experience
         FROM shell_task_events GROUP BY user_id
       ) rewards ON rewards.user_id = user.id
       SET user.experience = COALESCE(rewards.total_experience, 0)
