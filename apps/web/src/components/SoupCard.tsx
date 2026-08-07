@@ -91,7 +91,7 @@ export function SoupCard({
 export function CoverImage({ src, alt }: { src: string; alt: string }) {
   return (
     <div className="soup-card-cover-frame">
-      <img className="soup-card-cover" src={src} alt={alt} loading="lazy" decoding="async" />
+      <img className="soup-card-cover" src={src} alt={alt} data-image-fallback="cover" loading="lazy" decoding="async" />
     </div>
   );
 }

@@ -670,10 +670,7 @@ function sendError(res: express.Response, status: number, message: string) {
 
 function avatarUrl(userId: unknown, stored: unknown, hasAvatar = false) {
   if (!stored && !hasAvatar) return null;
-  const value = stored ? String(stored) : "";
-  return value && !value.startsWith("data:image/")
-    ? publicOssUrl(value)
-    : `/api/media/users/${encodeURIComponent(String(userId))}/avatar`;
+  return `/api/media/users/${encodeURIComponent(String(userId))}/avatar`;
 }
 
 function profileBackgroundUrl(userId: unknown, hasBackground: unknown, updatedAt: unknown) {
@@ -711,25 +708,33 @@ async function sendStoredImage(
   res: express.Response,
   value: unknown,
   maxWidth: number,
-  cacheControl = "public, max-age=3600, stale-while-revalidate=86400"
+  cacheControl = "public, max-age=3600, stale-while-revalidate=86400",
+  fallbackPath?: "/turtle-avatar.png" | "/default-cover.webp"
 ) {
-  if (!value) return sendError(res, 404, "图片不存在");
+  const sendFallback = () => fallbackPath
+    ? res.redirect(302, new URL(fallbackPath, config.webOrigin).toString())
+    : sendError(res, 404, "图片不存在");
+  if (!value) return sendFallback();
   const stored = String(value);
   if (!stored.startsWith("data:image/")) {
     const url = publicOssUrl(stored);
-    if (!url) return sendError(res, 404, "图片不存在");
+    if (!url) return sendFallback();
     if (!stored.startsWith("oss://")) return res.redirect(302, url);
 
-    const upstream = await fetch(url);
-    if (!upstream.ok) return sendError(res, upstream.status, "图片读取失败");
-    const output = Buffer.from(await upstream.arrayBuffer());
-    res.setHeader("Cache-Control", cacheControl);
-    res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/octet-stream");
-    res.setHeader("Content-Length", output.length);
-    return res.send(output);
+    try {
+      const upstream = await fetch(url);
+      if (!upstream.ok) return sendFallback();
+      const output = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Cache-Control", cacheControl);
+      res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/octet-stream");
+      res.setHeader("Content-Length", output.length);
+      return res.send(output);
+    } catch {
+      return sendFallback();
+    }
   }
   const decoded = decodeDataImage(stored);
-  if (!decoded) return sendError(res, 415, "图片格式不受支持");
+  if (!decoded) return sendFallback();
 
   const etag = `\"${createHash("sha1").update(decoded.buffer).update(String(maxWidth)).digest("hex")}\"`;
   res.setHeader("ETag", etag);
@@ -2181,7 +2186,7 @@ app.get("/api/media/users/:id/avatar", async (req, res) => {
   if (!row) return sendError(res, 404, "用户不存在");
   storedAvatarCache.set(req.params.id, { expiresAt: Date.now() + 5 * 60_000, value: row.avatar });
   if (storedAvatarCache.size > 200) storedAvatarCache.delete(storedAvatarCache.keys().next().value!);
-  return sendStoredImage(req, res, row.avatar, 160);
+  return sendStoredImage(req, res, row.avatar, 160, undefined, "/turtle-avatar.png");
 });
 
 app.get("/api/media/users/:id/profile-background", async (req, res) => {
@@ -2206,7 +2211,7 @@ app.get("/api/media/soups/:id/thumbnail", async (req, res) => {
   if (row.review_status !== "approved" && !isBackofficeAdminRole(viewer?.role) && viewer?.id !== String(row.creator_id)) {
     return sendError(res, 404, "作品不存在");
   }
-  return sendStoredImage(req, res, row.cover_thumbnail, 480);
+  return sendStoredImage(req, res, row.cover_thumbnail, 480, undefined, "/default-cover.webp");
 });
 
 app.get("/api/media/soups/:id/cover", async (req, res) => {
@@ -2219,7 +2224,7 @@ app.get("/api/media/soups/:id/cover", async (req, res) => {
   if (row.review_status !== "approved" && !isBackofficeAdminRole(viewer?.role) && viewer?.id !== String(row.creator_id)) {
     return sendError(res, 404, "作品不存在");
   }
-  return sendStoredImage(req, res, row.cover_image, 1280);
+  return sendStoredImage(req, res, row.cover_image, 1280, undefined, "/default-cover.webp");
 });
 
 app.get("/api/auth/me", async (req, res) => {
