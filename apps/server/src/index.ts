@@ -100,6 +100,7 @@ import onlineSoupRouter, {
   validRoomInviteToken
 } from "./onlineSoup.js";
 import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.js";
+import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -400,6 +401,26 @@ app.get("/api/app/android-update", async (req, res) => {
   );
   const release = rows.length > 0 ? mapAndroidReleaseRow(rows[0]) : null;
   res.json(resolveAndroidUpdate(Number(rawVersionCode), release));
+});
+
+// 热更新：WebView 资源版本（客户端检查时不强制要求登录）
+app.get("/api/app/web-resource-update", async (req, res) => {
+  const rawVersionCode = String(req.query.versionCode ?? "0");
+  if (!/^\d{1,10}$/.test(rawVersionCode)) {
+    return res.status(400).json({ error: "versionCode 必须是非负整数" });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, version_code, version_name, min_supported_version_code,
+      zip_url, zip_size, zip_sha256, release_notes, published_at, enabled,
+      created_at, updated_at
+     FROM web_resource_releases
+     WHERE enabled = 1
+     ORDER BY version_code DESC
+     LIMIT 1`
+  );
+  const manifest = rows.length > 0 ? mapWebResourceReleaseRow(rows[0]) : null;
+  res.json(resolveWebResourceUpdate(Number(rawVersionCode), manifest));
 });
 
 // 生产环境：serve Vite 构建产物
@@ -6495,6 +6516,76 @@ app.patch("/api/admin/android-releases/:id/enabled", async (req, res) => {
     [parsed.data.enabled ? 1 : 0, req.params.id]
   );
   if (result.affectedRows === 0) return sendError(res, 404, "Android 发布版本不存在");
+  res.json({ ok: true });
+});
+
+// 热更新：Admin 管理
+const webResourceReleaseSchema = z.object({
+  versionCode: z.coerce.number().int().positive().max(2_147_483_647),
+  versionName: z.string().trim().min(1).max(32),
+  minSupportedVersionCode: z.coerce.number().int().nonnegative().max(2_147_483_647),
+  zipUrl: z.string().url().max(1000).refine((value) => value.startsWith("https://"), "ZIP 地址必须使用 HTTPS"),
+  zipSize: z.coerce.number().int().nonnegative(),
+  zipSha256: z.string().trim().length(64).refine((value) => /^[0-9a-fA-F]{64}$/.test(value), "SHA-256 格式不正确"),
+  releaseNotes: z.array(z.string().trim().min(1).max(500)).max(30),
+  publishedAt: z.coerce.date(),
+  enabled: z.boolean().optional().default(false)
+}).refine((value) => value.minSupportedVersionCode <= value.versionCode, {
+  message: "最低支持版本不能高于发布版本",
+  path: ["minSupportedVersionCode"]
+});
+
+app.get("/api/admin/web-resource-releases", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, version_code, version_name, min_supported_version_code,
+      zip_url, zip_size, zip_sha256, release_notes, published_at, enabled,
+      created_at, updated_at
+     FROM web_resource_releases
+     ORDER BY version_code DESC`
+  );
+  res.json({ releases: rows.map((row) => mapWebResourceReleaseRow(row)) });
+});
+
+app.post("/api/admin/web-resource-releases", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = webResourceReleaseSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "Web 资源发布信息不正确");
+  const id = nanoid();
+  try {
+    await pool.query(
+      `INSERT INTO web_resource_releases
+        (id, version_code, version_name, min_supported_version_code, zip_url, zip_size, zip_sha256, release_notes, published_at, enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        parsed.data.versionCode,
+        parsed.data.versionName,
+        parsed.data.minSupportedVersionCode,
+        parsed.data.zipUrl,
+        parsed.data.zipSize,
+        parsed.data.zipSha256,
+        JSON.stringify(parsed.data.releaseNotes),
+        parsed.data.publishedAt,
+        parsed.data.enabled ? 1 : 0
+      ]
+    );
+  } catch (error) {
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") return sendError(res, 409, "该 versionCode 已存在");
+    throw error;
+  }
+  res.status(201).json({ id });
+});
+
+app.patch("/api/admin/web-resource-releases/:id/enabled", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "enabled 必须是布尔值");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "UPDATE web_resource_releases SET enabled = ? WHERE id = ?",
+    [parsed.data.enabled ? 1 : 0, req.params.id]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, "Web 资源发布版本不存在");
   res.json({ ok: true });
 });
 

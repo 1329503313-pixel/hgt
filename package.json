@@ -34,6 +34,8 @@
     "app:android:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android/build-android.ps1 -Configuration release",
     "app:android:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android/verify-android-artifact.ps1",
     "app:android:upload": "node scripts/android/upload-apk-to-oss.mjs --confirm-upload",
+    "app:android:package-web": "node scripts/android/package-web-resources.mjs",
+    "app:android:upload-web": "node scripts/android/upload-web-resources.mjs --confirm-upload",
     "db:up": "docker compose up -d mysql",
     "start": "npm run start -w apps/server"
   },

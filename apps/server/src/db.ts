@@ -202,6 +202,25 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS web_resource_releases (
+      id VARCHAR(64) PRIMARY KEY,
+      version_code INT UNSIGNED NOT NULL,
+      version_name VARCHAR(32) NOT NULL,
+      min_supported_version_code INT UNSIGNED NOT NULL DEFAULT 0,
+      zip_url VARCHAR(1000) NOT NULL,
+      zip_size INT UNSIGNED NOT NULL DEFAULT 0,
+      zip_sha256 CHAR(64) NOT NULL,
+      release_notes JSON NOT NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      published_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_web_resource_releases_version_code (version_code),
+      INDEX idx_web_resource_releases_enabled_version (enabled, version_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id VARCHAR(64) PRIMARY KEY,
       username VARCHAR(50) NOT NULL UNIQUE,
