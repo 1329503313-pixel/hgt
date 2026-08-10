@@ -485,6 +485,7 @@ export type OnlineSoupSnapshot = {
     type: "public" | "password";
     status: OnlineSoupRoomStatus;
     hostOnline: boolean;
+    hostOfflineDeadline: string | null;
     playerCount: number;
     playerCapacity: number;
     participantCapacity: number;

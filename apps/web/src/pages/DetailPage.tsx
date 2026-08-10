@@ -14,7 +14,6 @@ import { defaultCoverUrl } from "../shared/staticAssets";
 import { DetailSkeleton } from "../components/Skeletons";
 import { refreshMineContentCache } from "../shared/mineContentCache";
 import { parentRoute } from "../shared/routeHierarchy";
-import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import { SoupShareModal } from "../components/SoupShareModal";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { Modal } from "../components/Modal";
@@ -45,7 +44,6 @@ export default function DetailPage() {
   const navigationOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; soupShareReturnTo?: string; soupReturnTo?: string } | null;
   const onlineSoupOrigin = navigationOrigin;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
-  useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
   const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, refreshKey, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);

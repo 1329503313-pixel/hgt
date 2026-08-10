@@ -196,7 +196,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     try {
       await api(`/api/online-soup/rooms/${session.snapshot.room.id}/leave`, { method: "POST" });
       clearDock();
-      showToast(session.snapshot.me.isHost ? "房间已解散" : "已退出房间");
+      showToast(session.snapshot.me.isHost ? "已退出房间，房间将继续保留" : "已退出房间");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "退出房间失败");
     }
@@ -250,7 +250,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     </div>}
     {confirmLeave && session && <Modal onClose={() => setConfirmLeave(false)}>
       <div className="space-y-4 text-center">
-        <div><h2 className="text-xl font-black text-ink">{session.snapshot.me.isHost ? "确认退出并解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{session.snapshot.me.isHost ? "主持人退出后房间会立即解散，所有成员都将离开。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div>
+        <div><h2 className="text-xl font-black text-ink">确认退出房间？</h2><p className="mt-2 text-sm leading-6 text-muted">{session.snapshot.me.isHost && session.snapshot.room.status === "playing" ? "退出不会解散房间。本轮和房主身份将保留 15 分钟；逾期未返回时会结束本轮、取消当前选汤，并由在线成员接任房主。" : session.snapshot.me.isHost ? "退出不会解散房间，将由房内在线成员接任房主；暂无成员时房间仍会保留。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div>
         <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmLeave(false)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => void leaveRoom()}>确认退出</button></div>
       </div>
     </Modal>}

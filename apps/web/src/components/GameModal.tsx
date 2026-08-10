@@ -165,6 +165,14 @@ export function GameModal({
     }
   }
 
+  const progressHint = state.completed
+    ? "真相已经揭晓"
+    : state.progress >= 90
+      ? "已接近真相，请尝试复述完整故事"
+      : state.progress < 20
+        ? "进度达到20%后可获取提示"
+        : "已解锁方向性提示";
+
   return createPortal(
     <div className="ai-game-workspace" role="dialog" aria-modal="true" aria-label={`AI 玩汤：${soup.title}`}>
       <header className="ai-game-header">
@@ -209,13 +217,15 @@ export function GameModal({
 
           <section className="ai-game-progress-card" aria-label={`推理进度 ${state.progress}%`}>
             <div className="ai-game-progress-title">
-              <span>推理进度</span>
+              <div className="ai-game-progress-label">
+                <span>推理进度</span>
+                <small>{progressHint}</small>
+              </div>
               <strong>{state.progress}%</strong>
             </div>
             <div className="ai-game-progress-track">
               <div style={{ width: `${Math.max(3, state.progress)}%` }} />
             </div>
-            <p>{state.completed ? "真相已经揭晓" : state.progress >= 90 ? "已接近真相，请尝试复述完整故事" : state.progress < 20 ? "继续提问，进度达到 20% 后可获取提示" : "已解锁方向性提示"}</p>
           </section>
 
           {(state.revealedSupplements.surfaces.length > 0 || state.revealedSupplements.bottoms.length > 0) && (

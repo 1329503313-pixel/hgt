@@ -23,6 +23,14 @@ type UserSearchResponse = { users: SearchUser[]; total: number };
 const mobilePageSize = 10;
 const desktopFirstPageSize = 6;
 const desktopPageSize = 8;
+type HomeCategory = "recommended" | "latest" | "following" | "ai" | "played";
+const homeCategoryTabs: Array<{ key: HomeCategory; label: string; requiresAuth?: boolean }> = [
+  { key: "recommended", label: "推荐" },
+  { key: "latest", label: "最新" },
+  { key: "following", label: "关注", requiresAuth: true },
+  { key: "ai", label: "AI" },
+  { key: "played", label: "玩过", requiresAuth: true }
+];
 
 function paginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -54,11 +62,14 @@ export default function HomePage() {
   const previousFiltersRef = useRef("");
   const listTopRef = useRef<HTMLDivElement | null>(null);
   const randomSeedRef = useRef(createHomeRandomSeed());
+  const loadRequestRef = useRef(0);
   const [matchedUsers, setMatchedUsers] = useState<SearchUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersExpanded, setUsersExpanded] = useState(false);
   const userSearchRequestRef = useRef(0);
   const [showExportConfirm, setShowExportConfirm] = useState(false);
+  const [homeCategory, setHomeCategory] = useState<HomeCategory>("recommended");
+  const [categoryRefreshKey, setCategoryRefreshKey] = useState(0);
 
   const [filters, setFilters] = useState({
     keyword: "",
@@ -92,8 +103,9 @@ export default function HomePage() {
 
   const loadSoups = useCallback(
     async (append = false, bypassCache = false, page = currentPage) => {
-      if (loadingRef.current) return;
+      if (append && loadingRef.current) return;
       if (append && !hasMore) return;
+      const requestId = ++loadRequestRef.current;
       loadingRef.current = true;
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([key, value]) => {
@@ -106,11 +118,12 @@ export default function HomePage() {
       params.set("limit", String(pageSize));
       params.set("offset", String(pageOffset));
       params.set("seed", randomSeedRef.current);
+      params.set("category", homeCategory);
       params.set("includeTotal", isDesktop ? "1" : "0");
-      if (!filters.keyword && !filters.type && !filters.difficulty && filters.minRating === "all" && filters.bottomPublic === "all" && filters.aiGame === "all") {
+      if (homeCategory === "recommended" && !filters.keyword && !filters.type && !filters.difficulty && filters.minRating === "all" && filters.bottomPublic === "all" && filters.aiGame === "all") {
         params.set("homeFeatured", "1");
       }
-      const cacheKey = `hgt:home:v2:${user?.id ?? "guest"}:${params.toString()}`;
+      const cacheKey = `hgt:home:v3:${user?.id ?? "guest"}:${params.toString()}`;
       const cached = append || bypassCache ? null : readSessionCache<HomeCacheData>(cacheKey, 45_000);
       if (cached) {
         setSoups(cached.soups);
@@ -124,6 +137,7 @@ export default function HomePage() {
           cacheTtlMs: append ? 0 : 30_000,
           bypassCache
         });
+        if (requestId !== loadRequestRef.current) return;
         if (append) {
           setSoups((old) => {
             const seen = new Set(old.map((s) => s.id));
@@ -139,12 +153,32 @@ export default function HomePage() {
         setHasMore(data.hasMore);
         setTotal(data.total ?? 0);
       } finally {
-        loadingRef.current = false;
-        setLoading(false);
+        if (requestId === loadRequestRef.current) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
       }
     },
-    [currentPage, filters, firstDesktopPageSize, hasMore, isDesktop, user?.id]
+    [currentPage, filters, firstDesktopPageSize, hasMore, homeCategory, isDesktop, user?.id]
   );
+
+  const selectHomeCategory = (nextCategory: HomeCategory, requiresAuth = false) => {
+    if (requiresAuth && !user) {
+      openAuth();
+      return;
+    }
+    if (nextCategory === homeCategory && nextCategory !== "ai" && nextCategory !== "played") return;
+    if (nextCategory === "ai" || nextCategory === "played") {
+      randomSeedRef.current = createHomeRandomSeed();
+      setCategoryRefreshKey((key) => key + 1);
+    }
+    setCurrentPage(1);
+    setSoups([]);
+    setTotal(0);
+    setHasMore(true);
+    offsetRef.current = 0;
+    setHomeCategory(nextCategory);
+  };
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1024px)");
@@ -166,7 +200,14 @@ export default function HomePage() {
     previousRefreshKeyRef.current = refreshKey;
     if (bypassCache) randomSeedRef.current = createHomeRandomSeed();
     loadSoups(false, bypassCache, currentPage);
-  }, [filters, refreshKey, currentPage, isDesktop]);
+  }, [filters, refreshKey, currentPage, isDesktop, homeCategory, categoryRefreshKey]);
+
+  useEffect(() => {
+    if (!user && (homeCategory === "following" || homeCategory === "played")) {
+      setHomeCategory("recommended");
+      setCurrentPage(1);
+    }
+  }, [homeCategory, user]);
 
   useEffect(() => {
     const keyword = filters.keyword.trim();
@@ -522,6 +563,21 @@ export default function HomePage() {
           </button>
       </div>
 
+      <nav className="home-category-tabs" aria-label="海龟汤首页分类" role="tablist">
+        {homeCategoryTabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={homeCategory === tab.key}
+            className={homeCategory === tab.key ? "is-active" : ""}
+            onClick={() => selectHomeCategory(tab.key, Boolean(tab.requiresAuth))}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
       {!isResultMode && (
         <div className="home-mobile-banner"><HomeBannerCarousel /></div>
       )}
@@ -612,7 +668,7 @@ export default function HomePage() {
 
       {/* 导出汤名悬浮按钮 */}
       <button
-        className="fixed bottom-24 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:bg-blue-600 active:scale-95 lg:hidden"
+        className="hidden"
         aria-label="导出汤名"
         title="导出汤名"
         onClick={() => setShowExportConfirm(true)}

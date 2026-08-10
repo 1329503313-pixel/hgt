@@ -6,7 +6,6 @@ import { useApp } from "../context/AppContext";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import type { OnlineSoupChoice } from "../shared/types";
-import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 
 type SoupTab = "library" | "mine";
 type SoupPage = { soups: OnlineSoupChoice[]; hasMore: boolean; nextPage: number | null };
@@ -22,8 +21,6 @@ export default function OnlineSoupSelectPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextPage, setNextPage] = useState<number | null>(null);
   const [selectingId, setSelectingId] = useState<string | null>(null);
-  useOnlineSoupExitGuard(roomId, true, "selector");
-
   const keyword = keywords[tab].trim();
   useEffect(() => {
     let cancelled = false;

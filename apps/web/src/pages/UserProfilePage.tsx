@@ -8,7 +8,6 @@ import { PageTopBar } from "../components/PageTopBar";
 import { ProfileHero, SoupCoverGrid } from "../components/ProfileViews";
 import { ProfileSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
-import { useOnlineSoupExitGuard } from "../shared/onlineSoupExitGuard";
 import { CardCabinetSection } from "../components/CardCabinetSection";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { GiftDrawer, type GiftSource } from "../components/GiftDrawer";
@@ -26,7 +25,6 @@ export default function UserProfilePage() {
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   const circleId = onlineSoupOrigin?.circleId ?? "";
   const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : circleId ? `/circles/${circleId}` : "/";
-  useOnlineSoupExitGuard(onlineSoupRoomId, Boolean(onlineSoupOrigin?.onlineSoupMember), "detail");
   const [profile, setProfile] = useState<SocialProfile | null>(null);
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [giftOpen, setGiftOpen] = useState(false);

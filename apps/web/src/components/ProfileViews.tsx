@@ -1,4 +1,4 @@
-import { Flame, Gift, Heart } from "lucide-react";
+import { Flame } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { SocialProfile, SoupSummary } from "../shared/types";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
@@ -63,8 +63,8 @@ export function ProfileHero({
         </div>
       </div>
       <div className={`profile-hero-stats relative z-[1] grid grid-cols-5 divide-x divide-line px-1 py-3 ${hasBackground ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>
-        <button className="text-center disabled:cursor-default" onClick={onCharm} disabled={!onCharm}><p className="inline-flex items-center gap-1 text-lg font-black text-rose-600"><Heart size={15} className="fill-rose-500" />{profile.charmValue ?? 0}</p><p className="text-xs text-muted">魅力</p></button>
-        <div className="text-center"><p className="inline-flex items-center gap-1 text-lg font-black text-amber-600"><Gift size={15} />{profile.generosityValue ?? 0}</p><p className="text-xs text-muted">慷慨</p></div>
+        <button className="text-center disabled:cursor-default" onClick={onCharm} disabled={!onCharm}><p className="text-lg font-black text-rose-600">{profile.charmValue ?? 0}</p><p className="text-xs text-muted">魅力</p></button>
+        <div className="text-center"><p className="text-lg font-black text-amber-600">{profile.generosityValue ?? 0}</p><p className="text-xs text-muted">慷慨</p></div>
         <div className="text-center"><p className="text-lg font-black text-ink">{profile.receivedLikeCount}</p><p className="text-xs text-muted">获赞</p></div>
         <button className="text-center" onClick={onFollowing}><p className="text-lg font-black text-ink">{profile.followingCount}</p><p className="text-xs text-muted">关注</p></button>
         <button className="text-center" onClick={onFollowers}><p className="text-lg font-black text-ink">{profile.followerCount}</p><p className="text-xs text-muted">粉丝</p></button>

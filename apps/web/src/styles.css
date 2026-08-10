@@ -569,12 +569,13 @@ body {
 }
 
 .ai-game-progress-card { padding: 12px 14px; }
-.ai-game-progress-title { display: flex; align-items: center; justify-content: space-between; }
-.ai-game-progress-title span { color: #64748b; font-size: 12px; font-weight: 800; }
+.ai-game-progress-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ai-game-progress-label { display: flex; min-width: 0; align-items: baseline; gap: 6px; }
+.ai-game-progress-label span { flex: 0 0 auto; color: #64748b; font-size: 12px; font-weight: 800; }
+.ai-game-progress-label small { overflow: hidden; color: #94a3b8; font-size: 10px; font-weight: 700; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .ai-game-progress-title strong { color: #2563eb; font-size: 15px; font-weight: 900; }
 .ai-game-progress-track { height: 8px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
 .ai-game-progress-track > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2563eb, #6366f1); transition: width 700ms ease; }
-.ai-game-progress-card p { margin-top: 7px; color: #94a3b8; font-size: 10px; font-weight: 700; line-height: 1.5; }
 
 .ai-game-clues h2 { color: #64748b; font-size: 11px; font-weight: 900; }
 .ai-game-clues > div { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
@@ -797,7 +798,7 @@ body {
   .ai-game-surface-card.is-expanded .ai-game-surface-content { max-height: 30vh; }
   .ai-game-progress-card { padding: 16px 18px; }
   .ai-game-progress-track { height: 9px; margin-top: 11px; }
-  .ai-game-progress-card p { margin-top: 9px; font-size: 11px; }
+  .ai-game-progress-label small { font-size: 11px; }
   .ai-game-chat-header { display: flex; }
   .ai-game-message-list { padding: 26px 30px 34px; }
   .ai-game-message { max-width: 74%; margin-top: 18px; gap: 10px; }
@@ -806,6 +807,23 @@ body {
   .ai-game-composer-shell { padding: 14px 22px 12px; }
   .ai-game-composer { gap: 8px; }
   .ai-game-composer-tip { display: block; }
+}
+
+@media (max-width: 1023px) {
+  .ai-game-surface-card.is-expanded {
+    height: 25vh;
+    height: 25dvh;
+    min-height: 25vh;
+    min-height: 25dvh;
+    flex: 0 0 25vh;
+    flex-basis: 25dvh;
+  }
+
+  .ai-game-surface-card.is-expanded .ai-game-surface-content {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+  }
 }
 
 @media (max-width: 479px) {
@@ -929,7 +947,9 @@ textarea {
   max-height: 100px;
   padding-top: 11px;
   padding-bottom: 11px;
+  caret-color: #2563eb;
   line-height: 20px;
+  -webkit-text-fill-color: currentColor;
 }
 
 .filter-field {
@@ -2023,6 +2043,67 @@ textarea {
 .home-filter-reset:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.home-category-tabs {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.home-category-tabs button {
+  position: relative;
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: #344054;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 800;
+  opacity: 0.7;
+  touch-action: manipulation;
+  transition: opacity 160ms ease;
+}
+
+.home-category-tabs button::after {
+  position: absolute;
+  right: 50%;
+  bottom: 0;
+  width: 28px;
+  height: 4px;
+  border-radius: 2px;
+  background: currentColor;
+  content: "";
+  opacity: 0;
+  transform: translateX(50%) scaleX(0.55);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.home-category-tabs button:hover {
+  background: transparent;
+  opacity: 0.85;
+}
+
+.home-category-tabs button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline-offset: 1px;
+}
+
+.home-category-tabs button.is-active {
+  background: transparent;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.home-category-tabs button.is-active::after {
+  opacity: 1;
+  transform: translateX(50%) scaleX(1);
 }
 
 .rankings-filter-panel {
@@ -3666,6 +3747,7 @@ textarea {
   }
 
   .home-page > section,
+  .home-page > .home-category-tabs,
   .home-page > .home-content-heading,
   .home-page > .home-masonry,
   .home-page > .home-desktop-grid,
@@ -3717,11 +3799,31 @@ textarea {
   }
 
   .home-page:not(.home-page-result-mode) .home-desktop-grid {
-    padding-top: var(--desktop-page-content-gap);
+    padding-top: 14px;
   }
 
   .home-page-filter-result-mode .home-desktop-grid {
-    padding-top: var(--desktop-page-content-gap);
+    padding-top: 14px;
+  }
+
+  .home-page > .home-category-tabs {
+    display: flex;
+    min-height: 44px;
+    justify-content: center;
+    gap: 8px;
+    margin-top: var(--desktop-page-content-gap) !important;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .home-category-tabs button {
+    min-width: 92px;
+    padding: 0 20px;
+    background: transparent;
+    box-shadow: none;
   }
 
   .home-page .home-desktop-pagination {

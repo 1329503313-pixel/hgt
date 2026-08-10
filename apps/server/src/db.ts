@@ -648,6 +648,7 @@ export async function initDatabase() {
       current_soup_id VARCHAR(64) NULL,
       current_round_id VARCHAR(64) NULL,
       host_last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      host_grace_started_at DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       closed_at DATETIME NULL,
@@ -691,6 +692,36 @@ export async function initDatabase() {
       CONSTRAINT fk_online_member_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
       CONSTRAINT fk_online_member_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_completions (
+      round_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      soup_id VARCHAR(64) NOT NULL,
+      completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (round_id, user_id),
+      INDEX idx_online_completions_user_soup (user_id, soup_id),
+      CONSTRAINT fk_online_completion_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_completion_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_completion_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // 历史回合按玩家在回合结束时仍处于房间内的记录补齐；主持人与旁观者不计入。
+  await pool.query(`
+    INSERT IGNORE INTO online_soup_completions (round_id, user_id, soup_id, completed_at)
+    SELECT rounds.id, members.user_id, rounds.soup_id, rounds.ended_at
+    FROM online_soup_rounds rounds
+    INNER JOIN online_soup_members members ON members.room_id = rounds.room_id
+    INNER JOIN soups ON soups.id = rounds.soup_id
+    WHERE rounds.status = 'ended'
+      AND rounds.ended_at IS NOT NULL
+      AND JSON_LENGTH(COALESCE(rounds.published_bottom_indices, JSON_ARRAY()))
+        = 1 + JSON_LENGTH(COALESCE(soups.supplemental_bottoms, JSON_ARRAY()))
+      AND members.member_role = 'player'
+      AND members.joined_at <= rounds.ended_at
+      AND (members.left_at IS NULL OR members.left_at >= rounds.ended_at)
   `);
 
   await pool.query(`
@@ -818,6 +849,11 @@ export async function initDatabase() {
     "online_soup_members",
     "last_read_activity_sequence",
     "last_read_activity_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER last_seen_at"
+  );
+  await ensureColumn(
+    "online_soup_rooms",
+    "host_grace_started_at",
+    "host_grace_started_at DATETIME NULL AFTER host_last_seen_at"
   );
   await ensureIndex(
     "online_soup_rooms",

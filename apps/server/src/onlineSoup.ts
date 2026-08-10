@@ -14,6 +14,7 @@ import { parseGiftMessage } from "./gifts.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
 import { buildAnswerChangeNotice, onlineSoupAnswerValues, type OnlineSoupAnswerValue } from "./onlineSoupAnswerChange.js";
 import { finalizeOnlineSoupRoundPanelPage } from "./onlineSoupRoundPanel.js";
+import { selectOnlineSoupHostSuccessor, type OnlineSoupHostCandidate } from "./onlineSoupHostSuccession.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -30,7 +31,7 @@ export function setOnlineSoupLobbyEventEmitter(emitter: LobbyEventEmitter) {
 
 const router = Router();
 const HOST_ONLINE_SECONDS = 75;
-const HOST_OFFLINE_ROOM_EXPIRY_MINUTES = 30;
+export const HOST_OFFLINE_GRACE_MINUTES = 15;
 const MESSAGE_PAGE_SIZE = 100;
 export const ONLINE_SOUP_PARTICIPANT_CAPACITY = 11;
 export const ONLINE_SOUP_PLAYER_CAPACITY = ONLINE_SOUP_PARTICIPANT_CAPACITY - 1;
@@ -200,6 +201,54 @@ async function releaseStaleSeats(roomId?: string, db: mysql.Pool | mysql.PoolCon
   );
 }
 
+type ActiveHostSuccessor = OnlineSoupHostCandidate & {
+  previousRole: "player" | "spectator";
+  nickname: string;
+};
+
+async function activeHostSuccessor(roomId: string, currentHostId: string, db: mysql.PoolConnection) {
+  const [rows] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT m.user_id AS userId, m.member_role AS previousRole, m.joined_at AS joinedAt,
+       u.experience, u.nickname
+     FROM online_soup_members m
+     JOIN users u ON u.id = m.user_id
+     WHERE m.room_id = ? AND m.user_id <> ? AND m.is_active = 1
+     FOR UPDATE`,
+    [roomId, currentHostId]
+  );
+  return selectOnlineSoupHostSuccessor<ActiveHostSuccessor>(rows.map((row) => ({
+    userId: String(row.userId),
+    experience: row.experience,
+    joinedAt: row.joinedAt,
+    previousRole: String(row.previousRole) as "player" | "spectator",
+    nickname: String(row.nickname)
+  })));
+}
+
+async function transferDepartedHost(
+  roomId: string,
+  previousHostId: string,
+  successor: ActiveHostSuccessor,
+  db: mysql.PoolConnection
+) {
+  await db.query(
+    `UPDATE online_soup_rooms
+     SET host_id = ?, host_last_seen_at = NOW(), host_grace_started_at = NULL
+     WHERE id = ? AND host_id = ?`,
+    [successor.userId, roomId, previousHostId]
+  );
+  await db.query(
+    `UPDATE online_soup_members SET is_active = 0, left_at = NOW()
+     WHERE room_id = ? AND user_id = ? AND is_active = 1`,
+    [roomId, previousHostId]
+  );
+  await db.query(
+    `UPDATE online_soup_members SET member_role = 'host', last_seen_at = NOW()
+     WHERE room_id = ? AND user_id = ? AND is_active = 1`,
+    [roomId, successor.userId]
+  );
+}
+
 export async function cleanupOnlineSoupStaleSeats() {
   const [staleRooms] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT DISTINCT room_id FROM online_soup_members
@@ -211,31 +260,68 @@ export async function cleanupOnlineSoupStaleSeats() {
 
 export async function cleanupOnlineSoupInactiveHostRooms() {
   const [staleRooms] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, current_round_id
+    `SELECT id
      FROM online_soup_rooms
      WHERE status <> 'closed'
-       AND host_last_seen_at < NOW() - INTERVAL ${HOST_OFFLINE_ROOM_EXPIRY_MINUTES} MINUTE`
+       AND COALESCE(host_grace_started_at, host_last_seen_at) < NOW() - INTERVAL ${HOST_OFFLINE_GRACE_MINUTES} MINUTE`
   );
-  for (const room of staleRooms) {
+  for (const staleRoom of staleRooms) {
     const connection = await pool.getConnection();
-    let closed = false;
+    let previousHostId = "";
+    let successor: ActiveHostSuccessor | null = null;
+    let endedRoundId: string | null = null;
+    let clearedSoup = false;
     try {
       await connection.beginTransaction();
-      const [result] = await connection.query<mysql.ResultSetHeader>(
-        `UPDATE online_soup_rooms
-         SET status = 'closed', closed_at = NOW()
-         WHERE id = ? AND status <> 'closed'
-           AND host_last_seen_at < NOW() - INTERVAL ${HOST_OFFLINE_ROOM_EXPIRY_MINUTES} MINUTE`,
-        [room.id]
+      const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT r.*, u.nickname AS host_name
+         FROM online_soup_rooms r JOIN users u ON u.id = r.host_id
+         WHERE r.id = ? AND r.status <> 'closed'
+           AND COALESCE(r.host_grace_started_at, r.host_last_seen_at) < NOW() - INTERVAL ${HOST_OFFLINE_GRACE_MINUTES} MINUTE
+         FOR UPDATE`,
+        [staleRoom.id]
       );
-      if (result.affectedRows === 1) {
+      if (!room) {
+        await connection.rollback();
+        continue;
+      }
+      previousHostId = String(room.host_id);
+      await releaseStaleSeats(String(room.id), connection);
+      successor = await activeHostSuccessor(String(room.id), previousHostId, connection);
+
+      if (String(room.status) === "playing" && room.current_round_id) {
+        endedRoundId = String(room.current_round_id);
+        await connection.query(
+          "UPDATE online_soup_rounds SET status = 'ended', ended_at = NOW() WHERE id = ? AND status = 'playing'",
+          [endedRoundId]
+        );
+        await settleOnlineSoupRound(connection, endedRoundId);
         await systemMessage(
           String(room.id),
-          room.current_round_id ? String(room.current_round_id) : null,
-          `主持人离线超过${HOST_OFFLINE_ROOM_EXPIRY_MINUTES}分钟，房间已自动解散`,
+          endedRoundId,
+          `房主离线已满${HOST_OFFLINE_GRACE_MINUTES}分钟，本轮已结束，已取消当前海龟汤`,
           connection
         );
-        closed = true;
+      }
+      clearedSoup = Boolean(room.current_soup_id || room.current_round_id || String(room.status) !== "preparing");
+      if (clearedSoup) {
+        await connection.query(
+          `UPDATE online_soup_rooms
+           SET status = 'preparing', current_soup_id = NULL, current_round_id = NULL
+           WHERE id = ?`,
+          [room.id]
+        );
+      }
+      if (successor) {
+        await transferDepartedHost(String(room.id), previousHostId, successor, connection);
+        await systemMessage(
+          String(room.id),
+          null,
+          `${String(successor.nickname)} 已按等级和加入时间接任房主`,
+          connection
+        );
+      } else if (clearedSoup) {
+        await systemMessage(String(room.id), null, "暂无在线成员可接任房主，房间将继续保留", connection);
       }
       await connection.commit();
     } catch (error) {
@@ -244,7 +330,25 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
     } finally {
       connection.release();
     }
-    if (closed) notifyRoom(String(room.id), "room_closed", { cause: "host_offline_timeout" });
+    if (endedRoundId) {
+      const activitySequence = await recordRoomActivity(String(staleRoom.id), "progress", null, endedRoundId);
+      notifyRoom(String(staleRoom.id), "round_ended", {
+        cause: "host_offline_timeout",
+        activitySequence,
+        activityType: "progress"
+      });
+    } else if (clearedSoup) {
+      notifyRoom(String(staleRoom.id), "soup_selected", { cause: "host_offline_timeout", soupId: null });
+    }
+    if (successor) {
+      notifyRoom(String(staleRoom.id), "host_transferred", {
+        cause: "host_offline_timeout",
+        previousHostId,
+        newHostId: successor.userId,
+        previousRole: String(successor.previousRole),
+        newHostNickname: String(successor.nickname)
+      });
+    }
   }
 }
 
@@ -257,9 +361,9 @@ async function touch(roomId: string, user: OnlineUser, isHost: boolean) {
   );
   if (isHost) {
     await pool.query(
-      `UPDATE online_soup_rooms SET host_last_seen_at = NOW()
+      `UPDATE online_soup_rooms SET host_last_seen_at = NOW(), host_grace_started_at = NULL
        WHERE id = ? AND host_id = ? AND status <> 'closed'
-         AND host_last_seen_at < NOW() - INTERVAL 45 SECOND`,
+         AND (host_last_seen_at < NOW() - INTERVAL 45 SECOND OR host_grace_started_at IS NOT NULL)`,
       [roomId, user.id]
     );
   }
@@ -411,7 +515,12 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   ]);
   const viewerMember = memberRows.find((row) => String(row.user_id) === viewer.id);
   const isHost = room.host_id === viewer.id;
-  const hostOnline = Date.now() - new Date(room.host_last_seen_at).getTime() <= HOST_ONLINE_SECONDS * 1000;
+  const hostPresenceBase = room.host_grace_started_at ?? room.host_last_seen_at;
+  const hostOnline = !room.host_grace_started_at
+    && Date.now() - new Date(room.host_last_seen_at).getTime() <= HOST_ONLINE_SECONDS * 1000;
+  const hostOfflineDeadline = hostOnline
+    ? null
+    : new Date(new Date(hostPresenceBase).getTime() + HOST_OFFLINE_GRACE_MINUTES * 60_000).toISOString();
   const supplementalSurfaces = jsonList<string>(room.soup_supplemental_surfaces);
   const publishedSurfaceIndices = jsonList<number>(room.published_surface_indices);
   const visibleSupplementalSurfaces = publishedSurfaceIndices
@@ -420,7 +529,8 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   return {
     room: {
       id: String(room.id), code: String(room.room_code), name: String(room.name), type: String(room.room_type),
-      status: String(room.status), hostOnline, playerCount: memberRows.filter((row) => row.member_role === "player").length,
+      status: String(room.status), hostOnline, hostOfflineDeadline,
+      playerCount: memberRows.filter((row) => row.member_role === "player").length,
       playerCapacity: PLAYER_CAPACITY,
       participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY,
       currentRoundId: room.current_round_id ? String(room.current_round_id) : null,
@@ -926,13 +1036,50 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
   if (!context) return;
   if (context.user.id === context.room.host_id) {
     const connection = await pool.getConnection();
+    let successor: ActiveHostSuccessor | null = null;
+    let gracePeriod = false;
     try {
       await connection.beginTransaction();
-      await systemMessage(context.room.id, context.room.current_round_id, "主持人退出，房间已解散", connection);
-      await connection.query(
-        "UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW() WHERE id = ? AND status <> 'closed'",
-        [context.room.id]
+      const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT * FROM online_soup_rooms WHERE id = ? AND host_id = ? AND status <> 'closed' FOR UPDATE",
+        [context.room.id, context.user.id]
       );
+      if (!room) {
+        await connection.rollback();
+        return fail(res, 409, "房主身份已发生变化，请刷新房间状态");
+      }
+      await releaseStaleSeats(context.room.id, connection);
+      if (String(room.status) === "playing") {
+        gracePeriod = true;
+        await connection.query(
+          "UPDATE online_soup_rooms SET host_grace_started_at = NOW() WHERE id = ? AND host_id = ?",
+          [context.room.id, context.user.id]
+        );
+        await systemMessage(
+          context.room.id,
+          room.current_round_id ? String(room.current_round_id) : null,
+          `房主已离开，房间和本轮将保留${HOST_OFFLINE_GRACE_MINUTES}分钟，等待房主返回`,
+          connection
+        );
+      } else {
+        successor = await activeHostSuccessor(context.room.id, context.user.id, connection);
+        if (successor) {
+          await transferDepartedHost(context.room.id, context.user.id, successor, connection);
+          await systemMessage(
+            context.room.id,
+            room.current_round_id ? String(room.current_round_id) : null,
+            `${context.user.nickname} 已退出房间，${String(successor.nickname)} 接任房主`,
+            connection
+          );
+        } else {
+          gracePeriod = true;
+          await connection.query(
+            "UPDATE online_soup_rooms SET host_grace_started_at = NOW() WHERE id = ? AND host_id = ?",
+            [context.room.id, context.user.id]
+          );
+          await systemMessage(context.room.id, null, `${context.user.nickname} 已退出，房间将继续保留并等待成员接任`, connection);
+        }
+      }
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -940,8 +1087,27 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
     } finally {
       connection.release();
     }
-    res.json({ ok: true, roomClosed: true });
-    void notifyRoom(context.room.id, "room_closed");
+    res.json({
+      ok: true,
+      roomClosed: false,
+      hostTransferred: Boolean(successor),
+      hostGracePeriod: gracePeriod,
+      newHostId: successor?.userId ?? null
+    });
+    if (successor) {
+      void notifyRoom(context.room.id, "host_transferred", {
+        cause: "host_exit",
+        previousHostId: context.user.id,
+        newHostId: successor.userId,
+        previousRole: String(successor.previousRole),
+        newHostNickname: String(successor.nickname)
+      });
+    } else {
+      void notifyRoom(context.room.id, "host_offline", {
+        cause: "host_exit",
+        graceMinutes: HOST_OFFLINE_GRACE_MINUTES
+      });
+    }
     return;
   }
   await pool.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ?", [context.room.id, context.user.id]);
@@ -1037,7 +1203,7 @@ router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => 
     }
     targetNickname = String(target.nickname);
     await connection.query(
-      "UPDATE online_soup_rooms SET host_id = ?, host_last_seen_at = NOW() WHERE id = ?",
+      "UPDATE online_soup_rooms SET host_id = ?, host_last_seen_at = NOW(), host_grace_started_at = NULL WHERE id = ?",
       [req.params.userId, context.room.id]
     );
     await connection.query(
@@ -1423,6 +1589,12 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
     );
     if (ended) {
       await connection.query("UPDATE online_soup_rooms SET status = 'ended' WHERE id = ?", [context.room.id]);
+      await connection.query(
+        `INSERT IGNORE INTO online_soup_completions (round_id, user_id, soup_id)
+         SELECT ?, m.user_id, ? FROM online_soup_members m
+         WHERE m.room_id = ? AND m.is_active = 1 AND m.member_role = 'player'`,
+        [context.room.current_round_id, context.room.current_soup_id, context.room.id]
+      );
       await connection.query(
         `INSERT IGNORE INTO soup_access_grants (id, soup_id, user_id, granted_by)
          SELECT CONCAT('online-', LEFT(SHA2(CONCAT(?, ':', m.user_id), 256), 57)), ?, m.user_id, ? FROM online_soup_members m

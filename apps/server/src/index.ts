@@ -49,6 +49,11 @@ import {
 } from "./evaluationScoring.js";
 import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
 import {
+  homeSoupCategoryOrder,
+  homeSoupCategoryRequiresAuth,
+  parseHomeSoupCategory
+} from "./homeSoupCategory.js";
+import {
   RANKING_REWARD_BOARD_LABELS,
   runRankingRewardScheduler,
   type RankingRewardBoard
@@ -4460,6 +4465,10 @@ app.get("/api/soups", async (req, res) => {
   // 前端另有 30 秒内存缓存；这里主要覆盖刷新、返回导航和重复 GET。
   res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
   const user = await currentUser(req);
+  const homeCategory = parseHomeSoupCategory(req.query.category);
+  if (homeSoupCategoryRequiresAuth(homeCategory) && !user) {
+    return sendError(res, 401, "请先登录");
+  }
   const where: string[] = [];
   const params: unknown[] = [];
   const userParams: unknown[] = [];
@@ -4510,6 +4519,21 @@ app.get("/api/soups", async (req, res) => {
   if (req.query.aiGame === "disabled") {
     where.push("(s.enable_ai_game = FALSE OR NOT EXISTS (SELECT 1 FROM users ai_creator WHERE ai_creator.id = s.creator_id AND ai_creator.role IN ('admin', 'super_admin', 'backoffice_admin', 'vip')))");
   }
+  if (homeCategory === "following") {
+    where.push("EXISTS (SELECT 1 FROM user_follows home_follow WHERE home_follow.follower_id = ? AND home_follow.following_id = s.creator_id)");
+    params.push(user!.id);
+  }
+  if (homeCategory === "ai") {
+    where.push("s.enable_ai_game = TRUE AND EXISTS (SELECT 1 FROM users home_ai_creator WHERE home_ai_creator.id = s.creator_id AND home_ai_creator.role IN ('admin', 'super_admin', 'backoffice_admin', 'vip'))");
+  }
+  if (homeCategory === "played") {
+    where.push(`(
+      EXISTS (SELECT 1 FROM game_completions home_ai_completion WHERE home_ai_completion.soup_id = s.id AND home_ai_completion.user_id = ?)
+      OR EXISTS (SELECT 1 FROM online_soup_completions home_online_completion WHERE home_online_completion.soup_id = s.id AND home_online_completion.user_id = ?)
+      OR EXISTS (SELECT 1 FROM soup_access_grants home_legacy_online_completion WHERE home_legacy_online_completion.soup_id = s.id AND home_legacy_online_completion.user_id = ? AND home_legacy_online_completion.id LIKE 'online-%')
+    )`);
+    params.push(user!.id, user!.id, user!.id);
+  }
 
   const having: string[] = [];
   if (["2", "3", "4"].includes(String(req.query.minRating ?? ""))) {
@@ -4518,6 +4542,7 @@ app.get("/api/soups", async (req, res) => {
   }
 
   const useHomeFeaturedOrder =
+    homeCategory === "recommended" &&
     req.query.homeFeatured === "1" &&
     !req.query.keyword &&
     !req.query.author &&
@@ -4536,7 +4561,16 @@ app.get("/api/soups", async (req, res) => {
   const requestedOffset = Number(req.query.offset ?? 0);
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(Math.floor(requestedLimit), 50)) : 10;
   const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0;
-  const order = req.query.order === "asc" ? "ASC" : req.query.order === "desc" ? "DESC" : "RANDOM";
+  const categoryOrder = homeSoupCategoryOrder(homeCategory);
+  const order = categoryOrder === "latest"
+    ? "DESC"
+    : categoryOrder === "random"
+      ? "RANDOM"
+      : req.query.order === "asc"
+        ? "ASC"
+        : req.query.order === "desc"
+          ? "DESC"
+          : "RANDOM";
   const sortBy = req.query.sortBy === "heat" ? "heat" : "createdAt";
   const randomSeed = String(req.query.seed ?? new Date().toISOString().slice(0, 10)).slice(0, 32);
   const featuredCases = featuredSoupIds.map((_, index) => `WHEN ? THEN ${index}`).join(" ");
@@ -4557,7 +4591,7 @@ app.get("/api/soups", async (req, res) => {
       ? "CRC32(CONCAT(s.id, ?))"
       : sortBy === "heat"
         ? `${heatOrderExpression} ${order}, s.created_at DESC`
-        : `s.created_at ${order}`;
+        : `s.created_at ${order}, s.id ${order}`;
   const orderParams = featuredSoupIds.length > 0
     ? [...featuredSoupIds, ...featuredSoupIds, randomSeed]
     : order === "RANDOM"
@@ -5443,7 +5477,9 @@ app.get("/api/access-requests", async (req, res) => {
     FROM view_requests vr
     JOIN soups s ON s.id = vr.soup_id
     ${where}
-    ORDER BY vr.created_at DESC
+    ORDER BY CASE WHEN vr.status = 'pending' THEN 0 ELSE 1 END,
+      vr.created_at DESC,
+      vr.id DESC
     ${limit ? "LIMIT ? OFFSET ?" : ""}
     `,
     limit ? [...params, limit, offset] : params
@@ -7170,7 +7206,7 @@ onlineSoupWebSocketServer.on("connection", (socket) => {
   registerPresenceConnection(userId);
   socket.send(JSON.stringify({ event: "connected", payload: { roomId } }));
   void pool.query("UPDATE online_soup_members SET last_seen_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
-  void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
+  void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW(), host_grace_started_at = NULL WHERE id = ? AND host_id = ?", [roomId, userId]);
 
   socket.on("message", (raw) => {
     try {
@@ -7180,7 +7216,10 @@ onlineSoupWebSocketServer.on("connection", (socket) => {
       if (Date.now() - lastPresencePersistedAt < 60_000) return;
       lastPresencePersistedAt = Date.now();
       void pool.query("UPDATE online_soup_members SET last_seen_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
-      void pool.query("UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ?", [roomId, userId]);
+      void pool.query(
+        "UPDATE online_soup_rooms SET host_last_seen_at = NOW() WHERE id = ? AND host_id = ? AND host_grace_started_at IS NULL",
+        [roomId, userId]
+      );
     } catch { /* Ignore malformed client frames. */ }
   });
   socket.on("close", () => {
