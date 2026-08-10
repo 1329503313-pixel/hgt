@@ -5,6 +5,7 @@ import { useApp } from "../context/AppContext";
 import type { CircleSummary, SocialUser, SoupDetail } from "../shared/types";
 import { sanitizeHtml } from "../sanitizeHtml";
 import { Modal } from "./Modal";
+import { isShareCancelled, shareImage } from "../android/platform";
 
 type Target = { kind: "circle" | "friend"; id: string; name: string };
 
@@ -12,7 +13,6 @@ export function SoupShareModal({ soup, onClose }: { soup: SoupDetail; onClose: (
   const { user, openAuth, showToast } = useApp();
   const posterRef = useRef<HTMLDivElement>(null);
   const [posterFile, setPosterFile] = useState<File | null>(null);
-  const [posterUrl, setPosterUrl] = useState("");
   const [panel, setPanel] = useState<"main" | "circles" | "friends">("main");
   const [circles, setCircles] = useState<CircleSummary[]>([]);
   const [friends, setFriends] = useState<SocialUser[]>([]);
@@ -27,21 +27,23 @@ export function SoupShareModal({ soup, onClose }: { soup: SoupDetail; onClose: (
       void import("html-to-image").then(({ toPng }) => toPng(posterRef.current!, { pixelRatio: 2, cacheBust: true, backgroundColor: "#F5F7FA" }))
         .then(async (url) => {
           const blob = await (await fetch(url)).blob();
-          if (!cancelled) { setPosterUrl(url); setPosterFile(new File([blob], `${soup.title}-汤面.png`, { type: "image/png" })); }
+          if (!cancelled) setPosterFile(new File([blob], `${soup.title}-汤面.png`, { type: "image/png" }));
         }).catch(() => { if (!cancelled) showToast("汤面分享图片生成失败"); });
     });
     return () => { cancelled = true; cancelAnimationFrame(frame); };
   }, [soup.id, soup.title, showToast]);
 
-  function shareWechat() {
+  async function shareWechat() {
     if (!posterFile || sharing) return;
-    const download = () => { const a = document.createElement("a"); a.href = posterUrl; a.download = posterFile.name; a.click(); };
-    if (navigator.share && navigator.canShare?.({ files: [posterFile] })) {
-      setSharing(true);
-      void navigator.share({ title: `${soup.title}｜海龟汤汤面`, text: "分享一则海龟汤，来猜猜真相吧", files: [posterFile] })
-        .catch((error) => { if (!(error instanceof DOMException && error.name === "AbortError")) { download(); showToast("系统分享不可用，汤面图片已下载"); } })
-        .finally(() => setSharing(false));
-    } else { download(); showToast("汤面图片已下载，可发送至微信好友或微信群"); }
+    setSharing(true);
+    try {
+      const result = await shareImage({ file: posterFile, title: `${soup.title}｜海龟汤汤面`, text: "分享一则海龟汤，来猜猜真相吧" });
+      if (result === "downloaded") showToast("汤面图片已下载，可发送至微信好友或微信群");
+    } catch (error) {
+      if (!isShareCancelled(error)) showToast(error instanceof Error ? error.message : "系统分享暂时不可用");
+    } finally {
+      setSharing(false);
+    }
   }
 
   async function openTargets(kind: "circles" | "friends") {
@@ -90,7 +92,7 @@ export function SoupShareModal({ soup, onClose }: { soup: SoupDetail; onClose: (
           </div>
         </div>
         <div className="grid grid-cols-3 gap-2">
-          <button className="btn btn-primary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" disabled={!posterFile || sharing} onClick={shareWechat}><Share2 size={18} /><span>{posterFile ? "分享到微信" : "生成中…"}</span></button>
+          <button className="btn btn-primary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" disabled={!posterFile || sharing} onClick={() => void shareWechat()}><Share2 size={18} /><span>{posterFile ? "分享到微信" : "生成中…"}</span></button>
           <button className="btn btn-secondary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" onClick={() => void openTargets("circles")}><CircleEllipsis size={18} /><span>分享到圈子</span></button>
           <button className="btn btn-secondary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" onClick={() => void openTargets("friends")}><MessageCircle size={18} /><span>分享给好友</span></button>
         </div>

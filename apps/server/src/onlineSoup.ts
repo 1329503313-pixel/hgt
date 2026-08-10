@@ -1037,7 +1037,6 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
   if (context.user.id === context.room.host_id) {
     const connection = await pool.getConnection();
     let successor: ActiveHostSuccessor | null = null;
-    let gracePeriod = false;
     try {
       await connection.beginTransaction();
       const [[room]] = await connection.query<mysql.RowDataPacket[]>(
@@ -1049,36 +1048,26 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
         return fail(res, 409, "房主身份已发生变化，请刷新房间状态");
       }
       await releaseStaleSeats(context.room.id, connection);
-      if (String(room.status) === "playing") {
-        gracePeriod = true;
-        await connection.query(
-          "UPDATE online_soup_rooms SET host_grace_started_at = NOW() WHERE id = ? AND host_id = ?",
-          [context.room.id, context.user.id]
-        );
+      successor = await activeHostSuccessor(context.room.id, context.user.id, connection);
+      if (successor) {
+        await transferDepartedHost(context.room.id, context.user.id, successor, connection);
         await systemMessage(
           context.room.id,
           room.current_round_id ? String(room.current_round_id) : null,
-          `房主已离开，房间和本轮将保留${HOST_OFFLINE_GRACE_MINUTES}分钟，等待房主返回`,
+          `${context.user.nickname} 已退出房间，${String(successor.nickname)} 接任房主`,
           connection
         );
       } else {
-        successor = await activeHostSuccessor(context.room.id, context.user.id, connection);
-        if (successor) {
-          await transferDepartedHost(context.room.id, context.user.id, successor, connection);
-          await systemMessage(
-            context.room.id,
-            room.current_round_id ? String(room.current_round_id) : null,
-            `${context.user.nickname} 已退出房间，${String(successor.nickname)} 接任房主`,
-            connection
-          );
-        } else {
-          gracePeriod = true;
-          await connection.query(
-            "UPDATE online_soup_rooms SET host_grace_started_at = NOW() WHERE id = ? AND host_id = ?",
-            [context.room.id, context.user.id]
-          );
-          await systemMessage(context.room.id, null, `${context.user.nickname} 已退出，房间将继续保留并等待成员接任`, connection);
-        }
+        await systemMessage(
+          context.room.id,
+          room.current_round_id ? String(room.current_round_id) : null,
+          `${context.user.nickname} 已退出，房间内暂无其他成员，房间已解散`,
+          connection
+        );
+        await connection.query(
+          "UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ? AND host_id = ?",
+          [context.room.id, context.user.id]
+        );
       }
       await connection.commit();
     } catch (error) {
@@ -1089,9 +1078,9 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
     }
     res.json({
       ok: true,
-      roomClosed: false,
+      roomClosed: !successor,
       hostTransferred: Boolean(successor),
-      hostGracePeriod: gracePeriod,
+      hostGracePeriod: false,
       newHostId: successor?.userId ?? null
     });
     if (successor) {
@@ -1103,10 +1092,7 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
         newHostNickname: String(successor.nickname)
       });
     } else {
-      void notifyRoom(context.room.id, "host_offline", {
-        cause: "host_exit",
-        graceMinutes: HOST_OFFLINE_GRACE_MINUTES
-      });
+      void notifyRoom(context.room.id, "room_closed", { cause: "host_exit_empty" });
     }
     return;
   }

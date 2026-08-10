@@ -10,6 +10,7 @@ services:
       - NODE_ENV=production
       - PORT=4000
       - WEB_ORIGIN=${WEB_ORIGIN:?WEB_ORIGIN must be set}
+      - APP_ORIGIN=${APP_ORIGIN:-https://app.caqis.com}
       - PUBLIC_SITE_URL=${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be set}
       - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}

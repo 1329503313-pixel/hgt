@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Modal } from "./Modal";
 import { useApp } from "../context/AppContext";
 import type { CircleSummary, SocialUser } from "../shared/types";
+import { isShareCancelled, shareImage } from "../android/platform";
 
 type Props = {
   roomId: string;
@@ -228,30 +229,21 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
     return () => { cancelled = true; window.cancelAnimationFrame(frame); };
   }, [qrCode, roomCode, roomName, showToast]);
 
-  function shareToWechat() {
+  async function shareToWechat() {
     if (sharing || !posterFile || !posterDataUrl) return;
-    const downloadPoster = () => {
-      const anchor = document.createElement("a");
-      anchor.href = posterDataUrl;
-      anchor.download = posterFile.name;
-      anchor.click();
-    };
-    if (navigator.share && navigator.canShare?.({ files: [posterFile] })) {
-      setSharing(true);
-      void navigator.share({
+    setSharing(true);
+    try {
+      const result = await shareImage({
+        file: posterFile,
         title: `${roomName}｜在线玩汤邀请`,
-        text: `房间号 ${roomCode}，点击或扫码加入房间`,
-        files: [posterFile]
-      }).catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          downloadPoster();
-          showToast("系统分享不可用，邀请图片已下载，可发送至微信");
-        }
-      }).finally(() => setSharing(false));
-      return;
+        text: `房间号 ${roomCode}，点击或扫码加入房间`
+      });
+      if (result === "downloaded") showToast("邀请图片已下载，可发送至微信好友或微信群");
+    } catch (error) {
+      if (!isShareCancelled(error)) showToast(error instanceof Error ? error.message : "系统分享暂时不可用");
+    } finally {
+      setSharing(false);
     }
-    downloadPoster();
-    showToast("邀请图片已下载，可发送至微信好友或微信群");
   }
 
   async function openCircles() {
@@ -310,7 +302,7 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
         </div>
 
         <div className="grid grid-cols-3 gap-2">
-          <button className="btn btn-primary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" disabled={!posterFile || sharing} onClick={shareToWechat}><Share2 size={18} /><span>{!posterFile ? "生成中…" : "分享到微信"}</span></button>
+          <button className="btn btn-primary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" disabled={!posterFile || sharing} onClick={() => void shareToWechat()}><Share2 size={18} /><span>{!posterFile ? "生成中…" : "分享到微信"}</span></button>
           <button className="btn btn-secondary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" disabled={!inviteToken} onClick={() => void openCircles()}><CircleEllipsis size={18} /><span>分享到圈子</span></button>
           <button className="btn btn-secondary h-auto min-h-14 flex-col gap-1 px-2 py-2 text-xs" disabled={!inviteToken} onClick={() => void openFriends()}><MessageCircle size={18} /><span>分享给好友</span></button>
         </div>

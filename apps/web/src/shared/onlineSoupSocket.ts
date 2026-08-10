@@ -1,3 +1,5 @@
+import { normalizeApiMediaUrls, websocketEndpoint } from "../runtime";
+
 export function connectOnlineSoupSocket(
   roomId: string,
   onChanged: (reason: string, payload: Record<string, unknown>) => void,
@@ -12,8 +14,7 @@ export function connectOnlineSoupSocket(
 
   const connect = () => {
     if (closed) return;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const currentSocket = new WebSocket(`${protocol}//${window.location.host}/ws/online-soup?roomId=${encodeURIComponent(roomId)}`);
+    const currentSocket = new WebSocket(websocketEndpoint(`/ws/online-soup?roomId=${encodeURIComponent(roomId)}`));
     socket = currentSocket;
     currentSocket.addEventListener("open", () => {
       if (closed || socket !== currentSocket) {
@@ -35,7 +36,7 @@ export function connectOnlineSoupSocket(
     currentSocket.addEventListener("message", (event) => {
       if (socket !== currentSocket) return;
       try {
-        const message = JSON.parse(String(event.data));
+        const message = normalizeApiMediaUrls(JSON.parse(String(event.data)));
         if (message.event === "pong") {
           lastPongAt = Date.now();
           return;
@@ -81,8 +82,7 @@ export function connectOnlineSoupLobbySocket(
 
   const connect = () => {
     if (closed) return;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const currentSocket = new WebSocket(`${protocol}//${window.location.host}/ws/online-soup-lobby`);
+    const currentSocket = new WebSocket(websocketEndpoint("/ws/online-soup-lobby"));
     socket = currentSocket;
     currentSocket.addEventListener("open", () => {
       if (closed || socket !== currentSocket) {
@@ -104,7 +104,7 @@ export function connectOnlineSoupLobbySocket(
     currentSocket.addEventListener("message", (event) => {
       if (socket !== currentSocket) return;
       try {
-        const message = JSON.parse(String(event.data));
+        const message = normalizeApiMediaUrls(JSON.parse(String(event.data)));
         if (message.event === "pong") {
           lastPongAt = Date.now();
           return;

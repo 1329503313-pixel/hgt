@@ -3378,6 +3378,126 @@ textarea {
     margin-left: auto;
   }
 
+  .desktop-app-download {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 36px;
+    align-items: center;
+    border-radius: 18px;
+    outline: none;
+    text-shadow: none;
+  }
+
+  .desktop-app-download-trigger {
+    display: inline-flex;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 18px;
+    background: rgba(15, 35, 50, 0.24);
+    padding: 0 12px;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 13px;
+    font-weight: 800;
+    transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+  }
+
+  .desktop-app-download:hover .desktop-app-download-trigger,
+  .desktop-app-download:focus-visible .desktop-app-download-trigger {
+    border-color: rgba(255, 255, 255, 0.5);
+    background: rgba(37, 99, 235, 0.72);
+    color: #fff;
+  }
+
+  .desktop-app-download:focus-visible {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.82);
+  }
+
+  .desktop-app-download-popover {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 50%;
+    z-index: 20;
+    display: flex;
+    width: 224px;
+    visibility: hidden;
+    flex-direction: column;
+    align-items: center;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 18px 48px rgba(8, 20, 32, 0.26);
+    padding: 11px 11px 13px;
+    color: #17364c;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -6px);
+    transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
+  }
+
+  .desktop-app-download-popover::before {
+    position: absolute;
+    top: -6px;
+    left: calc(50% - 6px);
+    width: 12px;
+    height: 12px;
+    border-top: 1px solid rgba(148, 163, 184, 0.32);
+    border-left: 1px solid rgba(148, 163, 184, 0.32);
+    content: "";
+    background: rgba(255, 255, 255, 0.98);
+    transform: rotate(45deg);
+  }
+
+  .desktop-app-download-popover img {
+    display: block;
+    width: 200px;
+    height: 200px;
+    border-radius: 8px;
+    object-fit: contain;
+  }
+
+  .desktop-app-download-popover strong {
+    margin-top: 9px;
+    font-size: 14px;
+    font-weight: 900;
+  }
+
+  .desktop-app-download-popover > span {
+    margin-top: 3px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .desktop-app-download:hover .desktop-app-download-popover,
+  .desktop-app-download:focus-visible .desktop-app-download-popover {
+    visibility: visible;
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .desktop-app-download-trigger,
+    .desktop-app-download-popover {
+      transition: none;
+    }
+  }
+
+  @media (max-width: 1279px) {
+    .desktop-app-download-trigger {
+      width: 36px;
+      padding: 0;
+    }
+
+    .desktop-app-download-label {
+      display: none;
+    }
+  }
+
   .home-desktop-icon-button {
     position: relative;
     display: grid;

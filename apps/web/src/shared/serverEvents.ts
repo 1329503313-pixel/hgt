@@ -1,3 +1,5 @@
+import { apiEndpoint, normalizeApiMediaUrls } from "../runtime";
+
 type ServerEventListener = (event: MessageEvent<string>) => void;
 
 const listeners = new Map<string, Set<ServerEventListener>>();
@@ -5,7 +7,7 @@ let source: EventSource | null = null;
 
 function ensureSource() {
   if (source || listeners.size === 0) return;
-  source = new EventSource("/api/events", { withCredentials: true });
+  source = new EventSource(apiEndpoint("/api/events"), { withCredentials: true });
   for (const [type, typeListeners] of listeners) {
     const handler = dispatch(type, typeListeners);
     dispatchers.set(type, handler);
@@ -15,7 +17,18 @@ function ensureSource() {
 
 function dispatch(_type: string, typeListeners: Set<ServerEventListener>) {
   return (event: Event) => {
-    for (const listener of typeListeners) listener(event as MessageEvent<string>);
+    const message = event as MessageEvent<string>;
+    let normalized = message;
+    try {
+      normalized = new MessageEvent(message.type, {
+        data: JSON.stringify(normalizeApiMediaUrls(JSON.parse(message.data))),
+        lastEventId: message.lastEventId,
+        origin: message.origin
+      });
+    } catch {
+      // Preserve non-JSON server events unchanged.
+    }
+    for (const listener of typeListeners) listener(normalized);
   };
 }
 

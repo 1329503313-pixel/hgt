@@ -100,6 +100,7 @@ import onlineSoupRouter, {
   validRoomInviteToken
 } from "./onlineSoup.js";
 import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.js";
+import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const insecureJwtSecrets = new Set([
@@ -350,7 +351,13 @@ function extractAuthClaims(req: Request): AuthClaims | null {
   return null;
 }
 
-app.use(cors({ origin: config.webOrigin, credentials: true }));
+const corsOrigins = [
+  config.webOrigin,
+  config.appOrigin,
+  ...(config.nodeEnv === "production" ? [] : ["http://app.localhost"])
+];
+app.use(createLegacyHostRedirect(config.nodeEnv, config.publicSiteUrl));
+app.use(cors({ origin: [...new Set(corsOrigins)], credentials: true }));
 app.use(compression({
   threshold: 1024,
   filter: (req, res) => req.path !== "/api/events" && compression.filter(req, res)

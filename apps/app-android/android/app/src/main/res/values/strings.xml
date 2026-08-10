@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">烧脑海龟汤</string>
+    <string name="title_activity_main">烧脑海龟汤</string>
+    <string name="package_name">com.caqis.hgt</string>
+    <string name="custom_url_scheme">com.caqis.hgt</string>
+</resources>

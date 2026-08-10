@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import DOMPurify from "dompurify";
 import { Bell } from "lucide-react";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { Modal } from "./Modal";
+import { sanitizeHtml } from "../sanitizeHtml";
 
 type PopupNotice = {
   id: string;
@@ -108,7 +108,7 @@ export function GlobalNoticeModal() {
         </header>
         <div
           className="notice-rich-content max-h-[55dvh] overflow-y-auto rounded-2xl bg-slate-50 p-4 text-ink"
-          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(notice.content, { USE_PROFILES: { html: true } }) }}
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(notice.content) }}
         />
         <button
           type="button"

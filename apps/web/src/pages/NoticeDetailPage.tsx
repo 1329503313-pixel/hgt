@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import DOMPurify from "dompurify";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { PageTopBar } from "../components/PageTopBar";
 import { DetailSkeleton } from "../components/Skeletons";
+import { sanitizeHtml } from "../sanitizeHtml";
 
 type NoticeDetail = {
   id: string;
@@ -40,7 +40,7 @@ export default function NoticeDetailPage() {
               <h1 className="text-2xl font-black leading-snug text-ink">{notice.title}</h1>
               <p className="mt-3 text-sm text-muted">{notice.author} · {new Date(notice.publishedAt).toLocaleString("zh-CN", { hour12: false })}</p>
             </header>
-            <div className="notice-rich-content mt-6 text-ink" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(notice.content, { USE_PROFILES: { html: true } }) }} />
+            <div className="notice-rich-content mt-6 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(notice.content) }} />
           </article>
         ) : <p className="py-16 text-center text-sm text-muted">通知不存在或已删除</p>}
       </div>

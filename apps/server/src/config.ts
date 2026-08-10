@@ -27,6 +27,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: Number(process.env.PORT ?? 4000),
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
+  appOrigin: process.env.APP_ORIGIN ?? "https://app.caqis.com",
   publicSiteUrl: process.env.PUBLIC_SITE_URL ?? process.env.WEB_ORIGIN ?? "http://localhost:5173",
   cookieDomain: process.env.COOKIE_DOMAIN || undefined,
   cookieSecure: process.env.COOKIE_SECURE == null

@@ -23,6 +23,7 @@ import { useMessageUnread } from "../shared/useMessageUnread";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
 import { canAccessAdmin } from "../shared/roles";
+import { DesktopAppDownload } from "./DesktopAppDownload";
 
 export type DesktopModuleKey = "online-soup" | "circles" | "rankings" | "store" | "tasks" | "mine" | "achievements" | "cards" | "messages";
 
@@ -86,6 +87,7 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
           <button type="button" className={active === "tasks" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>
         </nav>
         <div className="home-desktop-account">
+          <DesktopAppDownload />
           {user ? (
             <>
               <button type="button" className={`home-desktop-icon-button ${active === "messages" ? "is-active" : ""}`} onClick={() => navigate("/messages")} aria-label="消息">

@@ -18,12 +18,21 @@ test_*.mjs
 *.tar.zip
 hgt.tar.gz
 apps/server/dist/
+apps/web/dist-android/
+apps/app-android/android/.gradle/
+apps/app-android/android/app/build/
+apps/app-android/android/build/
+apps/app-android/android/local.properties
+apps/app-android/android/keystore.properties
+*.keystore
+*.jks
 .local-backups/
 playwright-report/
 test-results/
 .e2e-artifacts/
 docs/*
 !docs/APP视觉与图标对齐执行说明.md
+!docs/APP_Web用户端100%复刻对照矩阵与重建计划.md
 artifacts/
 .local/
 # Agent working memory; not part of the product source.

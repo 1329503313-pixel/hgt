@@ -1,0 +1,5 @@
+# Copy this file outside the repository and keep the real values secret.
+storeFile=hgt-release.keystore
+storePassword=replace-with-secret
+keyAlias=hgt-release
+keyPassword=replace-with-secret

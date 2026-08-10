@@ -6,7 +6,10 @@
     "dev": "vite --host 0.0.0.0",
     "prebuild": "npm run optimize:images && npm run check:images",
     "build": "vite build",
+    "build:android": "vite build --mode android",
+    "build:android:local": "vite build --mode android-local",
     "check": "npm run check:images && tsc -p tsconfig.json --noEmit",
+    "test:media": "tsx --test tests/mediaUrls.test.ts",
     "optimize:images": "node scripts/optimize-images.mjs",
     "check:images": "node scripts/optimize-images.mjs --check",
     "preview": "vite preview"

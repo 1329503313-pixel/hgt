@@ -1,3 +1,5 @@
+import { normalizeApiMediaUrls, websocketEndpoint } from "../runtime";
+
 export type CircleSocketEvent = {
   event: string;
   payload?: Record<string, unknown>;
@@ -15,8 +17,7 @@ export function connectCircleSocket(
 
   const connect = () => {
     if (closed) return;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    socket = new WebSocket(`${protocol}//${window.location.host}/ws/circles?circleId=${encodeURIComponent(circleId)}`);
+    socket = new WebSocket(websocketEndpoint(`/ws/circles?circleId=${encodeURIComponent(circleId)}`));
     socket.addEventListener("open", () => {
       onConnectionChange?.(true);
       heartbeatTimer = window.setInterval(() => {
@@ -25,7 +26,7 @@ export function connectCircleSocket(
     });
     socket.addEventListener("message", (message) => {
       try {
-        onEvent(JSON.parse(message.data) as CircleSocketEvent);
+        onEvent(normalizeApiMediaUrls(JSON.parse(message.data) as CircleSocketEvent));
       } catch {
         // Ignore malformed server frames.
       }

@@ -1,3 +1,5 @@
+import { normalizeApiMediaUrls } from "../runtime";
+
 type CacheEnvelope<T> = { savedAt: number; value: T };
 
 export function readSessionCache<T>(key: string, maxAgeMs: number): T | null {
@@ -9,7 +11,7 @@ export function readSessionCache<T>(key: string, maxAgeMs: number): T | null {
       sessionStorage.removeItem(key);
       return null;
     }
-    return cached.value;
+    return normalizeApiMediaUrls(cached.value);
   } catch {
     return null;
   }

@@ -20,6 +20,7 @@ import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
+import { sanitizeHtml } from "../../sanitizeHtml";
 
 type NoticeSummary = {
   id: string;
@@ -387,7 +388,7 @@ export function NoticeManagement() {
               <div><h3 className="text-2xl font-black leading-tight text-ink">{viewing.title}</h3><p className="mt-2 text-sm text-muted">作者：{viewing.author}　 发布时间：{formatDate(viewing.publishedAt)}　 有效时间：{formatDuration(viewing.validDurationMinutes)}　 状态：{currentNoticeStatus(viewing) === "published" ? "已发布" : "已失效"}　 阅读：{viewing.readCount}</p></div>
               <button className="btn btn-secondary h-10 w-10 shrink-0 p-0" onClick={() => setViewing(null)}><X size={18} /></button>
             </div>
-            <div className="notice-rich-content text-ink" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(viewing.content, { USE_PROFILES: { html: true } }) }} />
+            <div className="notice-rich-content text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(viewing.content) }} />
           </article>
         </Modal>
       )}

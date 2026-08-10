@@ -16,6 +16,7 @@ import { desktopNavigationBannerUrl } from "../shared/staticAssets";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
 import { canAccessAdmin } from "../shared/roles";
+import { DesktopAppDownload } from "../components/DesktopAppDownload";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "total" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge">;
@@ -391,6 +392,7 @@ export default function HomePage() {
             <button type="button" onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>
           </nav>
           <div className="home-desktop-account">
+            <DesktopAppDownload />
             {user ? (
               <>
                 <button type="button" className="home-desktop-icon-button" onClick={() => navigate("/messages")} aria-label="消息">

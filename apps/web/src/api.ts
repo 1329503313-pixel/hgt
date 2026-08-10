@@ -10,8 +10,7 @@ import type {
   SoupSummary,
   ViewRequestItem
 } from "./shared/types";
-
-const API_URL = "";
+import { apiEndpoint, normalizeApiMediaUrls } from "./runtime";
 
 type ApiOptions = Omit<RequestInit, "body"> & {
   body?: BodyInit | object | null;
@@ -65,7 +64,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   const request = (async () => {
     const headers = new Headers(fetchOptions.headers);
     if (fetchOptions.body && !isBodyInit(fetchOptions.body)) headers.set("Content-Type", "application/json");
-    const response = await fetch(`${API_URL}${path}`, {
+    const response = await fetch(apiEndpoint(path), {
       ...fetchOptions,
       cache: bypassCache ? "no-store" : fetchOptions.cache,
       credentials: "include",
@@ -75,7 +74,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
           ? JSON.stringify(fetchOptions.body)
           : (fetchOptions.body as BodyInit | null | undefined)
     });
-    const data = await response.json().catch(() => ({}));
+    const data = normalizeApiMediaUrls(await response.json().catch(() => ({})));
     if (!response.ok) throw new ApiError(data.error ?? "请求失败", response.status, data.code);
     if (cacheKey && cacheTtlMs > 0) responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtlMs, value: data });
     if (method !== "GET") clearApiCache();
