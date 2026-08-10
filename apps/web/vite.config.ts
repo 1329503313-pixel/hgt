@@ -29,6 +29,22 @@ export default defineConfig(({ mode }) => {
         return id === "\0hgt-android-empty-image" ? 'export default "";' : null;
       }
     });
+  } else {
+    // Web build: stub @capacitor/* to prevent resolution failures
+    plugins.push({
+      name: "hgt-web-capacitor-stub",
+      enforce: "pre",
+      resolveId(source) {
+        if (source.startsWith("@capacitor/") || source === "@capacitor/app" || source === "@capacitor/browser" || source === "@capacitor/core" || source === "@capacitor/filesystem" || source === "@capacitor/share" || source === "@capacitor/splash-screen") {
+          return "\0hgt-capacitor-stub";
+        }
+        return null;
+      },
+      load(id) {
+        if (id === "\0hgt-capacitor-stub") return "export {}; export const Capacitor = { getPlatform: () => 'web' }; export const App = {}; export const Browser = {}; export const Share = {}; export const Filesystem = {}; export const Directory = {}; export const registerPlugin = () => ({}); export default {};";
+        return null;
+      }
+    });
   }
 
   return {
