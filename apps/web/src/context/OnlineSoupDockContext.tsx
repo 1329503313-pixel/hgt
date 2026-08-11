@@ -9,6 +9,7 @@ import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
 import type { OnlineSoupMessage, OnlineSoupSnapshot } from "../shared/types";
 import { GiftMessageCard } from "../components/GiftMessageCard";
+import { isOnlineSoupAlreadyExited } from "../shared/onlineSoupExit";
 import { useApp } from "./AppContext";
 
 type DockSession = {
@@ -198,6 +199,11 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
       clearDock();
       showToast(session.snapshot.me.isHost ? result.roomClosed ? "已退出并解散空房间" : "已退出房间，房主已转移" : "已退出房间");
     } catch (error) {
+      if (isOnlineSoupAlreadyExited(error)) {
+        clearDock();
+        showToast("已退出房间");
+        return;
+      }
       showToast(error instanceof Error ? error.message : "退出房间失败");
     }
   }

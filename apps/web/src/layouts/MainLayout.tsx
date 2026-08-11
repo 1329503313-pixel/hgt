@@ -11,6 +11,8 @@ const desktopModules: Record<string, { active: DesktopModuleKey; title: string; 
   "/circles": { active: "circles", title: "找到同好，分享每一个精彩脑洞", eyebrow: "圈子 · COMMUNITY" },
   "/mine/rankings": { active: "rankings", title: "看看最受欢迎的创作者与故事", eyebrow: "排行 · RANKINGS" },
   "/mine/store": { active: "store", title: "发现装扮、卡包与更多社区好物", eyebrow: "商城 · STORE" },
+  "/mine/store/cards": { active: "store", title: "抽取卡牌，继续你的收藏旅程", eyebrow: "卡包 · CARD PACKS" },
+  "/mine/store/stickers": { active: "store", title: "解锁表情，让每一次聊天更生动", eyebrow: "表情包 · STICKERS" },
   "/mine/asset-draw-history": { active: "store", title: "回顾每一次抽取与收藏收获", eyebrow: "抽卡记录 · DRAW HISTORY" },
   "/mine/tasks": { active: "tasks", title: "完成每日挑战，积累属于你的奖励", eyebrow: "任务 · MISSIONS" },
   "/mine/shells/transactions": { active: "tasks", title: "查看每一笔贝壳收入与支出", eyebrow: "贝壳明细 · SHELL HISTORY" },
@@ -30,7 +32,7 @@ const desktopModules: Record<string, { active: DesktopModuleKey; title: string; 
 };
 
 function desktopModuleForPath(path: string) {
-  if (/^\/mine\/store\/[^/]+$/.test(path)) {
+  if (/^\/mine\/store\/cards\/[^/]+$/.test(path) || (/^\/mine\/store\/[^/]+$/.test(path) && path !== "/mine/store/cards" && path !== "/mine/store/stickers")) {
     return { active: "store" as const, title: "查看卡包内容，开启新的收藏", eyebrow: "卡包详情 · PACK DETAILS" };
   }
   if (path === "/messages") {
@@ -62,7 +64,7 @@ export default function MainLayout() {
   const desktopSecondary = Boolean(desktopModule && !desktopPrimaryPaths.has(path));
 
   // Hide BottomNav on detail page, but include "soup/" prefix for home tab active state
-  const hideBottomNav = path.startsWith("/soup/") || path.startsWith("/messages") || /^\/mine\/store\/[^/]+$/.test(path);
+  const hideBottomNav = path.startsWith("/soup/") || path.startsWith("/messages") || /^\/mine\/store\/cards\/[^/]+$/.test(path);
 
   // home, mine, mine/* 用 PageTopBar 自行渲染 header
   // 这些页面的 header 由各自页面组件内部的 PageTopBar 处理

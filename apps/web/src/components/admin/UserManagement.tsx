@@ -13,6 +13,7 @@ import type { ActivityBadgeCondition } from "../BadgeVisuals";
 import { ActivityConditionsEditor, newActivityCondition } from "./ActivityConditionsEditor";
 import { LevelBadge } from "../LevelBadge";
 import { USER_ROLE_LABELS } from "../../shared/roles";
+import { ACCOUNT_PASSWORD_MAX_LENGTH, ACCOUNT_PASSWORD_MIN_LENGTH } from "../../shared/accountRules";
 
 type AdminUser = PublicUser & {
   username: string;
@@ -439,12 +440,16 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               id="admin-reset-password"
               className="field mt-2 w-full"
               type="password"
+              minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
+              maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
               autoFocus
-              placeholder="至少 6 位"
+              placeholder={`至少 ${ACCOUNT_PASSWORD_MIN_LENGTH} 位`}
+              aria-describedby="admin-reset-password-help"
               value={newPassword}
               onChange={(event) => setNewPassword(event.target.value)}
             />
-            {resetError && <p className="mt-2 text-sm text-red-600">{resetError}</p>}
+            {!resetError && <p id="admin-reset-password-help" className="mt-2 text-xs text-muted">新密码至少 {ACCOUNT_PASSWORD_MIN_LENGTH} 位</p>}
+            {resetError && <p className="mt-2 text-sm text-red-600" role="alert">{resetError}</p>}
             <div className="mt-5 grid grid-cols-2 gap-2">
               <button className="btn btn-secondary" type="button" onClick={closeResetPassword}>取消</button>
               <button className="btn btn-primary" type="submit" disabled={resetting}>{resetting ? "重置中……" : "确认重置"}</button>

@@ -11,7 +11,7 @@
       <view class="identity" @click.stop="openCreator">
         <text class="avatar-mini">{{ soup.creatorName.length > 0 ? soup.creatorName.substring(0, 1) : '汤' }}</text>
         <text class="creator">{{ soup.isOriginal ? soup.creatorName : '佚名' }}</text>
-        <text class="level">Lv{{ soup.creatorLevel }}</text>
+        <LevelBadge :level="soup.creatorLevel" />
         <view v-if="soup.creatorEquippedBadge != null" class="badge-wrap"><image class="badge-icon" :src="badgeUrl" mode="aspectFit"></image><text class="badge">{{ soup.creatorEquippedBadge!.name }}</text></view>
       </view>
       <view v-if="props.compact == true" class="tags">
@@ -30,6 +30,7 @@
 </template>
 
 <script setup lang="uts">
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import { absoluteApiUrl, soupThumbnailUrl } from '@/config/runtime.uts'
 import { SoupSummary } from '@/domain/dto/soup.uts'
 

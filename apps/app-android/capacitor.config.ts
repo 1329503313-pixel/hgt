@@ -4,7 +4,7 @@ const localProfile = process.env.HGT_ANDROID_PROFILE === "local";
 
 const config: CapacitorConfig = {
   appId: "com.caqis.hgt",
-  appName: "烧脑海龟汤",
+  appName: "汤汤解谜乐园",
   webDir: "../web/dist-android",
   loggingBehavior: "debug",
   backgroundColor: "#dcefd8",
@@ -25,9 +25,10 @@ const config: CapacitorConfig = {
       launchShowDuration: 900,
       launchAutoHide: true,
       launchFadeOutDuration: 160,
-      backgroundColor: "#dcefd8",
+      backgroundColor: "#10243d",
       androidSplashResourceName: "splash",
       androidScaleType: "CENTER_CROP",
+      splashFullScreen: true,
       showSpinner: false
     },
     SystemBars: {

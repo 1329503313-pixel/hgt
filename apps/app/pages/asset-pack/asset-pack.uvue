@@ -153,8 +153,8 @@ onLoad((options: OnLoadOptions) => { data.id = options['id'] ?? ''; reload() })
 .section-title{color:#121826;font-size:14px;font-weight:900}
 .owned-note{color:#667085;font-size:9px}
 .card-grid,.result-grid,.prob-grid{margin-top:12px;flex-direction:row;flex-wrap:wrap}
-.card-item{width:33.33%;align-items:center;padding:5px;transition-property:transform;transition-duration:120ms}
-.card-item-pressed{transform:scale(.95)}
+.card-item{width:33.33%;align-items:center;padding:5px;transition-property:opacity,background-color;transition-duration:120ms}
+.card-item-pressed{opacity:.82;background-color:#EFF6FF}
 .card-image-wrap{position:relative;width:88px;height:123px}
 .card-image{width:88px;height:123px;border-radius:10px}
 .card-locked{opacity:.38}

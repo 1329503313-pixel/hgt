@@ -4321,7 +4321,7 @@ textarea {
     radial-gradient(ellipse 110% 45% at 80% 84%, transparent 0 13%, rgba(34, 197, 94, 0.94) 23%, rgba(6, 182, 212, 0.96) 39%, rgba(99, 102, 241, 0.84) 55%, transparent 73%);
   background-repeat: repeat;
   background-size: 174px 104px, 226px 122px, 140px 87px;
-  animation: legendary-badge-flow 3.2s linear infinite;
+  animation: legendary-badge-flow 3s linear infinite;
   transform: skewX(-8deg) scale(1.14);
   mix-blend-mode: color;
   opacity: 0.5;
@@ -4393,7 +4393,7 @@ textarea {
   }
 }
 
-/* 卡牌：传说品质始终显示流光边框，详情和抽卡场景额外开启倾斜与卡面光效。 */
+/* 卡牌：传说品质保持主体稳定，只让流光边框和独立光效运动；精细指针展示态可启用受限倾斜。 */
 .asset-card {
   --card-rx: 0deg;
   --card-ry: 0deg;
@@ -4423,16 +4423,18 @@ textarea {
     inset 0 0 8px rgb(125 211 252 / 0.42),
     0 10px 26px rgb(2 132 199 / 0.28),
     0 0 12px rgb(37 99 235 / 0.2);
-  transform: rotateX(var(--card-rx)) rotateY(var(--card-ry));
+  transform: none;
   transform-style: preserve-3d;
   transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
 
-.asset-card-image { width: 100%; height: 100%; object-fit: cover; }
-.asset-card-legend .asset-card-image {
-  animation: asset-card-legend-breathe 7s ease-in-out var(--legend-breathe-delay, 0s) infinite alternate;
-  animation-play-state: paused;
-  transform-origin: 50% 52%;
+.asset-card-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .asset-card-legend .asset-card-frame::after {
@@ -4445,14 +4447,19 @@ textarea {
     radial-gradient(circle at 28% 24%, rgb(34 211 238 / 0.18), transparent 42%),
     radial-gradient(circle at 74% 68%, rgb(244 114 182 / 0.16), transparent 46%);
   opacity: 0.22;
-  animation: asset-card-legend-glow 7s ease-in-out var(--legend-breathe-delay, 0s) infinite alternate;
+  animation: asset-card-legend-glow 7s ease-in-out var(--legend-effect-delay, 0s) infinite alternate;
   animation-play-state: paused;
 }
 
-.asset-card-legend.asset-card-in-view .asset-card-image,
 .asset-card-legend.asset-card-in-view .asset-card-frame::after {
   animation-play-state: running;
-  will-change: transform, opacity;
+  will-change: opacity;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .asset-card-animated .asset-card-frame {
+    transform: rotateX(var(--card-rx)) rotateY(var(--card-ry));
+  }
 }
 .asset-card-high-detail .asset-card-frame {
   transform: none;
@@ -4530,7 +4537,10 @@ textarea {
   animation: asset-card-metal-flow 5.5s linear infinite;
   animation-play-state: paused;
 }
-.asset-card-legend.asset-card-in-view .asset-card-frame { animation-play-state: running; }
+.asset-card-legend.asset-card-in-view .asset-card-frame {
+  animation-play-state: running;
+  will-change: background-position;
+}
 .asset-card-motion-disabled.asset-card-legend .asset-card-image,
 .asset-card-motion-disabled.asset-card-legend .asset-card-frame,
 .asset-card-motion-disabled.asset-card-legend .asset-card-frame::after,
@@ -4735,7 +4745,6 @@ textarea {
 
 @keyframes asset-card-metal-flow { to { background-position: 0 0, 320% 50%; } }
 @keyframes asset-card-rarity-flow { to { background-position: 260% 50%; } }
-@keyframes asset-card-legend-breathe { from { transform: scale(1); } to { transform: scale(1.015) translateY(-0.2%); } }
 @keyframes asset-card-legend-glow { from { opacity: 0.16; } to { opacity: 0.42; } }
 @keyframes asset-draw-legend-aura { from { opacity: 0.78; transform: scale(1.02); } to { opacity: 1; transform: scale(1.16); } }
 @keyframes asset-pack-float { to { transform: translateY(-10px) rotate(1.5deg); filter: drop-shadow(0 20px 26px rgb(37 99 235 / 0.35)); } }
@@ -4769,7 +4778,6 @@ textarea {
   .card-cabinet-detail-flight,
   .asset-card-new-burst,
   .asset-result-pop { animation: none !important; }
-  .asset-card-legend .asset-card-image,
   .asset-card-legend .asset-card-frame::after,
   .asset-draw-aura-legend::before { animation: none !important; }
   .asset-card-frame { animation: none !important; transform: none !important; transition: none !important; }
@@ -4817,32 +4825,89 @@ textarea {
   text-shadow: 0 1px 2px rgb(15 23 42 / .26);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / .22);
   vertical-align: middle;
+  isolation: isolate;
 }
 .level-badge--0 { background: #94a3b8; }
-.level-badge--1,.level-badge--2,.level-badge--3 { background: #eabf58; }
-.level-badge--4,.level-badge--5,.level-badge--6 { background: #d99a28; }
-.level-badge--7,.level-badge--8,.level-badge--9 { background: #ea7a21; }
-.level-badge--10,.level-badge--11,.level-badge--12 { background: linear-gradient(120deg,#f59e0b,#ef4444); }
-.level-badge--13,.level-badge--14,.level-badge--15 { background: linear-gradient(120deg,#fb5b55,#c81e3a); }
-.level-badge--16,.level-badge--17,.level-badge--18 { background: linear-gradient(120deg,#e83e73,#8b3fc7); }
-.level-badge--19,.level-badge--20,.level-badge--21 { background: linear-gradient(120deg,#a855f7,#6d28d9); }
-.level-badge--22,.level-badge--23,.level-badge--24 { background: linear-gradient(120deg,#7c3aed,#3b1675); }
-.level-badge--25,.level-badge--26,.level-badge--27 { background: linear-gradient(120deg,#7c3aed,#3155d9); }
-.level-badge--28,.level-badge--29,.level-badge--30 { background: linear-gradient(110deg,#0f2b66,#245bb8,#0f2b66); background-size: 220% 100%; }
-.level-badge--31,.level-badge--32,.level-badge--33 { background: linear-gradient(110deg,#155eef,#21c7e8,#7656ff,#155eef); background-size: 260% 100%; }
-.level-badge--34,.level-badge--35,.level-badge--36 { background: linear-gradient(110deg,#ca8a04,#fde047,#f59e0b,#ca8a04); background-size: 260% 100%; }
-.level-badge--37,.level-badge--38,.level-badge--39 { background: linear-gradient(110deg,#be123c,#fb7185,#f97316,#be123c); background-size: 260% 100%; }
-.level-badge--40 { background: linear-gradient(110deg,#ef4444,#f59e0b,#eab308,#22c55e,#06b6d4,#3b82f6,#8b5cf6,#ef4444); background-size: 320% 100%; }
-.level-badge--animated { animation: level-badge-flow 3.2s linear infinite; }
-.level-badge--animated:is(.level-badge--19,.level-badge--20,.level-badge--21,.level-badge--22,.level-badge--23,.level-badge--24,.level-badge--25,.level-badge--26,.level-badge--27)::after {
-  content: "✦";
-  position: absolute;
-  right: .12rem;
-  top: .04rem;
-  color: #fff;
-  font-size: .42rem;
-  animation: level-badge-star 1.8s ease-in-out infinite;
-}
-@keyframes level-badge-flow { to { background-position: -220% 0; } }
-@keyframes level-badge-star { 0%,100% { opacity:.25; transform:scale(.65) rotate(0); } 50% { opacity:1; transform:scale(1.2) rotate(90deg); } }
-@media (prefers-reduced-motion: reduce) { .level-badge--animated,.level-badge--animated::after { animation: none !important; } }
+.level-badge--1 { background: #9db89a; }
+.level-badge--2 { background: #82c59a; }
+.level-badge--3 { background: #68d28c; }
+.level-badge--4 { background: #45c878; }
+.level-badge--5 { background: #20b968; }
+.level-badge--1,.level-badge--2,.level-badge--3,.level-badge--4,.level-badge--5 { border:1px solid rgb(15 82 54 / .2); text-shadow:0 1px 2px rgb(10 40 25 / .78),0 0 2px rgb(0 0 0 / .25); }
+.level-badge--6 { background: linear-gradient(115deg,#eadf63,#b9d84a); }
+.level-badge--7 { background: linear-gradient(115deg,#f1cf3d,#bfd932); }
+.level-badge--8 { background: linear-gradient(115deg,#efb82f,#e79225); }
+.level-badge--9 { background: linear-gradient(115deg,#df9d22,#cf741b); }
+.level-badge--10 { background: linear-gradient(115deg,#e7ad27,#bd5c18); }
+.level-badge--6,.level-badge--7,.level-badge--8,.level-badge--9,.level-badge--10 { text-shadow:0 1px 2px rgb(76 42 0 / .84),0 0 2px rgb(60 30 0 / .3); }
+.level-badge--11 { --level-color:#55b8ff; background:#55b8ff; }
+.level-badge--12 { --level-color:#249bff; background:#249bff; }
+.level-badge--13 { --level-color:#1677e8; background:#1677e8; }
+.level-badge--14 { --level-color:#3455d9; background:#3455d9; }
+.level-badge--15 { --level-color:#233cc7; background:#233cc7; }
+.level-badge--16 { --level-color:#b78cff; background:linear-gradient(110deg,#8f61e8,#b78cff,#8152dc); }
+.level-badge--17 { --level-color:#a66bff; background:linear-gradient(110deg,#7d42d6,#a66bff,#7138c8); }
+.level-badge--18 { --level-color:#9147ff; background:linear-gradient(110deg,#6827c4,#9147ff,#6123b8); }
+.level-badge--19 { --level-color:#7135e8; background:linear-gradient(110deg,#4f24af,#7135e8,#421b9a); }
+.level-badge--20 { --level-color:#5420c9; background:linear-gradient(110deg,#351183,#5420c9,#2e0d79); }
+.level-badge--21 { --level-color:#ff6f61; --level-glow:rgb(255 111 97 / .62); background:#ff6f61; }
+.level-badge--22 { --level-color:#f04444; --level-glow:rgb(240 68 68 / .62); background:#f04444; }
+.level-badge--23 { --level-color:#e8322e; --level-glow:rgb(232 50 46 / .66); background:#e8322e; }
+.level-badge--24 { --level-color:#c51f32; --level-glow:rgb(197 31 50 / .68); background:#c51f32; }
+.level-badge--25 { --level-color:#981b3b; --level-glow:rgb(152 27 59 / .72); background:#981b3b; }
+.level-badge--26 { --level-color:#536bdf; background:linear-gradient(120deg,#536bdf,#3545a8); }
+.level-badge--27 { --level-color:#584cd9; background:linear-gradient(120deg,#6659e4,#4335a9); }
+.level-badge--28 { --level-color:#244cba; background:linear-gradient(120deg,#265bc6,#162f79); }
+.level-badge--29 { --level-color:#4e3bb8; background:linear-gradient(120deg,#3156b9,#6632a8); }
+.level-badge--30 { --level-color:#43279b; background:linear-gradient(120deg,#294c9c,#5b238f,#301369); }
+.level-badge--31 { --level-glow:rgb(214 181 109 / .68); background:linear-gradient(115deg,#a98037,#e2c987,#9d742c); }
+.level-badge--32 { --level-glow:rgb(224 174 25 / .7); background:linear-gradient(115deg,#b57c08,#e7b62b,#996606); }
+.level-badge--33 { --level-glow:rgb(203 213 225 / .76); background:linear-gradient(115deg,#77879d,#d7dee8,#8290a3); }
+.level-badge--34 { --level-glow:rgb(225 168 75 / .72); background:linear-gradient(115deg,#9d6a24,#e4b95d,#b7792c); }
+.level-badge--35 { --level-glow:rgb(242 192 43 / .82); background:linear-gradient(115deg,#a96d03,#f1ca45,#a86a02); }
+.level-badge--31,.level-badge--32,.level-badge--33,.level-badge--34,.level-badge--35 { text-shadow:0 1px 2px rgb(58 34 0 / .9),0 0 3px rgb(55 30 0 / .42); }
+.level-badge--36 { --level-glow:rgb(244 190 63 / .72); background:linear-gradient(110deg,#a86a08,#f4d35e,#d45a38,#a86a08); background-size:260% 100%; }
+.level-badge--37 { --level-glow:rgb(139 92 246 / .76); background:linear-gradient(110deg,#295bd6,#8b5cf6,#e6b74c,#295bd6); background-size:280% 100%; }
+.level-badge--38 { --level-glow:rgb(34 211 238 / .76); background:linear-gradient(110deg,#ec4899,#f59e0b,#22c55e,#06b6d4,#6366f1,#ec4899); background-size:320% 100%; }
+.level-badge--39 { --level-glow:rgb(232 121 249 / .82); background:linear-gradient(110deg,#ef4444,#f59e0b,#eab308,#22c55e,#06b6d4,#3b82f6,#8b5cf6,#ef4444); background-size:360% 100%; }
+.level-badge--40 { --level-glow:rgb(250 204 21 / .9); min-width:2.55rem; background:linear-gradient(110deg,#5b2a00,#d69a13,#fff0a6,#d946ef,#2563eb,#22d3ee,#fbbf24,#7c2d12,#5b2a00); background-size:400% 100%; border:1px solid rgb(255 244 185 / .86); text-shadow:0 1px 2px rgb(45 20 0 / .92),0 0 5px rgb(255 255 255 / .72); }
+.level-badge__label { position:relative; z-index:3; }
+.level-badge__shine { position:absolute; z-index:2; inset:-25% auto -25% -45%; width:36%; background:linear-gradient(100deg,transparent,rgb(255 255 255 / .68),transparent); transform:skewX(-18deg); }
+.level-badge__stars { position:absolute; z-index:2; inset:0; pointer-events:none; }
+.level-badge__stars i { position:absolute; display:block; width:.18rem; height:.18rem; border-radius:999px; background:#fff; box-shadow:0 0 3px #fff; opacity:.72; }
+.level-badge__stars i:nth-child(1){left:8%;top:18%}.level-badge__stars i:nth-child(2){right:8%;bottom:18%}.level-badge__stars i:nth-child(3){left:23%;bottom:10%}.level-badge__stars i:nth-child(4){right:25%;top:10%}.level-badge__stars i:nth-child(5){left:48%;top:6%}
+.level-badge__blotches,.level-badge__rain,.level-badge__rings { position:absolute; z-index:2; inset:0; overflow:hidden; pointer-events:none; }
+.level-badge__blotches i { position:absolute; left:-42%; display:block; border-radius:46% 54% 61% 39% / 58% 42% 63% 37%; background:radial-gradient(ellipse at 44% 46%,rgb(255 255 255 / .96) 0,rgb(255 245 235 / .58) 38%,transparent 72%); filter:blur(.35px); mix-blend-mode:screen; opacity:0; }
+.level-badge__blotches i:nth-child(1) { top:-18%; width:1.05rem; height:.78rem; animation-duration:1.82s!important; }
+.level-badge__blotches i:nth-child(2) { top:42%; width:.72rem; height:.48rem; border-radius:63% 37% 44% 56% / 39% 61% 46% 54%; animation-duration:2.14s!important; animation-delay:-.74s!important; }
+.level-badge__blotches i:nth-child(3) { top:4%; width:.5rem; height:.34rem; border-radius:38% 62% 57% 43% / 64% 36% 55% 45%; animation-duration:1.58s!important; animation-delay:-1.18s!important; }
+.level-badge__blotches i:nth-child(4) { top:28%; width:1.2rem; height:.42rem; border-radius:71% 29% 64% 36% / 42% 58% 35% 65%; animation-duration:2.46s!important; animation-delay:-1.66s!important; }
+.level-badge__rain i { position:absolute; left:var(--rain-x); bottom:-.55rem; width:var(--rain-size); height:var(--rain-size); color:#fff; font-size:var(--rain-size); font-style:normal; line-height:1; text-align:center; text-shadow:0 0 3px #fff,0 0 6px rgb(180 210 255 / .92); opacity:0; animation:level-badge-reverse-rain var(--rain-duration) linear infinite; animation-delay:var(--rain-delay); }
+.level-badge__rings i { position:absolute; display:block; border:1px solid rgb(255 255 255 / .94); border-radius:50%; box-shadow:inset 0 0 3px rgb(255 255 255 / .9),0 0 3px #fff,0 0 6px rgb(255 255 255 / .72); opacity:0; }
+.level-badge__rings i:nth-child(1){left:-.08rem;top:-.06rem;width:.78rem;height:.78rem;--ring-x:.22rem;--ring-y:.06rem;animation-duration:1.54s!important}
+.level-badge__rings i:nth-child(2){left:.43rem;top:.36rem;width:.43rem;height:.43rem;--ring-x:-.14rem;--ring-y:-.1rem;animation-duration:1.18s!important;animation-delay:-.68s!important}
+.level-badge__rings i:nth-child(3){left:.76rem;top:-.18rem;width:1rem;height:1rem;--ring-x:.08rem;--ring-y:.16rem;animation-duration:2.08s!important;animation-delay:-1.26s!important}
+.level-badge__rings i:nth-child(4){left:1.28rem;top:.1rem;width:.62rem;height:.62rem;--ring-x:-.2rem;--ring-y:.04rem;animation-duration:1.36s!important;animation-delay:-.34s!important}
+.level-badge__rings i:nth-child(5){right:.48rem;top:.42rem;width:.36rem;height:.36rem;--ring-x:.16rem;--ring-y:-.14rem;animation-duration:1.02s!important;animation-delay:-.82s!important}
+.level-badge__rings i:nth-child(6){right:-.12rem;top:-.14rem;width:.92rem;height:.92rem;--ring-x:-.18rem;--ring-y:.12rem;animation-duration:1.88s!important;animation-delay:-1.48s!important}
+.level-badge__rings i:nth-child(7){left:1.82rem;top:-.08rem;width:.48rem;height:.48rem;--ring-x:.12rem;--ring-y:.17rem;animation-duration:1.24s!important;animation-delay:-.52s!important}
+.level-badge__rings i:nth-child(8){left:2.08rem;top:.24rem;width:.72rem;height:.72rem;--ring-x:-.22rem;--ring-y:-.08rem;animation-duration:1.66s!important;animation-delay:-1.06s!important}
+.level-badge--animated:is(.level-badge--11,.level-badge--12,.level-badge--13,.level-badge--14,.level-badge--15) .level-badge__stars i { animation:level-badge-twinkle 1.75s ease-in-out infinite; }
+.level-badge--animated .level-badge__stars i:nth-child(2){animation-delay:-.35s}.level-badge--animated .level-badge__stars i:nth-child(3){animation-delay:-.7s}.level-badge--animated .level-badge__stars i:nth-child(4){animation-delay:-1.05s}.level-badge--animated .level-badge__stars i:nth-child(5){animation-delay:-1.4s}
+.level-badge--animated:is(.level-badge--16,.level-badge--17,.level-badge--18,.level-badge--19,.level-badge--20) .level-badge__shine { animation:level-badge-shine 2.5s ease-in-out infinite; }
+.level-badge--animated:is(.level-badge--21,.level-badge--22,.level-badge--23,.level-badge--24,.level-badge--25) .level-badge__blotches i { animation:level-badge-drift-blotch 2s cubic-bezier(.35,.05,.58,1) infinite; }
+.level-badge--animated:is(.level-badge--31,.level-badge--32,.level-badge--33,.level-badge--34,.level-badge--35) .level-badge__rings i { animation:level-badge-ring-flash 1.72s ease-out infinite; }
+.level-badge--animated:is(.level-badge--36,.level-badge--37,.level-badge--38,.level-badge--39) { animation:level-badge-rainbow-breathe 4.2s linear infinite; }
+.level-badge--40.level-badge--animated { animation:level-badge-legend 5.4s linear infinite; }
+.level-badge--40.level-badge--animated .level-badge__shine { animation:level-badge-legend-shine 3s ease-in-out infinite; }
+.level-badge--40.level-badge--animated .level-badge__stars i { animation:level-badge-legend-star 2.3s ease-in-out infinite; }
+@keyframes level-badge-twinkle { 0%,100%{opacity:.25;transform:scale(.62)} 50%{opacity:1;transform:scale(1.28)} }
+@keyframes level-badge-shine { 0%,18%{opacity:0;transform:translateX(0) skewX(-18deg)} 48%{opacity:.86} 76%,100%{opacity:0;transform:translateX(275%) skewX(-18deg)} }
+@keyframes level-badge-drift-blotch { 0%{opacity:0;transform:translate(-.35rem,.2rem) scale(.52) rotate(-16deg)} 18%{opacity:.38} 42%{opacity:.9;transform:translate(1.85rem,-.12rem) scale(1.12) rotate(9deg)} 68%{opacity:.52;transform:translate(3.45rem,.16rem) scale(.88) rotate(-7deg)} 100%{opacity:0;transform:translate(5.15rem,-.18rem) scale(1.26) rotate(14deg)} }
+@keyframes level-badge-reverse-rain { 0%{opacity:0;transform:translateY(.2rem) scale(.58)} 14%{opacity:1} 78%{opacity:.92} 100%{opacity:0;transform:translateY(-1.75rem) scale(1.08)} }
+@keyframes level-badge-ring-flash { 0%{opacity:0;transform:translate(0,0) scale(.28)} 22%{opacity:.95} 46%{opacity:.66;transform:translate(0,0) scale(.94)} 72%{opacity:.88} 100%{opacity:0;transform:translate(var(--ring-x),var(--ring-y)) scale(1.48)} }
+@keyframes level-badge-rainbow-breathe { 0%{background-position:0 0;box-shadow:0 0 3px var(--level-glow)} 50%{box-shadow:0 0 9px var(--level-glow)} 100%{background-position:-260% 0;box-shadow:0 0 3px var(--level-glow)} }
+@keyframes level-badge-legend { 0%{background-position:0 0;box-shadow:0 0 4px rgb(250 204 21 / .7),0 0 7px rgb(217 70 239 / .28)} 50%{box-shadow:0 0 10px rgb(250 204 21 / .92),0 0 14px rgb(34 211 238 / .48)} 100%{background-position:-300% 0;box-shadow:0 0 4px rgb(250 204 21 / .7),0 0 7px rgb(217 70 239 / .28)} }
+@keyframes level-badge-legend-shine { 0%,20%{opacity:0;transform:translateX(0) skewX(-18deg)} 50%{opacity:1} 78%,100%{opacity:0;transform:translateX(310%) skewX(-18deg)} }
+@keyframes level-badge-legend-star { 0%,100%{opacity:.22;transform:scale(.55) rotate(0)} 50%{opacity:1;transform:scale(1.35) rotate(90deg)} }
+@media (prefers-reduced-motion:reduce){.level-badge--animated,.level-badge--animated *{animation:none!important}.level-badge__shine,.level-badge__blotches,.level-badge__rain{display:none}.level-badge__stars i{opacity:.72!important;transform:none!important}.level-badge__rings i{opacity:.55!important;transform:none!important}}

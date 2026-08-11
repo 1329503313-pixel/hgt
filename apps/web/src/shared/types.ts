@@ -333,16 +333,21 @@ export type StickerAsset = {
   id: string;
   name: string;
   text: string;
+  description: string;
   staticUrl: string;
   animatedUrl: string;
   width: number;
   height: number;
+  weight: number;
+  price: number;
+  owned: boolean;
 };
 
 export type StickerSeries = {
   id: string;
   name: string;
-  characterName: string;
+  description: string;
+  weight: number;
   stickers: StickerAsset[];
 };
 

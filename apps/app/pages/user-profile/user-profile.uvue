@@ -8,7 +8,7 @@
         <image v-if="backgroundUrl.length > 0" class="hero-bg" :src="backgroundUrl" mode="aspectFill"></image>
         <view class="hero-mask">
           <image v-if="avatarUrl.length > 0" class="avatar" :src="avatarUrl" mode="aspectFill"></image><view v-else class="avatar avatar-empty"><text>{{ data.profile!.nickname.substring(0,1) }}</text></view>
-          <view class="identity"><view class="name-row"><text class="name">{{ data.profile!.nickname }}</text><text class="level">Lv{{ data.profile!.level }}</text></view><view v-if="data.profile!.equippedBadge != null" class="badge-row"><image class="badge-icon" :src="badgeUrl" mode="aspectFit"></image><text class="badge-name" :class="'badge-' + data.profile!.equippedBadge!.tier">{{ data.profile!.equippedBadge!.name }}</text></view></view>
+          <view class="identity"><view class="name-row"><text class="name">{{ data.profile!.nickname }}</text><LevelBadge :level="data.profile!.level" /></view><view v-if="data.profile!.equippedBadge != null" class="badge-row"><image class="badge-icon" :src="badgeUrl" mode="aspectFit"></image><text class="badge-name" :class="'badge-' + data.profile!.equippedBadge!.tier">{{ data.profile!.equippedBadge!.name }}</text></view></view>
           <view v-if="!data.profile!.isSelf" class="actions"><view class="action" :class="data.profile!.isFollowing ? 'action-followed' : ''" @click="toggleFollow"><text>{{ data.profile!.isFollowing ? '✓' : '+' }}</text></view><view class="action" :class="data.profile!.isFollowing ? '' : 'action-disabled'" @click="openMessage"><text>✉</text></view></view>
         </view>
         <view class="stats"><view class="stat"><text class="stat-value">{{ data.profile!.receivedLikeCount }}</text><text class="stat-label">获赞</text></view><view class="stat stat-border" @click="openFollows('following')"><text class="stat-value">{{ data.profile!.followingCount }}</text><text class="stat-label">关注</text></view><view class="stat stat-border" @click="openFollows('followers')"><text class="stat-value">{{ data.profile!.followerCount }}</text><text class="stat-label">粉丝</text></view></view>
@@ -21,6 +21,7 @@
 </template>
 <script setup lang="uts">
 import AppBackButton from '@/components/base/AppBackButton.uvue'
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import { absoluteApiUrl, soupThumbnailUrl } from '@/config/runtime.uts'
 import { OwnedAssetCard, CardCabinet } from '@/domain/dto/digital-asset.uts'
 import { SocialProfile } from '@/domain/dto/social.uts'

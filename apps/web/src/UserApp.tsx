@@ -1,6 +1,5 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Routes, Route } from "react-router-dom";
-import { X } from "lucide-react";
 import { useApp } from "./context/AppContext";
 import { IncomingMessageBanner } from "./components/IncomingMessageBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -29,6 +28,7 @@ const RankingsPage = lazy(() => import("./pages/RankingsPage"));
 const ShellTaskCenterPage = lazy(() => import("./pages/ShellTaskCenterPage"));
 const ShellTransactionsPage = lazy(() => import("./pages/ShellTransactionsPage"));
 const AssetStorePage = lazy(() => import("./pages/AssetStorePage"));
+const StickerStorePage = lazy(() => import("./pages/StickerStorePage"));
 const AssetPackPage = lazy(() => import("./pages/AssetPackPage"));
 const CardCabinetPage = lazy(() => import("./pages/CardCabinetPage"));
 const AssetDrawHistoryPage = lazy(() => import("./pages/AssetDrawHistoryPage"));
@@ -57,7 +57,7 @@ function RouteFallback() {
 }
 
 export default function UserApp() {
-  const { toast, showToast, authMode, showSoupForm, showEvalForm, exportReady, badgeUnlock } = useApp();
+  const { authMode, showSoupForm, showEvalForm, exportReady, badgeUnlock } = useApp();
 
   return (
     <div className="app-shell min-h-screen bg-page">
@@ -78,6 +78,8 @@ export default function UserApp() {
               <Route path="mine/tasks" element={<ShellTaskCenterPage />} />
               <Route path="mine/shells/transactions" element={<ShellTransactionsPage />} />
               <Route path="mine/store" element={<AssetStorePage />} />
+              <Route path="mine/store/cards" element={<AssetStorePage />} />
+              <Route path="mine/store/stickers" element={<StickerStorePage />} />
               <Route path="mine/cards" element={<CardCabinetPage />} />
               <Route path="mine/asset-draw-history" element={<AssetDrawHistoryPage />} />
               <Route path="mine/settings" element={<AccountSettingsPage />} />
@@ -88,6 +90,7 @@ export default function UserApp() {
               <Route path="reset-password" element={<ForgotPasswordPage />} />
               <Route path="online-soup" element={<OnlineSoupLobbyPage />} />
               <Route path="circles" element={<CirclesPage />} />
+              <Route path="mine/store/cards/:packId" element={<AssetPackPage />} />
               <Route path="mine/store/:packId" element={<AssetPackPage />} />
               <Route path="messages" element={<MessagesPage />} />
               <Route path="messages/system" element={<NotificationsPage category="system" />} />
@@ -118,15 +121,6 @@ export default function UserApp() {
 
       <IncomingMessageBanner />
       <GlobalNoticeModal />
-
-      {toast && (
-        <div className="fixed left-1/2 top-[max(1rem,env(safe-area-inset-top))] z-50 flex -translate-x-1/2 items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-primary shadow-lg">
-          {toast}
-          <button type="button" onClick={() => showToast("")} className="ml-2 flex min-h-11 min-w-11 items-center justify-center" aria-label="关闭提示">
-            <X size={16} />
-          </button>
-        </div>
-      )}
 
       <Suspense fallback={null}>
         {authMode && <AuthModal />}

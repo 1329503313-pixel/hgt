@@ -28,7 +28,7 @@
             <image v-if="avatarUrl.length > 0" class="avatar" :src="avatarUrl" mode="aspectFill"></image>
             <view v-else class="avatar avatar-placeholder"><text class="avatar-text">{{ avatarText }}</text></view>
             <view class="profile-copy">
-              <view class="identity-row"><text class="nickname">{{ sessionState.user!.nickname }}</text><text class="level">Lv{{ level }}</text></view>
+              <view class="identity-row"><text class="nickname">{{ sessionState.user!.nickname }}</text><LevelBadge :level="level" /></view>
               <view class="asset-row"><image class="shell-icon" src="/static/tasks/shell.png" mode="aspectFit"></image><text class="asset-text">贝壳：{{ shellBalance }}</text><text class="asset-detail" @click.stop="openTransactions">明细</text></view>
               <view v-if="profile != null && profile!.equippedBadge != null" class="badge-row"><image class="badge-icon" :src="badgeUrl" mode="aspectFit"></image><text class="badge-name">{{ profile!.equippedBadge!.name }}</text></view>
             </view>
@@ -47,7 +47,7 @@
       <view class="summary-row">
         <view class="summary-card">
           <view class="summary-head"><text class="summary-label">等级成长</text><text class="summary-tail">差 {{ remainingExperience }} EXP</text></view>
-          <view class="summary-value-row"><text class="mini-level">Lv{{ level }}</text><text class="summary-value">{{ experience }}</text><text class="summary-unit">EXP</text></view>
+          <view class="summary-value-row"><LevelBadge :level="level" :spaced="false" /><text class="summary-value">{{ experience }}</text><text class="summary-unit">EXP</text></view>
           <view class="progress-meta"><text class="progress-meta-text">{{ currentLevelExperience }} / {{ experienceForNextLevel }}</text><text class="progress-meta-text">{{ levelPercent }}%</text></view>
           <view class="progress-track"><view class="level-progress" :style="{ width: levelProgressWidth }"></view></view>
         </view>
@@ -83,6 +83,7 @@
 </template>
 
 <script setup lang="uts">
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import { absoluteApiUrl } from '@/config/runtime.uts'
 import { ShellTaskCenter } from '@/domain/dto/shell.uts'
 import { SocialProfile } from '@/domain/dto/social.uts'

@@ -5,6 +5,7 @@ import { PageTopBar } from "../components/PageTopBar";
 import { MineBackButton } from "../components/MineBackButton";
 import { CardSkeleton } from "../components/Skeletons";
 import { useApp } from "../context/AppContext";
+import { ACCOUNT_PASSWORD_MAX_LENGTH, ACCOUNT_PASSWORD_MIN_LENGTH } from "../shared/accountRules";
 
 export default function ResetPasswordPage() {
   const { user, loadingUser, openAuth, showToast } = useApp();
@@ -38,8 +39,8 @@ export default function ResetPasswordPage() {
       <MineBackButton />
       <div>
         <form className="card space-y-4 p-4" onSubmit={submit}>
-          <div><label className="label mb-2 block" htmlFor="new-password">新密码</label><input id="new-password" className="field" type="password" minLength={6} autoComplete="new-password" value={password.next} onChange={(event) => setPassword((current) => ({ ...current, next: event.target.value }))} placeholder="请输入新密码" required /></div>
-          <div><label className="label mb-2 block" htmlFor="confirm-password">再次输入新密码</label><input id="confirm-password" className="field" type="password" minLength={6} autoComplete="new-password" value={password.confirm} onChange={(event) => setPassword((current) => ({ ...current, confirm: event.target.value }))} placeholder="请再次输入新密码" required /></div>
+          <div><label className="label mb-2 block" htmlFor="new-password">新密码</label><input id="new-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" aria-describedby="new-password-help" value={password.next} onChange={(event) => setPassword((current) => ({ ...current, next: event.target.value }))} placeholder="请输入新密码" required /><p id="new-password-help" className="mt-2 text-xs text-muted">密码至少 {ACCOUNT_PASSWORD_MIN_LENGTH} 位</p></div>
+          <div><label className="label mb-2 block" htmlFor="confirm-password">再次输入新密码</label><input id="confirm-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" value={password.confirm} onChange={(event) => setPassword((current) => ({ ...current, confirm: event.target.value }))} placeholder="请再次输入新密码" required /></div>
           <button className="btn btn-primary w-full" disabled={saving}>{saving ? "提交中……" : "确认重置"}</button>
         </form>
       </div>

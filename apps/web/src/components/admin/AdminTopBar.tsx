@@ -32,7 +32,7 @@ const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "approvals", label: "审批", icon: <ClipboardCheck size={17} /> },
   { key: "online-soup", label: "玩汤", icon: <Radio size={17} /> },
   { key: "circles", label: "圈子", icon: <CircleEllipsis size={17} /> },
-  { key: "assets", label: "卡牌", icon: <PackageOpen size={17} /> },
+  { key: "assets", label: "商城", icon: <PackageOpen size={17} /> },
   { key: "notices", label: "通知", icon: <Bell size={17} /> },
   { key: "feedback", label: "建议", icon: <MessageSquareText size={17} /> }
 ];

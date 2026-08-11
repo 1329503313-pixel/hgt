@@ -14,10 +14,13 @@
         </view>
         <text class="label">账号</text>
         <input class="input" v-model="data.username" placeholder="请输入账号" />
+        <text v-if="data.mode == 'register'" class="hint">6 至 50 位，仅支持大小写英文、数字和符号，不可重复</text>
         <text v-if="data.mode == 'register'" class="label">昵称</text>
-        <input v-if="data.mode == 'register'" class="input" v-model="data.nickname" placeholder="最多 8 个字符" />
+        <input v-if="data.mode == 'register'" class="input" v-model="data.nickname" maxlength="8" placeholder="请输入昵称" />
+        <text v-if="data.mode == 'register'" class="hint">1 至 8 个字符，不可与其他用户重复</text>
         <text class="label">密码</text>
         <input class="input" v-model="data.password" password="true" placeholder="请输入密码" confirm-type="done" @confirm="submit" />
+        <text v-if="data.mode == 'register'" class="hint">密码至少 6 位</text>
         <text v-if="data.mode == 'register'" class="label">邀请码（选填）</text>
         <input v-if="data.mode == 'register'" class="input" v-model="data.invitationCode" placeholder="5 位数字或大写字母" />
         <text v-if="data.errorMessage.length > 0" class="error">{{ data.errorMessage }}</text>
@@ -32,6 +35,7 @@
 <script setup lang="uts">
 import { loginSession, registerSession } from '@/stores/session.uts'
 import { ApiError } from '@/services/api-client.uts'
+import { accountNicknameError, accountPasswordError, accountUsernameError } from '@/services/account-rules.uts'
 
 type AuthData = {
   mode: string,
@@ -62,18 +66,19 @@ function setMode(mode: string) {
 
 function submit() {
   if (data.submitting) return
-  const username = data.username.trim()
+  const username = data.mode == 'register' ? data.username : data.username.trim()
   if (username.length == 0 || data.password.length == 0) {
     data.errorMessage = '请输入账号和密码'
     return
   }
-  if (data.mode == 'register' && data.password.length < 6) {
-    data.errorMessage = '密码至少 6 位'
-    return
-  }
-  if (data.mode == 'register' && data.nickname.trim().length == 0) {
-    data.errorMessage = '请输入昵称'
-    return
+  if (data.mode == 'register') {
+    let validationError = accountNicknameError(data.nickname)
+    if (validationError.length == 0) validationError = accountUsernameError(username)
+    if (validationError.length == 0) validationError = accountPasswordError(data.password)
+    if (validationError.length > 0) {
+      data.errorMessage = validationError
+      return
+    }
   }
   data.submitting = true
   data.errorMessage = ''
@@ -109,6 +114,7 @@ function submit() {
 .mode-active { background-color: #FFFFFF; color: #2563EB; font-weight: 700; }
 .label { margin-top: 11px; margin-bottom: 6px; color: #344054; font-size: 12px; font-weight: 600; }
 .input { height: 46px; padding: 0 12px; border-width: 1px; border-color: #DCE3EE; border-radius: 13px; background-color: #FFFFFF; color: #121826; font-size: 14px; }
+.hint { margin-top: 6px; color: #667085; font-size: 10px; line-height: 16px; }
 .error { margin-top: 12px; color: #D92D20; font-size: 12px; }
 .submit-button { margin-top: 18px; min-height: 46px; border-radius: 13px; background-color: #2563EB; color: #FFFFFF; font-size: 14px; font-weight: 700; }
 .privacy { margin-top: 12px; color: #98A2B3; font-size: 11px; text-align: center; }

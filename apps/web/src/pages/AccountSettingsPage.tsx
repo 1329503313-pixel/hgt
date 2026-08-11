@@ -10,6 +10,7 @@ import { CardSkeleton } from "../components/Skeletons";
 import { ProfileBackgroundEditor } from "../components/ProfileBackgroundEditor";
 import { EmailBindingCard } from "../components/EmailBindingCard";
 import { FeedbackCard } from "../components/FeedbackCard";
+import { ACCOUNT_NICKNAME_MAX_LENGTH, accountNicknameError } from "../shared/accountRules";
 
 type InvitationSummary = {
   inviteCode: string;
@@ -23,6 +24,7 @@ export default function AccountSettingsPage() {
   const [nickname, setNickname] = useState("");
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [nicknameSaving, setNicknameSaving] = useState(false);
+  const [nicknameError, setNicknameError] = useState("");
   const [invitationSummary, setInvitationSummary] = useState<InvitationSummary | null>(null);
 
   useEffect(() => { setNickname(user?.nickname ?? ""); }, [user?.nickname]);
@@ -64,8 +66,13 @@ export default function AccountSettingsPage() {
     event.preventDefault();
     if (!user || nicknameSaving) return;
     const value = nickname.trim();
-    if (!value || value.length > 8) return showToast("昵称应为 1 至 8 个字符");
+    const validationError = accountNicknameError(value);
+    if (validationError) {
+      setNicknameError(validationError);
+      return;
+    }
     setNicknameSaving(true);
+    setNicknameError("");
     try {
       const data = await api<NicknameResponse>("/api/me/nickname", { method: "PATCH", body: { nickname: value } });
       setUser({ ...user, nickname: data.nickname });
@@ -73,7 +80,7 @@ export default function AccountSettingsPage() {
       setNickname(data.nickname);
       showToast("昵称已更新");
     } catch (error) {
-      showToast((error as Error).message);
+      setNicknameError((error as Error).message);
     } finally {
       setNicknameSaving(false);
     }
@@ -100,8 +107,8 @@ export default function AccountSettingsPage() {
 
         <form className="card p-4" onSubmit={saveNickname}>
           <label className="mb-2 block text-sm font-black text-ink" htmlFor="account-nickname">昵称</label>
-          <div className="flex gap-2"><input id="account-nickname" className="field h-11" maxLength={8} value={nickname} onChange={(event) => setNickname(event.target.value)} /><button className="btn btn-primary h-11 shrink-0 px-4" disabled={nicknameSaving}>{nicknameSaving ? "保存中" : "保存"}</button></div>
-          <p className="mt-2 text-xs text-muted">1 至 8 个字符</p>
+          <div className="flex gap-2"><input id="account-nickname" className="field h-11" maxLength={ACCOUNT_NICKNAME_MAX_LENGTH} value={nickname} aria-invalid={Boolean(nicknameError)} aria-describedby="account-nickname-help" onChange={(event) => { setNickname(event.target.value); setNicknameError(""); }} /><button className="btn btn-primary h-11 shrink-0 px-4" disabled={nicknameSaving}>{nicknameSaving ? "保存中" : "保存"}</button></div>
+          <p id="account-nickname-help" className={`mt-2 text-xs ${nicknameError ? "font-semibold text-danger" : "text-muted"}`} role={nicknameError ? "alert" : undefined}>{nicknameError || "1 至 8 个字符，不可与其他用户重复"}</p>
         </form>
 
         <ProfileBackgroundEditor userId={user.id} />

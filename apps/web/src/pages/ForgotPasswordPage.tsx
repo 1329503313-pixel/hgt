@@ -4,6 +4,7 @@ import { api } from "../api";
 import { MineBackButton } from "../components/MineBackButton";
 import { PageTopBar } from "../components/PageTopBar";
 import { useApp } from "../context/AppContext";
+import { ACCOUNT_PASSWORD_MAX_LENGTH, ACCOUNT_PASSWORD_MIN_LENGTH } from "../shared/accountRules";
 
 const RESET_TOKEN_STORAGE_KEY = "hgt_password_reset_token";
 
@@ -142,12 +143,14 @@ export default function ForgotPasswordPage() {
                   className="field"
                   type="password"
                   autoComplete="new-password"
-                  minLength={6}
-                  maxLength={72}
+                  minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
+                  maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
+                  aria-describedby="forgot-new-password-help"
                   value={password.next}
                   onChange={(event) => setPassword((current) => ({ ...current, next: event.target.value }))}
                   required
                 />
+                <span id="forgot-new-password-help" className="block text-xs text-muted">密码至少 {ACCOUNT_PASSWORD_MIN_LENGTH} 位</span>
               </label>
               <label className="block space-y-2">
                 <span className="label">再次输入新密码</span>
@@ -155,8 +158,8 @@ export default function ForgotPasswordPage() {
                   className="field"
                   type="password"
                   autoComplete="new-password"
-                  minLength={6}
-                  maxLength={72}
+                  minLength={ACCOUNT_PASSWORD_MIN_LENGTH}
+                  maxLength={ACCOUNT_PASSWORD_MAX_LENGTH}
                   value={password.confirm}
                   onChange={(event) => setPassword((current) => ({ ...current, confirm: event.target.value }))}
                   required

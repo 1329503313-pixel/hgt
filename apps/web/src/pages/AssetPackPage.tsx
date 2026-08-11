@@ -66,7 +66,7 @@ export default function AssetPackPage() {
     }
   }
 
-  if (loading || !data) return <section className="min-h-screen bg-page"><PageTopBar title="卡包详情" backTo="/mine/store" /><div className="mx-auto max-w-6xl space-y-3 px-4"><ListSkeleton rows={6} /></div></section>;
+  if (loading || !data) return <section className="min-h-screen bg-page"><PageTopBar title="卡包详情" backTo="/mine/store/cards" /><div className="mx-auto max-w-6xl space-y-3 px-4"><ListSkeleton rows={6} /></div></section>;
   const { pack } = data;
   const singleFree = pack.freeDrawsRemaining > 0;
   const singleUnavailable = !singleFree && data.balance < pack.singlePrice;
@@ -74,7 +74,7 @@ export default function AssetPackPage() {
 
   return (
     <section className="min-h-screen bg-page">
-      <PageTopBar title="卡包详情" backTo="/mine/store" />
+      <PageTopBar title="卡包详情" backTo="/mine/store/cards" />
       <div className="asset-pack-detail-layout mx-auto max-w-6xl space-y-4 px-4 pb-32 lg:space-y-0">
         <div className="overflow-hidden rounded-3xl bg-slate-950 text-white shadow-soft">
           <div className="relative h-72 sm:h-96">{pack.coverCard ? <AssetMotionMedia card={pack.coverCard} className="h-full w-full object-cover opacity-75" eager /> : <div className="h-full w-full bg-slate-900" />}<div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/15 to-transparent" /><div className="absolute inset-x-0 bottom-0 p-5"><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-black backdrop-blur">{pack.packTypeLabel}</span><h1 className="mt-3 text-3xl font-black">{pack.name}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">{pack.description}</p></div></div>

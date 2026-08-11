@@ -1,0 +1,28 @@
+export const ACCOUNT_USERNAME_MIN_LENGTH = 6
+export const ACCOUNT_USERNAME_MAX_LENGTH = 50
+export const ACCOUNT_PASSWORD_MIN_LENGTH = 6
+export const ACCOUNT_PASSWORD_MAX_LENGTH = 72
+export const ACCOUNT_NICKNAME_MAX_LENGTH = 8
+
+export function accountUsernameError(value: string): string {
+  if (value.length < ACCOUNT_USERNAME_MIN_LENGTH) return '账号至少 6 位'
+  if (value.length > ACCOUNT_USERNAME_MAX_LENGTH) return '账号不能超过 50 位'
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code < 33 || code > 126) return '账号仅支持大小写英文、数字和符号，不能包含中文或空格'
+  }
+  return ''
+}
+
+export function accountPasswordError(value: string): string {
+  if (value.length < ACCOUNT_PASSWORD_MIN_LENGTH) return '密码至少 6 位'
+  if (value.length > ACCOUNT_PASSWORD_MAX_LENGTH) return '密码不能超过 72 位'
+  return ''
+}
+
+export function accountNicknameError(value: string): string {
+  const normalized = value.trim()
+  if (normalized.length == 0) return '请输入昵称'
+  if (normalized.length > ACCOUNT_NICKNAME_MAX_LENGTH) return '昵称不超过 8 个字符'
+  return ''
+}

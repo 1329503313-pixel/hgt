@@ -17,6 +17,7 @@ import type { OnlineSoupAnswer, OnlineSoupMessage, OnlineSoupSnapshot, StickerAs
 import { GiftMessageCard } from "../components/GiftMessageCard";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
+import { isOnlineSoupAlreadyExited } from "../shared/onlineSoupExit";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -903,13 +904,20 @@ export default function OnlineSoupRoomPage() {
     try {
       const result = await api<{ roomClosed?: boolean; hostTransferred?: boolean }>(`/api/online-soup/rooms/${roomId}/leave`, { method: "POST" });
       if (snapshot?.me.isHost) showToast(result.roomClosed ? "已退出并解散空房间" : "已退出房间，房主已转移");
+      else showToast("已退出房间");
     } catch (error) {
+      if (isOnlineSoupAlreadyExited(error)) {
+        setConfirmAction(null);
+        showToast("已退出房间");
+        returnFromInvite();
+        return;
+      }
       leavingRoomRef.current = false;
       roomReadAbortRef.current = new AbortController();
       showToast(error instanceof Error ? error.message : "退出房间失败");
       return;
     }
-    navigate("/online-soup");
+    returnFromInvite();
   }
 
   function minimizeCurrentRoom() {

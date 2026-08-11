@@ -25,8 +25,9 @@ import {
   normalizeUserRole
 } from "./roles.js";
 import { calculateExperienceAdjustment, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
-import { getSticker, stickerSeries } from "./stickers.js";
+import { getSticker, initializeStickerCatalog, registerStickerStoreRoutes, stickerSeriesForUser, userOwnsSticker } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
+import { accountNicknameSchema, accountPasswordSchema, accountUsernameSchema } from "./accountRules.js";
 import { generateInviteCode, INVITE_CODE_PATTERN, normalizeInviteCode } from "./inviteCodes.js";
 import {
   runDailyInviteShellSettlement,
@@ -41,7 +42,7 @@ import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
-import { hasSoupReviewContentChanged, normalizeExistingSoupCover } from "./soupInput.js";
+import { hasSoupReviewContentChanged, normalizeExistingSoupCover, soupValidationMessage } from "./soupInput.js";
 import {
   evaluationCountsTowardScore,
   scoringEvaluationJoin,
@@ -2048,17 +2049,19 @@ async function optimizeCoverImage(base64: string, soupId: string): Promise<{ ful
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-app.get("/api/stickers", (_req, res) => {
-  res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
-  res.json({ series: stickerSeries });
+app.get("/api/stickers", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ series: await stickerSeriesForUser(user.id) });
 });
 
 app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   const parsed = z
     .object({
-      username: text.max(50),
-      password: z.string().min(6).max(72),
-      nickname: text.max(8, "昵称不超过 8 个字符"),
+      username: accountUsernameSchema,
+      password: accountPasswordSchema,
+      nickname: accountNicknameSchema,
       invitationCode: z.string().max(20).optional()
     })
     .safeParse(req.body);
@@ -2070,17 +2073,27 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     return sendError(res, 400, "邀请码应为 5 位数字或大写字母");
   }
   if (isAdminRelatedNickname(nickname)) return sendError(res, 400, "该昵称为管理员专用，请更换昵称");
-  const [exists] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id FROM users WHERE username = ? LIMIT 1",
-    [username]
-  );
-  if (exists.length) return sendError(res, 409, "账号已存在");
-
   const id = nanoid();
   const hash = await bcrypt.hash(password, 10);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    const [existingAccounts] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM users WHERE username = ? LIMIT 1 FOR UPDATE",
+      [username]
+    );
+    if (existingAccounts.length) {
+      await connection.rollback();
+      return sendError(res, 409, "账号已存在，请更换账号");
+    }
+    const [existingNicknames] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM users WHERE nickname = ? LIMIT 1 FOR UPDATE",
+      [nickname]
+    );
+    if (existingNicknames.length) {
+      await connection.rollback();
+      return sendError(res, 409, "昵称已被使用，请更换昵称");
+    }
     let inviterId: string | null = null;
     if (invitationCode) {
       const [[inviter]] = await connection.query<mysql.RowDataPacket[]>(
@@ -2128,6 +2141,9 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     if ((error as { code?: string }).code === "ER_DUP_ENTRY") {
       return sendError(res, 409, "账号已存在，请更换账号");
     }
+    if (["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT"].includes((error as { code?: string }).code ?? "")) {
+      return sendError(res, 409, "账号或昵称刚被占用，请更换后重试");
+    }
     throw error;
   } finally {
     connection.release();
@@ -2174,7 +2190,7 @@ app.post("/api/auth/password", async (req, res) => {
   if (!user) return;
   const parsed = z
     .object({
-      newPassword: z.string().min(6, "新密码至少 6 位").max(72)
+      newPassword: accountPasswordSchema
     })
     .safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码信息不正确");
@@ -2372,23 +2388,49 @@ app.get("/api/events", async (req, res) => {
 app.patch("/api/me/nickname", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  const parsed = z.object({ nickname: text.max(8, "昵称不超过 8 个字符") }).safeParse(req.body);
+  const parsed = z.object({ nickname: accountNicknameSchema }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "昵称信息不正确");
   if (!isBackofficeAdminRole(user.role) && isAdminRelatedNickname(parsed.data.nickname)) {
     return sendError(res, 400, "该昵称为管理员专用，请更换昵称");
   }
 
-  // 更新用户昵称
-  await pool.query("UPDATE users SET nickname = ? WHERE id = ?", [parsed.data.nickname, user.id]);
-
-  // 同步更新该用户作为原创作者的 soups 中的 creator_name 和 author
-  await pool.query(
-    "UPDATE soups SET creator_name = ?, author = ? WHERE creator_id = ? AND is_original = TRUE",
-    [parsed.data.nickname, parsed.data.nickname, user.id]
-  );
-
-  // 同步更新 evaluations 中的 reviewer
-  await pool.query("UPDATE evaluations SET reviewer = ? WHERE reviewer_id = ?", [parsed.data.nickname, user.id]);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[current]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT nickname FROM users WHERE id = ? LIMIT 1 FOR UPDATE",
+      [user.id]
+    );
+    if (!current) {
+      await connection.rollback();
+      return sendError(res, 404, "用户不存在");
+    }
+    if (String(current.nickname) !== parsed.data.nickname) {
+      const [duplicates] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT id FROM users WHERE nickname = ? AND id <> ? LIMIT 1 FOR UPDATE",
+        [parsed.data.nickname, user.id]
+      );
+      if (duplicates.length) {
+        await connection.rollback();
+        return sendError(res, 409, "昵称已被使用，请更换昵称");
+      }
+      await connection.query("UPDATE users SET nickname = ? WHERE id = ?", [parsed.data.nickname, user.id]);
+      await connection.query(
+        "UPDATE soups SET creator_name = ?, author = ? WHERE creator_id = ? AND is_original = TRUE",
+        [parsed.data.nickname, parsed.data.nickname, user.id]
+      );
+      await connection.query("UPDATE evaluations SET reviewer = ? WHERE reviewer_id = ?", [parsed.data.nickname, user.id]);
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    if (["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT"].includes((error as { code?: string }).code ?? "")) {
+      return sendError(res, 409, "昵称刚被其他用户占用，请更换后重试");
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
 
   res.json({ ok: true, nickname: parsed.data.nickname });
 });
@@ -3248,6 +3290,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
   const sticker = parsed.data.stickerId ? getSticker(parsed.data.stickerId) : null;
   if (parsed.data.stickerId && !sticker) return sendError(res, 400, "表情不存在或已下架");
+  if (parsed.data.stickerId && !(await userOwnsSticker(user.id, parsed.data.stickerId))) return sendError(res, 403, "尚未拥有该表情，请先前往商城购买");
   const roomInvite = parsed.data.roomInvite
     ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
     : null;
@@ -3886,6 +3929,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
   const sticker = parsed.data.stickerId ? getSticker(parsed.data.stickerId) : null;
   if (parsed.data.stickerId && !sticker) return sendError(res, 400, "表情不存在或已下架");
+  if (parsed.data.stickerId && !(await userOwnsSticker(user.id, parsed.data.stickerId))) return sendError(res, 403, "尚未拥有该表情，请先前往商城购买");
   const roomInvite = parsed.data.roomInvite
     ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
     : null;
@@ -4715,7 +4759,7 @@ app.post("/api/soups", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const parsed = soupSchema.safeParse(req.body);
-  if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
+  if (!parsed.success) return sendError(res, 400, soupValidationMessage(parsed.error.issues));
 
   const idempotencyKey = req.get("Idempotency-Key")?.trim() ?? "";
   if (idempotencyKey && !isValidIdempotencyKey(idempotencyKey)) {
@@ -5132,7 +5176,7 @@ app.put("/api/soups/:id", async (req, res) => {
   const parsed = soupSchema.safeParse(
     normalizeExistingSoupCover(req.body, req.params.id, existingCoverUrl)
   );
-  if (!parsed.success) return sendError(res, 400, "请完整填写海龟汤信息");
+  if (!parsed.success) return sendError(res, 400, soupValidationMessage(parsed.error.issues));
   const next = parsed.data;
   if (next.isOriginal && !next.author) return sendError(res, 400, "原创海龟汤需要填写作者");
   const duplicate = await findDuplicateSoup(next, req.params.id);
@@ -6827,15 +6871,61 @@ app.patch("/api/admin/users/:id", async (req, res) => {
   if (actor.id === req.params.id && parsed.data.role !== "super_admin") {
     return sendError(res, 400, "不能取消自己的超级管理员权限");
   }
-  const [targetRows] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
-  if (!targetRows[0]) return sendError(res, 404, "用户不存在");
-  const tokenVersionIncrement = targetRows[0].role === parsed.data.role ? 0 : 1;
-  await pool.query("UPDATE users SET nickname = ?, role = ?, token_version = token_version + ? WHERE id = ?", [
-    parsed.data.nickname,
-    parsed.data.role,
-    tokenVersionIncrement,
-    req.params.id
-  ]);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[target]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT role, nickname FROM users WHERE id = ? LIMIT 1 FOR UPDATE",
+      [req.params.id]
+    );
+    if (!target) {
+      await connection.rollback();
+      return sendError(res, 404, "用户不存在");
+    }
+    const nicknameChanged = String(target.nickname) !== parsed.data.nickname;
+    if (nicknameChanged) {
+      const nicknameResult = accountNicknameSchema.safeParse(parsed.data.nickname);
+      if (!nicknameResult.success) {
+        await connection.rollback();
+        return sendError(res, 400, nicknameResult.error.issues[0]?.message ?? "昵称信息不正确");
+      }
+      const [duplicates] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT id FROM users WHERE nickname = ? AND id <> ? LIMIT 1 FOR UPDATE",
+        [nicknameResult.data, req.params.id]
+      );
+      if (duplicates.length) {
+        await connection.rollback();
+        return sendError(res, 409, "昵称已被使用，请更换昵称");
+      }
+      parsed.data.nickname = nicknameResult.data;
+    }
+    const tokenVersionIncrement = target.role === parsed.data.role ? 0 : 1;
+    await connection.query("UPDATE users SET nickname = ?, role = ?, token_version = token_version + ? WHERE id = ?", [
+      parsed.data.nickname,
+      parsed.data.role,
+      tokenVersionIncrement,
+      req.params.id
+    ]);
+    if (nicknameChanged) {
+      await connection.query(
+        "UPDATE soups SET creator_name = ?, author = ? WHERE creator_id = ? AND is_original = TRUE",
+        [parsed.data.nickname, parsed.data.nickname, req.params.id]
+      );
+      await connection.query(
+        "UPDATE evaluations SET reviewer = ? WHERE reviewer_id = ?",
+        [parsed.data.nickname, req.params.id]
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    if (["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT"].includes((error as { code?: string }).code ?? "")) {
+      return sendError(res, 409, "昵称刚被其他用户占用，请更换后重试");
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
   res.json({ ok: true });
 });
 
@@ -6850,7 +6940,7 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 app.post("/api/admin/users/:id/reset-password", async (req, res) => {
   const actor = await requireBackofficeAdmin(req, res);
   if (!actor) return;
-  const parsed = z.object({ newPassword: z.string().min(6, "新密码至少 6 位").max(72) }).safeParse(req.body);
+  const parsed = z.object({ newPassword: accountPasswordSchema }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码格式不正确");
   const [[target]] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
   if (!target) return sendError(res, 404, "用户不存在");
@@ -7057,6 +7147,7 @@ app.use("/api/online-soup", async (req, _res, next) => {
 }, onlineSoupRouter);
 
 registerDigitalAssetRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, onBadgeProgress: (userId) => queueSystemBadgeSync([userId]) });
+registerStickerStoreRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage });
 registerBannerRoutes(app, { requireAdmin, sendError });
 registerGiftRoutes(app, {
   requireAuth,
@@ -7147,6 +7238,7 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 
 if (config.runDatabaseMigrations) await initDatabase();
 else await pool.query("SELECT 1");
+await initializeStickerCatalog();
 await initializeUserBehaviorAnalytics().catch((error) => {
   console.error("User behavior analytics initialization failed; business routes will continue without analytics persistence:", error);
 });

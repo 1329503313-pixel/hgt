@@ -13,6 +13,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { awardBeginnerTask } from "./shellCurrency.js";
 import { awardInviteEmailBindingWithConnection } from "./inviteRewards.js";
+import { accountPasswordSchema } from "./accountRules.js";
 import {
   isEmailDeliveryConfigured,
   sendEmailSecurityNotice,
@@ -43,7 +44,7 @@ type RegisterEmailAuthOptions = {
 };
 
 const emailSchema = z.string().trim().email("邮箱格式不正确").max(255);
-const passwordSchema = z.string().min(6, "密码至少 6 位").max(72, "密码不能超过 72 位");
+const passwordSchema = accountPasswordSchema;
 
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();

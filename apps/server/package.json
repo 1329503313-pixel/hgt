@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/nickname.test.ts src/soupSimilarity.test.ts src/soupInput.test.ts src/evaluationScoring.test.ts src/stickers.test.ts src/shellCurrency.test.ts src/rankingRewards.test.ts src/badgeRewards.test.ts src/digitalAssets.test.ts src/bannerImages.test.ts src/seo.test.ts src/emailAuth.test.ts src/authCookies.test.ts src/inviteCodes.test.ts src/roles.test.ts src/conversations.test.ts src/ossStorage.test.ts src/idempotency.test.ts src/giftInventory.test.ts src/behaviorAnalytics.test.ts src/homeSoupCategory.test.ts src/onlineSoupAnswerChange.test.ts src/onlineSoupRoundPanel.test.ts src/onlineSoupHostSuccession.test.ts src/gameLogic.test.ts src/androidAppUpdate.test.ts src/legacyHostRedirect.test.ts",
+    "test": "tsx --test src/accountRules.test.ts src/nickname.test.ts src/soupSimilarity.test.ts src/soupInput.test.ts src/evaluationScoring.test.ts src/stickers.test.ts src/shellCurrency.test.ts src/rankingRewards.test.ts src/badgeRewards.test.ts src/digitalAssets.test.ts src/bannerImages.test.ts src/seo.test.ts src/emailAuth.test.ts src/authCookies.test.ts src/inviteCodes.test.ts src/roles.test.ts src/conversations.test.ts src/ossStorage.test.ts src/idempotency.test.ts src/giftInventory.test.ts src/behaviorAnalytics.test.ts src/homeSoupCategory.test.ts src/onlineSoupAnswerChange.test.ts src/onlineSoupRoundPanel.test.ts src/onlineSoupHostSuccession.test.ts src/gameLogic.test.ts src/androidAppUpdate.test.ts src/legacyHostRedirect.test.ts",
     "migrate": "tsx src/migrate.ts",
     "migrate:prod": "node dist/migrate.js",
     "media:migrate": "tsx src/migrateMediaToOss.ts",

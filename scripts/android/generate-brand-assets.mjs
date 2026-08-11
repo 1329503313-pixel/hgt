@@ -7,7 +7,8 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const resRoot = resolve(repoRoot, "apps/app-android/android/app/src/main/res");
 const iconSource = resolve(repoRoot, "apps/app/static/app/icon-192.png");
 const splashSource = resolve(repoRoot, "apps/app/static/app/splash-xhdpi.png");
-const splashBackground = "#dcefd8";
+const splashBackground = "#10243d";
+const launcherContentScale = 0.85;
 
 const densities = {
   mdpi: { icon: 48, foreground: 108 },
@@ -41,20 +42,41 @@ async function writePng(input, output, width, height, options = {}) {
     .toFile(output);
 }
 
+async function writeInsetPng(input, output, width, height, scale) {
+  const contentWidth = Math.max(1, Math.round(width * scale));
+  const contentHeight = Math.max(1, Math.round(height * scale));
+  const left = Math.floor((width - contentWidth) / 2);
+  const top = Math.floor((height - contentHeight) / 2);
+
+  await mkdir(resolve(output, ".."), { recursive: true });
+  await sharp(input)
+    .resize(contentWidth, contentHeight, { fit: "fill" })
+    .extend({
+      top,
+      bottom: height - contentHeight - top,
+      left,
+      right: width - contentWidth - left,
+      extendWith: "mirror"
+    })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toFile(output);
+}
+
 async function sha256(path) {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
 for (const [density, sizes] of Object.entries(densities)) {
   const directory = resolve(resRoot, `mipmap-${density}`);
-  await writePng(iconSource, resolve(directory, "ic_launcher.png"), sizes.icon, sizes.icon, { fit: "fill" });
-  await writePng(iconSource, resolve(directory, "ic_launcher_round.png"), sizes.icon, sizes.icon, { fit: "fill" });
-  await writePng(iconSource, resolve(directory, "ic_launcher_foreground.png"), sizes.foreground, sizes.foreground, { fit: "contain", background: splashBackground });
+  await writeInsetPng(iconSource, resolve(directory, "ic_launcher.png"), sizes.icon, sizes.icon, launcherContentScale);
+  await writeInsetPng(iconSource, resolve(directory, "ic_launcher_round.png"), sizes.icon, sizes.icon, launcherContentScale);
+  await writeInsetPng(iconSource, resolve(directory, "ic_launcher_foreground.png"), sizes.foreground, sizes.foreground, launcherContentScale);
 }
 
 for (const [density, [width, height]] of Object.entries(portraitSplashSizes)) {
   await writePng(splashSource, resolve(resRoot, `drawable-port-${density}/splash.png`), width, height, {
-    fit: "contain",
+    fit: "cover",
+    position: "centre",
     background: splashBackground
   });
 }
@@ -81,6 +103,9 @@ const trackedOutputs = [
 ];
 const manifest = {
   schemaVersion: 1,
+  transforms: {
+    launcherContentScale
+  },
   sources: {
     "apps/app/static/app/icon-192.png": await sha256(iconSource),
     "apps/app/static/app/splash-xhdpi.png": await sha256(splashSource)

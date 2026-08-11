@@ -16,7 +16,7 @@
         <view v-if="data.conversations.length > 0" class="conversation-list">
           <view v-for="conversation in data.conversations" :key="conversation.id" class="conversation" hover-class="item-pressed" @click="openConversation(conversation.id)">
             <view class="avatar-wrap" @click.stop="openUser(conversation.otherUser.id)"><image v-if="conversation.otherUser.avatar != null" class="avatar" :src="conversationAvatar(conversation)" mode="aspectFill"></image><view v-else class="avatar avatar-placeholder"><text>{{ conversation.otherUser.nickname.substring(0, 1) }}</text></view><view v-if="conversation.otherUser.isOnline" class="online-dot"></view><view v-if="conversation.unreadCount > 0" class="conversation-badge"><text class="count-badge-text">{{ conversation.unreadCount > 99 ? '99+' : conversation.unreadCount }}</text></view></view>
-            <view class="conversation-copy"><view class="identity-row"><text class="conversation-name">{{ conversation.otherUser.nickname }}</text><text class="level">Lv{{ conversation.otherUser.level }}</text><view v-if="conversation.otherUser.equippedBadge != null" class="badge-wrap"><image class="badge-icon-image" :src="conversationBadge(conversation)" mode="aspectFit"></image><text class="badge-name">{{ conversation.otherUser.equippedBadge!.name }}</text></view></view><text class="conversation-preview">{{ preview(conversation) }}</text></view><text class="date">{{ dateText(conversation.lastMessage == null ? conversation.updatedAt : conversation.lastMessage!.createdAt) }}</text>
+            <view class="conversation-copy"><view class="identity-row"><text class="conversation-name">{{ conversation.otherUser.nickname }}</text><LevelBadge :level="conversation.otherUser.level" /><view v-if="conversation.otherUser.equippedBadge != null" class="badge-wrap"><image class="badge-icon-image" :src="conversationBadge(conversation)" mode="aspectFit"></image><text class="badge-name">{{ conversation.otherUser.equippedBadge!.name }}</text></view></view><text class="conversation-preview">{{ preview(conversation) }}</text></view><text class="date">{{ dateText(conversation.lastMessage == null ? conversation.updatedAt : conversation.lastMessage!.createdAt) }}</text>
           </view>
         </view>
         <view v-else class="empty-inline"><view class="empty-inline-icon"><image class="empty-inline-image" src="/static/messages/empty-chat.png" mode="aspectFit"></image></view><text class="empty-inline-title">暂无私信</text><text class="empty-inline-message">关注用户后可以发起私信</text></view>
@@ -27,6 +27,7 @@
 </template>
 
 <script setup lang="uts">
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import { absoluteApiUrl } from '@/config/runtime.uts'
 import { loadConversations, loadMessageCounts, Conversation, MessageCounts } from '@/services/messages.uts'
 import { restoreSession, sessionState } from '@/stores/session.uts'

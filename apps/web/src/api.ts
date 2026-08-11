@@ -74,8 +74,20 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
           ? JSON.stringify(fetchOptions.body)
           : (fetchOptions.body as BodyInit | null | undefined)
     });
-    const data = normalizeApiMediaUrls(await response.json().catch(() => ({})));
-    if (!response.ok) throw new ApiError(data.error ?? "请求失败", response.status, data.code);
+    const responseText = await response.text();
+    let responseData: Record<string, unknown> = {};
+    if (responseText) {
+      try { responseData = JSON.parse(responseText) as Record<string, unknown>; }
+      catch { responseData = {}; }
+    }
+    const data = normalizeApiMediaUrls(responseData);
+    if (!response.ok) {
+      const contentType = response.headers.get("content-type") ?? "";
+      const fallbackMessage = response.status >= 500 && !contentType.includes("application/json")
+        ? "API 服务正在启动或重启，请稍后重试"
+        : "请求失败";
+      throw new ApiError(typeof data.error === "string" ? data.error : fallbackMessage, response.status, typeof data.code === "string" ? data.code : undefined);
+    }
     if (cacheKey && cacheTtlMs > 0) responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtlMs, value: data });
     if (method !== "GET") clearApiCache();
     return data as T;

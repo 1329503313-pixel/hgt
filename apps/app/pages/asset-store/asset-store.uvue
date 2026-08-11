@@ -1,7 +1,13 @@
 <template>
   <view class="page">
-    <view class="topbar"><AppBackButton @click="goBack" /><text class="title">商城</text><view class="back"></view></view>
-    <view v-if="data.loading" class="state"><text>正在加载卡包...</text></view>
+    <view class="topbar"><AppBackButton @click="goBack" /><text class="title">{{ data.mode == 'hub' ? '商城' : '卡包' }}</text><view class="back"></view></view>
+    <scroll-view v-if="data.mode == 'hub'" class="scroll" direction="vertical">
+      <view class="hub-list">
+        <view class="hub-card pack-hub" hover-class="hub-card-pressed" @click="openCardStore"><view class="hub-icon"><image class="hub-icon-image" src="/static/mine/store.png" mode="aspectFit"></image></view><view class="hub-copy"><text class="hub-title">卡包</text><text class="hub-description">抽取限定卡牌，查看免费次数、保底进度与收藏记录</text></view><text class="hub-arrow">›</text></view>
+        <view class="hub-card sticker-hub" hover-class="hub-card-pressed" @click="openStickerStore"><view class="hub-icon"><image class="hub-icon-image" src="/static/messages/smile.png" mode="aspectFit"></image></view><view class="hub-copy"><text class="hub-title">表情包</text><text class="hub-description">解锁聊天表情，购买后立即加入全部聊天场景</text></view><text class="hub-arrow">›</text></view>
+      </view><view class="safe-bottom"></view>
+    </scroll-view>
+    <view v-else-if="data.loading" class="state"><text>正在加载卡包...</text></view>
     <view v-else-if="data.errorMessage.length > 0" class="state"><text class="error">{{ data.errorMessage }}</text><button class="retry" @click="reload">重新加载</button></view>
     <scroll-view v-else class="scroll" direction="vertical">
       <!-- 钱包卡：H5 渐变 + 动效 + 3 入口 -->
@@ -110,8 +116,8 @@ import { absoluteApiUrl } from '@/config/runtime.uts'
 import { AssetPack, AssetStoreResponse } from '@/domain/dto/digital-asset.uts'
 import { loadAssetStore } from '@/services/digital-assets.uts'
 type PackGroup = { type: string, label: string, packs: AssetPack[] }
-type StoreData = { store: AssetStoreResponse | null, loading: boolean, errorMessage: string, storyPack: AssetPack | null }
-const data = reactive({ store: null, loading: false, errorMessage: '', storyPack: null } as StoreData)
+type StoreData = { mode: string, store: AssetStoreResponse | null, loading: boolean, errorMessage: string, storyPack: AssetPack | null }
+const data = reactive({ mode: 'hub', store: null, loading: false, errorMessage: '', storyPack: null } as StoreData)
 const packs = computed<AssetPack[]>(() => data.store == null ? [] as AssetPack[] : data.store!.packs)
 const freeDraws = computed<number>(() => packs.value.reduce((total, item) => total + item.freeDrawsRemaining, 0))
 const onSaleCount = computed<number>(() => packs.value.filter((item) => item.status == 'on_sale').length)
@@ -120,6 +126,8 @@ const groups = computed<PackGroup[]>(() => [groupFor('limited','限定卡包'), 
 function assetUrl(url: string): string { return absoluteApiUrl(url) }
 function remainingText(value: string | null): string { if (value == null || value.length == 0) return '长期上架'; const end = new Date(value).getTime(); const hours = Math.floor((end - Date.now()) / 3600000); if (hours <= 0) return '已结束'; return hours >= 24 ? '剩余 ' + Math.floor(hours / 24).toString() + ' 天' : '剩余 ' + hours.toString() + ' 小时' }
 function goBack() { uni.navigateBack() }
+function openCardStore() { uni.navigateTo({ url: '/pages/asset-store/asset-store?type=cards' }) }
+function openStickerStore() { uni.navigateTo({ url: '/pages/sticker-store/sticker-store' }) }
 function openCabinet() { uni.navigateTo({ url: '/pages/card-cabinet/card-cabinet' }) }
 function openRankings() { uni.navigateTo({ url: '/pages/rankings/rankings' }) }
 function openHistory() { uni.navigateTo({ url: '/pages/asset-draw-history/asset-draw-history' }) }
@@ -128,7 +136,7 @@ function storyText(value: string): string { const text = value.replace(/<br\s*\/
 function openStory(pack: AssetPack) { data.storyPack = pack }
 function closeStory() { data.storyPack = null }
 function reload() { if (data.loading) return; data.loading = true; data.errorMessage = ''; loadAssetStore((response) => { data.store = response; data.loading = false }, (error) => { data.loading = false; data.errorMessage = error.message }) }
-onLoad(() => reload())
+onLoad((options) => { data.mode = options['type'] == 'cards' ? 'cards' : 'hub'; if (data.mode == 'cards') reload() })
 </script>
 <style>
 .page{flex:1;background-color:#F4F7FB}
@@ -137,6 +145,17 @@ onLoad(() => reload())
 .back-pressed{background-color:#EEF2F6}
 .title{color:#121826;font-size:17px;font-weight:800}
 .scroll{flex:1}
+.hub-list{padding:12px 16px}
+.hub-card{min-height:190px;margin-bottom:14px;padding:22px;border-radius:24px;flex-direction:row;align-items:flex-end;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.12)}
+.pack-hub{background-color:#4F46E5;background-image:linear-gradient(135deg,#4F46E5,#7C3AED)}
+.sticker-hub{background-color:#0891B2;background-image:linear-gradient(135deg,#06B6D4,#2563EB)}
+.hub-card-pressed{opacity:.82}
+.hub-icon{position:absolute;left:22px;top:22px;width:56px;height:56px;border-radius:18px;align-items:center;justify-content:center;background-color:rgba(255,255,255,.18)}
+.hub-icon-image{width:30px;height:30px}
+.hub-copy{flex:1;padding-right:16px}
+.hub-title{color:#FFF;font-size:24px;font-weight:900}
+.hub-description{margin-top:8px;color:#E0F2FE;font-size:13px;line-height:20px}
+.hub-arrow{color:#FFF;font-size:34px;font-weight:500}
 /* 钱包卡：H5 渐变 + 动效装饰 */
 .wallet{margin:12px 16px;padding:20px;border-radius:24px;background-color:#3730A3;background-image:linear-gradient(135deg,#2563EB 0%,#4F46E5 50%,#7C3AED 100%);overflow:hidden;position:relative}
 .wallet-bg-circle{position:absolute;border-radius:50%;background-color:rgba(255,255,255,.08)}
@@ -171,8 +190,8 @@ onLoad(() => reload())
 .group-count{color:#98A2B3;font-size:9px;font-weight:700}
 /* 手机端对齐 H5：单列横向卡，左封面右信息 */
 .pack-list{width:100%}
-.pack-card{width:100%;height:220px;margin-bottom:12px;overflow:hidden;flex-direction:row;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF;transition-property:transform,border-color;transition-duration:140ms}
-.pack-card-pressed{transform:scale(.98);border-color:#C7D2FE;box-shadow:0 4px 14px rgba(79,70,229,.12)}
+.pack-card{width:100%;height:220px;margin-bottom:12px;overflow:hidden;flex-direction:row;border-width:1px;border-color:#E5EAF2;border-radius:18px;background-color:#FFF;transition-property:opacity,border-color,box-shadow;transition-duration:140ms}
+.pack-card-pressed{opacity:.94;border-color:#C7D2FE;box-shadow:0 4px 14px rgba(79,70,229,.12)}
 .cover-wrap{position:relative;width:112px;height:220px;background-color:#EEF2F6}
 .cover{width:112px;height:220px}
 .cover-empty{align-items:center;justify-content:center;background-color:#EEF2F6;color:#98A2B3;font-size:9px}

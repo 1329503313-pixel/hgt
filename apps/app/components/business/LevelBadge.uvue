@@ -1,0 +1,222 @@
+<template>
+  <view class="level-shell" :class="props.spaced == false ? '' : 'level-shell-spaced'" :aria-label="accessibilityLabel">
+    <view v-if="showHalo" ref="haloRef" class="level-halo" :class="haloClass"></view>
+    <view class="level-badge" :class="levelClass">
+      <view v-if="showWash" ref="washRef" class="level-wash" :class="washClass"></view>
+      <view v-if="showShine" ref="shineRef" class="level-shine"></view>
+      <view v-if="starCount > 0" ref="starsRef" class="level-stars">
+        <text v-if="starCount >= 1" class="level-star star-1">✦</text>
+        <text v-if="starCount >= 2" class="level-star star-2">✦</text>
+        <text v-if="starCount >= 3" class="level-star star-3">✦</text>
+        <text v-if="starCount >= 4" class="level-star star-4">✦</text>
+        <text v-if="starCount >= 5" class="level-star star-5">✦</text>
+      </view>
+      <view v-if="showBlotches" class="level-blotches">
+        <view ref="blotchOneRef" class="level-blotch blotch-one"></view>
+        <view ref="blotchTwoRef" class="level-blotch blotch-two"></view>
+        <view ref="blotchThreeRef" class="level-blotch blotch-three"></view>
+        <view ref="blotchFourRef" class="level-blotch blotch-four"></view>
+      </view>
+      <view v-if="showRain" class="level-rain-mask">
+        <view ref="rainARef" class="level-rain-group">
+          <text class="rain-star rain-1">✦</text><text class="rain-star rain-2">✦</text><text class="rain-star rain-3">✦</text>
+          <text class="rain-star rain-4">✦</text><text class="rain-star rain-5">✦</text><text class="rain-star rain-6">✦</text>
+        </view>
+        <view ref="rainBRef" class="level-rain-group">
+          <text v-if="rainCount >= 7" class="rain-star rain-7">✦</text><text v-if="rainCount >= 8" class="rain-star rain-8">✦</text>
+          <text v-if="rainCount >= 9" class="rain-star rain-9">✦</text><text v-if="rainCount >= 10" class="rain-star rain-10">✦</text>
+          <text v-if="rainCount >= 11" class="rain-star rain-11">✦</text><text v-if="rainCount >= 12" class="rain-star rain-12">✦</text>
+        </view>
+        <view ref="rainCRef" class="level-rain-group">
+          <text v-if="rainCount >= 13" class="rain-star rain-13">✦</text><text v-if="rainCount >= 14" class="rain-star rain-14">✦</text>
+          <text v-if="rainCount >= 15" class="rain-star rain-15">✦</text><text v-if="rainCount >= 16" class="rain-star rain-16">✦</text>
+        </view>
+      </view>
+      <view v-if="showRings" class="level-rings">
+        <view ref="ringOneRef" class="level-ring ring-one"></view>
+        <view ref="ringTwoRef" class="level-ring ring-two"></view>
+        <view ref="ringThreeRef" class="level-ring ring-three"></view>
+        <view ref="ringFourRef" class="level-ring ring-four"></view>
+        <view ref="ringFiveRef" class="level-ring ring-five"></view>
+        <view ref="ringSixRef" class="level-ring ring-six"></view>
+        <view ref="ringSevenRef" class="level-ring ring-seven"></view>
+        <view ref="ringEightRef" class="level-ring ring-eight"></view>
+      </view>
+      <text class="level-label">Lv{{ normalizedLevel }}</text>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const props = defineProps<{ level: number, spaced?: boolean }>()
+const normalizedLevel = computed<number>(() : number => Math.max(0, Math.min(40, Math.floor(props.level))))
+const levelClass = computed<string>(() : string => 'level-' + normalizedLevel.value.toString())
+const haloClass = computed<string>(() : string => 'halo-' + normalizedLevel.value.toString())
+const washClass = computed<string>(() : string => 'wash-' + normalizedLevel.value.toString())
+const showShine = computed<boolean>(() : boolean => (normalizedLevel.value >= 16 && normalizedLevel.value <= 20) || normalizedLevel.value == 40)
+const showBlotches = computed<boolean>(() : boolean => normalizedLevel.value >= 21 && normalizedLevel.value <= 25)
+const showRain = computed<boolean>(() : boolean => normalizedLevel.value >= 26 && normalizedLevel.value <= 30)
+const showRings = computed<boolean>(() : boolean => normalizedLevel.value >= 31 && normalizedLevel.value <= 35)
+const showHalo = computed<boolean>(() : boolean => normalizedLevel.value >= 36)
+const showWash = computed<boolean>(() : boolean => normalizedLevel.value >= 36)
+const starCount = computed<number>(() : number => {
+  if (normalizedLevel.value >= 11 && normalizedLevel.value <= 15) return normalizedLevel.value - 10
+  if (normalizedLevel.value == 39) return 4
+  if (normalizedLevel.value == 40) return 5
+  return 0
+})
+const rainCount = computed<number>(() : number => showRain.value ? 8 + (normalizedLevel.value - 26) * 2 : 0)
+const levelTitle = computed<string>(() : string => {
+  const value = normalizedLevel.value
+  if (value == 0) return '初来乍到'
+  if (value <= 5) return '见习侦探'
+  if (value <= 10) return '推理学徒'
+  if (value <= 15) return '本格侦探'
+  if (value <= 20) return '诡计专家'
+  if (value <= 25) return '逻辑大师'
+  if (value <= 30) return '谜境旅者'
+  if (value <= 35) return '星海贤者'
+  return '汤汤传说'
+})
+const accessibilityLabel = computed<string>(() : string => '等级 ' + normalizedLevel.value.toString() + ' ' + levelTitle.value)
+
+const haloRef = ref<UniElement | null>(null)
+const washRef = ref<UniElement | null>(null)
+const shineRef = ref<UniElement | null>(null)
+const starsRef = ref<UniElement | null>(null)
+const blotchOneRef = ref<UniElement | null>(null)
+const blotchTwoRef = ref<UniElement | null>(null)
+const blotchThreeRef = ref<UniElement | null>(null)
+const blotchFourRef = ref<UniElement | null>(null)
+const rainARef = ref<UniElement | null>(null)
+const rainBRef = ref<UniElement | null>(null)
+const rainCRef = ref<UniElement | null>(null)
+const ringOneRef = ref<UniElement | null>(null)
+const ringTwoRef = ref<UniElement | null>(null)
+const ringThreeRef = ref<UniElement | null>(null)
+const ringFourRef = ref<UniElement | null>(null)
+const ringFiveRef = ref<UniElement | null>(null)
+const ringSixRef = ref<UniElement | null>(null)
+const ringSevenRef = ref<UniElement | null>(null)
+const ringEightRef = ref<UniElement | null>(null)
+let haloAnimation : UniAnimation | null = null
+let washAnimation : UniAnimation | null = null
+let shineAnimation : UniAnimation | null = null
+let starsAnimation : UniAnimation | null = null
+let blotchOneAnimation : UniAnimation | null = null
+let blotchTwoAnimation : UniAnimation | null = null
+let blotchThreeAnimation : UniAnimation | null = null
+let blotchFourAnimation : UniAnimation | null = null
+let rainAAnimation : UniAnimation | null = null
+let rainBAnimation : UniAnimation | null = null
+let rainCAnimation : UniAnimation | null = null
+let ringOneAnimation : UniAnimation | null = null
+let ringTwoAnimation : UniAnimation | null = null
+let ringThreeAnimation : UniAnimation | null = null
+let ringFourAnimation : UniAnimation | null = null
+let ringFiveAnimation : UniAnimation | null = null
+let ringSixAnimation : UniAnimation | null = null
+let ringSevenAnimation : UniAnimation | null = null
+let ringEightAnimation : UniAnimation | null = null
+
+function stopAnimations() {
+  haloAnimation?.cancel(); washAnimation?.cancel(); shineAnimation?.cancel(); starsAnimation?.cancel()
+  blotchOneAnimation?.cancel(); blotchTwoAnimation?.cancel(); blotchThreeAnimation?.cancel(); blotchFourAnimation?.cancel()
+  rainAAnimation?.cancel(); rainBAnimation?.cancel(); rainCAnimation?.cancel()
+  ringOneAnimation?.cancel(); ringTwoAnimation?.cancel(); ringThreeAnimation?.cancel(); ringFourAnimation?.cancel()
+  ringFiveAnimation?.cancel(); ringSixAnimation?.cancel(); ringSevenAnimation?.cancel(); ringEightAnimation?.cancel()
+  haloAnimation = null; washAnimation = null; shineAnimation = null; starsAnimation = null
+  blotchOneAnimation = null; blotchTwoAnimation = null; blotchThreeAnimation = null; blotchFourAnimation = null
+  rainAAnimation = null; rainBAnimation = null; rainCAnimation = null
+  ringOneAnimation = null; ringTwoAnimation = null; ringThreeAnimation = null; ringFourAnimation = null
+  ringFiveAnimation = null; ringSixAnimation = null; ringSevenAnimation = null; ringEightAnimation = null
+}
+
+function animateBlotch(element : UniElement, duration : number, delay : number, lift : number) : UniAnimation {
+  return element.animate([
+    { opacity: '0', transform: 'translateX(-12px) translateY(3px) scale(0.52) rotate(-15deg)' },
+    { opacity: '0.9', transform: 'translateX(17px) translateY(' + lift.toString() + 'px) scale(1.12) rotate(8deg)' },
+    { opacity: '0.48', transform: 'translateX(39px) translateY(2px) scale(0.88) rotate(-6deg)' },
+    { opacity: '0', transform: 'translateX(58px) translateY(-2px) scale(1.24) rotate(13deg)' }
+  ], { duration: duration, delay: delay, easing: 'ease-in-out', iterations: Infinity })
+}
+function animateRain(element : UniElement, duration : number, delay : number) : UniAnimation {
+  return element.animate([
+    { opacity: '0', transform: 'translateY(8px) scale(0.7)' },
+    { opacity: '1', transform: 'translateY(-1px) scale(0.9)' },
+    { opacity: '0', transform: 'translateY(-26px) scale(1.06)' }
+  ], { duration: duration, delay: delay, easing: 'linear', iterations: Infinity })
+}
+function animateRing(element : UniElement, duration : number, delay : number, travelX : number, travelY : number) : UniAnimation {
+  return element.animate([
+    { opacity: '0', transform: 'translateX(0px) translateY(0px) scale(0.28)' },
+    { opacity: '0.96', transform: 'translateX(0px) translateY(0px) scale(0.72)' },
+    { opacity: '0.62', transform: 'translateX(0px) translateY(0px) scale(0.96)' },
+    { opacity: '0.88', transform: 'translateX(' + travelX.toString() + 'px) translateY(' + travelY.toString() + 'px) scale(1.16)' },
+    { opacity: '0', transform: 'translateX(' + travelX.toString() + 'px) translateY(' + travelY.toString() + 'px) scale(1.48)' }
+  ], { duration: duration, delay: delay, easing: 'ease-out', iterations: Infinity })
+}
+
+function startAnimations() {
+  stopAnimations()
+  if (haloRef.value != null) haloAnimation = haloRef.value!.animate([
+    { opacity: '0.28', transform: 'scale(0.94)' }, { opacity: '0.92', transform: 'scale(1.08)' }, { opacity: '0.28', transform: 'scale(0.94)' }
+  ], { duration: 3600, easing: 'ease-in-out', iterations: Infinity })
+  if (washRef.value != null) washAnimation = washRef.value!.animate([
+    { opacity: '0.16', backgroundColor: '#F59E0B' }, { opacity: '0.46', backgroundColor: '#D946EF' },
+    { opacity: '0.32', backgroundColor: '#2563EB' }, { opacity: '0.16', backgroundColor: '#F59E0B' }
+  ], { duration: normalizedLevel.value == 40 ? 4200 : 5000, easing: 'ease-in-out', iterations: Infinity })
+  if (shineRef.value != null) shineAnimation = shineRef.value!.animate([
+    { opacity: '0', transform: 'translateX(-18px) skewX(-18deg)' }, { opacity: '0.86', transform: 'translateX(22px) skewX(-18deg)' },
+    { opacity: '0', transform: 'translateX(62px) skewX(-18deg)' }
+  ], { duration: normalizedLevel.value == 40 ? 3000 : 2400, easing: 'ease-in-out', iterations: Infinity })
+  if (starsRef.value != null) starsAnimation = starsRef.value!.animate([
+    { opacity: '0.34', transform: 'translateX(-1px) translateY(1px) scale(0.92)' },
+    { opacity: '1', transform: 'translateX(2px) translateY(-1px) scale(1.08)' },
+    { opacity: '0.34', transform: 'translateX(-1px) translateY(1px) scale(0.92)' }
+  ], { duration: normalizedLevel.value >= 39 ? 2300 : 1700, easing: 'ease-in-out', iterations: Infinity })
+  if (blotchOneRef.value != null) blotchOneAnimation = animateBlotch(blotchOneRef.value!, 1820, 0, -2)
+  if (blotchTwoRef.value != null) blotchTwoAnimation = animateBlotch(blotchTwoRef.value!, 2140, 740, 1)
+  if (blotchThreeRef.value != null) blotchThreeAnimation = animateBlotch(blotchThreeRef.value!, 1580, 1180, -1)
+  if (blotchFourRef.value != null) blotchFourAnimation = animateBlotch(blotchFourRef.value!, 2460, 1660, 2)
+  if (rainARef.value != null) rainAAnimation = animateRain(rainARef.value!, 720, 0)
+  if (rainBRef.value != null) rainBAnimation = animateRain(rainBRef.value!, 820, 230)
+  if (rainCRef.value != null) rainCAnimation = animateRain(rainCRef.value!, 900, 470)
+  if (ringOneRef.value != null) ringOneAnimation = animateRing(ringOneRef.value!, 1540, 0, 4, 1)
+  if (ringTwoRef.value != null) ringTwoAnimation = animateRing(ringTwoRef.value!, 1180, 680, -3, -2)
+  if (ringThreeRef.value != null) ringThreeAnimation = animateRing(ringThreeRef.value!, 2080, 1260, 2, 3)
+  if (ringFourRef.value != null) ringFourAnimation = animateRing(ringFourRef.value!, 1360, 340, -4, 1)
+  if (ringFiveRef.value != null) ringFiveAnimation = animateRing(ringFiveRef.value!, 1020, 820, 3, -3)
+  if (ringSixRef.value != null) ringSixAnimation = animateRing(ringSixRef.value!, 1880, 1480, -3, 2)
+  if (ringSevenRef.value != null) ringSevenAnimation = animateRing(ringSevenRef.value!, 1240, 520, 2, 3)
+  if (ringEightRef.value != null) ringEightAnimation = animateRing(ringEightRef.value!, 1660, 1060, -4, -2)
+}
+
+onMounted(() => { nextTick(() => { startAnimations() }) })
+watch(() : number => props.level, () => { nextTick(() => { startAnimations() }) })
+onUnmounted(() => { stopAnimations() })
+</script>
+
+<style>
+.level-shell{position:relative;width:42px;height:20px;align-items:center;justify-content:center}.level-shell-spaced{margin-left:6px}
+.level-badge{position:relative;width:40px;height:18px;overflow:hidden;align-items:center;justify-content:center;border-width:1px;border-color:rgba(255,255,255,.26);border-radius:7px;background-color:#94A3B8}
+.level-label{position:relative;color:#FFFFFF;font-size:10px;font-weight:900;text-shadow:0 1px 2px rgba(30,20,0,.82)}
+.level-halo{position:absolute;width:40px;height:18px;border-radius:7px;background-color:rgba(255,255,255,.24);box-shadow:0 0 8px rgba(255,255,255,.34)}
+.level-wash{position:absolute;left:0;top:0;width:40px;height:18px;opacity:.2}
+.level-shine{position:absolute;left:-10px;top:-3px;width:11px;height:24px;background-image:linear-gradient(to right,rgba(255,255,255,0),rgba(255,255,255,.72));opacity:0;transform:skewX(-18deg)}
+.level-stars{position:absolute;left:0;top:0;width:40px;height:18px}.level-star{position:absolute;width:4px;height:4px;color:#FFFFFF;font-size:9px;line-height:4px;text-shadow:0 0 3px #FFFFFF}
+.star-1{left:3px;top:0}.star-2{right:3px;bottom:1px}.star-3{left:10px;bottom:0}.star-4{right:10px;top:0}.star-5{left:19px;top:-1px}
+.level-blotches{position:absolute;left:0;top:0;width:40px;height:18px;overflow:hidden}.level-blotch{position:absolute;left:-17px;background-color:rgba(255,247,239,.64);box-shadow:0 0 5px rgba(255,255,255,.9);opacity:0}.blotch-one{top:-2px;width:17px;height:12px;border-radius:8px}.blotch-two{top:9px;width:12px;height:8px;border-radius:6px}.blotch-three{top:2px;width:8px;height:6px;border-radius:4px}.blotch-four{top:6px;width:19px;height:7px;border-radius:8px}
+.level-rain-mask{position:absolute;left:0;top:0;width:40px;height:18px;overflow:hidden}.level-rain-group{position:absolute;left:0;top:0;width:40px;height:18px;opacity:0}.rain-star{position:absolute;color:#FFFFFF;font-size:7px;line-height:7px;text-shadow:0 0 3px #FFFFFF}.rain-1{left:1px;bottom:-3px}.rain-2{left:7px;bottom:1px}.rain-3{left:13px;bottom:-5px}.rain-4{left:20px;bottom:0}.rain-5{left:27px;bottom:-4px}.rain-6{left:35px;bottom:2px}.rain-7{left:4px;bottom:-6px}.rain-8{left:10px;bottom:-1px}.rain-9{left:16px;bottom:2px}.rain-10{left:23px;bottom:-6px}.rain-11{left:30px;bottom:0}.rain-12{left:37px;bottom:-3px}.rain-13{left:3px;bottom:3px}.rain-14{left:14px;bottom:-2px}.rain-15{left:25px;bottom:3px}.rain-16{left:34px;bottom:-5px}
+.level-rings{position:absolute;left:0;top:0;width:40px;height:18px;overflow:hidden}.level-ring{position:absolute;border-width:1px;border-color:rgba(255,255,255,.96);box-shadow:0 0 5px #FFFFFF;opacity:0}.ring-one{left:-2px;top:-1px;width:13px;height:13px;border-radius:8px}.ring-two{left:7px;top:7px;width:7px;height:7px;border-radius:4px}.ring-three{left:12px;top:-3px;width:17px;height:17px;border-radius:10px}.ring-four{left:21px;top:2px;width:10px;height:10px;border-radius:6px}.ring-five{right:7px;top:8px;width:6px;height:6px;border-radius:4px}.ring-six{right:-2px;top:-2px;width:15px;height:15px;border-radius:9px}.ring-seven{left:29px;top:-1px;width:8px;height:8px;border-radius:5px}.ring-eight{left:33px;top:5px;width:12px;height:12px;border-radius:7px}
+.level-0{background-color:#94A3B8}.level-1{background-color:#9DB89A;border-color:#779777}.level-2{background-color:#82C59A;border-color:#5EA87D}.level-3{background-color:#68D28C;border-color:#42B66F}.level-4{background-color:#45C878;border-color:#2AA85C}.level-5{background-color:#20B968;border-color:#128A4B}
+.level-6{background-image:linear-gradient(to right,#EADF63,#B9D84A)}.level-7{background-image:linear-gradient(to right,#F1CF3D,#BFD932)}.level-8{background-image:linear-gradient(to right,#EFB82F,#E79225)}.level-9{background-image:linear-gradient(to right,#DF9D22,#CF741B)}.level-10{background-image:linear-gradient(to right,#E7AD27,#BD5C18)}
+.level-11{background-color:#55B8FF}.level-12{background-color:#249BFF}.level-13{background-color:#1677E8}.level-14{background-color:#3455D9}.level-15{background-color:#233CC7}
+.level-16{background-image:linear-gradient(to right,#8F61E8,#B78CFF)}.level-17{background-image:linear-gradient(to right,#7D42D6,#A66BFF)}.level-18{background-image:linear-gradient(to right,#6827C4,#9147FF)}.level-19{background-image:linear-gradient(to right,#4F24AF,#7135E8)}.level-20{background-image:linear-gradient(to right,#351183,#5420C9)}
+.level-21{background-color:#FF6F61}.level-22{background-color:#F04444}.level-23{background-color:#E8322E}.level-24{background-color:#C51F32}.level-25{background-color:#981B3B}
+.level-26{background-image:linear-gradient(to right,#536BDF,#3545A8)}.level-27{background-image:linear-gradient(to right,#6659E4,#4335A9)}.level-28{background-image:linear-gradient(to right,#265BC6,#162F79)}.level-29{background-image:linear-gradient(to right,#3156B9,#6632A8)}.level-30{background-image:linear-gradient(to right,#294C9C,#5B238F)}
+.level-31{background-image:linear-gradient(to right,#A98037,#E2C987)}.level-32{background-image:linear-gradient(to right,#B57C08,#E7B62B)}.level-33{background-image:linear-gradient(to right,#77879D,#D7DEE8)}.level-34{background-image:linear-gradient(to right,#9D6A24,#E4B95D)}.level-35{background-image:linear-gradient(to right,#A96D03,#F1CA45)}
+.level-36{background-image:linear-gradient(to right,#A86A08,#F4D35E)}.level-37{background-image:linear-gradient(to right,#295BD6,#E6B74C)}.level-38{background-image:linear-gradient(to right,#EC4899,#06B6D4)}.level-39{background-image:linear-gradient(to right,#EF4444,#8B5CF6)}.level-40{background-image:linear-gradient(to right,#D69A13,#D946EF);border-color:#FFF0A6}
+.halo-36{background-color:rgba(244,190,63,.54)}.halo-37{background-color:rgba(139,92,246,.58)}.halo-38{background-color:rgba(34,211,238,.58)}.halo-39{background-color:rgba(232,121,249,.62)}.halo-40{background-color:rgba(250,204,21,.68);box-shadow:0 0 10px rgba(217,70,239,.56)}
+.wash-36{background-color:#D45A38}.wash-37{background-color:#8B5CF6}.wash-38{background-color:#22C55E}.wash-39{background-color:#06B6D4}.wash-40{background-color:#22D3EE}
+</style>

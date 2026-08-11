@@ -2,12 +2,15 @@
   <view class="keyboard">
     <view class="keyboard-head">
       <text class="keyboard-title">表情包</text>
-      <view class="close-button" hover-class="pressed" @click="emit('close')"><text class="close-symbol">⌄</text></view>
+      <view class="close-button" hover-class="pressed" aria-label="收起表情包" @click="emit('close')"><image class="close-icon" src="/static/messages/chevron-down.png" mode="aspectFit"></image></view>
     </view>
+    <scroll-view v-if="!props.loading && ownedSeries.length > 0" class="series-tabs" direction="horizontal" :show-scrollbar="false">
+      <view class="series-row"><view v-for="item in ownedSeries" :key="item.id" class="series-tab" :class="item.id == data.seriesId ? 'series-tab-active' : ''" hover-class="series-tab-pressed" @click="selectSeries(item.id)"><text class="series-label" :class="item.id == data.seriesId ? 'series-label-active' : ''">{{ item.name }}</text></view></view>
+    </scroll-view>
     <view v-if="props.loading" class="sticker-grid">
       <view v-for="index in 8" :key="index" class="sticker-cell"><view class="skeleton"></view></view>
     </view>
-    <view v-else-if="props.stickers.length == 0" class="empty"><text>暂无可用表情</text></view>
+    <view v-else-if="activeStickers.length == 0" class="empty"><text>暂无可用表情</text></view>
     <swiper v-else class="pages" :current="data.page" :duration="300" @change="changePage">
       <swiper-item v-for="(items, pageIndex) in pages" :key="pageIndex">
         <view class="sticker-grid">
@@ -26,15 +29,17 @@
 
 <script setup lang="uts">
 import { absoluteApiUrl } from '@/config/runtime.uts'
-import { StickerAsset } from '@/services/messages.uts'
+import { StickerAsset, StickerSeries } from '@/services/messages.uts'
 
-const props = defineProps<{ stickers: StickerAsset[], loading: boolean, sending: boolean }>()
+const props = defineProps<{ series: StickerSeries[], loading: boolean, sending: boolean }>()
 const emit = defineEmits<{ close: [], send: [sticker: StickerAsset] }>()
-type KeyboardData = { page: number }
-const data = reactive({ page: 0 } as KeyboardData)
+type KeyboardData = { page: number, seriesId: string }
+const data = reactive({ page: 0, seriesId: '' } as KeyboardData)
+const ownedSeries = computed((): StickerSeries[] => props.series.filter((series: StickerSeries): boolean => series.stickers.some((sticker: StickerAsset): boolean => sticker.owned))
+const activeStickers = computed((): StickerAsset[] => { const item = ownedSeries.value.find((series: StickerSeries): boolean => series.id == data.seriesId); return item == null ? [] as StickerAsset[] : item!.stickers.filter((sticker: StickerAsset): boolean => sticker.owned) })
 const pages = computed((): StickerAsset[][] => {
   const result: StickerAsset[][] = []
-  for (let index = 0; index < props.stickers.length; index += 8) result.push(props.stickers.slice(index, index + 8))
+  for (let index = 0; index < activeStickers.value.length; index += 8) result.push(activeStickers.value.slice(index, index + 8))
   return result
 })
 const pageStatus = computed((): string => {
@@ -43,15 +48,24 @@ const pageStatus = computed((): string => {
 })
 function stickerImageUrl(sticker: StickerAsset): string { return absoluteApiUrl(sticker.staticUrl) }
 function changePage(event: UniSwiperChangeEvent) { data.page = event.detail.current }
+function selectSeries(id: string) { data.seriesId = id; data.page = 0 }
 function choose(sticker: StickerAsset) { if (!props.sending) emit('send', sticker) }
+watch(() => props.series, (_value: StickerSeries[]) => { const value = ownedSeries.value; if (value.length == 0) { data.seriesId = ''; data.page = 0; return }; if (!value.some((item: StickerSeries): boolean => item.id == data.seriesId)) { data.seriesId = value[0].id; data.page = 0 } }, { immediate: true })
 </script>
 
 <style>
-.keyboard { height: 226px; padding: 10px 12px 12px 12px; border-top-width: 1px; border-top-color: #E5EAF2; background-color: #FFFFFF; }
+.keyboard { height: 270px; padding: 10px 12px 12px 12px; border-top-width: 1px; border-top-color: #E5EAF2; background-color: #FFFFFF; }
 .keyboard-head { height: 28px; flex-direction: row; align-items: center; justify-content: space-between; }
 .keyboard-title { color: #121826; font-size: 14px; font-weight: 800; }
 .close-button { width: 30px; height: 28px; align-items: center; justify-content: center; border-radius: 14px; }
-.close-symbol { color: #667085; font-size: 20px; }
+.close-icon { width: 18px; height: 18px; }
+.series-tabs { height: 42px; margin-top: 2px; }
+.series-row { height: 42px; flex-direction: row; align-items: center; }
+.series-tab { height: 36px; margin-right: 8px; padding: 0 16px; align-items: center; justify-content: center; border-radius: 18px; background-color: #F2F4F7; }
+.series-tab-active { background-color: #2563EB; }
+.series-tab-pressed { opacity: .75; }
+.series-label { color: #667085; font-size: 13px; font-weight: 800; }
+.series-label-active { color: #FFFFFF; }
 .pages, .sticker-grid, .empty { height: 154px; }
 .sticker-grid { flex-direction: row; flex-wrap: wrap; }
 .sticker-cell { width: 25%; height: 77px; align-items: center; justify-content: center; border-radius: 12px; }

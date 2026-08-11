@@ -1728,6 +1728,102 @@ export async function initDatabase() {
   await pool.query("UPDATE asset_cards SET motion_status = 'ready' WHERE motion_mp4_path IS NOT NULL AND motion_status = 'idle'");
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS sticker_series (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(80) NOT NULL,
+      description VARCHAR(500) NOT NULL DEFAULT '',
+      sort_order INT NOT NULL DEFAULT 0,
+      system_locked TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_sticker_series_order (sort_order, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sticker_products (
+      id VARCHAR(64) PRIMARY KEY,
+      series_id VARCHAR(64) NOT NULL,
+      name VARCHAR(80) NOT NULL,
+      description VARCHAR(500) NOT NULL DEFAULT '',
+      static_image_ref LONGTEXT NOT NULL,
+      animated_image_ref LONGTEXT NULL,
+      price INT UNSIGNED NOT NULL DEFAULT 0,
+      sort_order INT NOT NULL DEFAULT 0,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      default_owned TINYINT(1) NOT NULL DEFAULT 0,
+      deleted_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_sticker_products_catalog (series_id, deleted_at, enabled, sort_order, created_at),
+      CONSTRAINT fk_sticker_product_series FOREIGN KEY (series_id) REFERENCES sticker_series(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_stickers (
+      user_id VARCHAR(64) NOT NULL,
+      sticker_id VARCHAR(64) NOT NULL,
+      source ENUM('purchase','admin') NOT NULL DEFAULT 'purchase',
+      obtained_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, sticker_id),
+      INDEX idx_user_stickers_time (user_id, obtained_at),
+      CONSTRAINT fk_user_sticker_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_sticker_product FOREIGN KEY (sticker_id) REFERENCES sticker_products(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sticker_purchase_orders (
+      id VARCHAR(64) PRIMARY KEY,
+      request_id VARCHAR(100) NOT NULL UNIQUE,
+      user_id VARCHAR(64) NOT NULL,
+      sticker_id VARCHAR(64) NOT NULL,
+      shell_cost INT UNSIGNED NOT NULL,
+      balance_after INT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_sticker_purchase_user_product (user_id, sticker_id),
+      INDEX idx_sticker_purchase_user_time (user_id, created_at),
+      CONSTRAINT fk_sticker_purchase_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_sticker_purchase_product FOREIGN KEY (sticker_id) REFERENCES sticker_products(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(
+    `INSERT INTO sticker_series (id, name, description, sort_order, system_locked)
+     VALUES ('tangtang', '汤汤', '汤汤官方表情包系列', 1000, 1)
+     ON DUPLICATE KEY UPDATE name = VALUES(name), sort_order = 1000, system_locked = 1`
+  );
+  const defaultStickers = [
+    ['tangtang-detective-hello', '你好呀', 'hello/TTZT_01_你好呀_V1'],
+    ['tangtang-detective-come-drink-soup', '来喝汤', 'come-drink-soup/TTZT_02_来喝汤_V1'],
+    ['tangtang-detective-received', '收到啦', 'received/TTZT_03_收到啦_V1'],
+    ['tangtang-detective-good-night', '晚安喔', 'good-night/TTZT_04_晚安喔_V1'],
+    ['tangtang-detective-question', '我有问题', 'question/TTZT_05_我有问题_V1'],
+    ['tangtang-detective-is-that-so', '是这样吗', 'is-that-so/TTZT_06_是这样吗_V1'],
+    ['tangtang-detective-think-again', '再想想看', 'think-again/TTZT_07_再想想看_V1'],
+    ['tangtang-detective-clue', '线索呢', 'clue/TTZT_08_线索呢_V1'],
+    ['tangtang-detective-brain-burning', '好烧脑呀', 'brain-burning/TTZT_09_好烧脑呀_V1'],
+    ['tangtang-detective-confused', '我懵了', 'confused/TTZT_10_我懵了_V1'],
+    ['tangtang-detective-unbelievable', '真的假的？', 'unbelievable/TTZT_11_真的假的_V1'],
+    ['tangtang-detective-awesome', '你太棒了！', 'awesome/TTZT_12_你太棒了_V1'],
+    ['tangtang-detective-exhausted', '我不行了', 'exhausted/TTZT_13_我不行了_V1'],
+    ['tangtang-detective-why-like-this', '怎么这样？', 'why-like-this/TTZT_14_怎么这样_V1'],
+    ['tangtang-detective-happy', '开心~', 'happy/TTZT_15_开心_V1'],
+    ['tangtang-detective-whats-wrong', '怎么啦？', 'whats-wrong/TTZT_16_怎么啦_V1'],
+    ['tangtang-detective-thank-you', '谢谢你', 'thank-you/TTZT_17_谢谢你_V1'],
+    ['tangtang-detective-another-bowl', '再来一碗', 'another-bowl/TTZT_18_再来一碗_V1'],
+    ['tangtang-detective-give-up', '我放弃了', 'give-up/TTZT_19_我放弃了_V1']
+  ] as const;
+  for (let index = 0; index < defaultStickers.length; index += 1) {
+    const [id, name, path] = defaultStickers[index];
+    await pool.query(
+      `INSERT INTO sticker_products
+        (id, series_id, name, description, static_image_ref, animated_image_ref, price, sort_order, enabled, default_owned)
+       VALUES (?, 'tangtang', ?, '', ?, ?, 0, ?, 1, 1)
+       ON DUPLICATE KEY UPDATE series_id = 'tangtang', name = VALUES(name), sort_order = VALUES(sort_order), default_owned = 1`,
+      [id, name, `/stickers/tangtang-detective/${path}_static.webp`, `/stickers/tangtang-detective/${path}_320.webp`, 1000 - index]
+    );
+  }
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS asset_packs (
       id VARCHAR(64) PRIMARY KEY,
       name VARCHAR(120) NOT NULL,
@@ -2625,5 +2721,13 @@ async function seedLegendaryBadges() {
        name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
        achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend', activity_conditions = NULL`,
     ["ingenious-strategist", "神机妙算", "小O小O，快用你无敌的鬼脑想想办法啊！", null, "/badges/ingenious-strategist-legend.webp", 300]
+  );
+  await pool.query(
+    `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier, activity_conditions)
+     VALUES (?, ?, ?, ?, ?, ?, 'limited', 'legend', NULL)
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement), icon_url = VALUES(icon_url),
+       achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend', activity_conditions = NULL`,
+    ["mist-truth-seeker", "破雾寻真", "雾隐千谜，一语求真", null, "/badges/mist-truth-seeker-legend.webp", 300]
   );
 }

@@ -1,4 +1,4 @@
-import { AssetDrawHistoryResponse, AssetDrawResponse, AssetPackResponse, AssetStoreResponse, CardCabinetResponse } from '@/domain/dto/digital-asset.uts'
+import { AssetDrawHistoryResponse, AssetDrawResponse, AssetPackResponse, AssetStoreResponse, CardCabinetResponse, StickerPurchaseResponse, StickerStoreResponse } from '@/domain/dto/digital-asset.uts'
 import { apiGet, apiPatch, apiPost, ApiError } from '@/services/api-client.uts'
 
 function decodeAssetStore(json: string): AssetStoreResponse {
@@ -27,6 +27,14 @@ function decodeAssetPack(json: string): AssetPackResponse {
 
 export function loadAssetStore(success: (data: AssetStoreResponse) => void, fail: (error: ApiError) => void) {
   apiGet<AssetStoreResponse>('/api/asset-store/packs', (json: string): AssetStoreResponse => decodeAssetStore(json), success, fail)
+}
+
+export function loadStickerStore(success: (data: StickerStoreResponse) => void, fail: (error: ApiError) => void) {
+  apiGet<StickerStoreResponse>('/api/asset-store/stickers', (json: string): StickerStoreResponse => JSON.parse<StickerStoreResponse>(json)!, success, fail)
+}
+
+export function purchaseSticker(id: string, requestId: string, success: (data: StickerPurchaseResponse) => void, fail: (error: ApiError) => void) {
+  apiPost<StickerPurchaseResponse>('/api/asset-store/stickers/' + encodeURIComponent(id) + '/purchase', { requestId } as UTSJSONObject, (json: string): StickerPurchaseResponse => JSON.parse<StickerPurchaseResponse>(json)!, success, fail)
 }
 
 export function loadAssetPack(id: string, success: (data: AssetPackResponse) => void, fail: (error: ApiError) => void) {

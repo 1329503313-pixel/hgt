@@ -31,7 +31,7 @@
             <view class="message-body" :class="isMine(message) ? 'mine-body' : ''">
               <view class="identity-row" :class="isMine(message) ? 'mine-identity' : ''">
                 <text class="sender-name">{{ senderName(message) }}</text>
-                <text v-if="message.sender != null" class="level">Lv{{ message.sender!.level }}</text>
+                <LevelBadge v-if="message.sender != null" :level="message.sender!.level" />
                 <view v-if="message.sender != null && message.sender!.equippedBadge != null" class="message-badge-wrap"><image class="message-badge-icon" :src="senderBadgeIcon(message)" mode="aspectFit"></image><text class="badge-name" :class="badgeClass(message)">{{ message.sender!.equippedBadge!.name }}</text></view>
               </view>
               <image v-if="message.type == 'sticker' && stickerUrl(message).length > 0" class="message-sticker" :src="stickerUrl(message)" mode="aspectFit" @longpress="openMessageActions(message)"></image>
@@ -62,7 +62,7 @@
         <view class="icon-button" :class="data.showStickers ? 'icon-button-active' : ''" hover-class="pressed" @click="toggleStickers"><image class="composer-icon" src="/static/messages/smile.png" mode="aspectFit"></image></view>
         <button class="send-button" :class="data.sending || data.draft.trim().length == 0 ? 'send-disabled' : ''" :disabled="data.sending || data.draft.trim().length == 0" @click="sendText"><text class="send-label">{{ data.sending ? '发送中' : '发送' }}</text></button>
       </view>
-      <StickerKeyboard v-if="data.showStickers" :stickers="data.stickers" :loading="data.stickersLoading" :sending="data.sending" @close="closeStickers" @send="sendSticker" />
+      <StickerKeyboard v-if="data.showStickers" :series="data.stickerSeries" :loading="data.stickersLoading" :sending="data.sending" @close="closeStickers" @send="sendSticker" />
       <view v-if="data.showMembers" class="member-mask" @click="closeMembers">
         <view class="member-panel" @click.stop>
           <view class="member-panel-header"><view><text class="member-panel-title">圈子成员</text><text class="member-panel-subtitle">{{ data.detail!.circle.memberCount }} 位成员 · {{ data.detail!.circle.onlineCount }} 人在线</text></view><button class="member-panel-close" @click="closeMembers">×</button></view>
@@ -73,7 +73,7 @@
                 <view v-else class="member-avatar member-avatar-placeholder"><text>{{ member.nickname.substring(0, 1) }}</text></view>
                 <view v-if="member.isOnline" class="member-online-dot"></view>
               </view>
-              <view class="member-copy" @click="openMemberProfile(member)"><view class="member-name-row"><text class="member-name">{{ member.nickname }}</text><text class="member-level">Lv{{ member.level }}</text><view v-if="member.equippedBadge != null" class="member-badge-wrap"><image class="member-badge-icon" :src="memberBadgeIcon(member)" mode="aspectFit"></image><text class="member-badge" :class="memberBadgeClass(member)">{{ member.equippedBadge!.name }}</text></view></view><text class="member-state" :class="member.isOnline ? 'member-online' : ''">{{ member.isOnline ? '在线' : '离线' }}</text></view>
+              <view class="member-copy" @click="openMemberProfile(member)"><view class="member-name-row"><text class="member-name">{{ member.nickname }}</text><LevelBadge :level="member.level" /><view v-if="member.equippedBadge != null" class="member-badge-wrap"><image class="member-badge-icon" :src="memberBadgeIcon(member)" mode="aspectFit"></image><text class="member-badge" :class="memberBadgeClass(member)">{{ member.equippedBadge!.name }}</text></view></view><text class="member-state" :class="member.isOnline ? 'member-online' : ''">{{ member.isOnline ? '在线' : '离线' }}</text></view>
               <button v-if="sessionState.user != null && member.id != sessionState.user!.id" class="mention-button" @click="mentionMember(member)">@他</button>
             </view>
           </scroll-view>
@@ -85,13 +85,14 @@
 
 <script setup lang="uts">
 import AppBackButton from '@/components/base/AppBackButton.uvue'
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import StickerKeyboard from '@/components/chat/StickerKeyboard.uvue'
 import GiftMessageCard from '@/components/chat/GiftMessageCard.uvue'
 import { absoluteApiUrl } from '@/config/runtime.uts'
 import { CircleDetailResponse, CircleMember, CircleMention, CircleMessage, CircleMessagesResponse } from '@/domain/dto/circle.uts'
 import { CircleRealtimeHandle, connectCircleRealtime } from '@/services/circle-realtime.uts'
 import { loadCircleDetail, loadCircleMessages, loadCircleUnreadMentions, markAllCircleMentionsRead, markCircleMentionRead, markCircleRead, recallCircleMessage, sendCircleMessage, sendCircleSticker } from '@/services/circles.uts'
-import { StickerAsset, loadStickers } from '@/services/messages.uts'
+import { StickerAsset, StickerSeries, loadStickers } from '@/services/messages.uts'
 import { restoreSession, sessionState } from '@/stores/session.uts'
 import { refreshUnreadState } from '@/stores/unread.uts'
 
@@ -102,6 +103,7 @@ type CircleChatData = {
   messages: CircleMessagesResponse,
   draft: string,
   stickers: StickerAsset[],
+  stickerSeries: StickerSeries[],
   stickersLoading: boolean,
   showStickers: boolean,
   showMembers: boolean,
@@ -130,6 +132,7 @@ const data = reactive({
   messages: { messages: [] as CircleMessage[], hasMore: false, nextCursor: null as string | null },
   draft: '',
   stickers: [] as StickerAsset[],
+  stickerSeries: [] as StickerSeries[],
   stickersLoading: false,
   showStickers: false,
   showMembers: false,
@@ -230,6 +233,7 @@ function loadStickerData() {
   loadStickers((response) => {
     const all: StickerAsset[] = []
     response.series.forEach((series) => { all.push(...series.stickers) })
+    data.stickerSeries = response.series
     data.stickers = all
     data.stickersLoading = false
   }, (_) => { data.stickersLoading = false })

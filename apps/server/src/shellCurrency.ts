@@ -543,6 +543,7 @@ const TRANSACTION_LABELS: Record<string, string> = {
   badge_unlock_reward: "首次获得徽章奖励",
   badge_history_backfill: "历史徽章奖励贝壳补发",
   pack_single_draw: "卡包单抽消费",
+  sticker_purchase: "购买表情包",
   pack_ten_draw: "卡包十连消费",
   duplicate_card_refund: "满星重复卡片返还",
   admin_add: "后台人工增加",

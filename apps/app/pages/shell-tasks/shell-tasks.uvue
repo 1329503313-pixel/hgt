@@ -13,7 +13,7 @@
       <view class="summary-grid">
         <view class="summary-card summary-card-left">
           <view class="summary-icon summary-icon-blue"><image class="summary-icon-image" src="/static/tasks/growth.png" mode="aspectFit"></image></view>
-          <view class="summary-value-row"><text class="level">Lv{{ data.center!.levelProgress.level }}</text><text class="summary-value">{{ data.center!.levelProgress.isMaxLevel ? '满级' : Math.round(data.center!.levelProgress.progressPercent).toString() + '%' }}</text></view>
+          <view class="summary-value-row"><LevelBadge :level="data.center!.levelProgress.level" :spaced="false" /><text class="summary-value">{{ data.center!.levelProgress.isMaxLevel ? '满级' : Math.round(data.center!.levelProgress.progressPercent).toString() + '%' }}</text></view>
           <text class="summary-label">当前成长等级</text>
         </view>
         <view class="summary-card">
@@ -43,6 +43,7 @@
 
 <script setup lang="uts">
 import AppBackButton from '@/components/base/AppBackButton.uvue'
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import { BeginnerTask, ShellTask, ShellTaskCenter } from '@/domain/dto/shell.uts'
 import { loadShellTaskCenter } from '@/services/shells.uts'
 

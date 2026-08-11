@@ -65,12 +65,17 @@ export function AssetCardVisual({
   }, [card.rarity, motionAllowed]);
 
   function move(event: React.PointerEvent<HTMLButtonElement>) {
-    if (!animated || !ref.current || event.pointerType === "touch") return;
+    if (
+      !animated
+      || !ref.current
+      || event.pointerType !== "mouse"
+      || !window.matchMedia("(hover: hover) and (pointer: fine)").matches
+    ) return;
     const rect = ref.current.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
-    ref.current.style.setProperty("--card-rx", `${(0.5 - y) * 12}deg`);
-    ref.current.style.setProperty("--card-ry", `${(x - 0.5) * 14}deg`);
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    ref.current.style.setProperty("--card-rx", `${Math.round((0.5 - y) * 60) / 10}deg`);
+    ref.current.style.setProperty("--card-ry", `${Math.round((x - 0.5) * 70) / 10}deg`);
   }
 
   function reset() {
@@ -87,13 +92,13 @@ export function AssetCardVisual({
       ref={ref}
       type="button"
       className={`asset-card asset-card-${card.rarity} ${motionAllowed ? "asset-card-motion-allowed" : "asset-card-motion-disabled"} ${animated ? "asset-card-animated" : ""} ${highDetail ? "asset-card-high-detail" : ""} ${historyCompact ? "asset-card-history-compact" : ""} ${compactBadges ? "asset-card-compact-badges" : ""} ${selected ? "asset-card-selected" : ""} ${owned === false ? "asset-card-locked" : ""} ${className}`}
-      onPointerMove={move}
+      onPointerMove={animated ? move : undefined}
       onPointerEnter={warmHighDetail}
       onFocus={warmHighDetail}
       onTouchStart={warmHighDetail}
-      onPointerLeave={reset}
+      onPointerLeave={animated ? reset : undefined}
       onClick={onClick}
-      style={card.rarity === "legend" ? ({ "--legend-breathe-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s` } as React.CSSProperties) : undefined}
+      style={card.rarity === "legend" ? ({ "--legend-effect-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s` } as React.CSSProperties) : undefined}
       aria-label={ariaLabel ?? `${card.name}，${ASSET_RARITY_LABELS[card.rarity]}${displayedStarLevel != null ? `，${displayedStarLevel}星` : ""}${owned === false ? "，未获得" : ""}`}
     >
       <span className="asset-card-frame">

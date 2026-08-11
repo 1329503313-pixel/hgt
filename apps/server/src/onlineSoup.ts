@@ -6,7 +6,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { config } from "./config.js";
 import { pool } from "./db.js";
-import { getSticker } from "./stickers.js";
+import { getSticker, userOwnsSticker } from "./stickers.js";
 import { settleOnlineSoupRound } from "./shellCurrency.js";
 import { levelForExperience } from "./levelSystem.js";
 import { canViewAllSoupContentRole, isSuperAdminRole, type UserRole } from "./roles.js";
@@ -1286,6 +1286,7 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
   const sticker = parsed.data.type === "sticker" ? getSticker(parsed.data.stickerId) : null;
   if (parsed.data.type === "sticker" && !sticker) return fail(res, 400, "表情不存在或已下架");
+  if (parsed.data.type === "sticker" && !(await userOwnsSticker(context.user.id, parsed.data.stickerId))) return fail(res, 403, "尚未拥有该表情，请先前往商城购买");
   if (parsed.data.type === "question") {
     if (context.member?.member_role !== "player") return fail(res, 403, "只有玩家可以发送正式提问");
     if (context.room.status !== "playing") return fail(res, 409, "当前不在推理阶段");

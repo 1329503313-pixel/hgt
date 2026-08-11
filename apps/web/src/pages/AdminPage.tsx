@@ -12,7 +12,7 @@ import { NoticeManagement } from "../components/admin/NoticeManagement";
 import { CardSkeleton } from "../components/Skeletons";
 import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomManagement";
 import { CircleManagement } from "../components/admin/CircleManagement";
-import { DigitalAssetManagement } from "../components/admin/DigitalAssetManagement";
+import { StoreManagement } from "../components/admin/StoreManagement";
 import { BannerManagement } from "../components/admin/BannerManagement";
 import { FeedbackManagement } from "../components/admin/FeedbackManagement";
 import { GiftManagement } from "../components/admin/GiftManagement";
@@ -98,7 +98,7 @@ export default function AdminPage() {
           {activeTab === "approvals" && <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} />}
           {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}
           {activeTab === "circles" && isSuperAdmin && <CircleManagement />}
-          {activeTab === "assets" && isSuperAdmin && <DigitalAssetManagement />}
+          {activeTab === "assets" && isSuperAdmin && <StoreManagement />}
           {activeTab === "notices" && isSuperAdmin && <NoticeManagement />}
           {activeTab === "feedback" && <FeedbackManagement />}
         </div>

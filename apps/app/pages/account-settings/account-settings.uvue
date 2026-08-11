@@ -27,10 +27,11 @@
       <view class="card">
         <text class="title">昵称</text>
         <view class="nickname-row">
-          <input class="field" v-model="data.nickname" maxlength="8" placeholder="请输入昵称" />
+          <input class="field" v-model="data.nickname" maxlength="8" placeholder="请输入昵称" @input="clearNicknameError" />
           <button class="save-button" :disabled="data.nicknameSaving" @click="saveNickname">{{ data.nicknameSaving ? '保存中' : '保存' }}</button>
         </view>
-        <text class="hint">1 至 8 个字符</text>
+        <text v-if="data.nicknameError.length == 0" class="hint">1 至 8 个字符，不可与其他用户重复</text>
+        <text v-else class="nickname-error">{{ data.nicknameError }}</text>
       </view>
 
       <view class="card password-card" hover-class="card-pressed" @click="openPassword">
@@ -49,10 +50,12 @@
 import { absoluteApiUrl } from '@/config/runtime.uts'
 import { updateAvatar, updateNickname } from '@/services/account.uts'
 import { logoutSession, restoreSession, sessionState } from '@/stores/session.uts'
+import { accountNicknameError } from '@/services/account-rules.uts'
 
 type SettingsData = {
   nickname: string,
   nicknameSaving: boolean,
+  nicknameError: string,
   avatarSaving: boolean,
   loggingOut: boolean,
   errorMessage: string
@@ -60,6 +63,7 @@ type SettingsData = {
 const data = reactive({
   nickname: '',
   nicknameSaving: false,
+  nicknameError: '',
   avatarSaving: false,
   loggingOut: false,
   errorMessage: ''
@@ -69,6 +73,7 @@ const avatarText = computed((): string => sessionState.user == null || sessionSt
 
 function openAuth() { uni.navigateTo({ url: '/pages/auth/auth' }) }
 function openPassword() { uni.navigateTo({ url: '/pages/password-settings/password-settings' }) }
+function clearNicknameError() { data.nicknameError = '' }
 function confirmLogout() {
   if (data.loggingOut) return
   uni.showModal({
@@ -95,11 +100,13 @@ function confirmLogout() {
 function saveNickname() {
   if (sessionState.user == null || data.nicknameSaving) return
   const nickname = data.nickname.trim()
-  if (nickname.length < 1 || nickname.length > 8) {
-    uni.showToast({ title: '昵称应为 1 至 8 个字符', icon: 'none' })
+  const validationError = accountNicknameError(nickname)
+  if (validationError.length > 0) {
+    data.nicknameError = validationError
     return
   }
   data.nicknameSaving = true
+  data.nicknameError = ''
   data.errorMessage = ''
   updateNickname(nickname, (response) => {
     data.nicknameSaving = false
@@ -108,7 +115,7 @@ function saveNickname() {
     uni.showToast({ title: '昵称已更新', icon: 'success' })
   }, (error) => {
     data.nicknameSaving = false
-    data.errorMessage = error.message
+    data.nicknameError = error.message
     if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' })
   })
 }
@@ -179,6 +186,7 @@ watch((): string => sessionState.user == null ? '' : sessionState.user!.nickname
 .avatar-copy { margin-left: 16px; }
 .secondary-button { min-width: 112px; min-height: 42px; border-width: 1px; border-color: #DCE3EE; border-radius: 12px; background-color: #FFFFFF; color: #2563EB; font-size: 13px; font-weight: 700; }
 .hint { margin-top: 7px; color: #98A2B3; font-size: 10px; }
+.nickname-error { margin-top: 7px; color: #D92D20; font-size: 10px; font-weight: 700; }
 .nickname-row { margin-top: 12px; }
 .field { flex: 1; height: 44px; padding: 0 12px; border-width: 1px; border-color: #DCE3EE; border-radius: 12px; background-color: #FFFFFF; color: #121826; font-size: 14px; }
 .save-button, .primary-button { min-height: 44px; border-radius: 12px; background-color: #2563EB; color: #FFFFFF; font-size: 13px; font-weight: 700; }

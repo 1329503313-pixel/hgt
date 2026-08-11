@@ -12,12 +12,15 @@ type StickerKeyboardProps = {
 };
 
 export function StickerKeyboard({ series, loading = false, sending, onClose, onSend, className = "" }: StickerKeyboardProps) {
+  const [activeSeriesId, setActiveSeriesId] = useState("");
   const [page, setPage] = useState(0);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const swipeHandled = useRef(false);
-  const stickers = useMemo(() => series.flatMap((item) => item.stickers), [series]);
+  const ownedSeries = useMemo(() => series.filter((item) => item.stickers.some((sticker) => sticker.owned)), [series]);
+  const activeSeries = ownedSeries.find((item) => item.id === activeSeriesId) ?? ownedSeries[0] ?? null;
+  const stickers = useMemo(() => activeSeries?.stickers.filter((sticker) => sticker.owned) ?? [], [activeSeries]);
   const pages = useMemo(
     () => Array.from({ length: Math.ceil(stickers.length / 8) }, (_, index) => stickers.slice(index * 8, index * 8 + 8)),
     [stickers]
@@ -28,6 +31,11 @@ export function StickerKeyboard({ series, loading = false, sending, onClose, onS
     if (page >= pageCount) setPage(pageCount - 1);
   }, [page, pageCount]);
 
+  useEffect(() => {
+    if (!ownedSeries.length) { setActiveSeriesId(""); return; }
+    if (!ownedSeries.some((item) => item.id === activeSeriesId)) setActiveSeriesId(ownedSeries[0].id);
+  }, [activeSeriesId, ownedSeries]);
+
   return (
     <div className={`bg-white ${className}`}>
       <div className="mb-2 flex h-7 items-center justify-between">
@@ -36,6 +44,14 @@ export function StickerKeyboard({ series, loading = false, sending, onClose, onS
           <ChevronDown size={17} />
         </button>
       </div>
+      {!loading && ownedSeries.length > 0 && (
+        <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="表情包系列">
+          {ownedSeries.map((item) => {
+            const active = item.id === activeSeries?.id;
+            return <button key={item.id} type="button" role="tab" aria-selected={active} className={`min-h-10 shrink-0 rounded-full px-4 text-sm font-black transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${active ? "bg-primary text-white shadow-sm" : "bg-slate-100 text-muted hover:bg-blue-50 hover:text-primary"}`} onClick={() => { setActiveSeriesId(item.id); setPage(0); setDragX(0); }}>{item.name}</button>;
+          })}
+        </div>
+      )}
       {loading ? (
         <div className="grid h-[152px] grid-cols-4 grid-rows-2 gap-1.5 sm:h-[168px]" aria-label="表情包加载中">
           {Array.from({ length: 8 }, (_, index) => <span key={index} className="m-auto h-14 w-14 animate-pulse rounded-2xl bg-slate-100 sm:h-16 sm:w-16" />)}

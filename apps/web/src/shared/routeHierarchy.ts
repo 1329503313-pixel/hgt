@@ -16,10 +16,12 @@ export function parentRoute(pathname: string) {
   if (path === "/mine/settings/backgrounds") return "/mine/settings";
   if (path === "/mine/settings/invitations") return "/mine/settings";
   if (path === "/forgot-password" || path === "/reset-password") return "/";
-  if (/^\/mine\/store\/[^/]+$/.test(path)) return "/mine/store";
+  if (/^\/mine\/store\/cards\/[^/]+$/.test(path)) return "/mine/store/cards";
+  if (path === "/mine/store/cards" || path === "/mine/store/stickers") return "/mine/store";
+  if (/^\/mine\/store\/[^/]+$/.test(path)) return "/mine/store/cards";
   if (path === "/mine/shells/transactions") return "/mine";
   if (path === "/mine/store" || path === "/mine/cards") return "/mine";
-  if (path === "/mine/asset-draw-history") return "/mine/store";
+  if (path === "/mine/asset-draw-history") return "/mine/store/cards";
   if (/^\/mine\/[^/]+$/.test(path)) return "/mine";
   if (path === "/mine") return "/";
 

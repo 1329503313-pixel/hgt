@@ -164,6 +164,14 @@
       }
     },
     {
+      "path": "pages/sticker-store/sticker-store",
+      "style": {
+        "navigationBarTitleText": "表情包",
+        "navigationStyle": "custom",
+        "disableScroll": true
+      }
+    },
+    {
       "path": "pages/card-cabinet/card-cabinet",
       "style": {
         "navigationBarTitleText": "我的收藏柜",

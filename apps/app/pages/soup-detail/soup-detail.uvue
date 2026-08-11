@@ -25,7 +25,7 @@
           <view class="creator-avatar"><image v-if="creatorAvatarUrl.length > 0" class="creator-avatar-image" :src="creatorAvatarUrl" mode="aspectFill"></image><text v-else class="creator-avatar-text">{{ creatorAvatarText }}</text></view>
           <view class="creator-copy">
             <text class="author-label">作者 {{ data.soup!.author }} · 发布者</text>
-            <view class="creator-identity"><text class="creator">{{ data.soup!.creatorName }}</text><text class="level">Lv{{ data.soup!.creatorLevel }}</text><view v-if="data.soup!.creatorEquippedBadge != null" class="badge-wrap"><image class="badge-icon-image" :src="creatorBadgeUrl" mode="aspectFit"></image><text class="badge">{{ data.soup!.creatorEquippedBadge!.name }}</text></view></view>
+            <view class="creator-identity"><text class="creator">{{ data.soup!.creatorName }}</text><LevelBadge :level="data.soup!.creatorLevel" /><view v-if="data.soup!.creatorEquippedBadge != null" class="badge-wrap"><image class="badge-icon-image" :src="creatorBadgeUrl" mode="aspectFit"></image><text class="badge">{{ data.soup!.creatorEquippedBadge!.name }}</text></view></view>
           </view>
         </view>
         <view class="stat-grid">
@@ -115,7 +115,7 @@
         <view v-for="evaluation in data.soup!.evaluations" :key="evaluation.id" class="evaluation">
           <view class="evaluation-head" hover-class="interaction-pressed" @click="openUser(evaluation.reviewerId)">
             <text class="creator">{{ evaluation.reviewer }}</text>
-            <text class="level">Lv{{ evaluation.reviewerLevel }}</text>
+            <LevelBadge :level="evaluation.reviewerLevel" />
             <text class="evaluation-score">{{ evaluation.total.toFixed(1) }}</text>
           </view>
           <text v-if="evaluation.content != null && evaluation.content!.length > 0" class="content">{{ evaluation.content! }}</text>
@@ -127,6 +127,7 @@
 </template>
 
 <script setup lang="uts">
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import RadarChart from '@/components/business/RadarChart.uvue'
 import { absoluteApiUrl, soupThumbnailUrl } from '@/config/runtime.uts'
 import { EvaluationSummary, SoupDetail } from '@/domain/dto/soup.uts'

@@ -61,6 +61,10 @@ export type AssetPack = {
 
 export type AssetStoreResponse = { balance: number, packs: AssetPack[] }
 export type AssetPackResponse = { balance: number, pack: AssetPack }
+export type StoreSticker = { id: string, name: string, text: string, description: string, staticUrl: string, animatedUrl: string, width: number, height: number, weight: number, price: number, owned: boolean }
+export type StoreStickerSeries = { id: string, name: string, description: string, weight: number, stickers: StoreSticker[] }
+export type StickerStoreResponse = { balance: number, series: StoreStickerSeries[] }
+export type StickerPurchaseResponse = { owned: boolean, balance: number, orderId: string }
 
 export type AssetDrawResult = {
   id: string,

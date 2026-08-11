@@ -123,6 +123,17 @@ export function SoupEditor() {
 
   const keyFactsTotalWeight = value.keyFacts.reduce((sum, k) => sum + k.weight, 0);
   const keyFactsWeightValid = value.keyFacts.length === 0 || keyFactsTotalWeight === 100;
+  const emptyKeyFactIndex = value.keyFacts.findIndex((keyFact) => !keyFact.content.trim());
+  const invalidKeyFactWeightIndex = value.keyFacts.findIndex(
+    (keyFact) => !Number.isInteger(keyFact.weight) || keyFact.weight < 1 || keyFact.weight > 99
+  );
+  const aiAdvancedSettingsError = emptyKeyFactIndex >= 0
+    ? `AI 玩汤高级设置：第 ${emptyKeyFactIndex + 1} 个关键点未填写`
+    : invalidKeyFactWeightIndex >= 0
+      ? `AI 玩汤高级设置：第 ${invalidKeyFactWeightIndex + 1} 个关键点未填写有效进度值（1–99）`
+      : !keyFactsWeightValid
+        ? `AI 玩汤高级设置：进度值总和必须为 100，当前为 ${keyFactsTotalWeight}`
+        : "";
 
   // AI 重新解析
   async function handleReanalyze() {
@@ -173,6 +184,11 @@ export function SoupEditor() {
     event.preventDefault();
     if (submittingRef.current) return;
     if (!termsAccepted) { setTermsError("请先勾选同意用户使用条款"); return; }
+    if (canEnableAiGame && value.enableAiGame && aiAdvancedSettingsError) {
+      setAdvSettingsOpen(true);
+      showToast(aiAdvancedSettingsError);
+      return;
+    }
     setTermsError("");
     submittingRef.current = true;
     setSubmitting(true);
@@ -352,9 +368,16 @@ export function SoupEditor() {
               )}
             </div>
             {value.enableAiGame && (
-              <p className="pl-7 text-[11px] leading-5 text-muted">
-                仅无任何机制的汤建议开启 AI 玩汤，开启后用户如通关，可以直接获得汤底。
-              </p>
+              <>
+                <p className="pl-7 text-[11px] leading-5 text-muted">
+                  仅无任何机制的汤建议开启 AI 玩汤，开启后用户如通关，可以直接获得汤底。
+                </p>
+                {aiAdvancedSettingsError && (
+                  <button type="button" className="pl-7 text-left text-xs font-bold text-danger" onClick={() => setAdvSettingsOpen(true)}>
+                    {aiAdvancedSettingsError}，点击检查
+                  </button>
+                )}
+              </>
             )}
           </div>}
           <label className="flex items-center gap-2 text-xs leading-5 text-muted">
@@ -437,9 +460,10 @@ export function SoupEditor() {
                       <label className="text-[11px] font-bold text-muted">关键点</label>
                       <p className="text-[10px] text-muted">请以陈述句输入本故事的关键点，即盘到这个关键点则增长进度</p>
                       <input
-                        className="field mt-1 w-full text-sm"
+                        className={`field mt-1 w-full text-sm ${!kf.content.trim() ? "border-red-400" : ""}`}
                         placeholder="如：凶手是父亲"
                         value={kf.content}
+                        aria-invalid={!kf.content.trim()}
                         onChange={(e) => updateKeyFact(kf.id, "content", e.target.value)}
                       />
                     </div>
@@ -447,11 +471,12 @@ export function SoupEditor() {
                       <label className="text-[11px] font-bold text-muted">进度值</label>
                       <p className="text-[10px] text-muted">请输入该关键点的进度值，总和应该为 100</p>
                       <input
-                        className="field mt-1 w-24 text-sm"
+                        className={`field mt-1 w-24 text-sm ${!Number.isInteger(kf.weight) || kf.weight < 1 || kf.weight > 99 ? "border-red-400" : ""}`}
                         type="number"
                         min={1}
                         max={99}
                         value={kf.weight}
+                        aria-invalid={!Number.isInteger(kf.weight) || kf.weight < 1 || kf.weight > 99}
                         onChange={(e) => updateKeyFact(kf.id, "weight", Math.max(1, Math.min(99, parseInt(e.target.value) || 1)))}
                       />
                     </div>
@@ -470,8 +495,8 @@ export function SoupEditor() {
                 <p className="text-sm text-muted text-center py-4">暂无自定义关键点。留空则由 AI 自动拆分。</p>
               )}
 
-              {!keyFactsWeightValid && (
-                <p className="text-xs font-bold text-danger">进度值总和必须为 100，当前为 {keyFactsTotalWeight}。</p>
+              {aiAdvancedSettingsError && (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-danger" role="alert">{aiAdvancedSettingsError}</p>
               )}
             </div>
 
@@ -491,7 +516,7 @@ export function SoupEditor() {
               <button
                 type="button"
                 className="btn btn-primary flex-1"
-                disabled={!keyFactsWeightValid}
+                disabled={Boolean(aiAdvancedSettingsError)}
                 onClick={() => setAdvSettingsOpen(false)}
               >
                 完成

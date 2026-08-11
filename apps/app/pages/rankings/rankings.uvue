@@ -12,7 +12,7 @@
       <list-item v-for="item in visibleRows" :key="item.id" class="row" hover-class="pressed" @click="openItem(item)">
         <view class="rank" :class="rankClass(item.rank)"><text>{{ item.rank }}</text></view>
         <view v-if="data.category != 'soups'" class="avatar-wrap"><image v-if="item.avatar.length > 0" class="avatar" :src="item.avatar" mode="aspectFill"></image><view v-else class="avatar avatar-placeholder"><text>{{ item.name.substring(0,1) }}</text></view></view>
-        <view class="copy"><view class="name-row"><text class="name">{{ item.name }}</text><text v-if="item.level >= 0" class="level">Lv{{ item.level }}</text></view><text class="detail">{{ item.detail }}</text></view>
+        <view class="copy"><view class="name-row"><text class="name">{{ item.name }}</text><LevelBadge v-if="item.level >= 0" :level="item.level" /></view><text class="detail">{{ item.detail }}</text></view>
         <view class="metric"><text class="metric-value">{{ metricPrefix }}{{ item.value }}</text><text class="metric-label">{{ metricLabel }}</text></view>
       </list-item>
       <list-item v-if="visibleRows.length == 0" class="empty"><text>暂无榜单数据</text></list-item>
@@ -22,6 +22,7 @@
 </template>
 <script setup lang="uts">
 import AppBackButton from '@/components/base/AppBackButton.uvue'
+import LevelBadge from '@/components/business/LevelBadge.uvue'
 import { absoluteApiUrl } from '@/config/runtime.uts'
 import { CollectionRank, CollectionRankingsResponse, HotSoupRank, LevelRank, RankingsResponse, UserRank } from '@/domain/dto/ranking.uts'
 import { loadCollectionRankings, loadRankings } from '@/services/rankings.uts'
