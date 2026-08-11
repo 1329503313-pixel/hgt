@@ -8,6 +8,10 @@ export type WebResourceReleaseManifest = {
   zipSha256: string;
   releaseNotes: string[];
   publishedAt: string;
+  deltaUrl?: string;
+  deltaSize?: number;
+  deltaSha256?: string;
+  deltaBaseVersionCode?: number;
 };
 
 export type WebResourceReleaseRecord = WebResourceReleaseManifest & {

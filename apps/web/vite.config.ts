@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => {
         handler(html) {
           return html
             .replace("/src/main.tsx", "/src/main.android.tsx")
+            .replace(/\s*<!-- hgt-pwa-start -->[\s\S]*?<!-- hgt-pwa-end -->\s*/, "\n    ")
             .replace('<meta name="robots" content="index,follow" />', '<meta name="robots" content="noindex,nofollow" />')
             .replace("烧脑海龟汤社区｜海量经典海龟汤、推理解谜与烧脑游戏", "烧脑海龟汤");
         }

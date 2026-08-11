@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BEGINNER_TASKS,
+  BULK_SHELL_GRANT_USER_ROLES,
   beijingTaskDate,
+  bulkShellAdjustmentUserRoles,
   calculateTaskReward,
   eligibleBeginnerTaskTypes,
   hasOtherEligibleOnlineSoupPlayer,
@@ -12,8 +14,22 @@ import {
   SHELL_TASKS
 } from "./shellCurrency.js";
 import { calculateExperienceAdjustment, experienceProgress, LEVEL_THRESHOLDS, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
-import { calculateInviteMilestoneDelta } from "./inviteRewards.js";
+import {
+  calculateInviteMilestoneDelta,
+  isQualifyingInviteShellTransactionType
+} from "./inviteRewards.js";
 import { CURRENCY_DEFINITIONS, CURRENCY_TYPES, isCurrencyType } from "./currency.js";
+
+test("批量贝壳调整覆盖全部用户角色", () => {
+  assert.deepEqual(BULK_SHELL_GRANT_USER_ROLES, [
+    "user",
+    "vip",
+    "backoffice_admin",
+    "super_admin"
+  ]);
+  assert.deepEqual(bulkShellAdjustmentUserRoles("add"), BULK_SHELL_GRANT_USER_ROLES);
+  assert.deepEqual(bulkShellAdjustmentUserRoles("deduct"), ["user"]);
+});
 
 test("后端货币类型包含贝壳和明珠", () => {
   assert.deepEqual(CURRENCY_TYPES, ["shell", "pearl"]);
@@ -170,4 +186,13 @@ test("邀请用户贝壳成长奖励按每名用户累计且保留余数", () =>
   assert.equal(calculateInviteMilestoneDelta(59, 1), 1);
   assert.equal(calculateInviteMilestoneDelta(100, 2), 3);
   assert.equal(calculateInviteMilestoneDelta(20, 1), 0);
+});
+
+test("邀请用户成长返现只统计每日任务贝壳", () => {
+  assert.equal(isQualifyingInviteShellTransactionType("daily_task_reward"), true);
+  assert.equal(isQualifyingInviteShellTransactionType("badge_unlock_reward"), false);
+  assert.equal(isQualifyingInviteShellTransactionType("badge_history_backfill"), false);
+  assert.equal(isQualifyingInviteShellTransactionType("shell_adjustment"), false);
+  assert.equal(isQualifyingInviteShellTransactionType("beginner_task_reward"), false);
+  assert.equal(isQualifyingInviteShellTransactionType("gift_overflow"), false);
 });

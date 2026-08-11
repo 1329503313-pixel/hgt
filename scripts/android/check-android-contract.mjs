@@ -13,9 +13,11 @@ async function sha256(path) {
   return createHash("sha256").update(await readFile(pathOf(path))).digest("hex");
 }
 
-const [manifest, config, mainActivity, plugin, policy, paths, userApp, webApp, androidApp, version, packageJson, brandManifest] = await Promise.all([
+const [manifest, config, launchTheme, launchSplash, mainActivity, plugin, policy, paths, userApp, webApp, androidApp, version, packageJson, brandManifest] = await Promise.all([
   read("apps/app-android/android/app/src/main/AndroidManifest.xml"),
   read("apps/app-android/capacitor.config.ts"),
+  read("apps/app-android/android/app/src/main/res/values/styles.xml"),
+  read("apps/app-android/android/app/src/main/res/layout/launch_splash.xml"),
   read("apps/app-android/android/app/src/main/java/com/caqis/hgt/MainActivity.java"),
   read("apps/app-android/android/app/src/main/java/com/caqis/hgt/AndroidUpdatePlugin.java"),
   read("apps/app-android/android/app/src/main/java/com/caqis/hgt/AndroidUpdatePolicy.java"),
@@ -42,6 +44,10 @@ expect(!paths.includes("<external-path"), "Broad external-path FileProvider acce
 expect(config.includes('appId: "com.caqis.hgt"'), "Capacitor appId changed.");
 expect(!config.includes("server: { url:"), "Release shell must never load a remote web entry URL.");
 expect(config.includes("cleartext: localProfile"), "Cleartext traffic must be local-profile-only.");
+expect(config.includes('androidScaleType: "CENTER_CROP"'), "Android splash image must preserve its aspect ratio with CENTER_CROP.");
+expect(config.includes('layoutName: "launch_splash"'), "Android splash must use the aspect-ratio-safe launch layout.");
+expect(launchTheme.includes('<item name="android:background">@color/brand_splash_background</item>'), "Launch window background must not stretch the splash bitmap.");
+expect(launchSplash.includes('android:scaleType="centerCrop"'), "Launch splash layout must preserve the bitmap aspect ratio.");
 expect(mainActivity.includes("registerPlugin(AndroidUpdatePlugin.class)"), "Android update plugin is not registered.");
 expect(plugin.includes("AndroidUpdatePolicy.requireAllowedApkUrl"), "Update plugin must validate APK URLs.");
 expect(policy.includes('ALLOWED_HOST = "zgkc-storage.kjcxchina.com"'), "Official OSS host allowlist changed.");

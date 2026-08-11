@@ -24,6 +24,17 @@ function reportBadgeProgress(userIds: string | string[]) {
 
 export const SHELL_DAILY_LIMIT = 60;
 
+export const BULK_SHELL_GRANT_USER_ROLES = [
+  "user",
+  "vip",
+  "backoffice_admin",
+  "super_admin"
+] as const;
+
+export function bulkShellAdjustmentUserRoles(operation: "add" | "deduct"): readonly string[] {
+  return operation === "add" ? BULK_SHELL_GRANT_USER_ROLES : ["user"];
+}
+
 export type ShellTaskType =
   | "daily_login"
   | "publish_soup"
@@ -509,7 +520,7 @@ export async function shellTaskCenter(userId: string, now = new Date()) {
     {
       type: "invite_shell_milestone",
       name: "邀请用户成长奖励",
-      description: "每名受邀用户累计获得 20 贝壳，次日结算",
+      description: "每名受邀用户通过每日任务累计获得 20 贝壳，次日结算",
       reward: 1,
       progress: inviteStats.shellCompletedCount,
       target: 1,
@@ -643,9 +654,11 @@ export async function bulkAdjustShellBalances(userIds: string[], operatorId: str
   try {
     await connection.beginTransaction();
     const placeholders = userIds.map(() => "?").join(",");
+    const userRoles = bulkShellAdjustmentUserRoles(operation);
+    const rolePlaceholders = userRoles.map(() => "?").join(",");
     const [rows] = await connection.query<mysql.RowDataPacket[]>(
-      `SELECT id, shell_balance FROM users WHERE role = 'user' AND id IN (${placeholders}) FOR UPDATE`,
-      userIds
+      `SELECT id, shell_balance FROM users WHERE role IN (${rolePlaceholders}) AND id IN (${placeholders}) FOR UPDATE`,
+      [...userRoles, ...userIds]
     );
     const eligible = rows.filter((row) => operation === "add" || Number(row.shell_balance ?? 0) >= amount);
     if (eligible.length > 0) {

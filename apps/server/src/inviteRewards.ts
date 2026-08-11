@@ -12,7 +12,7 @@ const SETTLEMENT_BATCH_SIZE = 200;
 const SETTLEMENT_DELAY_MS = 5 * 60_000;
 const SETTLEMENT_LOCK = "hgt:invite-shell-daily-settlement";
 const EMAIL_SYNC_LOCK = "hgt:invite-email-reward-sync";
-const EXCLUDED_TRANSACTION_TYPES = ["invite_email_reward", "invite_shell_milestone_reward"] as const;
+export const INVITE_QUALIFYING_SHELL_TRANSACTION_TYPE = "daily_task_reward" as const;
 
 type QueryConnection = mysql.PoolConnection;
 
@@ -25,6 +25,10 @@ export function setInviteRewardProgressListener(listener: (userId: string) => vo
 export function calculateInviteMilestoneDelta(totalEarned: number, alreadyRewarded: number) {
   const target = Math.floor(Math.max(0, totalEarned) / INVITE_SHELL_MILESTONE);
   return Math.max(0, target - Math.max(0, alreadyRewarded));
+}
+
+export function isQualifyingInviteShellTransactionType(transactionType: string) {
+  return transactionType === INVITE_QUALIFYING_SHELL_TRANSACTION_TYPE;
 }
 
 export async function awardInviteEmailBindingWithConnection(connection: QueryConnection, inviteeUserId: string) {
@@ -168,23 +172,22 @@ export async function runDailyInviteShellSettlement(now = new Date()) {
           `SELECT binding.invitee_user_id, binding.inviter_user_id,
             progress.qualifying_shell_earned, progress.shell_milestones_rewarded,
             progress.shell_experience_reward, progress.settled_through,
-            COALESCE(SUM(shell_tx.amount), 0) AS newly_earned
+            COALESCE(SUM(shell_tx.amount), 0) AS qualifying_earned
            FROM user_invite_bindings binding
            INNER JOIN user_invite_reward_progress progress
              ON progress.invitee_user_id = binding.invitee_user_id
            LEFT JOIN shell_transactions shell_tx
              ON shell_tx.user_id = binding.invitee_user_id
             AND shell_tx.amount > 0
-            AND shell_tx.created_at > progress.settled_through
             AND shell_tx.created_at <= ?
-            AND shell_tx.transaction_type NOT IN (?, ?)
+            AND shell_tx.transaction_type = ?
            WHERE binding.invitee_user_id > ?
            GROUP BY binding.invitee_user_id, binding.inviter_user_id,
              progress.qualifying_shell_earned, progress.shell_milestones_rewarded,
              progress.shell_experience_reward, progress.settled_through
            ORDER BY binding.invitee_user_id ASC
            LIMIT ?`,
-          [cutoff, ...EXCLUDED_TRANSACTION_TYPES, cursor, SETTLEMENT_BATCH_SIZE]
+          [cutoff, INVITE_QUALIFYING_SHELL_TRANSACTION_TYPE, cursor, SETTLEMENT_BATCH_SIZE]
         );
         if (!rows.length) {
           await connection.commit();
@@ -194,7 +197,7 @@ export async function runDailyInviteShellSettlement(now = new Date()) {
         for (const row of rows) {
           const inviteeUserId = String(row.invitee_user_id);
           const inviterId = String(row.inviter_user_id);
-          const totalEarned = Number(row.qualifying_shell_earned ?? 0) + Number(row.newly_earned ?? 0);
+          const totalEarned = Number(row.qualifying_earned ?? 0);
           const alreadyRewarded = Number(row.shell_milestones_rewarded ?? 0);
           const milestoneDelta = calculateInviteMilestoneDelta(totalEarned, alreadyRewarded);
           let experienceReward = 0;

@@ -416,7 +416,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       />
 
       {isSuperAdmin && bulkShellOpen && <Modal full onClose={closeBulkShell}>
-        <div className="flex items-start justify-between gap-3 border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">批量发放/扣除贝壳</h2><p className="mt-1 text-sm text-muted">多个条件需同时满足，仅面向普通用户</p></div><button className="btn btn-secondary shrink-0 px-3" disabled={bulkShellBusy} onClick={closeBulkShell}><X size={17} />关闭</button></div>
+        <div className="flex items-start justify-between gap-3 border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">批量发放/扣除贝壳</h2><p className="mt-1 text-sm text-muted">多个条件需同时满足，{bulkShellOperation === "add" ? "发放面向所有用户类型" : "扣除仅面向普通用户"}</p></div><button className="btn btn-secondary shrink-0 px-3" disabled={bulkShellBusy} onClick={closeBulkShell}><X size={17} />关闭</button></div>
         <div className="space-y-5 py-5">
           <div className="grid gap-3 sm:grid-cols-2">
             <div><span className="text-sm font-bold text-ink">操作类型</span><div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={`btn ${bulkShellOperation === "add" ? "btn-primary" : "btn-secondary"}`} disabled={bulkShellBusy} onClick={() => { setBulkShellOperation("add"); setBulkShellPreview(null); }}>发放贝壳</button><button type="button" className={`btn ${bulkShellOperation === "deduct" ? "btn-danger" : "btn-secondary"}`} disabled={bulkShellBusy} onClick={() => { setBulkShellOperation("deduct"); setBulkShellPreview(null); }}>扣除贝壳</button></div></div>

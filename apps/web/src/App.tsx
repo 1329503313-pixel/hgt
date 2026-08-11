@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom";
 import { SeoManager } from "./components/SeoManager";
 import { SiteFooter } from "./components/SiteFooter";
 import { GlobalToast } from "./components/GlobalToast";
+import { PwaInstallPrompt } from "./components/PwaInstallPrompt";
 import UserApp from "./UserApp";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
@@ -13,6 +14,7 @@ function WebUserApp() {
       <SeoManager />
       <UserApp />
       <SiteFooter />
+      <PwaInstallPrompt />
     </>
   );
 }

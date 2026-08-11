@@ -8,6 +8,7 @@ import "./styles.css";
 import { setupPerformanceMonitoring } from "./performance";
 import { disablePageZoom } from "./disablePageZoom";
 import { ImageFallbackBoundary } from "./components/ImageFallbackBoundary";
+import { registerPwaServiceWorker } from "./pwa/registerServiceWorker";
 
 if (/MicroMessenger/i.test(window.navigator.userAgent)) {
   document.documentElement.classList.add("wechat-webview");
@@ -15,6 +16,7 @@ if (/MicroMessenger/i.test(window.navigator.userAgent)) {
 
 setupPerformanceMonitoring();
 disablePageZoom();
+registerPwaServiceWorker();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -1,0 +1,39 @@
+{
+  "id": "/",
+  "name": "汤汤解谜乐园",
+  "short_name": "汤汤解谜",
+  "description": "海龟汤创作、评价、推理和玩家交流社区",
+  "lang": "zh-CN",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#dcefd8",
+  "theme_color": "#2563eb",
+  "categories": ["games", "social"],
+  "icons": [
+    {
+      "src": "/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

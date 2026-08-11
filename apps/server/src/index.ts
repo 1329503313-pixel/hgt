@@ -75,6 +75,7 @@ import {
 import {
   adjustShellBalance,
   awardBeginnerTask,
+  bulkShellAdjustmentUserRoles,
   bulkAdjustShellBalances,
   awardShellTask,
   beijingTaskDate,
@@ -1736,9 +1737,10 @@ async function activityConditionCount(userId: string, condition: ActivityBadgeCo
   return Number(row?.count ?? 0);
 }
 
-async function usersMatchingActivityConditions(conditions: ActivityBadgeCondition[]) {
+async function usersMatchingActivityConditions(conditions: ActivityBadgeCondition[], operation: "add" | "deduct") {
   if (conditions.length === 0) return [] as string[];
-  const params: Array<string | number> = [];
+  const userRoles = bulkShellAdjustmentUserRoles(operation);
+  const params: Array<string | number> = [...userRoles];
   const clauses = conditions.map((condition, index) => {
     const source = ACTIVITY_CONDITION_SOURCES[condition.kind];
     const alias = `condition_source_${index}`;
@@ -1749,8 +1751,9 @@ async function usersMatchingActivityConditions(conditions: ActivityBadgeConditio
       longTerm ? "" : ` AND ${source.dateExpression(alias)} BETWEEN ? AND ?`
     }) >= ?`;
   });
+  const rolePlaceholders = userRoles.map(() => "?").join(",");
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id FROM users u WHERE u.role = 'user' AND ${clauses.join(" AND ")} ORDER BY u.created_at ASC, u.id ASC`,
+    `SELECT u.id FROM users u WHERE u.role IN (${rolePlaceholders}) AND ${clauses.join(" AND ")} ORDER BY u.created_at ASC, u.id ASC`,
     params
   );
   return rows.map((row) => String(row.id));
@@ -6975,7 +6978,7 @@ app.post("/api/admin/users/bulk-shell-adjustments/preview", async (req, res) => 
   if (!(await requireAdmin(req, res))) return;
   const parsed = bulkShellAdjustmentSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "批量贝壳条件无效");
-  const userIds = await usersMatchingActivityConditions(parsed.data.conditions);
+  const userIds = await usersMatchingActivityConditions(parsed.data.conditions, parsed.data.operation);
   let eligibleCount = userIds.length;
   if (parsed.data.operation === "deduct" && userIds.length > 0) {
     const placeholders = userIds.map(() => "?").join(",");
@@ -6993,7 +6996,7 @@ app.post("/api/admin/users/bulk-shell-adjustments", async (req, res) => {
   if (!admin) return;
   const parsed = bulkShellAdjustmentSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "批量贝壳条件无效");
-  const userIds = await usersMatchingActivityConditions(parsed.data.conditions);
+  const userIds = await usersMatchingActivityConditions(parsed.data.conditions, parsed.data.operation);
   const result = await bulkAdjustShellBalances(userIds, admin.id, parsed.data.operation, parsed.data.amount);
   for (const userId of result.adjustedUserIds) emitUnreadChanged(userId, "shell_adjustment");
   res.json({ matchedCount: result.matchedCount, adjustedCount: result.adjustedCount, skippedCount: result.skippedCount });

@@ -17,6 +17,8 @@
 
 
     <style name="AppTheme.NoActionBarLaunch" parent="AppTheme.NoActionBar">
-        <item name="android:background">@drawable/splash</item>
+        <!-- Keep the pre-Activity launch window neutral. The actual splash image is
+             rendered by launch_splash with centerCrop so its aspect ratio is preserved. -->
+        <item name="android:background">@color/brand_splash_background</item>
     </style>
 </resources>
