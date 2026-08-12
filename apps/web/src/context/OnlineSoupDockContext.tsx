@@ -12,6 +12,7 @@ import { GiftMessageBundle, GiftMessageCard } from "../components/GiftMessageCar
 import { isOnlineSoupAlreadyExited } from "../shared/onlineSoupExit";
 import { useApp } from "./AppContext";
 import { giftTimelineEntries } from "../shared/giftTimeline";
+import { onlineSoupAnswerPrefix } from "../shared/onlineSoupAnswerLabel";
 
 type DockSession = {
   snapshot: OnlineSoupSnapshot;
@@ -310,7 +311,7 @@ function MiniMessage({ message, currentUserId, currentAiProgress, onRecall, onLo
       <MessageActionMenu actions={canRecall ? [{ label: "撤回", tone: "danger", availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => onRecall(message) }] : []}>
         <div className="online-soup-mini-bubble"><p>{message.type === "sticker" ? "[表情包]" : message.content}</p></div>
       </MessageActionMenu>
-      {question && <small>{message.answer ? `AI 主持回答：${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}${message.aiStatus === "scoring" ? " · 正在核对本次发现" : message.aiStatus === "failed" ? " · 进度核对失败，请到完整房间重新核对" : ""}` : ["answering", "scoring"].includes(message.aiStatus) ? "AI 正在判断" : "等待主持人回复"}</small>}
+      {question && <small>{message.answer ? `${onlineSoupAnswerPrefix(message.aiStatus)}${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}${message.aiStatus === "scoring" ? " · 正在核对本次发现" : message.aiStatus === "failed" ? " · 进度核对失败，请到完整房间重新核对" : ""}` : ["answering", "scoring"].includes(message.aiStatus) ? "AI 正在判断" : "等待主持人回复"}</small>}
       {question && Boolean(message.aiProgressDelta) && (currentAiProgress ?? message.aiProgressAfter) != null && <small>— 进度+{message.aiProgressDelta}，当前进度：{currentAiProgress ?? message.aiProgressAfter}% —</small>}
       {question && message.aiStatus === "completed" && message.aiFeedback && <small>{message.aiFeedback}</small>}
       <time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>

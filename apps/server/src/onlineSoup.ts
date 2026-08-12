@@ -2621,7 +2621,12 @@ router.get("/admin/rooms/:roomId", async (req, res) => {
   if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
   const snapshot = await roomSnapshot(req.params.roomId, user);
   if (!snapshot) return fail(res, 404, "房间不存在");
-  res.json(snapshot);
+  res.json({
+    ...snapshot,
+    // Room snapshots are chronological for the player chat timeline. The admin
+    // detail panel is a recent-activity view, so keep the newest message first.
+    messages: [...(snapshot.messages ?? [])].reverse()
+  });
 });
 
 export default router;

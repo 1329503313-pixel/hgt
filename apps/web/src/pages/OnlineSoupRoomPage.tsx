@@ -19,6 +19,7 @@ import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
 import { isOnlineSoupAlreadyExited } from "../shared/onlineSoupExit";
 import { giftTimelineEntries } from "../shared/giftTimeline";
+import { onlineSoupAnswerPrefix } from "../shared/onlineSoupAnswerLabel";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -1493,7 +1494,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
                 ))}
               </div>
             ) : message.answer ? (
-              <div className={`flex flex-wrap items-center gap-2 ${mine ? "justify-end" : ""}`}><span className="inline-flex items-center rounded-full border border-primary bg-primary px-3 py-1.5 text-xs font-bold text-white"><Check size={12} className="mr-1" />AI 主持回答：{answerLabels[message.answer]}</span>{message.aiStatus === "scoring" && <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-600" role="status"><LoaderCircle className="animate-spin" size={13} />正在核对本次发现</span>}{message.aiStatus === "failed" && <><span className="text-xs font-bold text-red-500">进度核对失败：{message.aiError ?? "请稍后重试"}</span>{(mine || canRetryAi) && <button type="button" className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-600 transition hover:bg-red-50 disabled:opacity-50" disabled={retryingAi} onClick={() => onRetryAi(message)}>{retryingAi ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}{retryingAi ? "重试中" : "重新核对"}</button>}</>}</div>
+              <div className={`flex flex-wrap items-center gap-2 ${mine ? "justify-end" : ""}`}><span className="inline-flex items-center rounded-full border border-primary bg-primary px-3 py-1.5 text-xs font-bold text-white"><Check size={12} className="mr-1" />{onlineSoupAnswerPrefix(message.aiStatus)}{answerLabels[message.answer]}</span>{message.aiStatus === "scoring" && <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-600" role="status"><LoaderCircle className="animate-spin" size={13} />正在核对本次发现</span>}{message.aiStatus === "failed" && <><span className="text-xs font-bold text-red-500">进度核对失败：{message.aiError ?? "请稍后重试"}</span>{(mine || canRetryAi) && <button type="button" className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-600 transition hover:bg-red-50 disabled:opacity-50" disabled={retryingAi} onClick={() => onRetryAi(message)}>{retryingAi ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}{retryingAi ? "重试中" : "重新核对"}</button>}</>}</div>
             ) : ["pending", "answering", "scoring"].includes(message.aiStatus) ? (
               <p className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-600" role="status"><LoaderCircle className="animate-spin" size={14} />{message.aiStatus === "scoring" ? "AI 正在完整审阅" : "AI 正在判断"}</p>
             ) : message.aiStatus === "failed" ? (
