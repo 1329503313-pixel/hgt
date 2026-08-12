@@ -71,6 +71,7 @@ import AppBackButton from '@/components/base/AppBackButton.uvue'
 import { soupThumbnailUrl } from '@/config/runtime.uts'
 import { GameMessage } from '@/domain/dto/game.uts'
 import { SoupSummary } from '@/domain/dto/soup.uts'
+import { createOnlineSoupRoom, selectOnlineSoup } from '@/services/online-soup.uts'
 import { askGame, loadGameSoups, requestGameHint, restartGame, startGame } from '@/services/game.uts'
 import { loadSoupDetail } from '@/services/soups.uts'
 import { restoreSession, sessionState } from '@/stores/session.uts'
@@ -135,19 +136,16 @@ function loadLobby() {
 }
 function openGame(soup: SoupSummary) {
   if (data.turnLoading) return
-  data.activeSoup = soup
-  data.activeSurface = ''
   data.turnLoading = true
   data.errorMessage = ''
-  loadSoupDetail(soup.id, (response) => {
-    data.activeSurface = response.soup.surface
-  }, (_) => {})
-  startGame(soup.id, (response) => {
-    data.messages = response.messages
-    data.progress = response.progress
-    data.completed = response.completed
-    data.turnLoading = false
-    scrollBottom()
+  createOnlineSoupRoom(soup.title + ' AI 玩汤', 'public', '', 'ai', (room) => {
+    selectOnlineSoup(room.roomId, soup.id, (_) => {
+      data.turnLoading = false
+      uni.navigateTo({ url: '/pages/online-soup-room/online-soup-room?id=' + encodeURIComponent(room.roomId) })
+    }, (error) => {
+      data.turnLoading = false
+      data.errorMessage = error.message
+    })
   }, (error) => {
     data.turnLoading = false
     data.errorMessage = error.message

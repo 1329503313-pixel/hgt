@@ -23,14 +23,20 @@
           <text class="soup-title">{{ data.snapshot!.room.soup==null?'尚未选择海龟汤':data.snapshot!.room.soup!.title }}</text>
           <text v-if="data.snapshot!.room.soup!=null" class="surface">{{ data.snapshot!.room.soup!.surface }}</text>
           <text v-else class="surface muted">主持人选择海龟汤后，汤面将在这里展示。</text>
+          <view v-if="data.snapshot!.room.hostMode=='ai'&&data.snapshot!.room.currentRoundId!=null" class="ai-progress-card">
+            <view class="ai-progress-head"><text class="ai-progress-label">AI 推理进度</text><text class="ai-progress-value">{{ (data.snapshot!.room.aiProgress??0).toString()+'%' }}</text></view>
+            <view class="ai-progress-track"><view class="ai-progress-fill" :style="'width:'+Math.max(0,Math.min(100,data.snapshot!.room.aiProgress??0)).toString()+'%'" /></view>
+            <button v-if="data.snapshot!.me.role=='player'&&data.snapshot!.room.status=='playing'" class="ai-hint-button" :disabled="data.busy||(data.snapshot!.room.aiProgress??0)<20" @click="requestAiHint">{{ data.busyAction=='ai-hint'?'AI 正在生成提示':(data.snapshot!.room.aiProgress??0)<20?'进度达到 20% 后可提示':'获取 AI 提示' }}</button>
+          </view>
           <view v-if="data.snapshot!.me.isHost&&data.snapshot!.room.status!='playing'" class="host-actions">
             <button class="host-secondary" @click="openSelector">{{ data.snapshot!.room.soup==null?'选择海龟汤':'更换海龟汤' }}</button>
             <button class="host-primary" :disabled="data.snapshot!.room.soup==null||data.busy" @click="confirmStart">开始推理</button>
           </view>
+          <button v-if="data.snapshot!.me.isHost&&data.snapshot!.room.status!='playing'&&(data.snapshot!.room.hostMode=='ai'||data.snapshot!.room.soup?.enableAiGame==true)" class="host-mode" :disabled="data.busy" @click="toggleHostMode">{{ data.snapshot!.room.hostMode=='ai'?'真人主持':'AI主持' }}</button>
         </view>
         <view v-if="data.snapshot!.me.isHost&&data.snapshot!.room.soup!=null" class="host-control">
           <text class="host-control-title">主持人控制台</text>
-          <view class="host-control-row">
+          <view v-if="data.snapshot!.room.hostMode!='ai'" class="host-control-row">
             <view class="control-card clue-card" :class="data.snapshot!.room.status!='playing'||data.busy?'control-disabled':''" hover-class="control-pressed" @click="openClue">
               <text class="control-eyebrow">线索</text>
               <text class="control-name">发布主持人线索</text>
@@ -43,7 +49,7 @@
             </view>
           </view>
           <view class="host-control-row">
-            <view class="control-card bottom-card" :class="data.snapshot!.room.status!='playing'||data.busy?'control-disabled':''" hover-class="control-pressed" @click="openBottom">
+            <view v-if="data.snapshot!.room.hostMode!='ai'" class="control-card bottom-card" :class="data.snapshot!.room.status!='playing'||data.busy?'control-disabled':''" hover-class="control-pressed" @click="openBottom">
               <text class="control-eyebrow">汤底</text>
               <text class="control-name">{{ publishedBottomCount.toString()+'/'+totalBottomCount.toString()+' 已发布' }}</text>
               <text class="control-copy">公布答案与补充汤底</text>
@@ -110,10 +116,12 @@
                 <text class="bubble-content">{{ message.content }}</text>
               </view>
               <view v-if="message.type=='question'" class="answer-row">
-                <view v-if="data.snapshot!.me.isHost" class="answer-buttons">
+                <view v-if="data.snapshot!.me.isHost&&data.snapshot!.room.hostMode!='ai'" class="answer-buttons">
                   <button v-for="option in answerOptions" :key="option.value" :class="['answer-btn', message.answer==option.value?'answer-btn-active':'']" :disabled="data.busy" @click="answerQuestion(message,option.value)">{{ option.label }}</button>
                 </view>
-                <view v-else-if="message.answer!=null" class="answer-text"><text>主持回答：{{ answerLabel(message.answer!) }}</text></view>
+                <view v-else-if="message.answer!=null" class="answer-text"><text>{{ message.aiStatus=='completed'?'AI 主持回答：':'主持回答：' }}{{ answerLabel(message.answer!) }}</text></view>
+                <view v-else-if="message.aiStatus=='pending'" class="answer-pending"><text>AI 思考中…</text></view>
+                <view v-else-if="message.aiStatus=='failed'" class="answer-failed"><text>AI 回复失败：{{ message.aiError??'请稍后重试' }}</text></view>
                 <view v-else class="answer-pending"><text>等待主持人回复</text></view>
               </view>
               <text class="bubble-time">{{ timeText(message.createdAt) }}</text>
@@ -183,7 +191,7 @@ import LevelBadge from '@/components/business/LevelBadge.uvue'
 import {absoluteApiUrl} from '@/config/runtime.uts'
 import {ApiError} from '@/services/api-client.uts'
 import {OnlineSoupMember,OnlineSoupMessage,OnlineSoupOkResponse,OnlineSoupSelectedSoup,OnlineSoupSnapshot} from '@/domain/dto/online-soup.uts'
-import {answerOnlineSoupQuestion,endOnlineSoupRound,loadOnlineSoupRoom,publishOnlineSoupBottom,publishOnlineSoupClue,publishOnlineSoupSurface,sendOnlineSoupMessage,startOnlineSoupRound} from '@/services/online-soup.uts'
+import {answerOnlineSoupQuestion,changeOnlineSoupHostMode,endOnlineSoupRound,loadOnlineSoupRoom,publishOnlineSoupBottom,publishOnlineSoupClue,publishOnlineSoupSurface,requestOnlineSoupAiHint,sendOnlineSoupMessage,startOnlineSoupRound} from '@/services/online-soup.uts'
 import {sessionState} from '@/stores/session.uts'
 type ModalType='clue'|'surface'|'bottom'|'end'|''
 type AnswerOption={value:string,label:string}
@@ -195,7 +203,7 @@ const answerOptions:AnswerOption[]=[{value:'yes',label:'是'},{value:'no',label:
 const visibleMessages=computed<OnlineSoupMessage[]>(()=>data.snapshot==null?[] as OnlineSoupMessage[]:data.snapshot!.messages.slice(-40))
 const canSpeak=computed<boolean>(()=>data.snapshot!=null&&data.snapshot!.me.role!='spectator')
 const canQuestion=computed<boolean>(()=>data.snapshot!=null&&data.snapshot!.me.role=='player'&&data.snapshot!.room.status=='playing')
-const composerPlaceholder=computed<string>(()=>data.snapshot!=null&&data.snapshot!.me.isHost?'主持人发言…':data.mode=='question'?'输入正式问题…':'参与讨论…')
+const composerPlaceholder=computed<string>(()=>data.snapshot!=null&&data.snapshot!.me.isHost&&data.snapshot!.room.hostMode!='ai'?'主持人发言…':data.mode=='question'?'输入正式问题…':'参与讨论…')
 const hostSoup=computed<OnlineSoupSelectedSoup|null>(()=>data.snapshot==null||data.snapshot!.room.soup==null?null:data.snapshot!.room.soup!)
 function buildUnpublishedSurfaces():SurfaceEntry[]{const soup=hostSoup.value;if(soup==null||soup.supplementalSurfaces==null)return[];const published=soup.publishedSurfaceIndices??[];const result:SurfaceEntry[]=[];(soup.supplementalSurfaces??[]).forEach((content,index)=>{if(!published.includes(index))result.push({index,content})});return result}
 function buildBottomEntries():BottomEntry[]{const soup=hostSoup.value;if(soup==null||soup.bottom==null)return[];const published=soup.publishedBottomIndices??[];const list:SurfaceEntry[]=[{index:0,content:soup.bottom}];(soup.supplementalBottoms??[]).forEach((content,offset)=>{list.push({index:offset+1,content})});const result:BottomEntry[]=[];list.forEach((entry)=>{result.push({index:entry.index,content:entry.content,published:published.includes(entry.index)})});return result}
@@ -218,13 +226,15 @@ function openSoup(id:string){uni.navigateTo({url:'/pages/soup-detail/soup-detail
 function openSelector(){uni.navigateTo({url:'/pages/online-soup-select/online-soup-select?roomId='+encodeURIComponent(data.id)})}
 function reload(){if(data.id.length==0||data.loading)return;data.loading=true;data.errorMessage='';loadOnlineSoupRoom(data.id,(response)=>{data.snapshot=response;data.loading=false},(error)=>{data.loading=false;data.errorMessage=error.message})}
 function confirmStart(){if(data.snapshot==null||data.snapshot!.room.soup==null||data.busy)return;uni.showModal({title:'开始推理',content:'确认使用《'+data.snapshot!.room.soup!.title+'》开始本轮推理？',cancelText:'取消',confirmText:'开始',success:(result)=>{if(!result.confirm)return;data.busy=true;startOnlineSoupRound(data.id,(_)=>{data.busy=false;reload()},(error)=>{data.busy=false;uni.showToast({title:error.message,icon:'none'})})}})}
+function toggleHostMode(){if(data.snapshot==null||data.busy)return;const next=data.snapshot!.room.hostMode=='ai'?'human':'ai';data.busy=true;changeOnlineSoupHostMode(data.id,next,(response)=>{data.busy=false;if(response.soupCleared==true)uni.showToast({title:next=='ai'?'原海龟汤不支持 AI 玩汤，已取消选择':'尚未获得原海龟汤汤底，已取消选择',icon:'none'});reload()},(error)=>{data.busy=false;uni.showToast({title:error.message,icon:'none'})})}
 function sendMessage(){if(data.snapshot==null||data.busy)return;const content=data.draft.trim();if(content.length==0)return;if(data.mode=='question'&&!canQuestion.value){uni.showToast({title:'当前无法发送正式提问',icon:'none'});data.mode='discussion';return}data.busy=true;sendOnlineSoupMessage(data.id,data.mode,content,(_)=>{data.draft='';data.busy=false;reload()},(error)=>{data.busy=false;uni.showToast({title:error.message,icon:'none'})})}
+function requestAiHint(){if(data.snapshot==null||data.busy||(data.snapshot!.room.aiProgress??0)<20)return;data.busy=true;data.busyAction='ai-hint';requestOnlineSoupAiHint(data.id,(_)=>{data.busy=false;data.busyAction='';uni.showToast({title:'AI 提示已发布到线索中',icon:'none'});reload()},(error)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
 function closeModal(){data.modal='';data.clueDraft=''}
-function canUseHostControls():boolean{return data.snapshot!=null&&data.snapshot!.room.status=='playing'&&!data.busy}
+function canUseHostControls():boolean{return data.snapshot!=null&&data.snapshot!.room.status=='playing'&&data.snapshot!.room.hostMode!='ai'&&!data.busy}
 function openClue(){if(!canUseHostControls())return;data.clueDraft='';data.modal='clue'}
 function openSurface(){if(!canUseHostControls())return;if(unpublishedSurfaces.value.length==0){uni.showToast({title:'已全部发布',icon:'none'});return}data.modal='surface'}
 function openBottom(){if(!canUseHostControls())return;if(totalBottomCount.value==0){uni.showToast({title:'当前没有汤底可发布',icon:'none'});return}data.modal='bottom'}
-function confirmEnd(){if(!canUseHostControls())return;data.modal='end'}
+function confirmEnd(){if(data.snapshot==null||data.snapshot!.room.status!='playing'||data.busy)return;data.modal='end'}
 function submitClue(){const content=data.clueDraft.trim();if(content.length==0){uni.showToast({title:'请填写线索内容',icon:'none'});return}data.busy=true;data.busyAction='clue';publishOnlineSoupClue(data.id,content,(_)=>{data.busy=false;data.busyAction='';closeModal();reload()},(error)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
 function submitSurface(index:number){data.busy=true;data.busyAction='surface';publishOnlineSoupSurface(data.id,index,(_)=>{data.busy=false;data.busyAction='';closeModal();reload()},(error)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
 function submitBottom(index:number):void{data.busy=true;data.busyAction='bottom';publishOnlineSoupBottom(data.id,index,(response:OnlineSoupOkResponse)=>{data.busy=false;data.busyAction='';closeModal();reload();if(response.ended==true){uni.showToast({title:'全部汤底已发布，本轮结束',icon:'none'})}},(error:ApiError)=>{data.busy=false;data.busyAction='';uni.showToast({title:error.message,icon:'none'})})}
@@ -256,4 +266,7 @@ watch(canQuestion,(allowed:boolean)=>{if(!allowed&&data.mode=='question')data.mo
 .retry,.secondary,.primary,.danger,.cancel{height:42px;padding-top:0;padding-bottom:0;border-radius:11px;font-size:11px;font-weight:800;line-height:42px}
 .mode{height:32px;font-size:11px}
 .send{width:62px;height:42px;padding:0;font-size:11px;line-height:42px}
+.host-mode{height:38px;margin-top:10px;border-width:1px;border-color:#A78BFA;border-radius:10px;background-color:#312E81;color:#EDE9FE;font-size:10px;font-weight:800}
+.ai-progress-card{margin-top:14px;padding:12px;border-width:1px;border-color:rgba(147,197,253,.35);border-radius:12px;background-color:rgba(37,99,235,.18)}.ai-progress-head{flex-direction:row;align-items:center;justify-content:space-between}.ai-progress-label,.ai-progress-value{color:#DBEAFE;font-size:10px;font-weight:900}.ai-progress-track{height:7px;margin-top:9px;overflow:hidden;border-radius:4px;background-color:rgba(147,197,253,.25)}.ai-progress-fill{height:7px;border-radius:4px;background-color:#60A5FA}.ai-hint-button{height:40px;margin-top:10px;padding:0;border-width:1px;border-color:#93C5FD;border-radius:10px;background-color:#FFF;color:#1D4ED8;font-size:10px;font-weight:900;line-height:40px}
+.answer-failed{margin-top:3px;color:#B42318;font-size:9px;font-weight:800}
 </style>

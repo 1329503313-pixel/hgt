@@ -17,6 +17,7 @@
         <text v-if="data.soup!.summary.length > 0" class="hero-summary">{{ data.soup!.summary }}</text>
         <view class="chips">
           <text class="chip">{{ data.soup!.type }}</text>
+          <text v-if="data.soup!.enableAiGame" class="chip ai-chip">AI玩汤</text>
           <text class="chip warm">{{ data.soup!.difficulty }}</text>
           <text class="chip public-chip">{{ data.soup!.isBottomPublic ? '汤底公开' : '汤底需授权' }}</text>
           <text class="score">{{ totalScore }}</text>
@@ -131,9 +132,9 @@ import LevelBadge from '@/components/business/LevelBadge.uvue'
 import RadarChart from '@/components/business/RadarChart.uvue'
 import { absoluteApiUrl, soupThumbnailUrl } from '@/config/runtime.uts'
 import { EvaluationSummary, SoupDetail } from '@/domain/dto/soup.uts'
+import { createOnlineSoupRoom, selectOnlineSoup } from '@/services/online-soup.uts'
 import { loadSoupDetail, toggleSoupFavorite, toggleSoupLike } from '@/services/soups.uts'
 import { sessionState } from '@/stores/session.uts'
-import { requestGameLaunch } from '@/stores/game-launch.uts'
 
 type DetailData = {
   id: string,
@@ -248,8 +249,19 @@ function openEditor() {
 function openGame() {
   if (data.soup == null || !data.soup!.enableAiGame) return
   if (!requireInteractionLogin()) return
-  requestGameLaunch(data.id)
-  uni.switchTab({ url: '/pages/game/game' })
+  uni.showLoading({ title: '正在创建 AI 房间' })
+  createOnlineSoupRoom(data.soup!.title + ' AI 玩汤', 'public', '', 'ai', (room) => {
+    selectOnlineSoup(room.roomId, data.id, (_) => {
+      uni.hideLoading()
+      uni.navigateTo({ url: '/pages/online-soup-room/online-soup-room?id=' + encodeURIComponent(room.roomId) })
+    }, (error) => {
+      uni.hideLoading()
+      uni.showToast({ title: error.message, icon: 'none' })
+    })
+  }, (error) => {
+    uni.hideLoading()
+    uni.showToast({ title: error.message, icon: 'none' })
+  })
 }
 
 onLoad((options) => {
@@ -277,6 +289,7 @@ onShow(() => { if (data.soup != null) fetchDetail() })
 .chips, .creator-row, .evaluation-head { flex-direction: row; align-items: center; }
 .chips { margin-top: 12px; }
 .chip { margin-right: 7px; padding: 4px 8px; border-radius: 10px; background-color: #EAF2FF; color: #2563EB; font-size: 11px; }
+.chip.ai-chip { background-color: #F5F3FF; color: #7C3AED; }
 .chip.warm { background-color: #FFF7ED; color: #C2410C; }
 .public-chip { background-color: #ECFDF5; color: #059669; }
 .score { margin-left: auto; color: #2563EB; font-size: 16px; font-weight: 700; }

@@ -16,6 +16,7 @@
       </view>
       <view v-if="props.compact == true" class="tags">
         <text class="tag type-tag">{{ soup.type }}</text>
+        <text v-if="soup.enableAiGame" class="tag ai-tag">AI玩汤</text>
         <text v-if="soup.isOriginal" class="tag original-tag">原创汤</text>
         <text class="tag public-tag">{{ soup.isBottomPublic ? '汤底公开' : '汤面公开' }}</text>
       </view>
@@ -138,6 +139,7 @@ function openCreator() {
 .tags { flex-direction: row; flex-wrap: wrap; margin-top: 8px; }
 .tag { margin-right: 4px; margin-bottom: 4px; padding: 3px 6px; border-radius: 5px; font-size: 9px; font-weight: 700; }
 .type-tag { background-color: #EFF6FF; color: #2563EB; }
+.ai-tag { background-color: #F5F3FF; color: #7C3AED; }
 .original-tag { background-color: #ECFDF5; color: #059669; }
 .public-tag { background-color: #F5F3FF; color: #7C3AED; }
 .meta-row {
