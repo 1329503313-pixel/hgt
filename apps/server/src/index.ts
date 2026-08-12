@@ -1111,7 +1111,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     creatorEquippedBadge: equippedBadge(row.creator_badge_key, row.creator_badge_icon_url),
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
-    enableAiGame: bool(row.enable_ai_game),
+    enableAiGame: bool(row.enable_ai_game) && canEnableAiGameRole(row.creator_role),
     viewCount: views,
     likeCount: likes,
     favoriteCount: favorites,
@@ -4676,10 +4676,10 @@ app.get("/api/soups", async (req, res) => {
   const summarySelect = (lightImages = false) => `
     SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail,
       ${lightImages ? "s.has_cover_thumbnail" : "s.cover_thumbnail IS NOT NULL AS has_cover_thumbnail"}, s.is_original,
-      s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.view_count, s.created_at,
+      s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.enable_ai_game, s.view_count, s.created_at,
       s.review_status, s.review_reason, s.review_version,
       NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.role AS creator_role, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       ${user ? `EXISTS(SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,` : "FALSE AS is_liked,"}
@@ -4703,7 +4703,7 @@ app.get("/api/soups", async (req, res) => {
          SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary,
            CASE WHEN s.cover_thumbnail LIKE 'data:image/%' THEN NULL ELSE s.cover_thumbnail END AS cover_thumbnail,
            s.cover_thumbnail IS NOT NULL AS has_cover_thumbnail,
-           s.is_original, s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public,
+           s.is_original, s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.enable_ai_game,
            s.view_count, s.created_at, s.review_status, s.review_reason, s.review_version
          FROM soups s
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}

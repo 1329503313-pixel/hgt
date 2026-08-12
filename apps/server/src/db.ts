@@ -661,6 +661,7 @@ export async function initDatabase() {
       room_code CHAR(6) NOT NULL UNIQUE,
       name VARCHAR(50) NOT NULL,
       host_id VARCHAR(64) NOT NULL,
+      host_mode ENUM('human','ai') NOT NULL DEFAULT 'human',
       room_type ENUM('public','password') NOT NULL DEFAULT 'public',
       password_hash VARCHAR(128) NULL,
       status ENUM('preparing','playing','ended','closed') NOT NULL DEFAULT 'preparing',
@@ -683,8 +684,16 @@ export async function initDatabase() {
       room_id VARCHAR(64) NOT NULL,
       soup_id VARCHAR(64) NOT NULL,
       round_number INT UNSIGNED NOT NULL,
+      host_mode ENUM('human','ai') NOT NULL DEFAULT 'human',
       status ENUM('preparing','playing','ended') NOT NULL DEFAULT 'preparing',
       question_count INT UNSIGNED NOT NULL DEFAULT 0,
+      ai_messages JSON NULL,
+      ai_revealed_keys JSON NULL,
+      ai_revealed_atoms JSON NULL,
+      ai_revealed_supplements JSON NULL,
+      ai_progress INT UNSIGNED NOT NULL DEFAULT 0,
+      ai_version INT UNSIGNED NOT NULL DEFAULT 0,
+      ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle',
       published_surface_indices JSON NULL,
       published_bottom_indices JSON NULL,
       started_at DATETIME NULL,
@@ -757,6 +766,8 @@ export async function initDatabase() {
       content_index INT UNSIGNED NULL,
       question_number INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      ai_status ENUM('none','pending','completed','failed','cancelled') NOT NULL DEFAULT 'none',
+      ai_error VARCHAR(255) NULL,
       target_message_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
       reply_to_message_id VARCHAR(64) NULL,
@@ -784,6 +795,25 @@ export async function initDatabase() {
       CONSTRAINT fk_online_activity_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn(
+    "online_soup_rooms",
+    "host_mode",
+    "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER host_id"
+  );
+  await ensureColumn(
+    "online_soup_rounds",
+    "host_mode",
+    "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER round_number"
+  );
+  await ensureColumn("online_soup_rounds", "ai_messages", "ai_messages JSON NULL AFTER question_count");
+  await ensureColumn("online_soup_rounds", "ai_revealed_keys", "ai_revealed_keys JSON NULL AFTER ai_messages");
+  await ensureColumn("online_soup_rounds", "ai_revealed_atoms", "ai_revealed_atoms JSON NULL AFTER ai_revealed_keys");
+  await ensureColumn("online_soup_rounds", "ai_revealed_supplements", "ai_revealed_supplements JSON NULL AFTER ai_revealed_atoms");
+  await ensureColumn("online_soup_rounds", "ai_progress", "ai_progress INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_revealed_supplements");
+  await ensureColumn("online_soup_rounds", "ai_version", "ai_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_progress");
+  await ensureColumn("online_soup_rounds", "ai_status", "ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle' AFTER ai_version");
+  await ensureColumn("online_soup_messages", "ai_status", "ai_status ENUM('none','pending','completed','failed','cancelled') NOT NULL DEFAULT 'none' AFTER answer");
+  await ensureColumn("online_soup_messages", "ai_error", "ai_error VARCHAR(255) NULL AFTER ai_status");
   await ensureColumn(
     "online_soup_rounds",
     "published_surface_indices",

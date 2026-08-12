@@ -4,13 +4,32 @@ import { FastForward, Shell, Sparkles, X } from "lucide-react";
 import type { AssetDrawOrder } from "../shared/digitalAssets";
 import { AssetCardVisual } from "./AssetCardVisual";
 
+const AUTO_SKIP_DRAW_ANIMATION_KEY = "hgt:auto-skip-draw-animation";
+
+function getAutoSkipDrawAnimation() {
+  try {
+    return window.localStorage.getItem(AUTO_SKIP_DRAW_ANIMATION_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveAutoSkipDrawAnimation(enabled: boolean) {
+  try {
+    window.localStorage.setItem(AUTO_SKIP_DRAW_ANIMATION_KEY, String(enabled));
+  } catch {
+    // The preference still applies to the current page when storage is unavailable.
+  }
+}
+
 function NewCardBurst({ delayed = false }: { delayed?: boolean }) {
   return <img src="/new-card-burst.png?v=20260721-4" alt="新卡" className={`asset-card-new-burst ${delayed ? "asset-card-new-burst-delayed" : ""}`} draggable={false} />;
 }
 
 export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { order: AssetDrawOrder; balance: number; onClose: () => void; onDrawAgain: (mode: "single" | "ten") => void }) {
-  const [revealed, setRevealed] = useState(0);
-  const [started, setStarted] = useState(false);
+  const [autoSkipAnimation, setAutoSkipAnimation] = useState(getAutoSkipDrawAnimation);
+  const [revealed, setRevealed] = useState(() => getAutoSkipDrawAnimation() ? order.results.length + 1 : 0);
+  const [started, setStarted] = useState(getAutoSkipDrawAnimation);
   const complete = revealed > order.results.length;
   const current = order.results[Math.min(order.results.length - 1, Math.max(0, revealed - 1))];
   const waitingForLegend = started && !complete && current?.rarity === "legend";
@@ -33,6 +52,16 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
     setRevealed((value) => Math.min(order.results.length + 1, value + 1));
   }
 
+  function toggleAutoSkipAnimation() {
+    const nextEnabled = !autoSkipAnimation;
+    setAutoSkipAnimation(nextEnabled);
+    saveAutoSkipDrawAnimation(nextEnabled);
+    if (nextEnabled) {
+      setStarted(true);
+      setRevealed(order.results.length + 1);
+    }
+  }
+
   return createPortal(
     <div className="fixed inset-0 z-[140] text-white" role="dialog" aria-modal="true" aria-label="抽卡结果">
       <div className={`absolute inset-0 overflow-y-auto bg-slate-950/95 px-4 pb-28 pt-[max(20px,env(safe-area-inset-top))] backdrop-blur-md ${waitingForLegend ? "cursor-pointer" : ""}`} onClick={continueAfterLegend}>
@@ -45,7 +74,15 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
               <span className="hidden text-xs font-bold text-cyan-100/75 min-[380px]:inline">贝壳余额</span>
               <span>{balance.toLocaleString()}</span>
             </div>
-            {!complete && <button className="inline-flex min-h-10 items-center gap-2 rounded-full border border-white/25 px-4 text-sm font-bold" onClick={(event) => { event.stopPropagation(); setStarted(true); setRevealed(order.results.length + 1); }}><FastForward size={17} />跳过动画</button>}
+            <button
+              type="button"
+              className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-bold transition ${autoSkipAnimation ? "border-cyan-200/70 bg-cyan-200 text-slate-950 shadow-[0_0_18px_rgba(165,243,252,.3)]" : "border-white/25 bg-transparent text-white hover:bg-white/10"}`}
+              aria-pressed={autoSkipAnimation}
+              aria-label={autoSkipAnimation ? "取消自动跳过抽卡动画" : "自动跳过所有抽卡动画"}
+              onClick={(event) => { event.stopPropagation(); toggleAutoSkipAnimation(); }}
+            >
+              <FastForward size={17} />自动跳过
+            </button>
             <button className="grid h-10 w-10 place-items-center rounded-full border border-white/25" onClick={(event) => { event.stopPropagation(); onClose(); }} aria-label="关闭抽卡结果"><X size={20} /></button>
           </div>
         </div>

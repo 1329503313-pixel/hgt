@@ -1,13 +1,12 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
-import { Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, Trash2, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
+import { Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api, SoupResponse, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
 import { ContentCard } from "../components/ContentCard";
 import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
-import { GameModal } from "../components/GameModal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
 import { defaultCoverUrl } from "../shared/staticAssets";
@@ -48,11 +47,10 @@ export default function DetailPage() {
 
   const [soup, setSoup] = useState<SoupDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showGame, setShowGame] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showRoomCreate, setShowRoomCreate] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
-  const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "" });
+  const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "", hostMode: "human" as "human" | "ai" });
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   const [likePending, setLikePending] = useState(false);
   const [favoritePending, setFavoritePending] = useState(false);
@@ -98,13 +96,6 @@ export default function DetailPage() {
     if (!soup || !user) return null;
     return soup.evaluations.find((e) => e.reviewerId === user.id) ?? null;
   }, [soup, user]);
-
-  async function handleDelete() {
-    if (!soup || !confirm("确定删除这条海龟汤吗？相关评价也会删除。")) return;
-    await api(`/api/soups/${soup.id}`, { method: "DELETE" });
-    if (user && soup.creatorId === user.id) void refreshMineContentCache(user.id, "published").catch(() => {});
-    navigate(parentRoute(location.pathname), { replace: true });
-  }
 
   async function handleFavorite() {
     if (!soup || favoritePending) return;
@@ -271,7 +262,6 @@ export default function DetailPage() {
 
   if (loading) return <main className="mx-auto max-w-6xl px-4 py-20"><DetailSkeleton /></main>;
   if (!soup) return <div className="card p-8 text-center text-sm text-muted">海龟汤不存在</div>;
-  if (showGame) return <GameModal soup={soup} onBack={() => { setShowGame(false); triggerRefresh(); }} />;
 
   const hasRadarData = [
     soup.radar.writing, soup.radar.logic, soup.radar.share,
@@ -347,6 +337,7 @@ export default function DetailPage() {
             {soup.summary && <p className="detail-summary mt-3 line-clamp-3 text-sm leading-7 text-muted lg:text-base">{soup.summary}</p>}
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
+              {soup.enableAiGame && <span className="pill bg-violet-50 text-violet-600">AI玩汤</span>}
               <span className="pill bg-orange-50 text-orange-600">{soup.difficulty}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
             </div>
@@ -498,8 +489,7 @@ export default function DetailPage() {
           <p className="text-xs font-black tracking-[0.14em] text-primary">ACTIONS</p>
           <h2 className="mt-1 font-black text-ink">开始推理</h2>
           <div className="mt-4 grid gap-2">
-            {user && soup.enableAiGame && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => setShowGame(true)}>AI 玩汤</button>}
-            {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }}><DoorOpen size={17} />开房间</button>}
+            {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "", hostMode: "human" }); setShowRoomCreate(true); }}><DoorOpen size={17} />开房间</button>}
             <button className="btn btn-secondary w-full" onClick={() => setShowShare(true)}><Share2 size={17} />分享作品</button>
           </div>
         </div>
@@ -507,31 +497,21 @@ export default function DetailPage() {
           <div className="card p-4">
             <p className="text-xs font-black tracking-[0.14em] text-primary">MANAGE</p>
             <h2 className="mt-1 font-black text-ink">作品管理</h2>
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-4 grid gap-2">
               <button className="btn btn-secondary whitespace-nowrap px-2" onClick={() => openSoupEditor(soup)}>编辑</button>
-              <button className="btn btn-danger whitespace-nowrap px-2" onClick={handleDelete}>删除</button>
             </div>
           </div>
         )}
       </aside>
 
-      <div className="detail-side-actions site-footer-safe-bottom-24 fixed right-4 z-30 flex flex-col items-stretch gap-2 lg:hidden">
-        {user && soup.enableAiGame && isReviewApproved && <button className="flex h-14 w-28 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => setShowGame(true)} aria-label="AI 玩汤">AI玩汤</button>}
-        {soup.canViewFull && isReviewApproved && <button className="flex h-14 w-28 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "" }); setShowRoomCreate(true); }} aria-label="开房间"><DoorOpen size={17} />开房间</button>}
-        <button className="flex h-14 w-28 items-center justify-center gap-1.5 rounded-full bg-gradient-to-br from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-lg transition-transform hover:shadow-xl active:scale-95" onClick={() => setShowShare(true)} aria-label="分享"><Share2 size={17} />分享</button>
+      <div className="card mt-4 grid grid-cols-2 gap-3 p-3 lg:hidden" aria-label="作品操作">
+        {soup.canViewFull && isReviewApproved && <button className="btn btn-primary" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "", hostMode: "human" }); setShowRoomCreate(true); }}><DoorOpen size={18} />开房间</button>}
+        <button className="btn btn-secondary" onClick={() => setShowShare(true)}><Share2 size={18} />分享</button>
+        {soup.canEdit && <button className="btn btn-secondary col-span-2" onClick={() => openSoupEditor(soup)}><Pencil size={18} />编辑</button>}
       </div>
 
       {showShare && <SoupShareModal soup={soup} onClose={() => setShowShare(false)} />}
-      {showRoomCreate && <Modal onClose={() => !creatingRoom && setShowRoomCreate(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">开房间</h2><p className="mt-1 text-sm text-muted">创建后将自动选择《{soup.title}》</p></div><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间名称</span><input className="field" maxLength={50} value={roomForm.name} onChange={(e) => setRoomForm((old) => ({ ...old, name: e.target.value }))} /></label><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间类型</span><select className="field" value={roomForm.type} onChange={(e) => setRoomForm((old) => ({ ...old, type: e.target.value as "public" | "password", password: "" }))}><option value="public">公开房间</option><option value="password">密码房间</option></select></label>{roomForm.type === "password" && <label className="block space-y-2"><span className="text-xs font-bold text-muted">4 位密码</span><input className="field text-center tracking-[.3em]" inputMode="numeric" maxLength={4} value={roomForm.password} onChange={(e) => setRoomForm((old) => ({ ...old, password: e.target.value.replace(/\D/g, "") }))} /></label>}<button className="btn btn-primary w-full" disabled={creatingRoom} onClick={() => void createRoomForSoup()}>{creatingRoom ? "创建中…" : "创建并进入"}</button></div></Modal>}
-
-      {/* Edit/Delete floating bar */}
-      {soup.canEdit && (
-        <div className="site-footer-safe-bottom-4 fixed inset-x-4 z-30 mx-auto grid max-w-md grid-cols-2 gap-3 rounded-2xl border border-line bg-white/95 p-3 shadow-soft backdrop-blur lg:hidden">
-          <button className="btn btn-secondary" onClick={() => openSoupEditor(soup)}><Pencil size={18} /> 编辑</button>
-          <button className="btn btn-danger" onClick={handleDelete}><Trash2 size={18} /> 删除</button>
-        </div>
-      )}
-      {soup.canEdit && <div className="h-20 lg:hidden" />}
+      {showRoomCreate && <Modal onClose={() => !creatingRoom && setShowRoomCreate(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">开房间</h2><p className="mt-1 text-sm text-muted">创建后将自动选择《{soup.title}》</p></div>{soup.enableAiGame && <label className="block space-y-2"><span className="text-xs font-bold text-muted">主持方式</span><select className="field" value={roomForm.hostMode} onChange={(e) => setRoomForm((old) => ({ ...old, hostMode: e.target.value as "human" | "ai" }))}><option value="human">真人主持</option><option value="ai">AI 主持</option></select></label>}<label className="block space-y-2"><span className="text-xs font-bold text-muted">房间名称</span><input className="field" maxLength={50} value={roomForm.name} onChange={(e) => setRoomForm((old) => ({ ...old, name: e.target.value }))} /></label><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间类型</span><select className="field" value={roomForm.type} onChange={(e) => setRoomForm((old) => ({ ...old, type: e.target.value as "public" | "password", password: "" }))}><option value="public">公开房间</option><option value="password">密码房间</option></select></label>{roomForm.type === "password" && <label className="block space-y-2"><span className="text-xs font-bold text-muted">4 位密码</span><input className="field text-center tracking-[.3em]" inputMode="numeric" maxLength={4} value={roomForm.password} onChange={(e) => setRoomForm((old) => ({ ...old, password: e.target.value.replace(/\D/g, "") }))} /></label>}<button className="btn btn-primary w-full" disabled={creatingRoom} onClick={() => void createRoomForSoup()}>{creatingRoom ? "创建中…" : "创建并进入"}</button></div></Modal>}
     </section>
   );
 }

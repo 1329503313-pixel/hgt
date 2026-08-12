@@ -16,6 +16,8 @@ import {
   normalizeFactMatches,
   normalizeHintDimension,
   normalizeOrdinaryGameAnswer,
+  canRequestRoomAiHint,
+  trimRoomAiHistory,
   renderSafeHint,
   toPublicGameMessages,
   type AiGameSessionStatus,
@@ -358,7 +360,11 @@ function sendAiServiceError(res: any, error: unknown) {
   return res.status(502).json({ error: "AI 服务返回异常，请稍后重试" });
 }
 
-async function callDeepSeek(systemPrompt: string, messages: { role: string; content: string }[]): Promise<{
+async function callDeepSeek(
+  systemPrompt: string,
+  messages: { role: string; content: string }[],
+  options: { maxTokens?: number; temperature?: number } = {}
+): Promise<{
   answer: string;
   answerReasonCode: string;
   turnType: "question" | "retell";
@@ -384,8 +390,8 @@ async function callDeepSeek(systemPrompt: string, messages: { role: string; cont
           { role: "system", content: systemPrompt },
           ...messages.slice(-60).map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content }))
         ],
-        max_tokens: 4000,
-        temperature: 0.7
+        max_tokens: options.maxTokens ?? 4000,
+        temperature: options.temperature ?? 0.7
       }),
       signal: AbortSignal.timeout(30_000)
     });
@@ -554,6 +560,80 @@ function canPlaySoup(soup: GameSoupData, user: GameUser) {
 }
 
 type TurnResult = Awaited<ReturnType<typeof callDeepSeek>>;
+
+export type RoomAiGameState = {
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  revealedKeys: number[];
+  revealedAtomicFactIds: number[];
+  revealedSupplements: { surfaces: number[]; bottoms: number[] };
+  progress: number;
+};
+
+export async function runRoomAiTurn(soupId: string, question: string, state: RoomAiGameState) {
+  let soupData = await getSoupGameData(soupId);
+  if (!soupData) throw new AiServiceError(503, "海龟汤不存在");
+  soupData = await ensureSoupKeyFacts(soupId, soupData);
+  if (!soupData.enableAiGame || soupData.reviewStatus !== "approved" || soupData.keyFacts.length === 0) {
+    throw new AiServiceError(503, "该海龟汤暂不可由 AI 主持");
+  }
+  const systemPrompt = buildSystemPrompt(
+    soupData.surface, soupData.bottom, soupData.manual,
+    soupData.supplementalSurfaces, soupData.supplementalBottoms,
+    state.revealedSupplements.surfaces, state.revealedSupplements.bottoms,
+    soupData.keyFacts, soupData.atomicFacts, soupData.aiPrompt, state.revealedAtomicFactIds
+  );
+  // 房间对话会长期累积；只保留最近 12 轮，避免每次请求随着历史无限变慢。
+  const history = [...trimRoomAiHistory(state.messages), { role: "user" as const, content: question }];
+  const result = await callDeepSeek(systemPrompt, history, { maxTokens: 2000, temperature: 0.3 });
+  const turn = normalizeTurnResult(
+    result, soupData, state.revealedAtomicFactIds,
+    state.revealedSupplements, state.progress
+  );
+  return {
+    answer: turn.answer,
+    completed: turn.completed,
+    progress: turn.progress,
+    revealedKeys: turn.revealedKeys,
+    revealedAtomicFactIds: turn.revealedAtomicFactIds,
+    revealedSupplements: turn.revealedSupplements,
+    newlyRevealedSurfaceIndices: turn.revealedSupplements.surfaces.filter((index) => !state.revealedSupplements.surfaces.includes(index)),
+    newlyRevealedBottomIndices: turn.revealedSupplements.bottoms.filter((index) => !state.revealedSupplements.bottoms.includes(index)),
+    messages: [...history, { role: "assistant" as const, content: serializeAssistantTurn(turn) }]
+  };
+}
+
+export { canRequestRoomAiHint };
+
+export async function runRoomAiHint(soupId: string, state: RoomAiGameState) {
+  let soupData = await getSoupGameData(soupId);
+  if (!soupData) throw new AiServiceError(503, "海龟汤不存在");
+  soupData = await ensureSoupKeyFacts(soupId, soupData);
+  if (!soupData.enableAiGame || soupData.reviewStatus !== "approved" || soupData.keyFacts.length === 0) {
+    throw new AiServiceError(503, "该海龟汤暂不可由 AI 主持");
+  }
+  if (!canRequestRoomAiHint(state.progress)) {
+    throw new Error("推理进度达到 20% 后才能获取提示");
+  }
+
+  const history = trimRoomAiHistory(state.messages);
+  const dimension = await selectSafeHintDimension(soupData, state.revealedAtomicFactIds, history);
+  const turn = createHintTurn(
+    renderSafeHint(dimension), soupData, state.revealedAtomicFactIds,
+    state.revealedSupplements, state.progress
+  );
+  return {
+    answer: turn.answer,
+    progress: turn.progress,
+    revealedKeys: turn.revealedKeys,
+    revealedAtomicFactIds: turn.revealedAtomicFactIds,
+    revealedSupplements: turn.revealedSupplements,
+    messages: [
+      ...history,
+      { role: "user" as const, content: "请求提示" },
+      { role: "assistant" as const, content: serializeAssistantTurn(turn) }
+    ]
+  };
+}
 
 function resolveSavedAtomicFactIds(session: GameSessionRow, soupData: GameSoupData): number[] {
   const validAtomIds = new Set(soupData.atomicFacts.map((fact) => fact.id));
@@ -760,7 +840,21 @@ function sessionMatchesSoup(session: GameSessionRow, soupData: GameSoupData) {
 }
 
 // ---------- 大模型预拆分关键事实点 ----------
+const keyFactAnalysisJobs = new Map<string, Promise<void>>();
+
 export async function splitKeyFactsForSoup(soupId: string): Promise<void> {
+  const existing = keyFactAnalysisJobs.get(soupId);
+  if (existing) return existing;
+  const job = performSplitKeyFactsForSoup(soupId);
+  keyFactAnalysisJobs.set(soupId, job);
+  try {
+    await job;
+  } finally {
+    if (keyFactAnalysisJobs.get(soupId) === job) keyFactAnalysisJobs.delete(soupId);
+  }
+}
+
+async function performSplitKeyFactsForSoup(soupId: string): Promise<void> {
   try {
     let soupData = await getSoupGameData(soupId);
     if (!soupData) return;

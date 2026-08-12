@@ -195,3 +195,12 @@ export function renderSafeHint(dimension: HintDimension): string {
   };
   return messages[dimension];
 }
+
+export function trimRoomAiHistory<T>(messages: T[], maxMessages = 24): T[] {
+  if (!Array.isArray(messages) || maxMessages <= 0) return [];
+  return messages.slice(-maxMessages);
+}
+
+export function canRequestRoomAiHint(progress: number): boolean {
+  return Number.isFinite(progress) && progress >= 20 && progress < 100;
+}

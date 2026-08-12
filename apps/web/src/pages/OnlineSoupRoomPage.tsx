@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightLeft, ArrowUp, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LogOut, Menu, MessageCircle, Minimize2, Play, Plus, RefreshCw, Reply, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowRightLeft, ArrowUp, Bot, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, Minimize2, Play, Plus, RefreshCw, Reply, Send, Smile, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
@@ -29,16 +29,18 @@ type ProgressQuestion = {
   number: number;
   content: string;
   answer: OnlineSoupAnswer | null;
+  aiStatus: OnlineSoupMessage["aiStatus"];
+  aiError: string | null;
   sender: { id: string | null; nickname: string; avatar: string | null };
   createdAt: string;
 };
 type RoundClue = Pick<OnlineSoupMessage, "id" | "sequence" | "content" | "createdAt">;
-type ProgressPage = { roundId: string | null; questions: ProgressQuestion[]; hasMore: boolean; nextCursor: string | null };
+type ProgressPage = { roundId: string | null; aiProgress: number | null; questions: ProgressQuestion[]; hasMore: boolean; nextCursor: string | null };
 type CluePage = { roundId: string | null; clues: RoundClue[]; hasMore: boolean; nextCursor: string | null };
 type MentionRequest = { userId: string; nickname: string; key: number };
 const structuralRoomEvents = new Set([
   "member_joined", "member_left", "member_kicked", "host_transferred", "soup_selected", "round_started",
-  "supplemental_surface_published", "bottom_published", "round_ended"
+  "supplemental_surface_published", "bottom_published", "round_ended", "host_mode_changed"
 ]);
 
 function mergeMessages(older: OnlineSoupMessage[], newer: OnlineSoupMessage[]) {
@@ -101,6 +103,7 @@ export default function OnlineSoupRoomPage() {
   const { showToast, user, loadingUser, openAuth } = useApp();
   const { minimizeRoom, showFullRoom } = useOnlineSoupDock();
   const [snapshot, setSnapshot] = useState<OnlineSoupSnapshot | null>(null);
+  const [requestingAiHint, setRequestingAiHint] = useState(false);
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(false);
   const [mode, setMode] = useState<"discussion" | "question">("discussion");
@@ -126,6 +129,7 @@ export default function OnlineSoupRoomPage() {
   const [surfacePublishOpen, setSurfacePublishOpen] = useState(false);
   const [clue, setClue] = useState("");
   const [publishOpen, setPublishOpen] = useState(false);
+  const [changingHostMode, setChangingHostMode] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
   const [stickersLoading, setStickersLoading] = useState(true);
   const [stickersOpen, setStickersOpen] = useState(false);
@@ -376,12 +380,14 @@ export default function OnlineSoupRoomPage() {
         let after = "";
         let hasMore = true;
         let responseRoundId: string | null = requestedRoundId;
+        let responseAiProgress: number | null = null;
         const questions: ProgressQuestion[] = [];
         while (hasMore) {
           const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
           const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
           if (leavingRoomRef.current) return;
           responseRoundId = page.roundId;
+          responseAiProgress = page.aiProgress;
           questions.push(...page.questions);
           hasMore = page.hasMore;
           if (!page.nextCursor) break;
@@ -397,6 +403,7 @@ export default function OnlineSoupRoomPage() {
           continue;
         }
         setProgressQuestions(questions);
+        setSnapshot((current) => current ? { ...current, room: { ...current.room, aiProgress: responseAiProgress } } : current);
         progressLoadedRoundId.current = requestedRoundId;
       } while (progressQueued.current && !leavingRoomRef.current);
     } catch (error) {
@@ -496,11 +503,28 @@ export default function OnlineSoupRoomPage() {
     }
     if (reason === "answer_changed" && typeof payload.messageId === "string") {
       const nextAnswer = typeof payload.answer === "string" ? payload.answer as OnlineSoupAnswer : null;
+      const nextAiStatus = typeof payload.aiStatus === "string"
+        ? payload.aiStatus as OnlineSoupMessage["aiStatus"]
+        : undefined;
+      const nextAiError = typeof payload.aiError === "string" ? payload.aiError : null;
+      const nextAiProgress = typeof payload.aiProgress === "number" ? payload.aiProgress : null;
       setSnapshot((current) => current ? {
         ...current,
-        messages: current.messages.map((message) => message.id === payload.messageId ? { ...message, answer: nextAnswer } : message)
+        room: nextAiProgress === null ? current.room : { ...current.room, aiProgress: nextAiProgress },
+        messages: current.messages.map((message) => message.id === payload.messageId ? {
+          ...message,
+          answer: nextAnswer,
+          aiStatus: nextAiStatus ?? message.aiStatus,
+          aiError: nextAiStatus ? nextAiError : message.aiError
+        } : message)
       } : current);
-      setProgressQuestions((current) => current.map((question) => question.id === payload.messageId ? { ...question, answer: nextAnswer } : question));
+      setProgressQuestions((current) => current.map((question) => question.id === payload.messageId ? {
+        ...question,
+        answer: nextAnswer,
+        aiStatus: nextAiStatus ?? question.aiStatus,
+        aiError: nextAiStatus ? nextAiError : question.aiError
+      } : question));
+      if (payload.activityType === "progress") void loadProgress(true);
       if (payload.notificationCreated) void loadNewMessages();
       return;
     }
@@ -574,6 +598,8 @@ export default function OnlineSoupRoomPage() {
   }, [content]);
 
   const isHost = snapshot?.me.isHost ?? false;
+  const aiHosted = snapshot?.room.hostMode === "ai";
+  const canHumanHost = isHost && !aiHosted;
   const canDiscuss = snapshot && snapshot.me.role !== "spectator" && snapshot.room.status !== "closed";
   const canQuestion = snapshot?.me.role === "player" && snapshot.room.status === "playing";
   const activeMention = activeMentionAt(content, cursorPosition);
@@ -947,6 +973,32 @@ export default function OnlineSoupRoomPage() {
     } catch { /* toast above */ }
   }
 
+  async function changeHostMode(hostMode: "human" | "ai") {
+    if (changingHostMode || !snapshot || snapshot.room.hostMode === hostMode) return;
+    setChangingHostMode(true);
+    try {
+      const result = await api<{ soupCleared?: boolean }>(`/api/online-soup/rooms/${roomId}/host-mode`, { method: "PATCH", body: { hostMode } });
+      showToast(result.soupCleared
+        ? (hostMode === "ai" ? "已切换为 AI 主持，原海龟汤不支持 AI 玩汤，已取消选择" : "已切换为真人主持，尚未获得原海龟汤汤底，已取消选择")
+        : hostMode === "ai" ? "已切换为 AI 主持" : "已切换为真人主持");
+      await load(true);
+    } catch (error) { showToast(error instanceof Error ? error.message : "主持方式更改失败"); }
+    finally { setChangingHostMode(false); }
+  }
+
+  async function requestAiHint() {
+    if (requestingAiHint || !snapshot || snapshot.room.status !== "playing") return;
+    setRequestingAiHint(true);
+    try {
+      const result = await api<{ hint: string; aiProgress: number }>(`/api/online-soup/rooms/${roomId}/ai-hint`, { method: "POST" });
+      setSnapshot((current) => current ? { ...current, room: { ...current.room, aiProgress: result.aiProgress } } : current);
+      showToast("AI 提示已发布到线索中");
+      await Promise.all([loadClues(true), loadNewMessages()]);
+    } catch { /* api 已统一提示 */ } finally {
+      setRequestingAiHint(false);
+    }
+  }
+
   const groupedMembers = useMemo(() => ({
     host: snapshot?.members.find((member) => member.role === "host"),
     players: snapshot?.members.filter((member) => member.role === "player") ?? [],
@@ -1028,7 +1080,7 @@ export default function OnlineSoupRoomPage() {
         <div className="mx-auto flex max-w-[1388px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 lg:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <UnifiedBackButton compactOnMobile onClick={requestRoomExit} />
-            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="truncate text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]}</p></div>
+            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]} · {aiHosted ? <><Bot size={12} />AI 主持</> : <><Crown size={12} />真人主持</>}</p></div>
             <span className="shrink-0" title={socketConnected ? "实时连接正常" : "正在重新连接"}>{socketConnected ? <Wifi size={18} className="text-emerald-600" /> : <WifiOff size={18} className="text-red-500" />}</span>
           </div>
           <div className="flex shrink-0 items-center justify-end gap-3 lg:max-xl:w-full">
@@ -1075,6 +1127,20 @@ export default function OnlineSoupRoomPage() {
                 </div>}
                 <button className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink active:scale-95" onClick={() => setSoupExpanded((expanded) => !expanded)} aria-label={soupExpanded ? "收起汤面卡片" : "展开汤面卡片"} title={soupExpanded ? "收起" : "展开"}>{soupExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
               </div>
+              {aiHosted && snapshot.room.currentRoundId && <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50/70 p-2.5">
+                <div className="flex items-center gap-2 text-xs">
+                  <Bot size={14} className="shrink-0 text-primary" />
+                  <span className="font-black text-ink">AI 推理进度</span>
+                  <span className="ml-auto font-black tabular-nums text-primary">{snapshot.room.aiProgress ?? 0}%</span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-blue-100" role="progressbar" aria-label="AI 推理进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={snapshot.room.aiProgress ?? 0}>
+                  <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${snapshot.room.aiProgress ?? 0}%` }} />
+                </div>
+                {snapshot.me.role === "player" && snapshot.room.status === "playing" && <button type="button" className="mt-2 inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-black text-primary transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={requestingAiHint || (snapshot.room.aiProgress ?? 0) < 20} onClick={() => void requestAiHint()}>
+                  {requestingAiHint ? <LoaderCircle size={15} className="animate-spin" /> : <Lightbulb size={15} />}
+                  {requestingAiHint ? "AI 正在生成提示" : (snapshot.room.aiProgress ?? 0) < 20 ? "进度达到 20% 后可提示" : "获取 AI 提示"}
+                </button>}
+              </div>}
               {isHost && snapshot.room.soup && <div className={`mt-2 grid gap-1 rounded-lg bg-slate-100 p-1 ${hostPanelGroup === "materials" ? "grid-cols-3" : "grid-cols-2"}`} aria-label={hostPanelGroup === "materials" ? "主持人资料页签" : "主持人本轮页签"}>
                 {hostPanelGroup === "materials" ? ([
                   ["surface", "汤面"],
@@ -1139,7 +1205,7 @@ export default function OnlineSoupRoomPage() {
                   key={message.id}
                   className={`scroll-mt-24 rounded-2xl transition duration-500 ${highlightedMessageId === message.id ? "bg-violet-100/80 ring-2 ring-violet-400 ring-offset-4" : ""}`}
                 >
-                  <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
+                  <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={canHumanHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
                 </div>;
               })}
             </div>
@@ -1156,7 +1222,7 @@ export default function OnlineSoupRoomPage() {
             {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-40 border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-bold text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} /></span></span></button>)}</div></div>}
             {replyingTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-2"><Reply size={16} className="shrink-0 text-primary" /><p className="min-w-0 flex-1 truncate text-xs text-muted"><span className="font-bold text-primary">回复 {replyingTo.senderName ?? "已注销用户"}：</span>{onlineMessagePreview(replyingTo)}</p><button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-white hover:text-ink" onClick={() => setReplyingTo(null)} aria-label="取消回复"><X size={16} /></button></div>}
             <div className="flex items-end gap-1">
-              {!isHost && <div className="relative shrink-0">
+              {snapshot.me.role === "player" && <div className="relative shrink-0">
                 {showQuestionModeGuide && <div className="question-mode-guide absolute bottom-[calc(100%+14px)] left-0 z-50 w-56 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
                   如需要提问，请点击此按钮变更为提问
                   <button type="button" className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full text-slate-300 transition hover:bg-white/10 hover:text-white" onClick={() => setShowQuestionModeGuide(false)} aria-label="关闭提问指引"><X size={14} /></button>
@@ -1191,8 +1257,11 @@ export default function OnlineSoupRoomPage() {
       {isHost ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition duration-200 ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`}>
         {hostActionsOpen && <div className="absolute bottom-full right-1/2 mb-2 flex translate-x-1/2 flex-col items-center gap-2">
           {snapshot.room.status === "preparing" && !snapshot.room.soup && <FloatingAction tone="primary" label="选择海龟汤" onClick={() => { setHostActionsOpen(false); openSoupSelector(); }} />}
-          {snapshot.room.status === "preparing" && snapshot.room.soup && <><FloatingAction tone="primary" label="开始游戏" onClick={() => { setHostActionsOpen(false); void hostAction("start"); }} /><FloatingAction label="更换海龟汤" onClick={() => { setHostActionsOpen(false); openSoupSelector(); }} /></>}
-          {snapshot.room.status === "playing" && <><FloatingAction tone="amber" label="发布线索" onClick={() => { setHostActionsOpen(false); setClueOpen(true); }} />{unpublishedSurfaces.length > 0 && <FloatingAction tone="primary" label="发布补充汤面" onClick={() => { setHostActionsOpen(false); setSurfacePublishOpen(true); }} />}<FloatingAction tone="primary" label="发布汤底" onClick={() => { setHostActionsOpen(false); setPublishOpen(true); }} /><FloatingAction tone="amber" label="关闭本轮" onClick={() => { setHostActionsOpen(false); setConfirmAction("end-round"); }} /></>}
+          {snapshot.room.status !== "playing" && snapshot.room.soup && <FloatingAction tone="primary" label="开始游戏" onClick={() => { setHostActionsOpen(false); void hostAction("start"); }} />}
+          {snapshot.room.status === "preparing" && snapshot.room.soup && <FloatingAction label="更换海龟汤" onClick={() => { setHostActionsOpen(false); openSoupSelector(); }} />}
+          {snapshot.room.status === "playing" && <>{canHumanHost && <><FloatingAction tone="amber" label="发布线索" onClick={() => { setHostActionsOpen(false); setClueOpen(true); }} />{unpublishedSurfaces.length > 0 && <FloatingAction tone="primary" label="发布补充汤面" onClick={() => { setHostActionsOpen(false); setSurfacePublishOpen(true); }} />}<FloatingAction tone="primary" label="发布汤底" onClick={() => { setHostActionsOpen(false); setPublishOpen(true); }} /></>}<FloatingAction tone="amber" label="关闭本轮" onClick={() => { setHostActionsOpen(false); setConfirmAction("end-round"); }} /></>}
+          {snapshot.room.status !== "playing" && aiHosted && <FloatingAction label="真人主持" onClick={() => { setHostActionsOpen(false); void changeHostMode("human"); }} />}
+          {snapshot.room.status !== "playing" && !aiHosted && snapshot.room.soup?.enableAiGame && <FloatingAction label="AI主持" onClick={() => { setHostActionsOpen(false); void changeHostMode("ai"); }} />}
           {snapshot.room.status === "ended" && <FloatingAction tone="primary" label="更换海龟汤" onClick={() => { setHostActionsOpen(false); openSoupSelector(); }} />}
           <FloatingAction tone="danger" label="关闭房间" onClick={() => { setHostActionsOpen(false); setConfirmAction("close"); }} />
         </div>}
@@ -1343,8 +1412,14 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
               </div>
             ) : message.answer ? (
               <span className="inline-flex items-center rounded-full border border-primary bg-primary px-3 py-1.5 text-xs font-bold text-white">
-                <Check size={12} className="mr-1" />主持人回答：{answerLabels[message.answer]}
+                <Check size={12} className="mr-1" />{message.aiStatus === "completed" ? "AI 主持回答" : "主持人回答"}：{answerLabels[message.answer]}
               </span>
+            ) : message.aiStatus === "pending" ? (
+              <p className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-600" role="status"><LoaderCircle className="animate-spin" size={14} />AI 思考中</p>
+            ) : message.aiStatus === "failed" ? (
+              <p className="text-xs font-bold text-red-500">AI 回复失败：{message.aiError ?? "请稍后重试"}</p>
+            ) : message.aiStatus === "cancelled" ? (
+              <p className="text-xs font-bold text-muted">本轮已结束，AI 不再回复此提问</p>
             ) : (
               <p className="text-xs font-bold text-violet-500">等待主持人回复</p>
             )}

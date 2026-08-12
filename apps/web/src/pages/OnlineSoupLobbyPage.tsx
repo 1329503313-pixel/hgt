@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DoorOpen, LockKeyhole, MessageCircleQuestion, Plus, RefreshCw, Search, Users } from "lucide-react";
+import { Bot, Crown, DoorOpen, LockKeyhole, MessageCircleQuestion, Plus, RefreshCw, Search, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
@@ -36,7 +36,7 @@ export default function OnlineSoupLobbyPage() {
   const [pendingInvitePassword, setPendingInvitePassword] = useState("");
   const [joiningInvite, setJoiningInvite] = useState(false);
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", type: "public" as "public" | "password", password: "" });
+  const [form, setForm] = useState({ name: "", type: "public" as "public" | "password", password: "", hostMode: "human" as "human" | "ai" });
 
   const loadRooms = useCallback(async () => {
     try {
@@ -222,10 +222,10 @@ export default function OnlineSoupLobbyPage() {
           {rooms.map((room) => (
             <article key={room.id} className="online-soup-room-card card">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0"><h3 className="truncate text-base font-black text-ink">{room.name}</h3><p className="mt-1 text-xs font-semibold text-muted">房间号 {room.code} · 主持人 {room.host.nickname}</p></div>
+                <div className="min-w-0"><h3 className="truncate text-base font-black text-ink">{room.name}</h3><p className="mt-1 text-xs font-semibold text-muted">房间号 {room.code} · 房主 {room.host.nickname}</p></div>
                 <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{statusText[room.status]}</span></div>
               </div>
-              <div className="online-soup-room-current"><span>当前海龟汤</span><strong title={room.soupTitle ?? "尚未选择海龟汤"}>{room.soupTitle ?? "尚未选择海龟汤"}</strong></div>
+              <div className="online-soup-room-current"><span className="flex items-center gap-1">{room.hostMode === "ai" ? <Bot size={13} /> : <Crown size={13} />}{room.hostMode === "ai" ? "AI 主持" : "真人主持"}</span><strong title={room.soupTitle ?? "尚未选择海龟汤"}>{room.soupTitle ?? "尚未选择海龟汤"}</strong></div>
               <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.participantCount}/{room.participantCapacity} 人</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>{room.viewerRole ? "返回房间" : "加入房间"}</button></div>
             </article>
           ))}
@@ -234,8 +234,9 @@ export default function OnlineSoupLobbyPage() {
 
       {createOpen && <Modal onClose={() => setCreateOpen(false)}>
         <div className="space-y-4">
-          <div><h2 className="text-xl font-black text-ink">创建玩汤房间</h2><p className="mt-1 text-sm text-muted">你将成为本房间主持人</p></div>
+          <div><h2 className="text-xl font-black text-ink">创建玩汤房间</h2><p className="mt-1 text-sm text-muted">你将成为房主，进入房间后仍可更改主持方式</p></div>
           <label className="block text-sm font-bold text-ink">房间名称<input className="field mt-1 w-full" maxLength={50} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：周五夜猫局" /></label>
+          <fieldset><legend className="mb-2 text-sm font-bold text-ink">主持方式</legend><div className="grid grid-cols-2 gap-2"><button type="button" className={`btn ${form.hostMode === "human" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "human" })}><Crown size={16} />真人主持</button><button type="button" className={`btn ${form.hostMode === "ai" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "ai" })}><Bot size={16} />AI 主持</button></div><p className="mt-2 text-xs leading-5 text-muted">AI 主持房只能选择已开放 AI 玩汤的作品。</p></fieldset>
           <div className="grid grid-cols-2 gap-2">
             <button className={`btn ${form.type === "public" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "public", password: "" })}>公开房</button>
             <button className={`btn ${form.type === "password" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "password" })}><LockKeyhole size={16} /> 密码房</button>

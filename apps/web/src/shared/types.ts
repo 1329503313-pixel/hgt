@@ -47,6 +47,7 @@ export type SoupSummary = {
   creatorEquippedBadge: EquippedBadge | null;
   isSurfacePublic: boolean;
   isBottomPublic: boolean;
+  enableAiGame: boolean;
   viewCount: number;
   likeCount: number;
   favoriteCount: number;
@@ -415,6 +416,7 @@ export type CircleMessage = {
 export type CircleDetail = Omit<CircleSummary, "isJoined" | "latestMessage" | "unreadMention">;
 
 export type OnlineSoupRoomStatus = "preparing" | "playing" | "ended" | "closed";
+export type OnlineSoupHostMode = "human" | "ai";
 export type OnlineSoupMemberRole = "host" | "player" | "spectator" | "admin";
 export type OnlineSoupAnswer = "yes" | "no" | "both" | "unknown" | "irrelevant";
 
@@ -424,6 +426,7 @@ export type OnlineSoupLobbyRoom = {
   name: string;
   type: "public" | "password";
   status: OnlineSoupRoomStatus;
+  hostMode: OnlineSoupHostMode;
   host: { id: string; nickname: string };
   soupTitle: string | null;
   playerCount: number;
@@ -441,6 +444,7 @@ export type OnlineSoupChoice = {
   type: string;
   author: string;
   summary: string;
+  enableAiGame: boolean;
   coverImage: string | null;
   source: "mine" | "library";
 };
@@ -465,6 +469,8 @@ export type OnlineSoupMessage = {
   contentIndex: number | null;
   questionNumber: number | null;
   answer: OnlineSoupAnswer | null;
+  aiStatus: "none" | "pending" | "completed" | "failed" | "cancelled";
+  aiError: string | null;
   targetMessageId: string | null;
   mentions: Array<{ userId: string; nickname: string }>;
   replyTo: {
@@ -489,6 +495,8 @@ export type OnlineSoupSnapshot = {
     name: string;
     type: "public" | "password";
     status: OnlineSoupRoomStatus;
+    hostMode: OnlineSoupHostMode;
+    aiProgress: number | null;
     hostOnline: boolean;
     hostOfflineDeadline: string | null;
     playerCount: number;
@@ -499,6 +507,7 @@ export type OnlineSoupSnapshot = {
       id: string;
       title: string;
       type: string;
+      enableAiGame: boolean;
       surface: string;
       visibleSupplementalSurfaces: Array<{ index: number; content: string }>;
       supplementalSurfaces?: string[];

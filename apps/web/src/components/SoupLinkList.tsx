@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Eye, ChevronRight, ThumbsUp, Star, Sparkles, FileText, Flame } from "lucide-react";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
@@ -13,14 +13,41 @@ import { defaultCoverUrl, turtleAvatarUrl } from "../shared/staticAssets";
 export function SoupLinkList({
   soups,
   onOpen,
+  onLongPress,
   emptyHint,
   showHeatValue = false
 }: {
   soups: SoupSummary[];
   onOpen: (id: string) => void;
+  onLongPress?: (soup: SoupSummary) => void;
   emptyHint: string;
   showHeatValue?: boolean;
 }) {
+  const longPressTimer = useRef<number | null>(null);
+  const pointerStart = useRef({ x: 0, y: 0 });
+  const longPressTriggered = useRef(false);
+
+  function cancelLongPress() {
+    if (longPressTimer.current !== null) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+  }
+
+  function startLongPress(event: React.PointerEvent, soup: SoupSummary) {
+    if (!onLongPress || (event.pointerType === "mouse" && event.button !== 0)) return;
+    cancelLongPress();
+    longPressTriggered.current = false;
+    pointerStart.current = { x: event.clientX, y: event.clientY };
+    longPressTimer.current = window.setTimeout(() => {
+      longPressTriggered.current = true;
+      onLongPress(soup);
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, 550);
+  }
+
+  function trackLongPress(event: React.PointerEvent) {
+    if (Math.hypot(event.clientX - pointerStart.current.x, event.clientY - pointerStart.current.y) > 10) cancelLongPress();
+  }
+
   if (soups.length === 0) {
     return <div className="card p-4 text-center text-sm text-muted">{emptyHint}</div>;
   }
@@ -34,7 +61,12 @@ export function SoupLinkList({
           <button
             key={soup.id}
             className="soup-link-list-item flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-white p-3 text-left transition hover:border-blue-200 hover:bg-blue-50/30 hover:shadow-sm"
-            onClick={() => onOpen(soup.id)}
+            onPointerDown={(event) => startLongPress(event, soup)}
+            onPointerMove={trackLongPress}
+            onPointerUp={cancelLongPress}
+            onPointerCancel={cancelLongPress}
+            onContextMenu={(event) => { if (onLongPress) event.preventDefault(); }}
+            onClick={() => { if (longPressTriggered.current) { longPressTriggered.current = false; return; } onOpen(soup.id); }}
           >
             {soup.coverImage ? (
               <img className="soup-link-list-cover h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />
@@ -84,12 +116,14 @@ export function SubListPage({
   title,
   soups,
   emptyHint,
-  showHeatValue = false
+  showHeatValue = false,
+  onLongPress
 }: {
   title: string;
   soups: SoupSummary[];
   emptyHint: string;
   showHeatValue?: boolean;
+  onLongPress?: (soup: SoupSummary) => void;
 }) {
   const navigate = useNavigate();
   const { setExportReady } = useApp();
@@ -191,7 +225,7 @@ export function SubListPage({
     <section className="soup-sub-list-page space-y-3">
       <PageTopBar title={title} />
       <MineBackButton />
-      <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} emptyHint={emptyHint} showHeatValue={showHeatValue} />
+      <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} onLongPress={onLongPress} emptyHint={emptyHint} showHeatValue={showHeatValue} />
 
       {/* 导出汤名悬浮按钮 */}
       <button

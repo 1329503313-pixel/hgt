@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculateAtomicProgress,
+  canRequestRoomAiHint,
   completedProgressKeyIds,
   gameSessionStatus,
   normalizeAtomicFacts,
@@ -10,6 +11,7 @@ import {
   normalizeOrdinaryGameAnswer,
   renderSafeHint,
   toPublicGameMessages,
+  trimRoomAiHistory,
 } from "./gameLogic.js";
 
 test("AI 玩汤公开消息只返回 answer，不暴露关键事实", () => {
@@ -89,4 +91,18 @@ test("会话状态明确区分推理、待复述和完成", () => {
   assert.equal(gameSessionStatus(89, false), "active");
   assert.equal(gameSessionStatus(90, false), "awaiting_retell");
   assert.equal(gameSessionStatus(100, true), "completed");
+});
+
+test("房间 AI 只携带最近十二轮上下文", () => {
+  const history = Array.from({ length: 30 }, (_, index) => index + 1);
+  assert.deepEqual(trimRoomAiHistory(history), history.slice(6));
+  assert.deepEqual(trimRoomAiHistory(history, 4), [27, 28, 29, 30]);
+});
+
+test("房间 AI 提示仅在有效推理进度内开放", () => {
+  assert.equal(canRequestRoomAiHint(19), false);
+  assert.equal(canRequestRoomAiHint(20), true);
+  assert.equal(canRequestRoomAiHint(99), true);
+  assert.equal(canRequestRoomAiHint(100), false);
+  assert.equal(canRequestRoomAiHint(Number.NaN), false);
 });
