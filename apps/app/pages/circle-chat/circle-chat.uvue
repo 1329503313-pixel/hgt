@@ -20,7 +20,7 @@
       </view>
       <scroll-view class="message-scroll" direction="vertical" :scroll-top="data.scrollTop" :scroll-into-view="data.scrollIntoView" @scroll="handleScroll" @scrolltoupper="loadOlder" @scrolltolower="markAtBottom">
         <view v-if="data.messages.hasMore" class="older-button" hover-class="pressed" @click="loadOlder"><text>{{ data.loadingOlder ? '加载中...' : '加载更早消息' }}</text></view>
-        <view v-for="message in data.messages.messages" :id="'circle-message-' + message.id" :key="message.id" class="message-anchor" :class="data.highlightedId == message.id ? 'message-highlighted' : ''">
+        <view v-for="message in visibleMessages" :id="'circle-message-' + message.id" :key="message.id" class="message-anchor" :class="data.highlightedId == message.id ? 'message-highlighted' : ''">
           <view v-if="message.recalledAt != null" class="recalled"><text class="recalled-text">{{ recalledText(message) }}</text></view>
           <view v-else class="message-row" :class="isMine(message) ? 'mine-row' : ''">
             <view class="avatar-wrap" @click="openSenderProfile(message)">
@@ -36,6 +36,7 @@
               </view>
               <image v-if="message.type == 'sticker' && stickerUrl(message).length > 0" class="message-sticker" :src="stickerUrl(message)" mode="aspectFit" @longpress="openMessageActions(message)"></image>
               <view v-else-if="message.type == 'sticker'" class="missing-sticker"><text>表情已下架</text></view>
+              <GiftMessageBundle v-else-if="message.type == 'gift' && message.giftBundle != null && message.giftBundle!.length > 0" :gifts="message.giftBundle!" :align-mine="isMine(message)" />
               <GiftMessageCard v-else-if="message.type == 'gift' && message.giftDisplay != null" :gift-name="message.giftDisplay!.giftName" :icon-url="message.giftDisplay!.iconUrl" :quantity="message.giftDisplay!.quantity" :sender-name="message.giftDisplay!.senderName" :receiver-name="message.giftDisplay!.receiverName" :shell-reward="message.giftDisplay!.shellReward" :charm-reward="message.giftDisplay!.charmReward" />
               <view v-else class="bubble" :class="isMine(message) ? 'mine-bubble' : 'other-bubble'" @longpress="openMessageActions(message)">
                 <view v-if="message.replyTo != null" class="reply-quote" :class="isMine(message) ? 'mine-reply-quote' : ''" @click.stop="locateReply(message.replyTo!.id)">
@@ -88,7 +89,9 @@ import AppBackButton from '@/components/base/AppBackButton.uvue'
 import LevelBadge from '@/components/business/LevelBadge.uvue'
 import StickerKeyboard from '@/components/chat/StickerKeyboard.uvue'
 import GiftMessageCard from '@/components/chat/GiftMessageCard.uvue'
+import GiftMessageBundle from '@/components/chat/GiftMessageBundle.uvue'
 import { absoluteApiUrl } from '@/config/runtime.uts'
+import { collapseGiftMessages } from '@/services/chat-content.uts'
 import { CircleDetailResponse, CircleMember, CircleMention, CircleMessage, CircleMessagesResponse } from '@/domain/dto/circle.uts'
 import { CircleRealtimeHandle, connectCircleRealtime } from '@/services/circle-realtime.uts'
 import { loadCircleDetail, loadCircleMessages, loadCircleUnreadMentions, markAllCircleMentionsRead, markCircleMentionRead, markCircleRead, recallCircleMessage, sendCircleMessage, sendCircleSticker } from '@/services/circles.uts'
@@ -155,6 +158,11 @@ const data = reactive({
 } as CircleChatData)
 
 const circleAvatar = computed<string>(() => data.detail == null ? '' : absoluteApiUrl(data.detail!.circle.avatar))
+const visibleMessages = computed<CircleMessage[]>(() => {
+  const raw = JSON.parse(JSON.stringify(data.messages.messages)) as UTSJSONObject[]
+  collapseGiftMessages(raw)
+  return JSON.parse<CircleMessage[]>(JSON.stringify(raw))!
+})
 const memberCountText = computed<string>(() => data.detail == null ? '0' : (data.detail!.circle.memberCount > 99 ? '99+' : data.detail!.circle.memberCount.toString()))
 const sortedMembers = computed<CircleMember[]>(() => {
   if (data.detail == null) return [] as CircleMember[]

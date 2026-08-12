@@ -1,10 +1,13 @@
 export type GiftMessageDisplay = {
   giftSendId: string,
+  senderId: string,
+  receiverId: string,
   giftName: string,
   iconUrl: string,
   quantity: number,
   senderName: string,
   receiverName: string,
   shellReward: number,
-  charmReward: number
+  charmReward: number,
+  createdAt: string
 }

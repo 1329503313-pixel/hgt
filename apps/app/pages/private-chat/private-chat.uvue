@@ -6,7 +6,7 @@
       <view class="chat-header"><AppBackButton @click="goBack" /><view class="header-person" hover-class="pressed" @click="openOtherProfile"><view class="header-avatar"><image v-if="data.chat!.conversation.otherUser.avatar != null" class="avatar" :src="otherAvatar" mode="aspectFill"></image><view v-else class="avatar avatar-placeholder"><text>{{ data.chat!.conversation.otherUser.nickname.substring(0, 1) }}</text></view><view v-if="data.chat!.conversation.otherUser.isOnline" class="online-dot"></view></view><view class="header-copy"><view class="header-identity"><text class="header-name">{{ data.chat!.conversation.otherUser.nickname }}</text><LevelBadge :level="data.chat!.conversation.otherUser.level" /><view v-if="data.chat!.conversation.otherUser.equippedBadge != null" class="header-badge-wrap"><image class="header-badge-icon" :src="otherBadgeUrl" mode="aspectFit"></image><text class="header-badge">{{ data.chat!.conversation.otherUser.equippedBadge!.name }}</text></view></view><text class="header-status" :class="data.chat!.conversation.otherUser.isOnline ? 'online-status' : ''">{{ data.chat!.conversation.otherUser.isOnline ? '在线 · 消息实时送达' : '离线 · 上线后可查看消息' }}</text></view></view></view>
       <scroll-view class="message-scroll" direction="vertical" :scroll-top="data.scrollTop" @scroll="handleScroll" @scrolltoupper="loadOlder" @scrolltolower="markAtBottom">
         <view v-if="data.chat!.hasMore" class="older-button" hover-class="pressed" @click="loadOlder"><text>{{ data.loadingOlder ? '加载中...' : '加载更早消息' }}</text></view>
-        <view v-for="message in data.chat!.messages" :key="message.id">
+        <view v-for="message in visibleMessages" :key="message.id">
           <view v-if="message.recalledAt != null" class="recalled"><text class="recalled-text">{{ message.isMine ? '你撤回了一条消息' : data.chat!.conversation.otherUser.nickname + '撤回了一条消息' }}</text></view>
           <view v-else class="message-row" :class="message.isMine ? 'mine-row' : 'other-row'">
             <view class="message-avatar">
@@ -16,6 +16,7 @@
             <view class="message-body">
               <image v-if="message.type == 'sticker' && stickerUrl(message).length > 0" class="message-sticker" :src="stickerUrl(message)" mode="aspectFit" @longpress="openRecall(message)"></image>
               <view v-else-if="message.type == 'sticker'" class="missing-sticker"><text>表情已下架</text></view>
+              <GiftMessageBundle v-else-if="message.type == 'gift' && message.giftBundle != null && message.giftBundle!.length > 0" :gifts="message.giftBundle!" :align-mine="message.isMine" />
               <GiftMessageCard v-else-if="message.type == 'gift' && message.giftDisplay != null" :gift-name="message.giftDisplay!.giftName" :icon-url="message.giftDisplay!.iconUrl" :quantity="message.giftDisplay!.quantity" :sender-name="message.giftDisplay!.senderName" :receiver-name="message.giftDisplay!.receiverName" :shell-reward="message.giftDisplay!.shellReward" :charm-reward="message.giftDisplay!.charmReward" />
               <view v-else class="bubble" :class="message.isMine ? 'mine-bubble' : 'other-bubble'" @longpress="openRecall(message)"><text class="bubble-text" :class="message.isMine ? 'mine-bubble-text' : ''">{{ messagePreview(message) }}</text></view>
               <text class="time" :class="message.isMine ? 'mine-time' : ''">{{ timeText(message.createdAt) }}</text>
@@ -37,13 +38,21 @@ import AppBackButton from '@/components/base/AppBackButton.uvue'
 import LevelBadge from '@/components/business/LevelBadge.uvue'
 import StickerKeyboard from '@/components/chat/StickerKeyboard.uvue'
 import GiftMessageCard from '@/components/chat/GiftMessageCard.uvue'
+import GiftMessageBundle from '@/components/chat/GiftMessageBundle.uvue'
 import { absoluteApiUrl } from '@/config/runtime.uts'
+import { collapseGiftMessages } from '@/services/chat-content.uts'
 import { ChatResponse, PrivateMessage, StickerAsset, StickerSeries, loadChat, loadStickers, markConversationRead, recallPrivateMessage, sendPrivateMessage, sendPrivateSticker } from '@/services/messages.uts'
 import { restoreSession, sessionState } from '@/stores/session.uts'
 
 type ChatData = { id: string, chat: ChatResponse | null, draft: string, stickers: StickerAsset[], stickerSeries: StickerSeries[], stickersLoading: boolean, showStickers: boolean, showScrollBottom: boolean, atBottom: boolean, loading: boolean, reconciling: boolean, loadingOlder: boolean, sending: boolean, scrollTop: number, timerId: number, errorMessage: string }
 const data = reactive({ id: '', chat: null, draft: '', stickers: [], stickerSeries: [], stickersLoading: false, showStickers: false, showScrollBottom: false, atBottom: true, loading: false, reconciling: false, loadingOlder: false, sending: false, scrollTop: 999999, timerId: 0, errorMessage: '' } as ChatData)
 const myInitial = computed((): string => sessionState.user == null || sessionState.user!.nickname.length == 0 ? '我' : sessionState.user!.nickname.substring(0, 1))
+const visibleMessages = computed<PrivateMessage[]>(() => {
+  if (data.chat == null) return [] as PrivateMessage[]
+  const raw = JSON.parse(JSON.stringify(data.chat!.messages)) as UTSJSONObject[]
+  collapseGiftMessages(raw)
+  return JSON.parse<PrivateMessage[]>(JSON.stringify(raw))!
+})
 const otherAvatar = computed((): string => data.chat == null ? '' : absoluteApiUrl(data.chat!.conversation.otherUser.avatar))
 const otherBadgeUrl = computed((): string => data.chat == null || data.chat!.conversation.otherUser.equippedBadge == null ? '' : absoluteApiUrl(data.chat!.conversation.otherUser.equippedBadge!.iconUrl))
 function goBack() { uni.navigateBack() }
@@ -62,7 +71,7 @@ function handleComposerFocus() { closeStickers(); keepLatestVisible() }
 function markAtBottom() { data.atBottom = true; data.showScrollBottom = false }
 function handleScroll(event: UniScrollEvent) { if (event.detail.deltaY < -2) data.atBottom = false }
 function reload() { if (data.id.length == 0 || data.loading) return; data.loading = true; data.errorMessage = ''; loadStickerData(); loadChat(data.id, '', (response) => { data.chat = response; data.loading = false; scrollToBottom(); markConversationRead(data.id, () => {}, (error) => { data.errorMessage = error.message }) }, (error) => { data.loading = false; data.errorMessage = error.message; if (error.statusCode == 401) uni.redirectTo({ url: '/pages/auth/auth' }) }) }
-function reconcile() { if (data.id.length == 0 || data.chat == null || data.reconciling || data.sending) return; data.reconciling = true; loadChat(data.id, '', (response) => { if (data.chat != null) { const existingIds: string[] = data.chat!.messages.map((item: PrivateMessage): string => item.id); const incoming = response.messages.filter((item: PrivateMessage): boolean => !existingIds.includes(item.id)); if (incoming.length > 0) { data.chat!.messages = data.chat!.messages.concat(incoming); if (data.atBottom) scrollToBottom(); else data.showScrollBottom = true }; data.chat!.conversation = response.conversation }; data.reconciling = false }, (error) => { data.reconciling = false; data.errorMessage = error.message }) }
+function reconcile() { if (data.id.length == 0 || data.chat == null || data.reconciling || data.sending) return; data.reconciling = true; loadChat(data.id, '', (response) => { if (data.chat != null) { const existingIds: string[] = data.chat!.messages.map((item: PrivateMessage): string => item.id); response.messages.forEach((item: PrivateMessage) => { const index = data.chat!.messages.findIndex((existing: PrivateMessage): boolean => existing.id == item.id); if (index >= 0) data.chat!.messages[index] = item }); const incoming = response.messages.filter((item: PrivateMessage): boolean => !existingIds.includes(item.id)); if (incoming.length > 0) { data.chat!.messages = data.chat!.messages.concat(incoming); if (data.atBottom) scrollToBottom(); else data.showScrollBottom = true }; data.chat!.conversation = response.conversation }; data.reconciling = false }, (error) => { data.reconciling = false; data.errorMessage = error.message }) }
 function stopReconcile() { if (data.timerId != 0) { clearInterval(data.timerId); data.timerId = 0 } }
 function startReconcile() { stopReconcile(); data.timerId = setInterval(() => { reconcile() }, 5000) }
 function loadOlder() { if (data.chat == null || !data.chat!.hasMore || data.loadingOlder || data.chat!.nextCursor == null) return; data.loadingOlder = true; const cursor = data.chat!.nextCursor!; loadChat(data.id, cursor, (response) => { if (data.chat != null) { data.chat!.messages = response.messages.concat(data.chat!.messages); data.chat!.hasMore = response.hasMore; data.chat!.nextCursor = response.nextCursor }; data.loadingOlder = false }, (error) => { data.loadingOlder = false; data.errorMessage = error.message }) }

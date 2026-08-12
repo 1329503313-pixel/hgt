@@ -106,7 +106,6 @@ type EditorData = {
   id: string,
   coverImage: string,
   enableAiGame: boolean,
-  aiPrompt: string,
   keyFacts: KeyFact[],
   keyFactsCustomized: boolean,
   editReady: boolean,
@@ -135,7 +134,6 @@ const data = reactive({
   id: '',
   coverImage: '',
   enableAiGame: false,
-  aiPrompt: '',
   keyFacts: [] as KeyFact[],
   keyFactsCustomized: false,
   editReady: true,
@@ -198,7 +196,6 @@ function loadEditingSoup() {
     data.isBottomPublic = soup.isBottomPublic
     data.coverImage = soup.coverImage ?? ''
     data.enableAiGame = soup.enableAiGame
-    data.aiPrompt = soup.aiPrompt ?? ''
     data.keyFacts = soup.keyFacts ?? []
     data.keyFactsCustomized = soup.keyFactsCustomized
     data.termsAccepted = true
@@ -241,7 +238,6 @@ function submit() {
     isSurfacePublic: data.isSurfacePublic,
     isBottomPublic: data.isBottomPublic,
     enableAiGame: data.enableAiGame,
-    aiPrompt: data.aiPrompt,
     keyFacts: data.keyFacts,
     keyFactsCustomized: data.keyFactsCustomized
   } as UTSJSONObject

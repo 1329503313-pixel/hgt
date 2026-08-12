@@ -20,18 +20,24 @@ export function decodeGiftContent(content: string): GiftMessageDisplay | null {
     }
     const senderName = sender['nickname'] as string | null
     const receiverName = receiver['nickname'] as string | null
+    const senderId = sender['id'] as string | null
+    const receiverId = receiver['id'] as string | null
     const quantity = payload['quantity'] as number | null
     const shellReward = payload['shellReward'] as number | null
     const charmReward = payload['charmReward'] as number | null
+    const createdAt = payload['createdAt'] as string | null
     return {
       giftSendId,
+      senderId: senderId ?? '',
+      receiverId: receiverId ?? '',
       giftName: giftName ?? '礼物',
       iconUrl: iconUrl ?? '',
       quantity: quantity ?? 1,
       senderName: senderName ?? '用户',
       receiverName: receiverName ?? '用户',
       shellReward: shellReward ?? 0,
-      charmReward: charmReward ?? 0
+      charmReward: charmReward ?? 0,
+      createdAt: createdAt ?? ''
     } as GiftMessageDisplay
   } catch (_) {}
   return null
@@ -46,6 +52,7 @@ export function readableGiftContent(content: string): string | null {
 
 export function normalizeGiftMessage(message: UTSJSONObject) {
   if (message['giftDisplay'] == null) message['giftDisplay'] = null
+  if (message['giftBundle'] == null) message['giftBundle'] = null
   const content = message['content'] as string | null
   if (content == null) return
   const gift = decodeGiftContent(content)
@@ -53,5 +60,33 @@ export function normalizeGiftMessage(message: UTSJSONObject) {
     message['type'] = 'gift'
     message['giftDisplay'] = gift
     message['content'] = '🎁 ' + gift!.senderName + ' 送给 ' + gift!.receiverName + '「' + gift!.giftName + '」×' + gift!.quantity.toString()
+  }
+}
+
+export function collapseGiftMessages(messages: UTSJSONObject[]) {
+  let index = 0
+  while (index < messages.length) {
+    const message = messages[index]
+    const type = message['type'] as string | null
+    const gift = message['giftDisplay'] as UTSJSONObject | null
+    if (type != 'gift' || gift == null || message['recalledAt'] != null) { index++; continue }
+    const senderId = gift!['senderId'] as string | null
+    let end = index + 1
+    while (end < messages.length) {
+      const next = messages[end]
+      const nextGift = next['giftDisplay'] as UTSJSONObject | null
+      if (next['type'] != 'gift' || next['recalledAt'] != null || nextGift == null || nextGift!['senderId'] != senderId) break
+      end++
+    }
+    if (end - index > 3) {
+      const bundle: UTSJSONObject[] = []
+      for (let bundleIndex = index + 3; bundleIndex < end; bundleIndex++) {
+        const bundledGift = messages[bundleIndex]['giftDisplay'] as UTSJSONObject | null
+        if (bundledGift != null) bundle.push(bundledGift!)
+      }
+      messages[index + 3]['giftBundle'] = bundle
+      messages.splice(index + 4, end - index - 4)
+      index += 4
+    } else index = end
   }
 }

@@ -56,7 +56,7 @@ export type Conversation = {
   updatedAt: string
 }
 export type ConversationsResponse = { conversations: Conversation[] }
-export type PrivateMessage = { id: string, senderId: string, content: string, type: string, stickerId: string | null, stickerName: string | null, giftDisplay: GiftMessageDisplay | null, isMine: boolean, isRead: boolean, createdAt: string, recalledAt: string | null }
+export type PrivateMessage = { id: string, senderId: string, content: string, type: string, stickerId: string | null, stickerName: string | null, giftDisplay: GiftMessageDisplay | null, giftBundle: GiftMessageDisplay[] | null, isMine: boolean, isRead: boolean, createdAt: string, recalledAt: string | null }
 export type ChatResponse = { conversation: Conversation, messages: PrivateMessage[], hasMore: boolean, nextCursor: string | null }
 export type SendMessageResponse = { id: string, createdAt: string, message: PrivateMessage | null }
 export type RecallResponse = { messageId: string, recalledAt: string }

@@ -1,4 +1,5 @@
 import { EquippedBadge } from './soup.uts'
+import { GiftMessageDisplay } from './chat.uts'
 
 export type OnlineSoupHost = { id: string, nickname: string }
 export type OnlineSoupLobbyRoom = {
@@ -17,6 +18,10 @@ export type OnlineSoupMember = {
   equippedBadge: EquippedBadge | null, joinedAt: string
 }
 export type OnlineSoupVisibleSurface = { index: number, content: string }
+export type OnlineSoupFinishVote = {
+  id: string, status: string, eligibleCount: number, viewBottomCount: number, continueCount: number,
+  requiredViewBottomCount: number, myChoice: string | null, canVote: boolean, openedAt: string | null
+}
 // 玩家视角只含基础汤面 + 已发布补充汤面；主持人视角额外包含汤底、补充汤底、手册和发布状态。
 export type OnlineSoupSelectedSoup = {
   id: string, title: string, type: string, enableAiGame: boolean, surface: string,
@@ -27,7 +32,8 @@ export type OnlineSoupSelectedSoup = {
 export type OnlineSoupRoomState = {
   id: string, code: string, name: string, type: string, status: string, hostMode: string, hostOnline: boolean,
   playerCount: number, playerCapacity: number, participantCapacity: number,
-  currentRoundId: string | null, aiProgress: number | null, soup: OnlineSoupSelectedSoup | null, createdAt: string
+  currentRoundId: string | null, aiProgress: number | null, finishVote: OnlineSoupFinishVote | null,
+  soup: OnlineSoupSelectedSoup | null, createdAt: string
 }
 export type OnlineSoupMe = { role: string, isHost: boolean }
 export type OnlineSoupMessage = {
@@ -35,8 +41,10 @@ export type OnlineSoupMessage = {
   senderId: string | null, senderName: string | null,
   senderAvatar: string | null, senderLevel: number, senderEquippedBadge: EquippedBadge | null,
   type: string, content: string, stickerId: string | null,
+  giftDisplay: GiftMessageDisplay | null, giftBundle: GiftMessageDisplay[] | null,
   senderIsHost: boolean, contentIndex: number | null, questionNumber: number | null,
   answer: string | null, aiStatus: string, aiError: string | null, roundEnded: boolean, allBottomsPublished: boolean,
+  aiProgressDelta: number | null, aiProgressAfter: number | null, aiFeedback: string | null,
   createdAt: string, recalledAt: string | null
 }
 export type OnlineSoupSnapshot = {

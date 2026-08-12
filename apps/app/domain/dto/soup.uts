@@ -82,7 +82,6 @@ export type SoupDetail = {
   isSurfacePublic: boolean,
   isBottomPublic: boolean,
   enableAiGame: boolean,
-  aiPrompt: string | null,
   keyFacts: KeyFact[] | null,
   keyFactsCustomized: boolean,
   canEdit: boolean,
