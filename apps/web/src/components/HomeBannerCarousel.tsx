@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import { homeBannerUrl } from "../shared/staticAssets";
 
@@ -96,22 +97,35 @@ export function HomeBannerCarousel({ variant = "mobile" }: { variant?: "desktop"
         {banners.map((banner, index) => {
           const image = (variant === "desktop" ? banner.desktopImageUrl || banner.imageUrl : banner.imageUrl) || homeBannerUrl;
           const shouldLoad = index === activeIndex || index === nextIndex || loadedBannerIds.has(banner.id);
+          const isInternalLink = Boolean(banner.linkUrl?.startsWith("/") && !banner.linkUrl.startsWith("//"));
           const content = shouldLoad
             ? <img src={image} alt={banner.name} draggable={false} loading="eager" decoding="async" />
             : <span className="block aspect-video w-full bg-slate-100" aria-hidden="true" />;
           return (
             <div className="home-banner-slide" key={banner.id} aria-hidden={banner.id !== banners[activeIndex]?.id}>
               {banner.linkUrl ? (
-                <a
-                  className="block"
-                  href={banner.linkUrl}
-                  onClick={(event) => {
-                    if (dragDistanceRef.current > 8) event.preventDefault();
-                  }}
-                  {...(/^https?:\/\//i.test(banner.linkUrl) ? { target: "_blank", rel: "noreferrer" } : {})}
-                >
-                  {content}
-                </a>
+                isInternalLink ? (
+                  <Link
+                    className="block"
+                    to={banner.linkUrl}
+                    onClick={(event) => {
+                      if (dragDistanceRef.current > 8) event.preventDefault();
+                    }}
+                  >
+                    {content}
+                  </Link>
+                ) : (
+                  <a
+                    className="block"
+                    href={banner.linkUrl}
+                    onClick={(event) => {
+                      if (dragDistanceRef.current > 8) event.preventDefault();
+                    }}
+                    {...(/^https?:\/\//i.test(banner.linkUrl) ? { target: "_blank", rel: "noreferrer" } : {})}
+                  >
+                    {content}
+                  </a>
+                )
               ) : content}
             </div>
           );

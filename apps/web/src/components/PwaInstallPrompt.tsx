@@ -133,8 +133,12 @@ export function PwaInstallPrompt() {
                 <span className="text-sm leading-6 text-ink"><strong>2.</strong> 向下找到并选择“添加到主屏幕”</span>
               </li>
               <li className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-primary shadow-sm" aria-hidden="true"><Smartphone size={20} /></span>
+                <span className="text-sm leading-6 text-ink"><strong>3.</strong> 开启“打开为 Web App”</span>
+              </li>
+              <li className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-primary shadow-sm" aria-hidden="true"><Download size={20} /></span>
-                <span className="text-sm leading-6 text-ink"><strong>3.</strong> 点击右上角“添加”完成安装</span>
+                <span className="text-sm leading-6 text-ink"><strong>4.</strong> 点击右上角“添加”完成安装</span>
               </li>
             </ol>
             <button type="button" className="btn btn-primary min-h-12 w-full" onClick={dismiss}>知道了</button>
