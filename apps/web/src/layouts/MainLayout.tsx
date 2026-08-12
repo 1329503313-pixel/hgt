@@ -4,7 +4,7 @@ import { DesktopModuleHeader, type DesktopModuleKey } from "../components/Deskto
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { parentRoute } from "../shared/routeHierarchy";
 
-const desktopPrimaryPaths = new Set(["/online-soup", "/circles", "/mine/rankings", "/mine/store", "/mine/tasks", "/mine", "/messages"]);
+const desktopPrimaryPaths = new Set(["/online-soup", "/circles", "/mine/rankings", "/mine/store", "/mine/tasks", "/mine/cards", "/mine/achievements", "/mine", "/messages"]);
 
 const desktopModules: Record<string, { active: DesktopModuleKey; title: string; eyebrow: string }> = {
   "/online-soup": { active: "online-soup", title: "和朋友一起，进入实时推理房间", eyebrow: "玩汤 · ONLINE SOUP" },

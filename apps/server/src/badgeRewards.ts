@@ -55,14 +55,13 @@ export function systemBadgeKeysWithPrerequisites(
 }
 
 export function calculateBadgeShellReward(
-  achievementPoints: number,
-  rewardEligible: boolean,
-  rewardRecordCreated: boolean
+  _achievementPoints: number,
+  _rewardEligible: boolean,
+  _rewardRecordCreated: boolean
 ) {
-  if (!rewardEligible || !rewardRecordCreated) return 0;
-  return Math.max(0, Math.floor(achievementPoints));
+  return 0;
 }
 
-export function badgeUnlockNotificationContent(content: string, shellReward: number) {
-  return shellReward > 0 ? `${content}，同时获得 ${shellReward} 贝壳。` : content;
+export function badgeUnlockNotificationContent(content: string, _shellReward: number) {
+  return content;
 }

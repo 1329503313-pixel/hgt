@@ -10,6 +10,7 @@
     "build:android:local": "vite build --mode android-local",
     "check": "npm run check:images && npm run check:pwa && tsc -p tsconfig.json --noEmit",
     "test:media": "tsx --test tests/mediaUrls.test.ts",
+    "test:chat": "tsx --test src/shared/giftTimeline.test.ts",
     "check:pwa": "node scripts/check-pwa.mjs",
     "pwa:icons": "node scripts/generate-pwa-icons.mjs",
     "optimize:images": "node scripts/optimize-images.mjs",

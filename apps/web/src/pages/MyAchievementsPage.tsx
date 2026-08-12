@@ -764,7 +764,7 @@ export default function MyAchievementsPage() {
     <section className="space-y-3">
       <PageTopBar title="我的成就" />
 
-      <MineBackButton />
+      <MineBackButton hideOnDesktop />
 
       <div className="mx-4 flex items-center justify-between rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 shadow-sm">
         <div>

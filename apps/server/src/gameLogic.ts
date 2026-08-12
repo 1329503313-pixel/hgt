@@ -39,7 +39,16 @@ export type FactMatch = {
   grade: FactMatchGrade;
 };
 
-export type AiGameSessionStatus = "active" | "awaiting_retell" | "completed";
+export type AiGameSessionStatus = "active" | "completed";
+
+export const ROOM_AI_QUESTION_RISKS = [
+  "long",
+  "multiple_claims",
+  "negation",
+  "ambiguous_reference",
+] as const;
+
+export type RoomAiQuestionRisk = (typeof ROOM_AI_QUESTION_RISKS)[number];
 
 function normalizedFactText(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("zh-CN");
@@ -134,7 +143,6 @@ export function normalizeFactMatches(value: unknown, validFactIds: Iterable<numb
 
 export function gameSessionStatus(progress: number, completed: boolean): AiGameSessionStatus {
   if (completed || progress >= 100) return "completed";
-  if (progress >= 90) return "awaiting_retell";
   return "active";
 }
 
@@ -196,9 +204,124 @@ export function renderSafeHint(dimension: HintDimension): string {
   return messages[dimension];
 }
 
+/**
+ * 提示逐次变得更可操作，但正文始终由服务端模板生成，不接触汤底事实。
+ */
+export function renderProgressiveHint(dimension: HintDimension, requestCount: number): string {
+  const level = Math.max(1, Math.min(3, Math.floor(requestCount)));
+  if (level === 1) return renderSafeHint(dimension);
+
+  const questionGuides: Record<HintDimension, string> = {
+    人物关系: "可以具体确认关键人物在事件发生前是否认识，以及彼此是什么关系。",
+    行为目的: "可以选一个最异常的行为，追问当事人这样做是否为了达成某个目的。",
+    动机: "可以追问谁最希望事件发生，以及这种愿望是否构成了关键动机。",
+    手法: "可以把结果拆成步骤，逐一确认事件是如何被实施或造成的。",
+    关键物品: "可以确认是否有某件物品改变了事件结果，再追问它的用途或来源。",
+    时间: "可以确认关键事件的先后顺序，以及某个时间条件是否决定了结果。",
+    地点: "可以确认地点本身是否具有特殊条件，以及换个地点结果是否会不同。",
+    因果关系: "可以从最终结果向前倒推，确认直接原因和更早发生的诱因。",
+  };
+  if (level === 2) return questionGuides[dimension];
+
+  const narrowingGuides: Record<HintDimension, string> = {
+    人物关系: "建议把人物两两组合提问，优先排查亲属、熟人、利益或身份关系。",
+    行为目的: "建议先确认异常行为是在保护、隐瞒、误导还是求助，再继续缩小目的。",
+    动机: "建议从利益、情感、恐惧和误解四类动机逐一排查，先确认哪一类重要。",
+    手法: "建议依次确认是否涉及伪装、替代、时间差或环境条件，不要一次列举多个答案。",
+    关键物品: "建议先确认关键物品是否由人物携带、现场原有或后来出现，再追问用途。",
+    时间: "建议画出事件前、事件中、被发现后三段时间线，逐段确认异常发生在哪一段。",
+    地点: "建议先确认地点是公开还是封闭、固定还是移动，再追问其特殊条件。",
+    因果关系: "建议用“如果没有这一步，结局还会发生吗”逐步测试每个事件是否是必要原因。",
+  };
+  return narrowingGuides[dimension];
+}
+
 export function trimRoomAiHistory<T>(messages: T[], maxMessages = 24): T[] {
   if (!Array.isArray(messages) || maxMessages <= 0) return [];
   return messages.slice(-maxMessages);
+}
+
+/**
+ * 房间 AI 每次都能从持久化事实状态取得累计进度，因此上下文只保留最近五轮。
+ * assistant 历史中的内部计分 JSON 会被压缩成五态回答，减少输入 token，
+ * 同时保留代词和承接问句所需的短期语境。
+ */
+export function compactRoomAiHistory(
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  maxMessages = 10,
+): Array<{ role: "user" | "assistant"; content: string }> {
+  const compacted: Array<{ role: "user" | "assistant"; content: string }> = [];
+  for (const message of trimRoomAiHistory(messages, maxMessages)) {
+    if (message.role === "user") {
+      compacted.push({ role: "user", content: message.content.slice(0, 1_000) });
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(message.content) as { answer?: unknown };
+      const answer = normalizeOrdinaryGameAnswer(parsed.answer, false);
+      if (answer) compacted.push({ role: "assistant", content: answer });
+    } catch {
+      const answer = normalizeOrdinaryGameAnswer(message.content, false);
+      if (answer) compacted.push({ role: "assistant", content: answer });
+    }
+  }
+  return compacted;
+}
+
+/**
+ * 复杂问句先走完整审阅，避免为了速度牺牲否定、枚举与指代场景的准确率。
+ * 这里只判断表达风险，不尝试猜测问题语义或故事答案。
+ */
+export function roomAiQuestionRisks(question: string): RoomAiQuestionRisk[] {
+  const text = question.trim();
+  const risks: RoomAiQuestionRisk[] = [];
+  if (text.length > 80) risks.push("long");
+
+  const questionMarks = (text.match(/[？?]/g) ?? []).length;
+  const judgmentWords = (text.match(/(?:是否|是不是|有没有|会不会|能不能|难道)/g) ?? []).length;
+  if (
+    questionMarks > 1
+    || judgmentWords > 1
+    || /(?:以及|并且|同时|或者|还是).*(?:是否|是不是|有没有|会不会|能不能)/.test(text)
+  ) risks.push("multiple_claims");
+
+  if (/(?:不是|没有|并非|未曾|不可能|难道|莫非).*(?:吗|么|是否|是不是|没有|不)/.test(text)) {
+    risks.push("negation");
+  }
+
+  if (/^(?:他|她|它|他们|她们|它们|这个人|那个人|这个东西|那个东西|这件事|那件事)/.test(text)) {
+    risks.push("ambiguous_reference");
+  }
+  return risks;
+}
+
+export type RoomAiProgressFeedbackKind = "gain" | "duplicate" | "close" | "off_track" | "ambiguous";
+
+export function roomAiProgressFeedback(
+  progressDelta: number,
+  scoreableFactCount: number,
+  weakFactCount: number,
+  risks: readonly RoomAiQuestionRisk[] = [],
+): { kind: RoomAiProgressFeedbackKind; text: string } {
+  if (progressDelta > 0) return { kind: "gain", text: `确认了新的关键信息，进度 +${progressDelta}%` };
+  if (risks.includes("multiple_claims")) return { kind: "ambiguous", text: "本题包含多个判断，暂未形成唯一确认；拆成一个判断提问更容易推进" };
+  if (risks.includes("ambiguous_reference")) return { kind: "ambiguous", text: "指代对象不够明确，暂未增加进度；说出人物或物品名称会更准确" };
+  if (scoreableFactCount > 0) return { kind: "duplicate", text: "方向正确，但本题确认的是已知信息，进度保持不变" };
+  if (weakFactCount > 0) return { kind: "close", text: "已经接近关键方向；把对象、行为或因果关系问得更具体会更容易推进" };
+  return { kind: "off_track", text: "本题暂未触及新的关键信息，可以换一个人物、动机、物品或因果方向" };
+}
+
+/**
+ * 判断是否刚好进入“连续多题无进展”状态。
+ * progressDeltas 按时间倒序排列；只在达到门槛的那一题返回 true，避免后续重复发提示。
+ */
+export function shouldPublishRoomAiStallHint(
+  progressDeltas: readonly number[],
+  threshold = 10,
+): boolean {
+  if (!Number.isInteger(threshold) || threshold <= 0 || progressDeltas.length < threshold) return false;
+  return progressDeltas.slice(0, threshold).every((delta) => Number(delta) === 0)
+    && (progressDeltas.length === threshold || Number(progressDeltas[threshold]) > 0);
 }
 
 export function canRequestRoomAiHint(progress: number): boolean {

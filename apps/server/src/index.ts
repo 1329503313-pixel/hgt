@@ -13,6 +13,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { initDatabase, pool } from "./db.js";
 import gameRouter, { splitKeyFactsForSoup, forceReanalyzeKeyFacts, setBadgeProgressListener } from "./game.js";
+import { AI_KEY_FACT_BACKFILL_INTERVAL_MS, backfillMissingAiKeyFacts } from "./keyFactBackfill.js";
 import { reviewSoupContent, SoupReviewUnavailableError, type SoupReviewResult } from "./soupReview.js";
 import { findHighlySimilarSoup, type SoupSimilarityInput } from "./soupSimilarity.js";
 import { PublicUser } from "./types.js";
@@ -38,17 +39,20 @@ import { registerDigitalAssetRoutes } from "./digitalAssets.js";
 import { registerBannerRoutes } from "./banners.js";
 import { parseGiftMessage, registerGiftRoutes } from "./gifts.js";
 import { canonicalConversationUserIds, conversationOtherUserIdentity } from "./conversations.js";
+import { recordChatMessageForRateLimit, stickerCooldownMessage } from "./chatMessageRateLimit.js";
 import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
-import { hasSoupReviewContentChanged, normalizeExistingSoupCover, soupValidationMessage } from "./soupInput.js";
+import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
 import {
   evaluationCountsTowardScore,
   scoringEvaluationJoin,
   scoringEvaluationPredicate
 } from "./evaluationScoring.js";
 import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
+import { runPostCommitTask } from "./postCommit.js";
+import { hasPendingApprovals } from "./adminModuleUnread.js";
 import {
   homeSoupCategoryOrder,
   homeSoupCategoryRequiresAuth,
@@ -97,6 +101,8 @@ import onlineSoupRouter, {
   cleanupOnlineSoupStaleSeats,
   ONLINE_SOUP_PARTICIPANT_CAPACITY,
   ONLINE_SOUP_PLAYER_CAPACITY,
+  resumeEligibleOnlineSoupAiFinishVotes,
+  resumePendingOnlineSoupAiQuestions,
   setOnlineSoupEventEmitter,
   setOnlineSoupLobbyEventEmitter,
   validRoomInviteToken
@@ -104,6 +110,7 @@ import onlineSoupRouter, {
 import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.js";
 import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
+import { registerVipRoutes, syncExpiredVipRoles } from "./vip.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const insecureJwtSecrets = new Set([
@@ -599,7 +606,6 @@ const soupSchema = z.object({
   isSurfacePublic: z.boolean().default(true),
   isBottomPublic: z.boolean().default(false),
   enableAiGame: z.boolean().default(false),
-  aiPrompt: z.string().trim().max(5000).optional().default(""),
   keyFacts: z
     .array(
       z.object({
@@ -613,6 +619,14 @@ const soupSchema = z.object({
     .optional()
     .default([]),
   keyFactsCustomized: z.boolean().optional().default(false)
+}).superRefine((soup, context) => {
+  if (hasEmptyManualAiKeyFacts(soup)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["keyFacts"],
+      message: "手动管理关键点时至少保留 1 个关键点"
+    });
+  }
 });
 
 const evaluationSchema = z.object({
@@ -857,7 +871,12 @@ async function currentUser(req: express.Request): Promise<AuthenticatedUser | nu
   if (pending) return pending;
   const request = (async () => {
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, username, nickname, role, token_version, created_at, experience,
+      `SELECT id, username, nickname,
+         CASE
+           WHEN role = 'vip' AND vip_legacy_active = 0 AND vip_expires_at IS NOT NULL AND vip_expires_at <= UTC_TIMESTAMP() THEN 'user'
+           ELSE role
+         END AS role,
+         token_version, created_at, experience,
          equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
        FROM users WHERE id = ? LIMIT 1`,
       [claims.id]
@@ -3329,6 +3348,17 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    const stickerCooldownMs = await recordChatMessageForRateLimit(connection, {
+      scopeType: "circle",
+      scopeId: req.params.id,
+      userId: user.id,
+      messageType,
+    });
+    if (stickerCooldownMs > 0) {
+      await connection.rollback();
+      res.setHeader("Retry-After", Math.max(1, Math.ceil(stickerCooldownMs / 1000)));
+      return sendError(res, 429, stickerCooldownMessage(stickerCooldownMs));
+    }
     await connection.query(
       `INSERT INTO circle_messages (id, circle_id, sender_id, content, message_type, sticker_id, mentions_json, reply_to_message_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -3947,6 +3977,17 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    const stickerCooldownMs = await recordChatMessageForRateLimit(connection, {
+      scopeType: "private",
+      scopeId: req.params.id,
+      userId: user.id,
+      messageType,
+    });
+    if (stickerCooldownMs > 0) {
+      await connection.rollback();
+      res.setHeader("Retry-After", Math.max(1, Math.ceil(stickerCooldownMs / 1000)));
+      return sendError(res, 429, stickerCooldownMessage(stickerCooldownMs));
+    }
     await connection.query(
       "INSERT INTO private_messages (id, conversation_id, sender_id, content, message_type, sticker_id) VALUES (?, ?, ?, ?, ?, ?)",
       [id, req.params.id, user.id, content, messageType, sticker?.id ?? null]
@@ -4784,7 +4825,6 @@ app.post("/api/soups", async (req, res) => {
     : {
         ...parsed.data,
         enableAiGame: false,
-        aiPrompt: "",
         keyFacts: [],
         keyFactsCustomized: false
       };
@@ -4836,11 +4876,11 @@ app.post("/api/soups", async (req, res) => {
     }
     await connection.query(
       `INSERT INTO soups
-        (id, title, author, type, difficulty, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, ai_prompt, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, title, author, type, difficulty, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, soup.title, author, soup.type, soup.difficulty, soup.summary, optimizedCover?.full ?? null, optimizedCover?.thumbnail ?? null, soup.isOriginal, soup.isSensitive,
         soup.surface, JSON.stringify(soup.supplementalSurfaces), soup.bottom, JSON.stringify(soup.supplementalBottoms), soup.manual || null,
-        soup.isSurfacePublic, soup.isBottomPublic, soup.enableAiGame, review.decision, review.reason, 1, soup.aiPrompt || null,
+        soup.isSurfacePublic, soup.isBottomPublic, soup.enableAiGame, review.decision, review.reason, 1,
         soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null, null, soup.keyFactsCustomized ? 1 : 0, user.id, user.nickname]
     );
     if (review.decision === "approved" && soup.isSurfacePublic) {
@@ -4874,9 +4914,9 @@ app.post("/api/soups", async (req, res) => {
   if (review.decision === "pending") await recordAdminModuleEvent("approvals");
   res.status(201).json({ id, reviewStatus: review.decision });
 
-  // 异步生成进度关键点，并基于作者关键点继续拆分内部原子事实；不阻塞发布响应。
+  // 保存成功后立即触发自动生成；失败会由每小时扫描继续补齐。
   if (soup.enableAiGame) {
-    splitKeyFactsForSoup(id).catch(() => {});
+    runPostCommitTask("AI key fact generation after soup publish", () => splitKeyFactsForSoup(id));
   }
 
   // 百度收录：公开+审核通过 → 即时推送单条链接
@@ -4967,7 +5007,6 @@ app.get("/api/soups/:id", async (req, res) => {
       isSensitive: canEdit ? bool(soup.is_sensitive) : false,
       enableAiGame: bool(soup.enable_ai_game) && canEnableAiGameRole(statsRows[0]?.creator_role),
       canConfigureAiGame: canEnableAiGameRole(statsRows[0]?.creator_role),
-      aiPrompt: canEdit ? (soup.ai_prompt as string) || null : null,
       keyFacts: canEdit ? safeParseJson(soup.key_facts) : null,
       keyFactsCustomized: canEdit && (soup.key_facts_customized as number) === 1,
       canViewFull: full,
@@ -5209,14 +5248,12 @@ app.put("/api/soups/:id", async (req, res) => {
   const coverImage = existingCoverSelected ? soup.cover_image : (optimizedCover?.full ?? null);
   const thumbnail = existingCoverSelected ? soup.cover_thumbnail : (optimizedCover?.thumbnail ?? null);
   const enableAiGame = creatorCanConfigureAiGame ? next.enableAiGame : bool(soup.enable_ai_game);
-  const aiPrompt = creatorCanConfigureAiGame ? (next.aiPrompt || null) : soup.ai_prompt;
-  const keyFacts = creatorCanConfigureAiGame
-    ? (next.keyFacts.length > 0 ? JSON.stringify(next.keyFacts) : null)
-    : soup.key_facts;
-  const keyFactsHash = creatorCanConfigureAiGame ? null : soup.key_facts_hash;
-  const keyFactsCustomized = creatorCanConfigureAiGame
-    ? (next.keyFactsCustomized ? 1 : 0)
-    : Number(soup.key_facts_customized ?? 0);
+  const manualKeyFacts = creatorCanConfigureAiGame && next.keyFactsCustomized;
+  const keyFacts = manualKeyFacts
+    ? JSON.stringify(next.keyFacts)
+    : normalizeStoredJsonForSql(soup.key_facts);
+  const keyFactsHash = manualKeyFacts ? null : soup.key_facts_hash;
+  const keyFactsCustomized = manualKeyFacts ? 1 : Number(soup.key_facts_customized ?? 0);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -5226,7 +5263,7 @@ app.put("/api/soups/:id", async (req, res) => {
            is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + ?,
            reviewed_at = CASE WHEN ? THEN NULL ELSE reviewed_at END,
            reviewed_by = CASE WHEN ? THEN NULL ELSE reviewed_by END,
-           ai_prompt = ?, key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
+           key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
        WHERE id = ?`,
       [
         next.title,
@@ -5251,7 +5288,6 @@ app.put("/api/soups/:id", async (req, res) => {
         reviewContentChanged ? 1 : 0,
         reviewContentChanged,
         reviewContentChanged,
-        aiPrompt,
         keyFacts,
         keyFactsHash,
         keyFactsCustomized,
@@ -5276,15 +5312,17 @@ app.put("/api/soups/:id", async (req, res) => {
   } finally {
     connection.release();
   }
-  if (review.decision === "pending") await recordAdminModuleEvent("approvals");
+  if (review.decision === "pending") {
+    runPostCommitTask("soup edit approval unread event", () => recordAdminModuleEvent("approvals"));
+  }
   res.json({ ok: true, reviewStatus: review.decision });
 
-  // 作者前台仍维护进度关键点；内部原子事实由 AI 基于最新关键点异步刷新。
+  // 手动配置优先；未手动配置时自动生成，失败由每小时扫描重试。
   if (creatorCanConfigureAiGame && enableAiGame) {
-    splitKeyFactsForSoup(req.params.id).catch(() => {});
+    runPostCommitTask("AI key fact generation after soup edit", () => splitKeyFactsForSoup(req.params.id));
   } else if (creatorCanConfigureAiGame && !enableAiGame) {
     // 关闭 AI 玩汤时清空缓存
-    pool.query("UPDATE soups SET key_facts = NULL, key_facts_hash = NULL, key_fact_atoms = NULL, key_fact_atoms_hash = NULL, ai_prompt = NULL, key_facts_customized = 0 WHERE id = ?", [req.params.id]).catch(() => {});
+    runPostCommitTask("AI key fact cleanup after soup edit", () => pool.query("UPDATE soups SET key_facts = NULL, key_facts_hash = NULL, key_fact_atoms = NULL, key_fact_atoms_hash = NULL, key_facts_customized = 0 WHERE id = ?", [req.params.id]));
   }
 });
 
@@ -6406,20 +6444,33 @@ app.post("/api/me/feedback", async (req, res) => {
 });
 
 app.get("/api/admin/module-unread", async (req, res) => {
-  if (!(await requireBackofficeAdmin(req, res))) return;
-  const [eventRows, readRows] = await Promise.all([
+  const admin = await requireBackofficeAdmin(req, res);
+  if (!admin) return;
+  const [approvalCounts, eventRows, readRows] = await Promise.all([
+    Promise.all([
+      pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM soups WHERE review_status = 'pending'").then(([rows]) => Number(rows[0]?.total ?? 0)),
+      pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM view_requests WHERE status = 'pending'").then(([rows]) => Number(rows[0]?.total ?? 0)),
+      isSuperAdminRole(admin.role)
+        ? pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM excellent_author_applications WHERE status = 'pending'").then(([rows]) => Number(rows[0]?.total ?? 0))
+        : Promise.resolve(0)
+    ]),
     pool.query<mysql.RowDataPacket[]>(
-      "SELECT module_key, MAX(id) AS newest_event_id FROM admin_module_events WHERE module_key IN ('approvals', 'feedback') GROUP BY module_key"
+      "SELECT module_key, MAX(id) AS newest_event_id FROM admin_module_events WHERE module_key = 'feedback' GROUP BY module_key"
     ).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
-      "SELECT module_key, last_event_id FROM admin_module_reads WHERE module_key IN ('approvals', 'feedback')"
+      "SELECT module_key, last_event_id FROM admin_module_reads WHERE module_key = 'feedback'"
     ).then(([rows]) => rows)
   ]);
   const events = new Map(eventRows.map((row) => [String(row.module_key), Number(row.newest_event_id ?? 0)]));
   const reads = new Map(readRows.map((row) => [String(row.module_key), Number(row.last_event_id ?? 0)]));
+  const [pendingSoups, pendingBottomRequests, pendingExcellentAuthors] = approvalCounts;
   res.setHeader("Cache-Control", "private, no-store, max-age=0");
   res.json({
-    approvals: (events.get("approvals") ?? 0) > (reads.get("approvals") ?? 0),
+    approvals: hasPendingApprovals({
+      soups: pendingSoups,
+      bottomRequests: pendingBottomRequests,
+      excellentAuthors: pendingExcellentAuthors
+    }, isSuperAdminRole(admin.role)),
     feedback: (events.get("feedback") ?? 0) > (reads.get("feedback") ?? 0)
   });
 });
@@ -6863,17 +6914,8 @@ app.get("/api/admin/users", async (req, res) => {
 app.patch("/api/admin/users/:id", async (req, res) => {
   const actor = await requireAdmin(req, res);
   if (!actor) return;
-  const parsed = z.object({
-    nickname: text.max(50),
-    role: z.enum(["super_admin", "backoffice_admin", "vip", "user"])
-  }).safeParse(req.body);
+  const parsed = z.object({ nickname: text.max(50) }).strict().safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "用户信息不正确");
-  if (!isBackofficeAdminRole(parsed.data.role) && isAdminRelatedNickname(parsed.data.nickname)) {
-    return sendError(res, 400, "该角色不能使用管理员相关昵称");
-  }
-  if (actor.id === req.params.id && parsed.data.role !== "super_admin") {
-    return sendError(res, 400, "不能取消自己的超级管理员权限");
-  }
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -6884,6 +6926,10 @@ app.patch("/api/admin/users/:id", async (req, res) => {
     if (!target) {
       await connection.rollback();
       return sendError(res, 404, "用户不存在");
+    }
+    if (!isBackofficeAdminRole(target.role) && isAdminRelatedNickname(parsed.data.nickname)) {
+      await connection.rollback();
+      return sendError(res, 400, "该角色不能使用管理员相关昵称");
     }
     const nicknameChanged = String(target.nickname) !== parsed.data.nickname;
     if (nicknameChanged) {
@@ -6902,13 +6948,7 @@ app.patch("/api/admin/users/:id", async (req, res) => {
       }
       parsed.data.nickname = nicknameResult.data;
     }
-    const tokenVersionIncrement = target.role === parsed.data.role ? 0 : 1;
-    await connection.query("UPDATE users SET nickname = ?, role = ?, token_version = token_version + ? WHERE id = ?", [
-      parsed.data.nickname,
-      parsed.data.role,
-      tokenVersionIncrement,
-      req.params.id
-    ]);
+    await connection.query("UPDATE users SET nickname = ? WHERE id = ?", [parsed.data.nickname, req.params.id]);
     if (nicknameChanged) {
       await connection.query(
         "UPDATE soups SET creator_name = ?, author = ? WHERE creator_id = ? AND is_original = TRUE",
@@ -7227,6 +7267,7 @@ registerGiftRoutes(app, {
     queueSystemBadgeSync(userIds);
   }
 });
+registerVipRoutes(app, { pool, requireAuth, requireAdmin, sendError });
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if ((err as { type?: string }).type === "entity.parse.failed") {
@@ -7241,12 +7282,29 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 
 if (config.runDatabaseMigrations) await initDatabase();
 else await pool.query("SELECT 1");
+await syncExpiredVipRoles(pool).catch((error) => console.error("VIP expiry synchronization failed:", error));
+const vipExpirySyncTimer = setInterval(() => {
+  syncExpiredVipRoles(pool).catch((error) => console.error("VIP expiry synchronization failed:", error));
+}, 60_000);
+vipExpirySyncTimer.unref();
 await initializeStickerCatalog();
 await initializeUserBehaviorAnalytics().catch((error) => {
   console.error("User behavior analytics initialization failed; business routes will continue without analytics persistence:", error);
 });
 await cleanupOnlineSoupStaleSeats();
 await cleanupOnlineSoupInactiveHostRooms();
+await resumePendingOnlineSoupAiQuestions();
+await resumeEligibleOnlineSoupAiFinishVotes();
+const fillMissingAiKeyFacts = async () => {
+  const count = await backfillMissingAiKeyFacts(pool, splitKeyFactsForSoup);
+  if (count > 0) console.log(`AI key fact backfill checked ${count} soup(s)`);
+};
+// 启动时先补一次，之后每小时兜底；生成失败的作品会在下一轮继续重试。
+void fillMissingAiKeyFacts().catch((error) => console.error("AI key fact backfill failed:", error));
+const aiKeyFactBackfillTimer = setInterval(() => {
+  void fillMissingAiKeyFacts().catch((error) => console.error("AI key fact backfill failed:", error));
+}, AI_KEY_FACT_BACKFILL_INTERVAL_MS);
+aiKeyFactBackfillTimer.unref();
 const onlineSoupSeatCleanupTimer = setInterval(() => {
   Promise.all([
     cleanupOnlineSoupStaleSeats(),

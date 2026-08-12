@@ -39,7 +39,7 @@ function StatusPill({ status }: { status: RequestStatus }) {
   return <span className={`rounded-full px-2 py-1 text-xs font-bold ${status === "pending" ? "bg-amber-50 text-amber-700" : status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{statusLabel(status)}</span>;
 }
 
-export function ApprovalManagement({ canReviewExcellentAuthor }: { canReviewExcellentAuthor: boolean }) {
+export function ApprovalManagement({ canReviewExcellentAuthor, onPendingChange }: { canReviewExcellentAuthor: boolean; onPendingChange: () => void | Promise<void> }) {
   const [activeTab, setActiveTab] = useState<ApprovalTab>("soup-review");
 
   useEffect(() => {
@@ -53,12 +53,12 @@ export function ApprovalManagement({ canReviewExcellentAuthor }: { canReviewExce
         <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "bottom" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("bottom")}>申请汤底</button>
         {canReviewExcellentAuthor && <button className={`rounded-lg px-4 py-2 text-sm font-bold ${activeTab === "excellent-author" ? "bg-primary text-white" : "text-muted hover:bg-blue-50"}`} onClick={() => setActiveTab("excellent-author")}>申请认证优秀作者</button>}
       </div>
-      {activeTab === "soup-review" ? <SoupReviewList /> : activeTab === "bottom" ? <BottomApprovalList /> : canReviewExcellentAuthor ? <ExcellentAuthorApprovalList /> : <SoupReviewList />}
+      {activeTab === "soup-review" ? <SoupReviewList onPendingChange={onPendingChange} /> : activeTab === "bottom" ? <BottomApprovalList onPendingChange={onPendingChange} /> : canReviewExcellentAuthor ? <ExcellentAuthorApprovalList onPendingChange={onPendingChange} /> : <SoupReviewList onPendingChange={onPendingChange} />}
     </div>
   );
 }
 
-function SoupReviewList() {
+function SoupReviewList({ onPendingChange }: { onPendingChange: () => void | Promise<void> }) {
   const navigate = useNavigate();
   const { showToast } = useApp();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
@@ -103,6 +103,7 @@ function SoupReviewList() {
       });
       showToast(decision === "approved" ? "汤品审核已通过" : "汤品审核已驳回");
       await load();
+      await onPendingChange();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "审核失败");
       await load();
@@ -155,7 +156,7 @@ function SoupReviewList() {
   );
 }
 
-function BottomApprovalList() {
+function BottomApprovalList({ onPendingChange }: { onPendingChange: () => void | Promise<void> }) {
   const navigate = useNavigate();
   const [requests, setRequests] = useState<ViewRequestItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -180,6 +181,7 @@ function BottomApprovalList() {
   async function decideRequest(id: string, decision: "approved" | "rejected") {
     await api(`/api/access-requests/${id}/decision`, { method: "POST", body: { decision } });
     await loadRequests();
+    await onPendingChange();
   }
 
   return (
@@ -215,7 +217,7 @@ function BottomApprovalList() {
   );
 }
 
-function ExcellentAuthorApprovalList() {
+function ExcellentAuthorApprovalList({ onPendingChange }: { onPendingChange: () => void | Promise<void> }) {
   const { showToast } = useApp();
   const navigate = useNavigate();
   const [applications, setApplications] = useState<ExcellentAuthorApplicationItem[]>([]);
@@ -252,6 +254,7 @@ function ExcellentAuthorApprovalList() {
       showToast(decision === "approved" ? "优秀作者认证已通过" : "优秀作者认证已驳回");
       setDetail(null);
       await loadApplications();
+      await onPendingChange();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "审批失败");
     }

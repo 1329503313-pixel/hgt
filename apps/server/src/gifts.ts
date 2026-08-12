@@ -9,6 +9,7 @@ import { canonicalConversationUserIds } from "./conversations.js";
 import { storeMediaBuffer } from "./ossStorage.js";
 import type { PublicUser } from "./types.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
+import { recordChatMessageForRateLimit } from "./chatMessageRateLimit.js";
 
 type AuthenticatedUser = PublicUser & { tokenVersion: number };
 type RequireUser = (
@@ -492,6 +493,29 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
           createdAt
         };
         const content = JSON.stringify(messageSnapshot);
+
+        // 礼物属于发送者自己的非表情消息，会结束对应聊天场景中的连续表情计数。
+        await recordChatMessageForRateLimit(connection, {
+          scopeType: "private",
+          scopeId: privateConversationId,
+          userId: user.id,
+          messageType: "gift",
+        });
+        if (effectiveSource.type === "circle" && effectiveSource.id) {
+          await recordChatMessageForRateLimit(connection, {
+            scopeType: "circle",
+            scopeId: effectiveSource.id,
+            userId: user.id,
+            messageType: "gift",
+          });
+        } else if (effectiveSource.type === "online_soup" && effectiveSource.id) {
+          await recordChatMessageForRateLimit(connection, {
+            scopeType: "online_soup",
+            scopeId: effectiveSource.id,
+            userId: user.id,
+            messageType: "gift",
+          });
+        }
 
         privateMessageId = nanoid();
         await connection.query(

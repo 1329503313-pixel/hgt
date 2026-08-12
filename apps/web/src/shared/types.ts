@@ -99,7 +99,6 @@ export type SoupDetail = SoupSummary & {
   manual: string | null;
   enableAiGame: boolean;
   canConfigureAiGame: boolean;
-  aiPrompt: string | null;
   keyFacts: KeyFact[] | null;
   keyFactsCustomized: boolean;
   canViewFull: boolean;
@@ -461,7 +460,7 @@ export type OnlineSoupMessage = {
   senderAvatar: string | null;
   senderLevel: number;
   senderEquippedBadge: EquippedBadge | null;
-  type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system";
+  type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system" | "ai_advice";
   content: string;
   gift?: GiftMessage | null;
   stickerId: string | null;
@@ -469,8 +468,11 @@ export type OnlineSoupMessage = {
   contentIndex: number | null;
   questionNumber: number | null;
   answer: OnlineSoupAnswer | null;
-  aiStatus: "none" | "pending" | "completed" | "failed" | "cancelled";
+  aiStatus: "none" | "pending" | "answering" | "scoring" | "completed" | "failed" | "cancelled";
   aiError: string | null;
+  aiProgressDelta: number | null;
+  aiProgressAfter: number | null;
+  aiFeedback: string | null;
   targetMessageId: string | null;
   mentions: Array<{ userId: string; nickname: string }>;
   replyTo: {
@@ -497,6 +499,17 @@ export type OnlineSoupSnapshot = {
     status: OnlineSoupRoomStatus;
     hostMode: OnlineSoupHostMode;
     aiProgress: number | null;
+    finishVote: {
+      id: string;
+      status: "open" | "passed" | "auto_completed" | "cancelled";
+      eligibleCount: number;
+      viewBottomCount: number;
+      continueCount: number;
+      requiredViewBottomCount: number;
+      myChoice: "view_bottom" | "continue" | null;
+      canVote: boolean;
+      openedAt: string | null;
+    } | null;
     hostOnline: boolean;
     hostOfflineDeadline: string | null;
     playerCount: number;

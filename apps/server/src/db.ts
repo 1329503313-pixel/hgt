@@ -694,6 +694,7 @@ export async function initDatabase() {
       ai_progress INT UNSIGNED NOT NULL DEFAULT 0,
       ai_version INT UNSIGNED NOT NULL DEFAULT 0,
       ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle',
+      ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0,
       published_surface_indices JSON NULL,
       published_bottom_indices JSON NULL,
       started_at DATETIME NULL,
@@ -738,6 +739,66 @@ export async function initDatabase() {
 
   // 历史回合按玩家在回合结束时仍处于房间内的记录补齐；主持人与旁观者不计入。
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_finish_votes (
+      id VARCHAR(64) PRIMARY KEY,
+      round_id VARCHAR(64) NOT NULL UNIQUE,
+      room_id VARCHAR(64) NOT NULL,
+      status ENUM('open','passed','auto_completed','cancelled') NOT NULL DEFAULT 'open',
+      opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      closed_at DATETIME NULL,
+      INDEX idx_online_finish_vote_room (room_id, status),
+      CONSTRAINT fk_online_finish_vote_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_finish_vote_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn("users", "vip_expires_at", "vip_expires_at DATETIME NULL AFTER role");
+  await ensureColumn("users", "vip_legacy_active", "vip_legacy_active TINYINT(1) NOT NULL DEFAULT 0 AFTER vip_expires_at");
+  // 旧版 VIP 只有角色、没有到期时间。保留其有效身份，直到管理员明确赠送新时长或取消。
+  await pool.query(
+    "UPDATE users SET vip_legacy_active = 1 WHERE role = 'vip' AND vip_expires_at IS NULL AND vip_legacy_active = 0"
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS vip_daily_order_sequences (
+      order_date DATE PRIMARY KEY,
+      last_sequence INT UNSIGNED NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS vip_orders (
+      id VARCHAR(64) PRIMARY KEY,
+      order_number CHAR(14) NOT NULL,
+      user_id VARCHAR(64) NULL,
+      user_nickname VARCHAR(50) NOT NULL,
+      user_username VARCHAR(50) NOT NULL,
+      order_type ENUM('purchase_month','purchase_year','gift','reduce','cancel') NOT NULL,
+      day_change INT NOT NULL,
+      balance_after_days INT UNSIGNED NOT NULL,
+      operator_user_id VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_vip_orders_number (order_number),
+      INDEX idx_vip_orders_user_number (user_id, order_number),
+      INDEX idx_vip_orders_type_number (order_type, order_number),
+      INDEX idx_vip_orders_nickname_number (user_nickname, order_number),
+      INDEX idx_vip_orders_username_number (user_username, order_number),
+      CONSTRAINT fk_vip_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_vip_orders_operator FOREIGN KEY (operator_user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_finish_vote_members (
+      vote_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      choice ENUM('view_bottom','continue') NULL,
+      voted_at DATETIME NULL,
+      PRIMARY KEY (vote_id, user_id),
+      INDEX idx_online_finish_vote_choice (vote_id, choice),
+      CONSTRAINT fk_online_finish_vote_member_vote FOREIGN KEY (vote_id) REFERENCES online_soup_finish_votes(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_finish_vote_member_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
     INSERT IGNORE INTO online_soup_completions (round_id, user_id, soup_id, completed_at)
     SELECT rounds.id, members.user_id, rounds.soup_id, rounds.ended_at
     FROM online_soup_rounds rounds
@@ -759,15 +820,17 @@ export async function initDatabase() {
       room_id VARCHAR(64) NOT NULL,
       round_id VARCHAR(64) NULL,
       sender_id VARCHAR(64) NULL,
-      message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system') NOT NULL,
+      message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice') NOT NULL,
       content TEXT NOT NULL,
       sticker_id VARCHAR(64) NULL,
       gift_send_id VARCHAR(64) NULL,
       content_index INT UNSIGNED NULL,
       question_number INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
-      ai_status ENUM('none','pending','completed','failed','cancelled') NOT NULL DEFAULT 'none',
+      ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none',
       ai_error VARCHAR(255) NULL,
+      ai_progress_delta INT UNSIGNED NULL,
+      ai_progress_after INT UNSIGNED NULL,
       target_message_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
       reply_to_message_id VARCHAR(64) NULL,
@@ -812,8 +875,12 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rounds", "ai_progress", "ai_progress INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_revealed_supplements");
   await ensureColumn("online_soup_rounds", "ai_version", "ai_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_progress");
   await ensureColumn("online_soup_rounds", "ai_status", "ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle' AFTER ai_version");
-  await ensureColumn("online_soup_messages", "ai_status", "ai_status ENUM('none','pending','completed','failed','cancelled') NOT NULL DEFAULT 'none' AFTER answer");
+  await ensureColumn("online_soup_rounds", "ai_hint_count", "ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_status");
+  await ensureColumn("online_soup_messages", "ai_status", "ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none' AFTER answer");
   await ensureColumn("online_soup_messages", "ai_error", "ai_error VARCHAR(255) NULL AFTER ai_status");
+  await ensureColumn("online_soup_messages", "ai_progress_delta", "ai_progress_delta INT UNSIGNED NULL AFTER ai_error");
+  await ensureColumn("online_soup_messages", "ai_progress_after", "ai_progress_after INT UNSIGNED NULL AFTER ai_progress_delta");
+  await ensureColumn("online_soup_messages", "ai_feedback", "ai_feedback VARCHAR(255) NULL AFTER ai_progress_after");
   await ensureColumn(
     "online_soup_rounds",
     "published_surface_indices",
@@ -913,9 +980,18 @@ export async function initDatabase() {
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_messages' AND COLUMN_NAME = 'message_type'`
   );
-  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'gift'")) {
+  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'ai_advice'")) {
     await pool.query(
-      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system') NOT NULL"
+      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice') NOT NULL"
+    );
+  }
+  const [[onlineSoupAiStatus]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_messages' AND COLUMN_NAME = 'ai_status'`
+  );
+  if (!String(onlineSoupAiStatus?.COLUMN_TYPE ?? "").includes("'scoring'")) {
+    await pool.query(
+      "ALTER TABLE online_soup_messages MODIFY COLUMN ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none'"
     );
   }
 
@@ -1605,6 +1681,21 @@ export async function initDatabase() {
   await ensureIndex("circle_messages", "idx_circle_messages_reply", "reply_to_message_id");
   await ensureIndex("circle_messages", "idx_circle_messages_gift_send", "gift_send_id");
 
+  // 跨进程共享的聊天表情连发状态：按用户和当前会话独立计数。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_message_rate_limits (
+      scope_type ENUM('private','circle','online_soup') NOT NULL,
+      scope_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      consecutive_sticker_count INT UNSIGNED NOT NULL DEFAULT 0,
+      last_sticker_at DATETIME(6) NULL,
+      updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+      PRIMARY KEY (scope_type, scope_id, user_id),
+      INDEX idx_chat_message_rate_limits_user (user_id, updated_at),
+      CONSTRAINT fk_chat_message_rate_limits_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS circle_message_mentions (
       message_id VARCHAR(64) NOT NULL,
@@ -1682,7 +1773,6 @@ export async function initDatabase() {
   await ensureColumn("soups", "key_facts_customized", "key_facts_customized TINYINT(1) NOT NULL DEFAULT 0 AFTER key_facts_hash");
   await ensureColumn("soups", "key_fact_atoms", "key_fact_atoms JSON NULL AFTER key_facts_customized");
   await ensureColumn("soups", "key_fact_atoms_hash", "key_fact_atoms_hash VARCHAR(64) NULL AFTER key_fact_atoms");
-  await ensureColumn("soups", "ai_prompt", "ai_prompt TEXT NULL AFTER enable_ai_game");
   await ensureColumn("soups", "review_status", "review_status ENUM('approved','pending','rejected') NOT NULL DEFAULT 'approved' AFTER enable_ai_game");
   await ensureColumn("soups", "review_reason", "review_reason VARCHAR(500) NULL AFTER review_status");
   await ensureColumn("soups", "review_version", "review_version INT NOT NULL DEFAULT 1 AFTER review_reason");
@@ -1694,12 +1784,10 @@ export async function initDatabase() {
     UPDATE game_sessions
     SET status = CASE
       WHEN progress >= 100 THEN 'completed'
-      WHEN progress >= 90 THEN 'awaiting_retell'
       ELSE 'active'
     END
     WHERE status <> CASE
       WHEN progress >= 100 THEN 'completed'
-      WHEN progress >= 90 THEN 'awaiting_retell'
       ELSE 'active'
     END
   `);
@@ -1852,7 +1940,6 @@ export async function initDatabase() {
       [id, name, `/stickers/tangtang-detective/${path}_static.webp`, `/stickers/tangtang-detective/${path}_320.webp`, 1000 - index]
     );
   }
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS asset_packs (
       id VARCHAR(64) PRIMARY KEY,
@@ -2637,7 +2724,8 @@ async function backfillHistoricalBadgeShellRewards() {
           badgeKey: String(row.badge_key),
           points: Math.max(0, Math.floor(Number(row.reward_points ?? 0)))
         }));
-        const totalReward = rewards.reduce((sum, item) => sum + item.points, 0);
+        // 成就点不再兑换等量贝壳；仅将旧的待补发记录结算为 0，已到账奖励不回收。
+        const totalReward = 0;
         if (totalReward > 0) {
           const [[user]] = await connection.query<mysql.RowDataPacket[]>(
             "SELECT shell_balance FROM users WHERE id = ? FOR UPDATE",
@@ -2674,7 +2762,7 @@ async function backfillHistoricalBadgeShellRewards() {
              SET achievement_points_snapshot = ?, shell_reward = ?, settlement_status = 'settled',
                  reward_source = 'historical_backfill', rewarded_at = CURRENT_TIMESTAMP
              WHERE user_id = ? AND badge_key = ? AND settlement_status = 'pending'`,
-            [reward.points, reward.points, userId, reward.badgeKey]
+            [reward.points, 0, userId, reward.badgeKey]
           );
         }
         await connection.commit();

@@ -12,11 +12,12 @@ import { LevelBadge } from "../components/LevelBadge";
 import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
-import { GiftMessageCard } from "../components/GiftMessageCard";
+import { GiftMessageBundle, GiftMessageCard } from "../components/GiftMessageCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
+import { giftTimelineEntries } from "../shared/giftTimeline";
 
 type CircleState = {
   circle: Omit<CircleSummary, "isJoined" | "latestMessage">;
@@ -483,7 +484,18 @@ export default function CircleChatPage() {
           }}
         >
           {hasMore && <button className="mx-auto block rounded-full bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
-          {messages.map((message) => {
+          {giftTimelineEntries(messages).map((entry) => {
+            if (entry.kind === "gift_bundle") {
+              const mine = entry.gifts[0]?.sender.id === user?.id;
+              return <GiftMessageBundle
+                key={entry.key}
+                gifts={entry.gifts}
+                align={mine ? "right" : "left"}
+                anchorIds={entry.messages.map((message) => `circle-message-${message.id}`)}
+                highlighted={entry.messages.some((message) => message.id === highlightedMessageId)}
+              />;
+            }
+            const message = entry.message;
             const mine = message.sender?.id === user?.id;
             const senderName = message.sender?.nickname ?? "已注销用户";
             const sticker = message.stickerId ? stickersById.get(message.stickerId) : null;

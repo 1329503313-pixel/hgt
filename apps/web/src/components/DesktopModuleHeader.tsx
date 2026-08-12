@@ -15,6 +15,7 @@ import {
   Trophy,
   UserRound
 } from "lucide-react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -22,8 +23,10 @@ import { desktopNavigationBannerUrl } from "../shared/staticAssets";
 import { useMessageUnread } from "../shared/useMessageUnread";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
+import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { canAccessAdmin } from "../shared/roles";
 import { DesktopAppDownload } from "./DesktopAppDownload";
+import { DesktopGlobalSearch } from "./DesktopGlobalSearch";
 
 export type DesktopModuleKey = "online-soup" | "circles" | "rankings" | "store" | "tasks" | "mine" | "achievements" | "cards" | "messages";
 
@@ -33,6 +36,13 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
   const unread = useMessageUnread(user?.id, Boolean(user));
   const heroParallax = useDesktopHeroParallax<HTMLElement>();
   const shellBalance = useShellBalance(user?.id);
+  const userMenuRef = useDismissibleDetails();
+  const [searchKeyword, setSearchKeyword] = useState("");
+
+  function submitGlobalSearch() {
+    const keyword = searchKeyword.trim();
+    navigate(keyword ? `/?search=${encodeURIComponent(keyword)}` : "/");
+  }
 
   function navigateAuthenticated(path: string) {
     if (!user) {
@@ -85,6 +95,8 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
           <button type="button" className={active === "rankings" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
           <button type="button" className={active === "store" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>
           <button type="button" className={active === "tasks" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>
+          <button type="button" className={active === "cards" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/cards")}><GalleryVerticalEnd size={17} />收藏</button>
+          <button type="button" className={active === "achievements" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/achievements")}><Award size={17} />成就</button>
         </nav>
         <div className="home-desktop-account">
           <DesktopAppDownload />
@@ -97,7 +109,7 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
               {canAccessAdmin(user.role) && (
                 <button type="button" className="home-desktop-icon-button" onClick={() => navigate("/admin")} aria-label="后台"><Shield size={18} /></button>
               )}
-              <details className="home-desktop-user-menu">
+              <details ref={userMenuRef} className="home-desktop-user-menu">
                 <summary>
                   {user.avatar ? <img src={user.avatar} alt="" /> : <span>{(user.nickname || user.username).slice(0, 1)}</span>}
                   <strong>{(user.nickname || user.username).slice(0, 8)}</strong>
@@ -105,8 +117,6 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
                 <div>
                   <button type="button" onClick={() => navigate("/mine")}><UserRound size={16} />个人中心</button>
                   <button type="button" onClick={() => navigate("/mine/settings")}><Settings size={16} />账号设置</button>
-                  <button type="button" onClick={() => navigate("/mine/achievements")}><Award size={16} />我的成就</button>
-                  <button type="button" onClick={() => navigate("/mine/cards")}><GalleryVerticalEnd size={16} />收藏柜</button>
                   <button type="button" onClick={handleLogout}><LogOut size={16} />退出登录</button>
                 </div>
               </details>
@@ -121,6 +131,9 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
       <div className="home-desktop-hero-copy desktop-module-hero-copy">
         <span>{eyebrow}</span>
         <strong>{title}</strong>
+      </div>
+      <div className="home-desktop-search-tools desktop-module-search-tools">
+        <DesktopGlobalSearch value={searchKeyword} onChange={setSearchKeyword} onSubmit={submitGlobalSearch} />
       </div>
     </header>
   );

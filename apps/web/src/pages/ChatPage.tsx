@@ -9,13 +9,14 @@ import { ListSkeleton } from "../components/Skeletons";
 import { subscribeServerEvent } from "../shared/serverEvents";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
-import { GiftMessageCard } from "../components/GiftMessageCard";
+import { GiftMessageBundle, GiftMessageCard } from "../components/GiftMessageCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 import { GiftDrawer } from "../components/GiftDrawer";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
+import { giftTimelineEntries } from "../shared/giftTimeline";
 
 type ChatResponse = {
   conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean; isFollowing: boolean } };
@@ -297,7 +298,12 @@ export default function ChatPage() {
               加载更早消息
             </button>
           )}
-          {chat.messages.map((message) => {
+          {giftTimelineEntries(chat.messages).map((entry) => {
+            if (entry.kind === "gift_bundle") {
+              const mine = entry.gifts[0]?.sender.id === user?.id;
+              return <GiftMessageBundle key={entry.key} gifts={entry.gifts} align={mine ? "right" : "left"} />;
+            }
+            const message = entry.message;
             const sender = message.isMine ? user : chat.conversation.otherUser;
             const sticker = message.stickerId ? stickersById.get(message.stickerId) : null;
             if (message.recalledAt) {

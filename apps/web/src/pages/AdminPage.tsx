@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { AdminSidebar, AdminTopBar, AdminTab } from "../components/admin/AdminTopBar";
@@ -16,6 +16,7 @@ import { StoreManagement } from "../components/admin/StoreManagement";
 import { BannerManagement } from "../components/admin/BannerManagement";
 import { FeedbackManagement } from "../components/admin/FeedbackManagement";
 import { GiftManagement } from "../components/admin/GiftManagement";
+import { VipManagement } from "../components/admin/VipManagement";
 import { canAccessAdmin, isSuperAdminRole } from "../shared/roles";
 import { api } from "../api";
 import { subscribeServerEvent } from "../shared/serverEvents";
@@ -26,6 +27,16 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<AdminTab>("data");
   const [moduleUnread, setModuleUnread] = useState({ approvals: false, feedback: false });
 
+  const loadModuleUnread = useCallback(async () => {
+    if (!user || !canAccessAdmin(user.role)) return;
+    try {
+      const next = await api<{ approvals: boolean; feedback: boolean }>("/api/admin/module-unread", { bypassCache: true, dedupe: false });
+      setModuleUnread(next);
+    } catch {
+      // 后台红点拉取失败不阻断管理功能。
+    }
+  }, [user]);
+
   useEffect(() => {
     if (loadingUser) return;
     if (!user || !canAccessAdmin(user.role)) { navigate("/"); return; }
@@ -33,31 +44,22 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!user || !canAccessAdmin(user.role)) return;
-    let disposed = false;
-    const loadUnread = async () => {
-      try {
-        const next = await api<{ approvals: boolean; feedback: boolean }>("/api/admin/module-unread", { bypassCache: true, dedupe: false });
-        if (!disposed) setModuleUnread(next);
-      } catch {
-        // 后台红点拉取失败不阻断管理功能。
-      }
-    };
-    void loadUnread();
-    const timer = window.setInterval(loadUnread, 30_000);
-    const handleFocus = () => void loadUnread();
+    void loadModuleUnread();
+    const timer = window.setInterval(loadModuleUnread, 30_000);
+    const handleFocus = () => void loadModuleUnread();
     window.addEventListener("focus", handleFocus);
     return () => {
-      disposed = true;
       window.clearInterval(timer);
       window.removeEventListener("focus", handleFocus);
     };
-  }, [user]);
+  }, [user, loadModuleUnread]);
 
   useEffect(() => {
     const update = (unread: boolean) => (event: MessageEvent<string>) => {
       try {
         const { moduleKey } = JSON.parse(event.data) as { moduleKey?: "approvals" | "feedback" };
-        if (moduleKey) setModuleUnread((current) => ({ ...current, [moduleKey]: unread }));
+        if (moduleKey === "approvals") void loadModuleUnread();
+        else if (moduleKey) setModuleUnread((current) => ({ ...current, [moduleKey]: unread }));
       } catch {
         // 忽略格式异常的后台模块事件。
       }
@@ -68,12 +70,12 @@ export default function AdminPage() {
       unsubscribeUnread();
       unsubscribeRead();
     };
-  }, []);
+  }, [loadModuleUnread]);
 
   useEffect(() => {
-    if (activeTab !== "approvals" && activeTab !== "feedback") return;
-    setModuleUnread((current) => ({ ...current, [activeTab]: false }));
-    void api(`/api/admin/module-unread/${activeTab}/read`, { method: "PATCH" }).catch(() => {});
+    if (activeTab !== "feedback") return;
+    setModuleUnread((current) => ({ ...current, feedback: false }));
+    void api("/api/admin/module-unread/feedback/read", { method: "PATCH" }).catch(() => {});
   }, [activeTab]);
 
   if (loadingUser) {
@@ -91,11 +93,12 @@ export default function AdminPage() {
           {activeTab === "data" && <AdminDashboard />}
           {activeTab === "banners" && isSuperAdmin && <BannerManagement />}
           {activeTab === "users" && <UserManagement isSuperAdmin={isSuperAdmin} />}
+          {activeTab === "vip" && isSuperAdmin && <VipManagement />}
           {activeTab === "soups" && <SoupManagement canDelete={isSuperAdmin} />}
           {activeTab === "evaluations" && <EvaluationManagement />}
           {activeTab === "gifts" && isSuperAdmin && <GiftManagement />}
           {activeTab === "badges" && isSuperAdmin && <BadgeManagement />}
-          {activeTab === "approvals" && <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} />}
+          {activeTab === "approvals" && <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} onPendingChange={loadModuleUnread} />}
           {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}
           {activeTab === "circles" && isSuperAdmin && <CircleManagement />}
           {activeTab === "assets" && isSuperAdmin && <StoreManagement />}

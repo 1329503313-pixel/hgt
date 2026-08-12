@@ -168,7 +168,7 @@ export function GameModal({
   const progressHint = state.completed
     ? "真相已经揭晓"
     : state.progress >= 90
-      ? "已接近真相，请尝试复述完整故事"
+      ? "已接近真相，可以继续确认剩余关键信息"
       : state.progress < 20
         ? "进度达到20%后可获取提示"
         : "已解锁方向性提示";

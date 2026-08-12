@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, Gem, Heart, KeyRound, Search, Shell, Sparkles, Trash2, X } from "lucide-react";
-import type { PublicUser, UserRole } from "../../shared/types";
+import { ArrowUpDown, Gem, Heart, KeyRound, Search, ShieldCheck, ShieldMinus, Shell, Sparkles, Trash2, X } from "lucide-react";
+import type { PublicUser } from "../../shared/types";
 import type { ShellTransaction } from "../../shared/types";
 import { api } from "../../api";
 import { Modal } from "../Modal";
@@ -90,6 +90,12 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [bulkShellPreview, setBulkShellPreview] = useState<BulkShellPreview | null>(null);
   const [bulkShellBusy, setBulkShellBusy] = useState(false);
   const [bulkShellError, setBulkShellError] = useState("");
+  const [adminRoleOpen, setAdminRoleOpen] = useState(false);
+  const [adminNickname, setAdminNickname] = useState("");
+  const [adminCandidates, setAdminCandidates] = useState<AdminUser[]>([]);
+  const [selectedAdminCandidate, setSelectedAdminCandidate] = useState<AdminUser | null>(null);
+  const [adminRoleBusy, setAdminRoleBusy] = useState(false);
+  const [adminRoleError, setAdminRoleError] = useState("");
   const presenceRefreshTimer = useRef<number | null>(null);
 
   const loadUsers = useCallback(async () => {
@@ -132,8 +138,34 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
 
   const template = useMemo(() => gridTemplate(userColumns, visibleColumns), [visibleColumns]);
 
-  async function updateRole(item: AdminUser, role: UserRole) {
-    await api(`/api/admin/users/${item.id}`, { method: "PATCH", body: { nickname: item.nickname, role } });
+  async function searchAdminCandidate() {
+    const query = adminNickname.trim();
+    if (!query) { setAdminRoleError("请输入用户昵称"); return; }
+    setAdminRoleBusy(true); setAdminRoleError(""); setSelectedAdminCandidate(null);
+    try {
+      const data = await api<{ users: AdminUser[] }>(`/api/admin/vip/users/search?mode=nickname&query=${encodeURIComponent(query)}`);
+      setAdminCandidates(data.users);
+      if (!data.users.length) setAdminRoleError("未找到匹配用户");
+    } catch (error) { setAdminRoleError(error instanceof Error ? error.message : "用户查询失败"); }
+    finally { setAdminRoleBusy(false); }
+  }
+
+  async function setAdminRole() {
+    if (!selectedAdminCandidate) { setAdminRoleError("请选择一个用户"); return; }
+    setAdminRoleBusy(true); setAdminRoleError("");
+    try {
+      await api(`/api/admin/users/${selectedAdminCandidate.id}/admin-role`, { method: "POST" });
+      showToast(`已将 ${selectedAdminCandidate.nickname} 设置为后台管理员`);
+      setAdminRoleOpen(false); setAdminNickname(""); setAdminCandidates([]); setSelectedAdminCandidate(null);
+      await loadUsers();
+    } catch (error) { setAdminRoleError(error instanceof Error ? error.message : "设置管理员失败"); }
+    finally { setAdminRoleBusy(false); }
+  }
+
+  async function cancelAdminRole(item: AdminUser) {
+    if (!confirm(`确定取消 ${item.nickname} 的后台管理员身份吗？`)) return;
+    await api(`/api/admin/users/${item.id}/admin-role`, { method: "DELETE" });
+    showToast(`已取消 ${item.nickname} 的后台管理员身份`);
     await loadUsers();
   }
 
@@ -287,6 +319,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           <div className="mt-1 text-sm text-muted">{total} 位用户</div>
         </div>
         <div className="flex items-center gap-2">
+          {isSuperAdmin && <button type="button" className="btn btn-secondary h-10 px-3 text-xs whitespace-nowrap" onClick={() => { setAdminRoleOpen(true); setAdminRoleError(""); }}><ShieldCheck size={16} />设置管理员</button>}
           {isSuperAdmin && <button type="button" className="btn btn-primary h-10 px-3 text-xs whitespace-nowrap" onClick={() => { setBulkShellOpen(true); setBulkShellPreview(null); setBulkShellError(""); }}><Shell size={16} />发放/扣除贝壳</button>}
           <ColumnSelector columns={userColumns} visible={visibleColumns} onChange={setVisibleColumns} />
         </div>
@@ -354,14 +387,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                   </div>
                 )}
                 {visibleColumns.has("role") && (
-                  isSuperAdmin ? (
-                    <select className="field h-9 w-28 px-2 text-xs" value={user.role} onChange={(event) => updateRole(user, event.target.value as UserRole)}>
-                      <option value="user">普通用户</option>
-                      <option value="vip">VIP</option>
-                      <option value="backoffice_admin">后台管理员</option>
-                      <option value="super_admin">超级管理员</option>
-                    </select>
-                  ) : <span className="text-xs font-bold text-ink">{USER_ROLE_LABELS[user.role]}</span>
+                  <span className="text-xs font-bold text-ink">{USER_ROLE_LABELS[user.role]}</span>
                 )}
                 {visibleColumns.has("level") && (
                   <button
@@ -398,7 +424,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                     : <span className="text-xs text-muted">无权限</span>
                 )}
                 {visibleColumns.has("actions") && (isSuperAdmin
-                  ? <button className="btn btn-danger h-8 px-2 text-xs whitespace-nowrap" onClick={() => deleteUser(user)}><Trash2 size={14} />删除</button>
+                  ? <div className="flex items-center gap-1">{user.role === "backoffice_admin" && <button className="btn btn-secondary h-8 px-2 text-xs whitespace-nowrap text-amber-700" onClick={() => void cancelAdminRole(user)}><ShieldMinus size={14} />取消管理员</button>}<button className="btn btn-danger h-8 px-2 text-xs whitespace-nowrap" onClick={() => deleteUser(user)}><Trash2 size={14} />删除</button></div>
                   : <span className="text-xs text-muted">—</span>)}
               </div>
             ))}
@@ -414,6 +440,16 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         onPageChange={setPage}
         onPageSizeChange={(size) => { setPage(1); setPageSize(size); }}
       />
+
+      {isSuperAdmin && adminRoleOpen && <Modal onClose={() => { if (!adminRoleBusy) { setAdminRoleOpen(false); setAdminCandidates([]); setSelectedAdminCandidate(null); setAdminRoleError(""); } }}>
+        <div className="space-y-4">
+          <div><h2 className="text-lg font-black text-ink">设置后台管理员</h2><p className="mt-1 text-sm text-muted">输入用户昵称查询；如有重名，请根据账号选择正确用户。</p></div>
+          <label className="block"><span className="text-sm font-bold text-ink">用户昵称</span><div className="mt-2 flex gap-2"><input className="field min-w-0 flex-1" value={adminNickname} autoFocus onChange={(event) => setAdminNickname(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchAdminCandidate(); } }} /><button type="button" className="btn btn-secondary shrink-0" disabled={adminRoleBusy} onClick={() => void searchAdminCandidate()}><Search size={16} />查询</button></div></label>
+          {adminCandidates.length > 0 && <div className="max-h-56 space-y-2 overflow-y-auto" role="radiogroup" aria-label="匹配用户">{adminCandidates.map((candidate) => <button key={candidate.id} type="button" role="radio" aria-checked={selectedAdminCandidate?.id === candidate.id} className={`flex min-h-12 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition ${selectedAdminCandidate?.id === candidate.id ? "border-primary bg-blue-50" : "border-line hover:bg-slate-50"}`} onClick={() => setSelectedAdminCandidate(candidate)}><span><strong className="block text-sm text-ink">{candidate.nickname}</strong><span className="text-xs text-muted">@{candidate.username}</span></span><span className="text-xs font-bold text-muted">{USER_ROLE_LABELS[candidate.role]}</span></button>)}</div>}
+          {adminRoleError && <p className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-600" role="alert">{adminRoleError}</p>}
+          <div className="grid grid-cols-2 gap-2"><button type="button" className="btn btn-secondary" disabled={adminRoleBusy} onClick={() => setAdminRoleOpen(false)}>取消</button><button type="button" className="btn btn-primary" disabled={adminRoleBusy || !selectedAdminCandidate} onClick={() => void setAdminRole()}>{adminRoleBusy ? "处理中…" : "确定设置"}</button></div>
+        </div>
+      </Modal>}
 
       {isSuperAdmin && bulkShellOpen && <Modal full onClose={closeBulkShell}>
         <div className="flex items-start justify-between gap-3 border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">批量发放/扣除贝壳</h2><p className="mt-1 text-sm text-muted">多个条件需同时满足，{bulkShellOperation === "add" ? "发放面向所有用户类型" : "扣除仅面向普通用户"}</p></div><button className="btn btn-secondary shrink-0 px-3" disabled={bulkShellBusy} onClick={closeBulkShell}><X size={17} />关闭</button></div>

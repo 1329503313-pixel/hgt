@@ -23,6 +23,20 @@ export function hasSoupReviewContentChanged(
     || String(existing.bottom) !== next.bottom;
 }
 
+export function normalizeStoredJsonForSql(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+export function hasEmptyManualAiKeyFacts(input: {
+  enableAiGame: boolean;
+  keyFactsCustomized: boolean;
+  keyFacts: unknown[];
+}) {
+  return input.keyFactsCustomized && input.keyFacts.length === 0;
+}
+
 type SoupValidationIssue = {
   path: PropertyKey[];
   message: string;
@@ -44,7 +58,6 @@ const soupFieldLabels: Record<string, string> = {
   isSurfacePublic: "汤面公开设置",
   isBottomPublic: "汤底公开设置",
   enableAiGame: "AI 玩汤开关",
-  aiPrompt: "AI 玩汤高级设置提示词",
   keyFacts: "AI 玩汤高级设置关键点",
   keyFactsCustomized: "AI 玩汤高级设置"
 };
@@ -61,6 +74,7 @@ export function soupValidationMessage(issues: SoupValidationIssue[]) {
       if (keyFactField === "weight") return `AI 玩汤高级设置：第 ${position} 个关键点未填写有效进度值（1–99）`;
     }
     if (issue.message.includes("权重总和")) return "AI 玩汤高级设置：进度值总和必须为 100";
+    if (issue.message.includes("至少保留 1 个")) return "AI 玩汤高级设置：手动管理关键点时至少保留 1 个关键点";
     return `AI 玩汤高级设置关键点有误：${issue.message}`;
   }
 

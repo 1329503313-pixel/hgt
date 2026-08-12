@@ -6,6 +6,7 @@ import { api } from "../api";
 import { useMessageUnread } from "../shared/useMessageUnread";
 import { UnifiedBackButton } from "./UnifiedBackButton";
 import { canAccessAdmin } from "../shared/roles";
+import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 
 export function PageTopBar({ title, titleContent, titleTo = "/", titleState, backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; titleState?: Record<string, unknown>; backTo?: string; rightAction?: React.ReactNode }) {
   const { user } = useApp();
@@ -53,6 +54,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", titleState, bac
 function UserMenuDropdown({ user }: { user: AccountUser }) {
   const { setUser, showToast, triggerRefresh } = useApp();
   const navigate = useNavigate();
+  const userMenuRef = useDismissibleDetails();
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
@@ -63,7 +65,7 @@ function UserMenuDropdown({ user }: { user: AccountUser }) {
   }
 
   return (
-    <details className="user-menu">
+    <details ref={userMenuRef} className="user-menu">
       <summary className="avatar-name-gap flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:px-2.5 sm:py-1.5">
         {user.avatar ? (
           <img className="h-7 w-7 shrink-0 rounded-full object-cover" src={user.avatar} alt="" />

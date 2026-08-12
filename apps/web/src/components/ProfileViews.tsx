@@ -51,15 +51,15 @@ export function ProfileHero({
           <button className="profile-hero-avatar h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-white/90 bg-white/20 text-2xl font-black shadow-md" onClick={onAvatar} disabled={!onAvatar}>
             {profile.avatar ? <img className="h-full w-full object-cover" src={profile.avatar} alt="" /> : profile.nickname.slice(0, 1)}
           </button>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h1 className="truncate text-xl font-black">{profile.nickname}</h1>
+          <div className="profile-hero-copy min-w-0 flex-1">
+            <div className="profile-hero-name-row flex min-w-0 items-center gap-2">
+              <h1 className="min-w-0 truncate text-xl font-black">{profile.nickname}</h1>
               <LevelBadge level={profile.level} />
               {showBadge && profile.equippedBadge && <EquippedBadgeIcon badge={profile.equippedBadge} className="h-8 w-8 rounded-lg" title={profile.equippedBadge.name} animated={false} showName={false} />}
             </div>
             {meta && <div className="mt-1">{meta}</div>}
           </div>
-          {actions && <div className="shrink-0">{actions}</div>}
+          {actions && <div className="profile-hero-actions shrink-0">{actions}</div>}
         </div>
       </div>
       <div className={`profile-hero-stats relative z-[1] grid grid-cols-5 divide-x divide-line px-1 py-3 ${hasBackground ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>

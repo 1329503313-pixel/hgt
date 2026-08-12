@@ -10,6 +10,7 @@ import {
   MessageSquareText,
   PackageOpen,
   Gift,
+  Crown,
   Radio,
   RefreshCw,
   Soup,
@@ -19,12 +20,13 @@ import { useNavigate } from "react-router-dom";
 import type { UserRole } from "../../shared/types";
 import { isSuperAdminRole } from "../../shared/roles";
 
-export type AdminTab = "data" | "banners" | "users" | "soups" | "evaluations" | "gifts" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices" | "feedback";
+export type AdminTab = "data" | "banners" | "users" | "vip" | "soups" | "evaluations" | "gifts" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices" | "feedback";
 
 const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "data", label: "数据", icon: <BarChart3 size={17} /> },
   { key: "banners", label: "Banner", icon: <Images size={17} /> },
   { key: "users", label: "用户", icon: <Users size={17} /> },
+  { key: "vip", label: "VIP", icon: <Crown size={17} /> },
   { key: "soups", label: "汤品", icon: <Soup size={17} /> },
   { key: "evaluations", label: "评价", icon: <MessageSquare size={17} /> },
   { key: "gifts", label: "礼物", icon: <Gift size={17} /> },

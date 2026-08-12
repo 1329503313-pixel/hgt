@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Award, Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LogOut, MessageCircleQuestion, Plus, RotateCcw, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
 import type { PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
@@ -17,6 +17,8 @@ import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
 import { canAccessAdmin } from "../shared/roles";
 import { DesktopAppDownload } from "../components/DesktopAppDownload";
+import { DesktopGlobalSearch } from "../components/DesktopGlobalSearch";
+import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "total" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge">;
@@ -47,9 +49,12 @@ function createHomeRandomSeed() {
 export default function HomePage() {
   const { user, refreshKey, setExportReady, openAuth, openSoupEditor, setUser, showToast, triggerRefresh } = useApp();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const routedSearchKeyword = searchParams.get("search")?.trim() ?? "";
   const unread = useMessageUnread(user?.id, Boolean(user));
   const heroParallax = useDesktopHeroParallax<HTMLDivElement>();
   const shellBalance = useShellBalance(user?.id);
+  const userMenuRef = useDismissibleDetails();
 
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -73,7 +78,7 @@ export default function HomePage() {
   const [categoryRefreshKey, setCategoryRefreshKey] = useState(0);
 
   const [filters, setFilters] = useState({
-    keyword: "",
+    keyword: routedSearchKeyword,
     type: "",
     difficulty: "",
     minRating: "all",
@@ -81,7 +86,7 @@ export default function HomePage() {
     aiGame: "all"
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [searchKeyword, setSearchKeyword] = useState("");
+  const [searchKeyword, setSearchKeyword] = useState(routedSearchKeyword);
   const activeFilterCount = [
     filters.type,
     filters.difficulty,
@@ -92,7 +97,16 @@ export default function HomePage() {
   const isResultMode = Boolean(filters.keyword) || activeFilterCount > 0;
   const firstDesktopPageSize = isResultMode ? desktopPageSize : desktopFirstPageSize;
 
-  const submitSearch = () => setFilters((old) => ({ ...old, keyword: searchKeyword.trim() }));
+  const submitSearch = () => {
+    const keyword = searchKeyword.trim();
+    setFilters((old) => ({ ...old, keyword }));
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (keyword) next.set("search", keyword);
+      else next.delete("search");
+      return next;
+    }, { replace: true });
+  };
   const resetFilters = () => setFilters((old) => ({
     ...old,
     type: "",
@@ -180,6 +194,11 @@ export default function HomePage() {
     offsetRef.current = 0;
     setHomeCategory(nextCategory);
   };
+
+  useEffect(() => {
+    setSearchKeyword(routedSearchKeyword);
+    setFilters((old) => old.keyword === routedSearchKeyword ? old : { ...old, keyword: routedSearchKeyword });
+  }, [routedSearchKeyword]);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1024px)");
@@ -390,6 +409,8 @@ export default function HomePage() {
             <button type="button" onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>
+            <button type="button" onClick={() => navigateAuthenticated("/mine/cards")}><GalleryVerticalEnd size={17} />收藏</button>
+            <button type="button" onClick={() => navigateAuthenticated("/mine/achievements")}><Award size={17} />成就</button>
           </nav>
           <div className="home-desktop-account">
             <DesktopAppDownload />
@@ -402,7 +423,7 @@ export default function HomePage() {
                 {canAccessAdmin(user.role) && (
                   <button type="button" className="home-desktop-icon-button" onClick={() => navigate("/admin")} aria-label="后台"><Shield size={18} /></button>
                 )}
-                <details className="home-desktop-user-menu">
+                <details ref={userMenuRef} className="home-desktop-user-menu">
                   <summary>
                     {user.avatar ? <img src={user.avatar} alt="" /> : <span>{(user.nickname || user.username).slice(0, 1)}</span>}
                     <strong>{(user.nickname || user.username).slice(0, 8)}</strong>
@@ -410,8 +431,6 @@ export default function HomePage() {
                   <div>
                     <button type="button" onClick={() => navigate("/mine")}><UserRound size={16} />个人中心</button>
                     <button type="button" onClick={() => navigate("/mine/settings")}><Settings size={16} />账号设置</button>
-                    <button type="button" onClick={() => navigate("/mine/achievements")}><Award size={16} />我的成就</button>
-                    <button type="button" onClick={() => navigate("/mine/cards")}><GalleryVerticalEnd size={16} />收藏柜</button>
                     <button type="button" onClick={handleLogout}><LogOut size={16} />退出登录</button>
                   </div>
                 </details>
@@ -474,15 +493,7 @@ export default function HomePage() {
               </button>
             </div>
           )}
-          <div className="home-desktop-search-box">
-            <input
-              placeholder="搜索海龟汤或用户昵称..."
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter") submitSearch(); }}
-            />
-            <button type="button" onClick={submitSearch} aria-label="搜索"><Search size={18} /></button>
-          </div>
+          <DesktopGlobalSearch value={searchKeyword} onChange={setSearchKeyword} onSubmit={submitSearch} />
           <button
             type="button"
             className={`home-desktop-filter-trigger ${filtersOpen ? "is-open" : ""}`}

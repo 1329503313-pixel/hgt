@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasSoupReviewContentChanged, normalizeExistingSoupCover, soupValidationMessage } from "./soupInput.js";
+import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
 
 test("编辑海龟汤时将当前 OSS 封面转换为站内封面标记", () => {
   const body = {
@@ -32,6 +32,19 @@ test("仅修改封面等非审核内容时不触发重新审核", () => {
   assert.equal(hasSoupReviewContentChanged(existing, { ...existing, bottom: "新汤底" }), true);
 });
 
+test("编辑无 AI 配置权限的旧作品时将数据库 JSON 对象安全序列化", () => {
+  assert.equal(normalizeStoredJsonForSql(null), null);
+  assert.equal(normalizeStoredJsonForSql('[{"id":1}]'), '[{"id":1}]');
+  assert.equal(normalizeStoredJsonForSql([{ id: 1, content: "关键点", weight: 100 }]), '[{"id":1,"content":"关键点","weight":100}]');
+});
+
+test("开启 AI 玩汤并手动管理关键点时禁止保存空列表", () => {
+  assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: true, keyFactsCustomized: true, keyFacts: [] }), true);
+  assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: true, keyFactsCustomized: false, keyFacts: [] }), false);
+  assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: false, keyFactsCustomized: true, keyFacts: [] }), true);
+  assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: true, keyFactsCustomized: true, keyFacts: [{}] }), false);
+});
+
 test("海龟汤校验错误明确指出 AI 高级设置中的问题", () => {
   assert.equal(
     soupValidationMessage([{ path: ["keyFacts", 0, "content"], message: "Too small" }]),
@@ -44,6 +57,10 @@ test("海龟汤校验错误明确指出 AI 高级设置中的问题", () => {
   assert.equal(
     soupValidationMessage([{ path: ["keyFacts"], message: "进度关键点权重总和必须为 100" }]),
     "AI 玩汤高级设置：进度值总和必须为 100"
+  );
+  assert.equal(
+    soupValidationMessage([{ path: ["keyFacts"], message: "手动管理关键点时至少保留 1 个关键点" }]),
+    "AI 玩汤高级设置：手动管理关键点时至少保留 1 个关键点"
   );
 });
 

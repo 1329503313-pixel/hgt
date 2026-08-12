@@ -18,6 +18,7 @@ import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { Modal } from "../components/Modal";
 import { seoDescription, setDocumentSeo } from "../shared/seo";
 import { canAccessAdmin } from "../shared/roles";
+import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { EvaluationCard } from "../components/EvaluationCard";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
@@ -39,6 +40,7 @@ function CollapsibleSection({ children, defaultOpen = false }: { children: React
 export default function DetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const userMenuRef = useDismissibleDetails();
   const location = useLocation();
   const navigationOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; soupShareReturnTo?: string; soupReturnTo?: string } | null;
   const onlineSoupOrigin = navigationOrigin;
@@ -279,7 +281,7 @@ export default function DetailPage() {
           <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
             {user ? (
               <>
-                <details className="user-menu">
+                <details ref={userMenuRef} className="user-menu">
                   <summary className="avatar-name-gap flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:px-2.5 sm:py-1.5">
                     {user.avatar ? (
                       <img className="h-7 w-7 shrink-0 rounded-full object-cover" src={user.avatar} alt="" />

@@ -121,13 +121,18 @@ export function SoupEditor() {
     });
   }
 
-  const keyFactsTotalWeight = value.keyFacts.reduce((sum, k) => sum + k.weight, 0);
+  const keyFactsTotalWeight = value.keyFacts.reduce(
+    (sum, k) => sum + (Number.isFinite(k.weight) ? k.weight : 0),
+    0
+  );
   const keyFactsWeightValid = value.keyFacts.length === 0 || keyFactsTotalWeight === 100;
   const emptyKeyFactIndex = value.keyFacts.findIndex((keyFact) => !keyFact.content.trim());
   const invalidKeyFactWeightIndex = value.keyFacts.findIndex(
     (keyFact) => !Number.isInteger(keyFact.weight) || keyFact.weight < 1 || keyFact.weight > 99
   );
-  const aiAdvancedSettingsError = emptyKeyFactIndex >= 0
+  const aiAdvancedSettingsError = value.keyFactsCustomized && value.keyFacts.length === 0
+    ? "AI 玩汤高级设置：手动管理关键点时至少保留 1 个关键点"
+    : emptyKeyFactIndex >= 0
     ? `AI 玩汤高级设置：第 ${emptyKeyFactIndex + 1} 个关键点未填写`
     : invalidKeyFactWeightIndex >= 0
       ? `AI 玩汤高级设置：第 ${invalidKeyFactWeightIndex + 1} 个关键点未填写有效进度值（1–99）`
@@ -135,12 +140,13 @@ export function SoupEditor() {
         ? `AI 玩汤高级设置：进度值总和必须为 100，当前为 ${keyFactsTotalWeight}`
         : "";
 
-  // AI 重新解析
+  // 清除关键点（服务端仍沿用原有重新生成逻辑）
   async function handleReanalyze() {
     if (!editingSoupId) return;
     try {
       await api(`/api/soups/${editingSoupId}/reanalyze-keyfacts`, { method: "POST" });
-      showToast("AI 重新解析中，稍后刷新查看结果");
+      patch({ keyFacts: [], keyFactsCustomized: false });
+      showToast("关键点已清除，稍后刷新查看重新生成结果");
       setReanalyzeConfirmOpen(false);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "操作失败");
@@ -184,7 +190,7 @@ export function SoupEditor() {
     event.preventDefault();
     if (submittingRef.current) return;
     if (!termsAccepted) { setTermsError("请先勾选同意用户使用条款"); return; }
-    if (canEnableAiGame && value.enableAiGame && aiAdvancedSettingsError) {
+    if (canEnableAiGame && aiAdvancedSettingsError) {
       setAdvSettingsOpen(true);
       showToast(aiAdvancedSettingsError);
       return;
@@ -199,7 +205,6 @@ export function SoupEditor() {
     const payload = {
       ...formValue,
       enableAiGame: canEnableAiGame ? value.enableAiGame : false,
-      aiPrompt: canEnableAiGame ? value.aiPrompt : "",
       keyFacts: canEnableAiGame ? value.keyFacts : [],
       keyFactsCustomized: canEnableAiGame ? value.keyFactsCustomized : false,
       supplementalSurfaces: value.supplementalSurfaces.map((s: string) => s.trim()).filter(Boolean),
@@ -420,20 +425,6 @@ export function SoupEditor() {
           <div className="space-y-5 p-2 max-h-[80vh] overflow-auto">
             <h2 className="text-lg font-black text-ink">AI 高级设置</h2>
 
-            {/* AI 提示词 */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-bold text-ink">AI 提示词</label>
-              <p className="text-[11px] leading-5 text-muted">
-                您可编辑您的 AI 提示词，主要用于规定 AI 主持人的身份、注意点。比如：你是主持人视角，可以回答所有真实问题；或你是汤面中的 XX 人，当用户问你 XX 问题时，你需要以 XX 人的视角来回答问题。
-              </p>
-              <textarea
-                className="field min-h-[120px] w-full"
-                placeholder="留空则使用默认提示词"
-                value={value.aiPrompt}
-                onChange={(e) => patch({ aiPrompt: e.target.value })}
-              />
-            </div>
-
             {/* 进度关键点 */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -475,9 +466,17 @@ export function SoupEditor() {
                         type="number"
                         min={1}
                         max={99}
-                        value={kf.weight}
+                        value={Number.isInteger(kf.weight) && kf.weight >= 1 ? kf.weight : ""}
                         aria-invalid={!Number.isInteger(kf.weight) || kf.weight < 1 || kf.weight > 99}
-                        onChange={(e) => updateKeyFact(kf.id, "weight", Math.max(1, Math.min(99, parseInt(e.target.value) || 1)))}
+                        onWheel={(event) => event.currentTarget.blur()}
+                        onChange={(e) => {
+                          const input = e.target.value;
+                          updateKeyFact(
+                            kf.id,
+                            "weight",
+                            input === "" ? 0 : Math.max(1, Math.min(99, Number(input)))
+                          );
+                        }}
                       />
                     </div>
                   </div>
@@ -485,6 +484,8 @@ export function SoupEditor() {
                     type="button"
                     className="shrink-0 grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-red-50 hover:text-danger"
                     onClick={() => removeKeyFact(kf.id)}
+                    aria-label={`删除第 ${value.keyFacts.findIndex((item) => item.id === kf.id) + 1} 个关键点`}
+                    title="删除关键点"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -492,7 +493,11 @@ export function SoupEditor() {
               ))}
 
               {value.keyFacts.length === 0 && (
-                <p className="text-sm text-muted text-center py-4">暂无自定义关键点。留空则由 AI 自动拆分。</p>
+                <p className={`py-4 text-center text-sm ${value.keyFactsCustomized ? "font-bold text-danger" : "text-muted"}`}>
+                  {value.keyFactsCustomized
+                    ? "手动管理关键点时至少保留 1 个关键点，当前状态无法保存。"
+                    : "暂无自定义关键点，发布或开启 AI 玩汤后将由 AI 自动拆分。"}
+                </p>
               )}
 
               {aiAdvancedSettingsError && (
@@ -500,14 +505,14 @@ export function SoupEditor() {
               )}
             </div>
 
-            {/* AI 重新解析 */}
+            {/* 清除关键点 */}
             {value.keyFactsCustomized && editing && (
               <button
                 type="button"
                 className="btn btn-secondary w-full text-sm"
                 onClick={() => setReanalyzeConfirmOpen(true)}
               >
-                由 AI 自动重新解析关键点
+                清除关键点
               </button>
             )}
 
@@ -526,12 +531,12 @@ export function SoupEditor() {
         </Modal>
       )}
 
-      {/* AI 重新解析确认弹窗 */}
+      {/* 清除关键点确认弹窗 */}
       {reanalyzeConfirmOpen && (
         <Modal onClose={() => setReanalyzeConfirmOpen(false)}>
           <div className="space-y-4 p-2">
-            <p className="text-sm font-bold text-ink">是否由 AI 自动重新解析关键点并覆盖您的预设？</p>
-            <p className="text-xs text-muted">此操作将清除您手动编辑的关键点和提示词，由 AI 根据汤面、汤底、主持人手册重新生成。</p>
+            <p className="text-sm font-bold text-ink">是否清除已保存的关键点？</p>
+            <p className="text-xs text-muted">此操作只会清除手动编辑的关键点；服务端随后会按现有逻辑重新生成内部关键点。</p>
             <div className="flex gap-2">
               <button type="button" className="btn btn-secondary flex-1" onClick={() => setReanalyzeConfirmOpen(false)}>取消</button>
               <button type="button" className="btn btn-primary flex-1" onClick={handleReanalyze}>确认</button>
