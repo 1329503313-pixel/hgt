@@ -36,6 +36,7 @@ export const config = {
   sessionSecret: process.env.SESSION_SECRET ?? "dev-session-secret-change-me",
   adminDefaultPassword: process.env.ADMIN_DEFAULT_PASSWORD ?? "",
   runDatabaseMigrations: process.env.RUN_DB_MIGRATIONS !== "false",
+  releaseCandidate: process.env.RELEASE_CANDIDATE === "true",
   assetMediaDir: resolve(process.env.ASSET_MEDIA_DIR || "data/asset-media"),
   aliyunOssPublicEndpoint:
     process.env.ALIYUN_OSS_PUBLIC_ENDPOINT ?? "https://oss-cn-beijing.aliyuncs.com",

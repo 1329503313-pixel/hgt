@@ -1,5 +1,7 @@
-export const AUTH_COOKIE_NAME = "hgt_session";
-export const LEGACY_AUTH_COOKIE_NAME = "hgt_token";
+// hgt_token is the permanent production cookie name. Keep accepting the
+// short-lived hgt_session migration name so an upgrade never logs users out.
+export const AUTH_COOKIE_NAME = "hgt_token";
+export const LEGACY_AUTH_COOKIE_NAME = "hgt_session";
 
 export function authTokenFromCookies(cookies: Record<string, unknown> | undefined) {
   const current = cookies?.[AUTH_COOKIE_NAME];

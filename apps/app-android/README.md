@@ -65,7 +65,7 @@ npm run app:android:verify
 - `app:android:verify`：验证正式包 applicationId、版本、证书、SHA256 和敏感权限。
 - `app:android:smoke`：需要且只接受一台 online 真机/模拟器，执行安装、冷启动、前台 Activity 与崩溃日志检查。
 
-当前本地候选版本为 `1.0.0-p0.2 (100002)`；它仍需 Android 真机主链路验收后才能进入 OSS 上传审批。
+当前发布版本读取 `release/version.json`，不要在文档中维护容易过期的版本副本。完整构建、上传、更新记录发布与耗时优化参见 [`docs/生产部署与Android发布Runbook.md`](../../docs/生产部署与Android发布Runbook.md)。
 
 ## 版本控制
 

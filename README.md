@@ -27,25 +27,18 @@ npm run check:images -w apps/web
 
 ## Docker 部署（阿里云）
 
-### 前置条件
+生产 Web/Server 部署与 Android APK 发布统一遵循 [生产部署与 Android 发布 Runbook](docs/生产部署与Android发布Runbook.md)。只有用户在当前任务明确授权“全量部署”后才允许操作生产环境。
 
-1. 阿里云 ECS 安装好 Docker 和 Docker Compose
-2. 代码上传到服务器
+### 标准入口
 
-### 构建与启动
+```powershell
+# 本地门禁
+npm run check
+npm test
+npm run build:all
 
-```bash
-# 1. 使用服务器上的持久化环境文件校验配置
-docker compose --env-file /opt/hgt/.env config --quiet
-
-# 2. 构建镜像并启动
-docker compose --env-file /opt/hgt/.env up -d --build
-
-# 3. 查看日志
-docker compose logs -f
-
-# 4. 查看服务状态
-docker compose ps
+# 已授权时：白名单生产包、旁路构建、认证不变量校验、自动回滚切换
+npm run release:production:deploy
 ```
 
 ### 环境变量配置
@@ -54,15 +47,15 @@ docker compose ps
 
 | 变量 | 说明 |
 |------|------|
-| `JWT_SECRET` | **必填**，JWT 签名密钥（`openssl rand -hex 32`） |
+| `JWT_SECRET` | **必填**；生产永久沿用现有值，只能从当前容器/持久化配置继承并用 `-e JWT_SECRET` 注入，禁止生成或轮换 |
 | `ADMIN_DEFAULT_PASSWORD` | 管理员初始密码 |
 | `DB_PASSWORD` | MySQL 密码 |
 | `WEB_ORIGIN` | 前端域名（替换为实际域名） |
 | `PUBLIC_SITE_URL` | SEO canonical、robots 和 sitemap 使用的正式站点地址，例如 `https://hgt.caqis.com/` |
 | `RUN_DB_MIGRATIONS` | 启动时自动补齐表和索引，默认 `true`；多实例部署时可先单独执行迁移再设为 `false` |
 
-生产部署必须始终通过同一个服务器绝对路径环境文件启动。不要用手写的
-`docker run -e ...` 重建应用容器；手写变量清单容易在新增配置后漏传变量。
+生产部署必须从当前容器继承完整环境，并由版本化发布脚本显式执行
+`-e JWT_SECRET`。不要手写不完整的 `docker run -e ...` 变量清单。
 Compose 和服务端都会拒绝在邮件必填配置缺失时启动，避免容器表面健康、
 实际到绑定邮箱时才返回 503。
 
@@ -76,23 +69,7 @@ npm run migrate:prod -w apps/server
 
 迁移成功后将应用实例的 `RUN_DB_MIGRATIONS` 设为 `false` 再滚动发布，避免每个实例重复执行结构检查。
 
-### 部署到阿里云
-
-```bash
-# 在服务器上
-git clone <你的仓库>
-cd hgt
-
-# 编辑密码
-vim docker-compose.yml
-
-# 启动
-docker compose up -d --build
-```
-
-服务启动后访问 `http://<服务器IP>:4000`。
-
-如果要配置 HTTPS + 域名，在服务器前面加 Nginx 或 Caddy 反向代理。
+服务切换后必须验证正式域名首页、健康接口、Android CORS、JWT 哈希和 Cookie 契约；任一项不一致由脚本自动回滚。
 
 ### 邮箱验证与找回密码
 

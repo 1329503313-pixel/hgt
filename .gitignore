@@ -33,6 +33,7 @@ test-results/
 docs/*
 !docs/APP视觉与图标对齐执行说明.md
 !docs/APP_Web用户端100%复刻对照矩阵与重建计划.md
+!docs/生产部署与Android发布Runbook.md
 artifacts/
 .local/
 # Agent working memory; not part of the product source.

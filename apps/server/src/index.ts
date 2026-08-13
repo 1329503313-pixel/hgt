@@ -7324,6 +7324,12 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   res.status(500).json({ error: "服务暂时不可用" });
 });
 
+if (config.releaseCandidate) {
+  // A deployment candidate may coexist briefly with production. It verifies
+  // database connectivity, HTTP health and static assets without running any
+  // migration, cleanup, settlement, recovery or scheduled write path.
+  await pool.query("SELECT 1");
+} else {
 if (config.runDatabaseMigrations) await initDatabase();
 else await pool.query("SELECT 1");
 await syncExpiredVipRoles(pool).catch((error) => console.error("VIP expiry synchronization failed:", error));
@@ -7391,18 +7397,21 @@ const settleRankingRewards = () => {
 settleRankingRewards();
 const rankingRewardSettlementTimer = setInterval(settleRankingRewards, 60_000);
 rankingRewardSettlementTimer.unref();
+}
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);
 });
 
 // 百度收录：每日一次全量推送（启动 60s 后首次执行，之后每 24h 一次）
 const BAIDU_PUSH_INTERVAL = 24 * 60 * 60 * 1000;
-setTimeout(() => {
-  pushFullSiteToBaidu(pool, config.publicSiteUrl).catch(() => {});
-  setInterval(() => {
+if (!config.releaseCandidate) {
+  setTimeout(() => {
     pushFullSiteToBaidu(pool, config.publicSiteUrl).catch(() => {});
-  }, BAIDU_PUSH_INTERVAL);
-}, 60_000);
+    setInterval(() => {
+      pushFullSiteToBaidu(pool, config.publicSiteUrl).catch(() => {});
+    }, BAIDU_PUSH_INTERVAL);
+  }, 60_000);
+}
 
 const onlineSoupWebSocketServer = new WebSocketServer({ noServer: true });
 

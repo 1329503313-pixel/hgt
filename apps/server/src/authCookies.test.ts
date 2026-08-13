@@ -7,7 +7,7 @@ import {
   authTokenFromCookies
 } from "./authCookies.js";
 
-test("new authentication cookie takes priority over the legacy cookie", () => {
+test("permanent authentication cookie takes priority over the migration cookie", () => {
   assert.equal(authTokenFromCookies({
     [LEGACY_AUTH_COOKIE_NAME]: "old-user-token",
     [AUTH_COOKIE_NAME]: "new-user-token"
@@ -18,7 +18,7 @@ test("new authentication cookie takes priority over the legacy cookie", () => {
   );
 });
 
-test("legacy authentication cookie remains valid during migration", () => {
+test("migration authentication cookie remains valid without logging users out", () => {
   assert.equal(authTokenFromCookies({ [LEGACY_AUTH_COOKIE_NAME]: "legacy-token" }), "legacy-token");
   assert.equal(authTokenFromCookieHeader(`${LEGACY_AUTH_COOKIE_NAME}=legacy-token`), "legacy-token");
 });
