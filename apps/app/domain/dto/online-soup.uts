@@ -36,11 +36,18 @@ export type OnlineSoupRoomState = {
   soup: OnlineSoupSelectedSoup | null, createdAt: string
 }
 export type OnlineSoupMe = { role: string, isHost: boolean }
+export type OnlineSoupHonorUser = { userId: string, nickname: string, avatar: string | null, progressContribution: number }
+export type OnlineSoupHonorQuestion = {
+  messageId: string, questionNumber: number, userId: string, nickname: string, avatar: string | null,
+  question: string, answer: string, progressDelta: number
+}
+export type OnlineSoupAiHonors = { version: number, mvp: OnlineSoupHonorUser, bestQuestion: OnlineSoupHonorQuestion }
 export type OnlineSoupMessage = {
   id: string, sequence: string, roundId: string | null, soupId: string | null,
   senderId: string | null, senderName: string | null,
   senderAvatar: string | null, senderLevel: number, senderEquippedBadge: EquippedBadge | null,
   type: string, content: string, stickerId: string | null,
+  aiHonors: OnlineSoupAiHonors | null,
   giftDisplay: GiftMessageDisplay | null, giftBundle: GiftMessageDisplay[] | null,
   senderIsHost: boolean, contentIndex: number | null, questionNumber: number | null,
   answer: string | null, aiStatus: string, aiError: string | null, roundEnded: boolean, allBottomsPublished: boolean,

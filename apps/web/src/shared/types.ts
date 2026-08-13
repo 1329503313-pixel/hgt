@@ -419,6 +419,26 @@ export type OnlineSoupHostMode = "human" | "ai";
 export type OnlineSoupMemberRole = "host" | "player" | "spectator" | "admin";
 export type OnlineSoupAnswer = "yes" | "no" | "both" | "unknown" | "irrelevant";
 
+export type OnlineSoupAiHonors = {
+  version: 1;
+  mvp: {
+    userId: string;
+    nickname: string;
+    avatar: string | null;
+    progressContribution: number;
+  };
+  bestQuestion: {
+    messageId: string;
+    questionNumber: number;
+    userId: string;
+    nickname: string;
+    avatar: string | null;
+    question: string;
+    answer: OnlineSoupAnswer;
+    progressDelta: number;
+  };
+};
+
 export type OnlineSoupLobbyRoom = {
   id: string;
   code: string;
@@ -460,8 +480,9 @@ export type OnlineSoupMessage = {
   senderAvatar: string | null;
   senderLevel: number;
   senderEquippedBadge: EquippedBadge | null;
-  type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system" | "ai_advice";
+  type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system" | "ai_advice" | "ai_honor";
   content: string;
+  aiHonors: OnlineSoupAiHonors | null;
   gift?: GiftMessage | null;
   stickerId: string | null;
   senderIsHost: boolean;

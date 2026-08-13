@@ -2,6 +2,13 @@
 
 海龟汤 (HGT) 评价管理系统 — 全栈 monorepo
 
+## APP 开发目录永久规则（最高优先级）
+
+- `apps/app` 是已停用、仅供历史参考的 uni-app x / uniapp 客户端。从本规则写入后的后续任务开始，任何功能开发、缺陷修复、交互调整、视觉修改、类型同步或构建适配均禁止修改该目录；本规则不要求撤回写入前已经存在的改动。
+- 用户提到“APP”“Android APP”“手机 APP”“更新 APP”或类似表述时，统一指 `apps/web` 的手机端响应式页面及其 `apps/app-android` Capacitor Web 套壳。业务功能和界面以 `apps/web` 为唯一实现源；只有套壳原生能力、Android 工程配置或打包事项才修改 `apps/app-android`。
+- 不得因文档中仍存在“原生 APP”“uni-app x”或 HBuilderX 等历史表述而推断需要同步 `apps/app`，也不得把 HBuilderX / uni-app 编译作为当前 APP 功能的验收要求。
+- 只有用户明确要求修改或删除本节永久规则后，才允许在后续任务中重新启用或修改 `apps/app`。
+
 ## 线上部署禁令（永久）
 
 - 禁止将本项目或任何修改部署、发布、同步到线上环境。

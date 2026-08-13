@@ -820,7 +820,7 @@ export async function initDatabase() {
       room_id VARCHAR(64) NOT NULL,
       round_id VARCHAR(64) NULL,
       sender_id VARCHAR(64) NULL,
-      message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice') NOT NULL,
+      message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor') NOT NULL,
       content TEXT NOT NULL,
       sticker_id VARCHAR(64) NULL,
       gift_send_id VARCHAR(64) NULL,
@@ -980,9 +980,9 @@ export async function initDatabase() {
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_messages' AND COLUMN_NAME = 'message_type'`
   );
-  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'ai_advice'")) {
+  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'ai_honor'")) {
     await pool.query(
-      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice') NOT NULL"
+      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor') NOT NULL"
     );
   }
   const [[onlineSoupAiStatus]] = await pool.query<mysql.RowDataPacket[]>(

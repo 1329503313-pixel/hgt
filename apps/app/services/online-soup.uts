@@ -20,6 +20,7 @@ function decodeOnlineSoupSnapshot(json:string):OnlineSoupSnapshot{
     if(message['aiProgressDelta']==null)message['aiProgressDelta']=null
     if(message['aiProgressAfter']==null)message['aiProgressAfter']=null
     if(message['aiFeedback']==null)message['aiFeedback']=null
+    if(message['aiHonors']==null)message['aiHonors']=null
   })
   return JSON.parse<OnlineSoupSnapshot>(JSON.stringify(root))!
 }

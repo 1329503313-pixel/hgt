@@ -18,6 +18,7 @@ import { selectOnlineSoupHostSuccessor, type OnlineSoupHostCandidate } from "./o
 import { AiServiceError, canRequestRoomAiHint, ensureAiSoupKeyFacts, runRoomAiFastAnswer, runRoomAiHint, runRoomAiTurn, splitKeyFactsForSoup, type RoomAiGameState } from "./game.js";
 import { renderProgressiveHint, roomAiProgressFeedback, roomAiQuestionRisks, shouldPublishRoomAiStallHint } from "./gameLogic.js";
 import { recordChatMessageForRateLimit, stickerCooldownMessage } from "./chatMessageRateLimit.js";
+import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors } from "./onlineSoupHonors.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -551,6 +552,37 @@ async function completeAiRound(
       : "达到投票门槛，已发布汤底，本轮游戏结束",
     db,
   );
+  const [honorQuestions] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT m.id, m.message_sequence, m.question_number, m.sender_id, m.content, m.answer,
+       m.ai_progress_delta, u.nickname, u.avatar IS NOT NULL AS has_avatar
+     FROM online_soup_messages m
+     JOIN users u ON u.id = m.sender_id
+     WHERE m.round_id = ? AND m.message_type = 'question' AND m.ai_status = 'completed'
+       AND m.recalled_at IS NULL AND m.ai_progress_delta > 0
+     ORDER BY m.message_sequence ASC`,
+    [roundId],
+  );
+  const honors = selectOnlineSoupAiHonors(honorQuestions.map((question) => ({
+    id: String(question.id),
+    sequence: String(question.message_sequence),
+    questionNumber: Number(question.question_number ?? 0),
+    senderId: String(question.sender_id),
+    senderNickname: String(question.nickname),
+    senderAvatar: question.has_avatar
+      ? `/api/media/users/${encodeURIComponent(String(question.sender_id))}/avatar`
+      : null,
+    content: String(question.content),
+    answer: String(question.answer ?? ""),
+    progressDelta: Number(question.ai_progress_delta ?? 0),
+  })));
+  if (honors) {
+    await db.query(
+      `INSERT INTO online_soup_messages
+       (id, room_id, round_id, sender_id, message_type, content)
+       VALUES (?, ?, ?, NULL, 'ai_honor', ?)`,
+      [nanoid(), roomId, roundId, JSON.stringify(honors)],
+    );
+  }
   return true;
 }
 
@@ -879,6 +911,9 @@ function lobbyRoom(row: mysql.RowDataPacket) {
 function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
   const recalledAt = iso(row.recalled_at);
   const replyRecalledAt = iso(row.reply_recalled_at);
+  const aiHonors = !recalledAt && row.message_type === "ai_honor"
+    ? parseOnlineSoupAiHonors(row.content)
+    : null;
   return {
     id: String(row.id),
     sequence: String(row.message_sequence),
@@ -893,7 +928,8 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderLevel: levelForExperience(row.sender_experience),
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
     type: String(row.message_type),
-    content: recalledAt ? "" : String(row.content),
+    content: recalledAt ? "" : aiHonors ? "AI 本轮评选" : String(row.content),
+    aiHonors,
     gift: !recalledAt && row.message_type === "gift" ? parseGiftMessage(row.content) : null,
     stickerId: row.sticker_id ? String(row.sticker_id) : null,
     senderIsHost: Boolean(

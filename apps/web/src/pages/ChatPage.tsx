@@ -395,7 +395,6 @@ export default function ChatPage() {
         source={{ type: "private", id }}
         onClose={() => setGiftOpen(false)}
         onSent={() => {
-          setGiftOpen(false);
           shouldFollowBottomRef.current = true;
           void loadMessages().catch((error) => showToast((error as Error).message));
         }}

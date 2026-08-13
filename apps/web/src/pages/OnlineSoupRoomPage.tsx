@@ -20,6 +20,7 @@ import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
 import { isOnlineSoupAlreadyExited } from "../shared/onlineSoupExit";
 import { giftTimelineEntries } from "../shared/giftTimeline";
 import { onlineSoupAnswerPrefix } from "../shared/onlineSoupAnswerLabel";
+import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -1417,6 +1418,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
   if (message.type === "system") return <div className="py-1 text-center text-xs font-bold text-muted">— {message.content} {message.targetMessageId && !isHost && <button type="button" className="ml-1 font-black text-primary underline-offset-2 hover:underline" onClick={() => void onLocate(message.targetMessageId!)} aria-label={`定位到${message.content.match(/#\d+/)?.[0] ?? "被变更回答的提问"}`}>【定位】</button>} —</div>;
+  if (message.type === "ai_honor" && message.aiHonors) return <OnlineSoupHonorCard honors={message.aiHonors} onOpenUser={onOpenUser} />;
   if (message.type === "ai_advice") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Sparkles size={17} />AI 玩汤建议</div><ul className="mt-2 space-y-1.5 text-sm leading-6 text-slate-700">{message.content.split("\n").filter(Boolean).map((line) => <li key={line} className="flex gap-2"><span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /><span>{line}</span></li>)}</ul></article>;
   if (message.type === "clue") return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-amber-800"><Lightbulb size={16} /> 主持人线索</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></div>;
   if (message.type === "supplemental_surface") return <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Soup size={16} /> 补充汤面 {(message.contentIndex ?? 0) + 1}</div><div className="content-block mt-2 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></div>;

@@ -1,0 +1,38 @@
+<template>
+  <view class="gift-bundle" :class="alignMine ? 'gift-bundle-mine' : ''">
+    <button class="bundle-summary" hover-class="bundle-pressed" @click="toggle">
+      <view class="bundle-icons">
+        <image v-for="(gift,index) in previewGifts" :key="gift.giftSendId" class="bundle-icon" :class="index > 0 ? 'bundle-icon-overlap' : ''" :src="giftIcon(gift)" mode="aspectFit"></image>
+      </view>
+      <view class="bundle-copy">
+        <text class="bundle-title">又送出 {{ totalQuantity }} 份礼物</text>
+        <text class="bundle-subtitle">{{ gifts.length }} 条送礼记录 · {{ data.expanded ? '点击收起' : '点击查看' }}</text>
+      </view>
+      <text class="bundle-action">{{ data.expanded ? '收起' : '查看' }}</text>
+    </button>
+    <scroll-view v-if="data.expanded" class="bundle-details" direction="vertical">
+      <view v-for="gift in gifts" :key="gift.giftSendId" class="bundle-row">
+        <image class="bundle-row-icon" :src="giftIcon(gift)" mode="aspectFit"></image>
+        <view class="bundle-row-copy"><text class="bundle-row-name">{{ gift.giftName }} ×{{ gift.quantity }}</text><text class="bundle-row-recipient">送给 {{ gift.receiverName }}</text></view>
+        <text class="bundle-row-time">{{ timeText(gift.createdAt) }}</text>
+      </view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { GiftMessageDisplay } from '@/domain/dto/chat.uts'
+import { absoluteApiUrl } from '@/config/runtime.uts'
+
+const props = defineProps<{ gifts: GiftMessageDisplay[], alignMine: boolean }>()
+const data = reactive({ expanded: false })
+const previewGifts = computed<GiftMessageDisplay[]>((): GiftMessageDisplay[] => props.gifts.slice(Math.max(0, props.gifts.length - 3)))
+const totalQuantity = computed<number>((): number => props.gifts.reduce((total: number, gift: GiftMessageDisplay): number => total + gift.quantity, 0))
+function toggle() { data.expanded = !data.expanded }
+function giftIcon(gift: GiftMessageDisplay): string { return absoluteApiUrl(gift.iconUrl) }
+function timeText(value: string): string { const date = new Date(value); if (Number.isNaN(date.getTime())) return ''; return date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0') }
+</script>
+
+<style>
+.gift-bundle{width:280px;max-width:100%;border-width:1px;border-color:#FCE7F3;border-radius:17px;overflow:hidden;background-color:#FFFFFF}.gift-bundle-mine{align-self:flex-end}.bundle-summary{width:100%;min-height:64px;padding:8px 10px;flex-direction:row;align-items:center;border-radius:0;background-color:#FFF7ED}.bundle-icons{width:58px;height:40px;flex-direction:row;align-items:center}.bundle-icon{width:36px;height:36px;padding:3px;border-width:2px;border-color:#FFFFFF;border-radius:11px;background-color:#FFFFFF}.bundle-icon-overlap{margin-left:-24px}.bundle-copy{flex:1;min-width:0;margin-left:7px;align-items:flex-start}.bundle-title{color:#121826;font-size:13px;font-weight:900;lines:1}.bundle-subtitle{margin-top:3px;color:#667085;font-size:9px;font-weight:700;lines:1}.bundle-action{min-width:44px;color:#2563EB;font-size:10px;font-weight:900;text-align:center}.bundle-pressed{opacity:.76}.bundle-details{height:220px;border-top-width:1px;border-top-color:#FCE7F3;background-color:#FFFFFF}.bundle-row{min-height:52px;padding:7px 9px;flex-direction:row;align-items:center;border-bottom-width:1px;border-bottom-color:#F2F4F7}.bundle-row-icon{width:38px;height:38px;padding:4px;border-radius:10px;background-color:#FFFAEB}.bundle-row-copy{flex:1;min-width:0;margin-left:8px}.bundle-row-name{color:#121826;font-size:11px;font-weight:900;lines:1}.bundle-row-recipient{margin-top:2px;color:#667085;font-size:9px;lines:1}.bundle-row-time{color:#98A2B3;font-size:8px}
+</style>
