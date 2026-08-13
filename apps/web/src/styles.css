@@ -2327,7 +2327,36 @@ textarea {
 
 .detail-body-grid {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 12px;
+}
+
+.detail-page,
+.detail-page-content,
+.detail-story-column,
+.detail-insight-sidebar,
+.detail-radar-card,
+.detail-radar-chart,
+.detail-evaluations-card,
+.radar-chart-shell {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.detail-radar-card,
+.detail-radar-chart,
+.radar-chart-shell {
+  width: 100%;
+  overflow: hidden;
+}
+
+.radar-chart-shell > canvas {
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
 }
 
 .recent-gifts-row {

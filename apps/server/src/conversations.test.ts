@@ -16,7 +16,7 @@ test("私信会话列表和详情使用实时经验计算对方等级", () => {
     {
       id: "target-user",
       nickname: "对方用户",
-      level: 5
+      level: 7
     }
   );
 });

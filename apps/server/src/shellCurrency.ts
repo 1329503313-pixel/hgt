@@ -721,7 +721,7 @@ export async function bulkAdjustShellBalances(userIds: string[], operatorId: str
 
 export async function settleOnlineSoupRound(connection: QueryConnection, roundId: string) {
   const [[round]] = await connection.query<mysql.RowDataPacket[]>(
-    `SELECT r.id, r.room_id, r.soup_id, r.started_at, r.ended_at, rooms.host_id, soups.creator_id AS soup_creator_id
+    `SELECT r.id, r.room_id, r.soup_id, r.host_mode, r.started_at, r.ended_at, rooms.host_id, soups.creator_id AS soup_creator_id
      FROM online_soup_rounds r
      INNER JOIN online_soup_rooms rooms ON rooms.id = r.room_id
      INNER JOIN soups ON soups.id = r.soup_id
@@ -742,17 +742,25 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
       AND messages.sender_id = members.user_id
       AND messages.message_type = 'question'
       AND messages.answer IS NOT NULL
+      AND messages.recalled_at IS NULL
+      AND (
+        ? <> 'ai'
+        OR messages.ai_status = 'completed'
+      )
      WHERE members.room_id = ?
        AND members.member_role = 'player'
        AND members.is_active = 1
      GROUP BY members.user_id
      HAVING answered_questions >= 5`,
-    [roundId, round.room_id]
+    [roundId, String(round.host_mode ?? "human"), round.room_id]
   );
   const [[hostRow]] = await connection.query<mysql.RowDataPacket[]>(
     `SELECT COUNT(*) AS answered_questions
-     FROM online_soup_messages
-     WHERE round_id = ? AND message_type = 'question' AND answer IS NOT NULL`,
+     FROM online_soup_messages messages
+     INNER JOIN online_soup_rounds counted_round ON counted_round.id = messages.round_id
+     WHERE messages.round_id = ? AND messages.message_type = 'question'
+       AND messages.answer IS NOT NULL AND messages.recalled_at IS NULL
+       AND (counted_round.host_mode <> 'ai' OR messages.ai_status = 'completed')`,
     [roundId]
   );
   const awards: Array<{ userId: string; taskType: ShellTaskType; eventKey: string }> = playerRows.map((row) => ({
@@ -760,7 +768,7 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
     taskType: "join_online_soup",
     eventKey: `online-join:${row.user_id}:${roundId}`
   }));
-  if (Number(hostRow?.answered_questions ?? 0) >= 5) {
+  if (String(round.host_mode ?? "human") === "human" && Number(hostRow?.answered_questions ?? 0) >= 5) {
     awards.push({
       userId: String(round.host_id),
       taskType: "host_online_soup",

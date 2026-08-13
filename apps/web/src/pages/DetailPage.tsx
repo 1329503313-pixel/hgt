@@ -448,7 +448,7 @@ export default function DetailPage() {
               <div><p className="text-xs font-black tracking-[0.14em] text-primary">RATING</p><h2 className="mt-1 font-black text-ink">六维评分</h2></div>
               <span className="text-2xl font-black text-primary">{soup.averageTotal ?? "—"}</span>
             </div>
-            <div className="min-h-0 flex-1"><RadarChart radar={soup.radar} /></div>
+            <div className="detail-radar-chart min-h-0 min-w-0 flex-1"><RadarChart radar={soup.radar} /></div>
           </div>
         )}
 

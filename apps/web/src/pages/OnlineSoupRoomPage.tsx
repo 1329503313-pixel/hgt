@@ -32,11 +32,13 @@ type ProgressQuestion = {
   number: number;
   content: string;
   answer: OnlineSoupAnswer | null;
+  aiPreliminaryAnswer: OnlineSoupAnswer | null;
   aiStatus: OnlineSoupMessage["aiStatus"];
   aiError: string | null;
   aiProgressDelta: number | null;
   aiProgressAfter: number | null;
   aiFeedback: string | null;
+  aiQueuePosition: number | null;
   sender: { id: string | null; nickname: string; avatar: string | null };
   createdAt: string;
 };
@@ -53,11 +55,27 @@ const structuralRoomEvents = new Set([
 function mergeMessages(older: OnlineSoupMessage[], newer: OnlineSoupMessage[]) {
   const byId = new Map(older.map((message) => [message.id, message]));
   for (const message of newer) byId.set(message.id, message);
-  return [...byId.values()].sort((left, right) => {
+  return refreshAiQueuePositions([...byId.values()].sort((left, right) => {
     const leftSequence = BigInt(left.sequence);
     const rightSequence = BigInt(right.sequence);
     return leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : 0;
+  }));
+}
+
+function refreshAiQueuePositions(messages: OnlineSoupMessage[]) {
+  let position = 0;
+  return messages.map((message) => {
+    const active = !message.recalledAt && message.type === "question" && ["pending", "answering", "scoring"].includes(message.aiStatus);
+    return { ...message, aiQueuePosition: active ? ++position : null };
   });
+}
+
+function refreshProgressQueuePositions(questions: ProgressQuestion[]) {
+  let position = 0;
+  return questions.map((question) => ({
+    ...question,
+    aiQueuePosition: ["pending", "answering", "scoring"].includes(question.aiStatus) ? ++position : null,
+  }));
 }
 
 function isAbortError(error: unknown) {
@@ -497,17 +515,17 @@ export default function OnlineSoupRoomPage() {
     if (reason === "message_recalled" && typeof payload.messageId === "string" && typeof payload.recalledAt === "string") {
       setSnapshot((current) => current ? {
         ...current,
-        messages: current.messages.map((message) => {
+        messages: refreshAiQueuePositions(current.messages.map((message) => {
           if (message.id === payload.messageId) return { ...message, content: "", stickerId: null, mentions: [], recalledAt: payload.recalledAt as string };
           const reply = message.replyTo;
           if (reply && reply.id === payload.messageId) {
             return { ...message, replyTo: { ...reply, content: "", stickerId: null, recalledAt: payload.recalledAt as string } };
           }
           return message;
-        })
+        }))
       } : current);
       setReplyingTo((current) => current?.id === payload.messageId ? null : current);
-      setProgressQuestions((current) => current.filter((question) => question.id !== payload.messageId));
+      setProgressQuestions((current) => refreshProgressQueuePositions(current.filter((question) => question.id !== payload.messageId)));
       return;
     }
     if (reason === "answer_changed" && typeof payload.messageId === "string") {
@@ -523,9 +541,10 @@ export default function OnlineSoupRoomPage() {
       setSnapshot((current) => current ? {
         ...current,
         room: nextAiProgress === null ? current.room : { ...current.room, aiProgress: nextAiProgress },
-        messages: current.messages.map((message) => message.id === payload.messageId ? {
+        messages: refreshAiQueuePositions(current.messages.map((message) => message.id === payload.messageId ? {
           ...message,
           answer: nextAnswer,
+          aiPreliminaryAnswer: null,
           aiStatus: nextAiStatus ?? message.aiStatus,
           aiError: nextAiStatus ? nextAiError : message.aiError,
           aiProgressDelta: nextAiStatus ? nextAiProgressDelta : message.aiProgressDelta,
@@ -533,11 +552,12 @@ export default function OnlineSoupRoomPage() {
           aiFeedback: nextAiStatus
             ? nextAiStatus === "completed" ? nextAiFeedback : message.aiFeedback
             : message.aiFeedback
-        } : message)
+        } : message))
       } : current);
-      setProgressQuestions((current) => current.map((question) => question.id === payload.messageId ? {
+      setProgressQuestions((current) => refreshProgressQueuePositions(current.map((question) => question.id === payload.messageId ? {
         ...question,
         answer: nextAnswer,
+        aiPreliminaryAnswer: null,
         aiStatus: nextAiStatus ?? question.aiStatus,
         aiError: nextAiStatus ? nextAiError : question.aiError,
         aiProgressDelta: nextAiStatus ? nextAiProgressDelta : question.aiProgressDelta,
@@ -545,7 +565,7 @@ export default function OnlineSoupRoomPage() {
         aiFeedback: nextAiStatus
           ? nextAiStatus === "completed" ? nextAiFeedback : question.aiFeedback
           : question.aiFeedback
-      } : question));
+      } : question)));
       if (payload.activityType === "progress") void loadProgress(true);
       if (payload.notificationCreated) void loadNewMessages();
       return;
@@ -1038,17 +1058,20 @@ export default function OnlineSoupRoomPage() {
     }
   }
 
-  async function retryAiQuestion(message: OnlineSoupMessage) {
+  async function retryAiQuestion(message: Pick<OnlineSoupMessage, "id">) {
     if (retryingAiMessageId) return;
     setRetryingAiMessageId(message.id);
     try {
       await api(`/api/online-soup/rooms/${roomId}/questions/${message.id}/retry-ai`, { method: "POST" });
       setSnapshot((current) => current ? {
         ...current,
-        messages: current.messages.map((item) => item.id === message.id
-          ? { ...item, aiStatus: "pending", aiError: null }
-          : item),
+        messages: refreshAiQueuePositions(current.messages.map((item) => item.id === message.id
+          ? { ...item, answer: null, aiPreliminaryAnswer: null, aiStatus: "pending", aiError: null }
+          : item)),
       } : current);
+      setProgressQuestions((current) => refreshProgressQueuePositions(current.map((item) => item.id === message.id
+        ? { ...item, answer: null, aiPreliminaryAnswer: null, aiStatus: "pending", aiError: null }
+        : item)));
       showToast("已重新提交给 AI 主持人");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "重试失败");
@@ -1216,7 +1239,35 @@ export default function OnlineSoupRoomPage() {
             </div>
             {soupExpanded && snapshot.room.soup && <div ref={assistantPanelTab ? assistantScrollRef : undefined} className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-line p-4" onScroll={assistantPanelTab ? updateAssistantScrollPosition : undefined}>
               {((isHost && hostPanelGroup === "materials" && (soupTab === "surface" || !canHumanHost)) || (!isHost && viewerPanelTab === "surface")) && <>
-                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-muted">{snapshot.room.soup.type}</span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-muted">{snapshot.room.soup.type}</span>
+                  {aiHosted && snapshot.room.currentRoundId && <div className="flex min-w-0 flex-1 items-center gap-2 lg:hidden">
+                    <div
+                      className="relative flex h-6 min-w-0 flex-1 items-center overflow-hidden rounded-full border border-blue-200 bg-blue-50 px-2"
+                      role="progressbar"
+                      aria-label="AI 推理进度"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={snapshot.room.aiProgress ?? 0}
+                    >
+                      <div className="absolute inset-y-0 left-0 bg-blue-200/80 transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${snapshot.room.aiProgress ?? 0}%` }} />
+                      <Bot size={12} className="relative shrink-0 text-primary" />
+                      <span className="relative ml-1 truncate text-xs font-black text-blue-900">AI 进度</span>
+                      <strong className="relative ml-auto pl-1.5 text-xs font-black tabular-nums text-primary">{snapshot.room.aiProgress ?? 0}%</strong>
+                    </div>
+                    {snapshot.me.role === "player" && snapshot.room.status === "playing" && <button
+                      type="button"
+                      className="relative inline-flex h-6 w-[76px] shrink-0 items-center justify-center gap-1 rounded-full border border-blue-200 bg-white px-2 text-xs font-black text-primary transition after:absolute after:-inset-y-2.5 after:inset-x-0 after:content-[''] hover:bg-blue-50 active:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 disabled:opacity-70"
+                      disabled={requestingAiHint || (snapshot.room.aiProgress ?? 0) < 20}
+                      onClick={() => void requestAiHint()}
+                      aria-label={requestingAiHint ? "AI 正在生成提示" : (snapshot.room.aiProgress ?? 0) < 20 ? `推理进度达到 20% 后可获取提示，当前 ${snapshot.room.aiProgress ?? 0}%` : "获取 AI 提示"}
+                      title={requestingAiHint ? "AI 正在生成提示" : (snapshot.room.aiProgress ?? 0) < 20 ? `进度达到 20% 后可提示，当前 ${snapshot.room.aiProgress ?? 0}%` : "获取 AI 提示"}
+                    >
+                      {requestingAiHint ? <LoaderCircle size={13} className="animate-spin" /> : <Lightbulb size={13} />}
+                      <span>{requestingAiHint ? "生成中" : "提示"}</span>
+                    </button>}
+                  </div>}
+                </div>
                 <div className="content-block mt-3 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(snapshot.room.soup.surface) }} />
                 {(canHumanHost
                   ? (snapshot.room.soup.supplementalSurfaces ?? []).map((content, index) => ({ content, index }))
@@ -1229,14 +1280,14 @@ export default function OnlineSoupRoomPage() {
                   </section>;
                 })}
               </>}
-              {assistantPanelTab === "progress" && aiHosted && snapshot.room.currentRoundId && <div className="sticky top-0 z-10 mb-3 rounded-xl border border-blue-200 bg-blue-50/95 p-3 shadow-sm backdrop-blur">
+              {assistantPanelTab === "progress" && aiHosted && snapshot.room.currentRoundId && <div className="sticky top-0 z-10 mb-3 hidden rounded-xl border border-blue-200 bg-blue-50/95 p-3 shadow-sm backdrop-blur lg:block">
                 <div className="flex items-center gap-2 text-xs"><Bot size={14} className="shrink-0 text-primary" /><span className="font-black text-ink">AI 推理进度</span><span className="ml-auto font-black tabular-nums text-primary">{snapshot.room.aiProgress ?? 0}%</span></div>
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-blue-100" role="progressbar" aria-label="AI 推理进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={snapshot.room.aiProgress ?? 0}><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${snapshot.room.aiProgress ?? 0}%` }} /></div>
                 {snapshot.me.role === "player" && snapshot.room.status === "playing" && <button type="button" className="mt-2 inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-black text-primary transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={requestingAiHint || (snapshot.room.aiProgress ?? 0) < 20} onClick={() => void requestAiHint()}>{requestingAiHint ? <LoaderCircle size={15} className="animate-spin" /> : <Lightbulb size={15} />}{requestingAiHint ? "AI 正在生成提示" : (snapshot.room.aiProgress ?? 0) < 20 ? "进度达到 20% 后可提示" : "获取 AI 提示"}</button>}
               </div>}
-              {assistantPanelTab && showAssistantScrollToLatest && <div className={`pointer-events-none sticky z-20 flex h-0 justify-end ${assistantPanelTab === "progress" && aiHosted ? "top-24" : "top-0"}`}><button type="button" className="pointer-events-auto grid h-9 w-9 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_6px_18px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95" onClick={scrollAssistantToLatest} aria-label="回到最新线索或进度" title="回到最新"><ArrowUp size={19} strokeWidth={2.5} /></button></div>}
+              {assistantPanelTab && showAssistantScrollToLatest && <div className={`pointer-events-none sticky z-20 flex h-0 justify-end ${assistantPanelTab === "progress" && aiHosted ? "top-0 lg:top-24" : "top-0"}`}><button type="button" className="pointer-events-auto grid h-9 w-9 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_6px_18px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95" onClick={scrollAssistantToLatest} aria-label="回到最新线索或进度" title="回到最新"><ArrowUp size={19} strokeWidth={2.5} /></button></div>}
               {assistantPanelTab === "clues" && (cluesLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstClueMessages.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstClueMessages.map((message, index) => <article key={message.id} className="cursor-pointer rounded-xl border border-amber-200 bg-amber-50 p-3 transition hover:border-amber-400 hover:shadow-sm active:scale-[0.99]" onClick={() => void locateRoomMessage(message.id)}><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {roundClues.length - index}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>)}
-              {assistantPanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <article key={question.id} className="cursor-pointer rounded-xl border border-blue-100 bg-blue-50 p-3 transition hover:border-blue-300 hover:shadow-sm active:scale-[0.99]" onClick={() => void locateRoomMessage(question.id)}><div className="flex items-center gap-2"><button className="shrink-0 rounded-full" disabled={!question.sender.id} onClick={(event) => { event.stopPropagation(); question.sender.id && openMemberProfile(question.sender.id); }}>{question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="shrink-0 text-xs font-black text-primary">#{question.number}</span><span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span>{Boolean(question.aiProgressDelta) && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">进度+{question.aiProgressDelta}</span>}<time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p></div></div><div className="mt-2 pl-10">{question.answer ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{answerLabels[question.answer]}</span> : <span className="inline-flex rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted">等待主持人回复</span>}</div></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
+              {assistantPanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <ProgressQuestionCard key={question.id} question={question} canRetry={Boolean(snapshot.me.isHost || question.sender.id === user?.id)} retrying={retryingAiMessageId === question.id} onRetry={() => void retryAiQuestion(question)} onLocate={() => void locateRoomMessage(question.id)} onOpenUser={openMemberProfile} />)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
               {canHumanHost && hostPanelGroup === "materials" && soupTab === "bottom" && <>
                 {snapshot.room.soup.bottom && <section className="rounded-xl bg-amber-50 p-3">
                   <h3 className="text-sm font-black text-amber-800">主汤底{snapshot.room.soup.publishedBottomIndices?.includes(0) ? " · 已发布" : ""}</h3>
@@ -1289,7 +1340,7 @@ export default function OnlineSoupRoomPage() {
                   key={message.id}
                   className={`scroll-mt-24 rounded-2xl transition duration-500 ${highlightedMessageId === message.id ? "bg-violet-100/80 ring-2 ring-violet-400 ring-offset-4" : ""}`}
                 >
-                  <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={canHumanHost} canRetryAi={snapshot.me.isHost} currentAiProgress={snapshot.room.aiProgress} canReply={Boolean(canDiscuss)} onAnswer={answer} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
+                  <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={canHumanHost} canRetryAi={snapshot.me.isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
                 </div>;
               })}
             </div>
@@ -1384,6 +1435,64 @@ function MemberRow({ member, onOpenUser, canManage }: { member: OnlineSoupSnapsh
   return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={canManage ? `管理成员${member.nickname}` : `查看${member.nickname}的主页`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}</button><div className="flex min-w-0 flex-1 items-center gap-1.5"><span className="truncate font-bold text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" /></div>{member.role === "host" && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 主持人</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
 }
 
+function ProgressQuestionCard({
+  question,
+  canRetry,
+  retrying,
+  onRetry,
+  onLocate,
+  onOpenUser,
+}: {
+  question: ProgressQuestion;
+  canRetry: boolean;
+  retrying: boolean;
+  onRetry: () => void;
+  onLocate: () => void;
+  onOpenUser: (id: string) => void;
+}) {
+  const active = ["pending", "answering", "scoring"].includes(question.aiStatus);
+  const statusText = question.aiStatus === "pending"
+    ? question.aiQueuePosition && question.aiQueuePosition > 1
+      ? `AI 队列第 ${question.aiQueuePosition} 位`
+      : "即将由 AI 处理"
+    : question.aiStatus === "answering"
+      ? "AI 正在判断"
+      : question.aiStatus === "scoring"
+        ? "AI 正在结合汤底与上下文判断"
+        : question.aiStatus === "cancelled"
+          ? "本轮已结束，提问已取消"
+          : null;
+  return <article className="cursor-pointer rounded-xl border border-blue-100 bg-blue-50 p-3 transition hover:border-blue-300 hover:shadow-sm active:scale-[0.99]" onClick={onLocate}>
+    <div className="flex items-center gap-2">
+      <button className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded-full" disabled={!question.sender.id} onClick={(event) => { event.stopPropagation(); question.sender.id && onOpenUser(question.sender.id); }}>
+        {question.sender.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={question.sender.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{question.sender.nickname.slice(0, 1)}</span>}
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="shrink-0 text-xs font-black text-primary">#{question.number}</span>
+          <span className="truncate text-xs font-bold text-ink">{question.sender.nickname}</span>
+          {Boolean(question.aiProgressDelta) && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">进度+{question.aiProgressDelta}</span>}
+          <time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
+        </div>
+        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">{question.content}</p>
+      </div>
+    </div>
+    <div className="mt-2 space-y-1.5 pl-10">
+      {question.answer
+        ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />AI 最终回答：{answerLabels[question.answer]}</span>
+        : statusText
+            ? <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted" role={active ? "status" : undefined}>{active && <LoaderCircle size={12} className="animate-spin" />}{statusText}</span>
+            : null}
+      {question.aiStatus === "failed" && <div className="flex flex-wrap items-center gap-2" role="alert">
+        <span className="text-xs font-bold text-red-600">AI 核对失败：{question.aiError ?? "请稍后重试"}</span>
+        {canRetry && <button type="button" className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-600 disabled:opacity-50" disabled={retrying} onClick={(event) => { event.stopPropagation(); onRetry(); }}>{retrying ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}{retrying ? "重试中" : "重新请求"}</button>}
+      </div>}
+      {question.aiStatus === "completed" && question.aiFeedback && <p className={`rounded-lg px-2 py-1 text-xs font-bold ${question.aiProgressDelta ? "bg-emerald-50 text-emerald-700" : "bg-white text-slate-600"}`}>{question.aiFeedback}</p>}
+      {question.aiStatus === "completed" && question.aiProgressAfter != null && <p className="text-xs font-bold text-muted">该题完成后进度：{question.aiProgressAfter}%</p>}
+    </div>
+  </article>;
+}
+
 function FloatingAction({ label, onClick, tone = "default" }: { label: string; onClick: () => void; tone?: "default" | "primary" | "amber" | "danger" }) {
   const tones = {
     default: "border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 text-slate-700 hover:border-slate-300",
@@ -1413,7 +1522,7 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
   return <button className={`group relative grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-full border px-1 text-center text-[12px] font-black leading-[1.25] ring-1 ring-white/80 transition duration-200 hover:-translate-y-1 hover:scale-[1.03] active:translate-y-0 active:scale-95 ${tones[tone]}`} onClick={onClick} aria-label={label} title={label}><span className="pointer-events-none absolute inset-1 rounded-full border border-white/80" /><span className="pointer-events-none absolute inset-0 grid place-items-center opacity-[0.12] transition duration-200 group-hover:scale-110 group-hover:opacity-[0.18]">{icon}</span><span className="relative drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]">{lines.map((line) => <span className="block" key={line}>{line}</span>)}</span></button>;
 }
 
-const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, canRetryAi, currentAiProgress, canReply, onAnswer, onRetryAi, retryingAi, onRecall, onReply, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; canRetryAi: boolean; currentAiProgress: number | null; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
+const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, canRetryAi, canReply, onAnswer, onRetryAi, retryingAi, onRecall, onReply, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; canRetryAi: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
@@ -1496,12 +1605,12 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
                 ))}
               </div>
             ) : message.answer ? (
-              <div className={`flex flex-wrap items-center gap-2 ${mine ? "justify-end" : ""}`}><span className="inline-flex items-center rounded-full border border-primary bg-primary px-3 py-1.5 text-xs font-bold text-white"><Check size={12} className="mr-1" />{onlineSoupAnswerPrefix(message.aiStatus)}{answerLabels[message.answer]}</span>{message.aiStatus === "scoring" && <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-600" role="status"><LoaderCircle className="animate-spin" size={13} />正在核对本次发现</span>}{message.aiStatus === "failed" && <><span className="text-xs font-bold text-red-500">进度核对失败：{message.aiError ?? "请稍后重试"}</span>{(mine || canRetryAi) && <button type="button" className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-600 transition hover:bg-red-50 disabled:opacity-50" disabled={retryingAi} onClick={() => onRetryAi(message)}>{retryingAi ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}{retryingAi ? "重试中" : "重新核对"}</button>}</>}</div>
+              <div className={`flex flex-wrap items-center gap-2 ${mine ? "justify-end" : ""}`}><span className="inline-flex items-center rounded-full border border-primary bg-primary px-3 py-1.5 text-xs font-bold text-white"><Check size={12} className="mr-1" />{onlineSoupAnswerPrefix(message.aiStatus)}{answerLabels[message.answer]}</span></div>
             ) : ["pending", "answering", "scoring"].includes(message.aiStatus) ? (
-              <p className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-600" role="status"><LoaderCircle className="animate-spin" size={14} />{message.aiStatus === "scoring" ? "AI 正在完整审阅" : "AI 正在判断"}</p>
+              <p className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-600" role="status"><LoaderCircle className="animate-spin" size={14} />{message.aiStatus === "pending" && message.aiQueuePosition && message.aiQueuePosition > 1 ? `AI 队列第 ${message.aiQueuePosition} 位` : message.aiStatus === "pending" ? "即将由 AI 处理" : "AI 正在结合汤底与上下文判断"}</p>
             ) : message.aiStatus === "failed" ? (
               <div className={`flex flex-wrap items-center gap-2 ${mine ? "justify-end" : ""}`}>
-                <p className="text-xs font-bold text-red-500">AI 回复失败：{message.aiError ?? "请稍后重试"}</p>
+                <p className="text-xs font-bold text-red-600" role="alert">AI 回复失败：{message.aiError ?? "请稍后重试"}</p>
                 {(mine || canRetryAi) && <button type="button" className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-600 transition hover:bg-red-50 disabled:opacity-50" disabled={retryingAi} onClick={() => onRetryAi(message)}>{retryingAi ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}{retryingAi ? "重试中" : "重新请求"}</button>}
               </div>
             ) : message.aiStatus === "cancelled" ? (
@@ -1511,9 +1620,9 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
             )}
           </div>
         )}
-        {question && Boolean(message.aiProgressDelta) && (currentAiProgress ?? message.aiProgressAfter) != null && (
+        {question && Boolean(message.aiProgressDelta) && message.aiProgressAfter != null && (
           <div className={`mt-1.5 max-w-full px-1 text-xs font-bold text-muted ${mine ? "text-right" : "text-left"}`} role="status">
-            — 进度+{message.aiProgressDelta}，当前进度：{currentAiProgress ?? message.aiProgressAfter}% —
+            — 进度+{message.aiProgressDelta}，该题完成后进度：{message.aiProgressAfter}% —
           </div>
         )}
         {question && message.aiStatus === "completed" && message.aiFeedback && (
@@ -1527,6 +1636,8 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
   previous.message === next.message
   && previous.currentUserId === next.currentUserId
   && previous.isHost === next.isHost
+  && previous.canRetryAi === next.canRetryAi
+  && previous.retryingAi === next.retryingAi
   && previous.canReply === next.canReply
   && previous.soupId === next.soupId
   && previous.stickers === next.stickers

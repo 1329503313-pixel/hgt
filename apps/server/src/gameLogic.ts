@@ -269,8 +269,8 @@ export function compactRoomAiHistory(
 }
 
 /**
- * 复杂问句先走完整审阅，避免为了速度牺牲否定、枚举与指代场景的准确率。
- * 这里只判断表达风险，不尝试猜测问题语义或故事答案。
+ * 识别会影响计分反馈的表达风险，不尝试猜测问题语义或故事答案。
+ * 所有正式提问都使用同一套完整最终判断流程。
  */
 export function roomAiQuestionRisks(question: string): RoomAiQuestionRisk[] {
   const text = question.trim();

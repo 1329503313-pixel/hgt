@@ -44,7 +44,7 @@ import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
-import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
+import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
 import {
   evaluationCountsTowardScore,
   scoringEvaluationJoin,
@@ -98,6 +98,7 @@ import {
 import { WebSocket, WebSocketServer } from "ws";
 import onlineSoupRouter, {
   cleanupOnlineSoupInactiveHostRooms,
+  cleanupOnlineSoupIdleSingleUserRooms,
   cleanupOnlineSoupStaleSeats,
   ONLINE_SOUP_PARTICIPANT_CAPACITY,
   ONLINE_SOUP_PLAYER_CAPACITY,
@@ -582,7 +583,7 @@ const optionalScore = z
   .optional()
   .transform((value) => (value === "" || value == null ? null : Number(value)));
 
-const soupSchema = z.object({
+const soupSchema = z.preprocess(normalizeSoupAiConfigurationInput, z.object({
   title: text,
   author: z.string().trim().max(100).optional().default(""),
   type: text.max(20),
@@ -627,7 +628,7 @@ const soupSchema = z.object({
       message: "手动管理关键点时至少保留 1 个关键点"
     });
   }
-});
+}));
 
 const evaluationSchema = z.object({
   total: score,
@@ -5346,6 +5347,11 @@ app.delete("/api/soups/:id", async (req, res) => {
   const soup = await getSoupRaw(req.params.id);
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有删除权限");
+  const [[activeRound]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id FROM online_soup_rounds WHERE soup_id = ? AND status IN ('preparing','playing') LIMIT 1",
+    [req.params.id],
+  );
+  if (activeRound) return sendError(res, 409, "该海龟汤正在玩汤房间中使用，请在本轮结束后再删除");
   await pool.query("DELETE FROM soups WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -6976,6 +6982,15 @@ app.delete("/api/admin/users/:id", async (req, res) => {
   const user = await requireAdmin(req, res);
   if (!user) return;
   if (user.id === req.params.id) return sendError(res, 400, "不能删除自己");
+  const [[activeRound]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT rounds.id
+     FROM online_soup_rounds rounds
+     JOIN soups ON soups.id = rounds.soup_id
+     WHERE soups.creator_id = ? AND rounds.status IN ('preparing','playing')
+     LIMIT 1`,
+    [req.params.id],
+  );
+  if (activeRound) return sendError(res, 409, "该用户的海龟汤正在玩汤房间中使用，请在本轮结束后再删除用户");
   await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -7293,8 +7308,15 @@ await initializeUserBehaviorAnalytics().catch((error) => {
 });
 await cleanupOnlineSoupStaleSeats();
 await cleanupOnlineSoupInactiveHostRooms();
+await cleanupOnlineSoupIdleSingleUserRooms();
 await resumePendingOnlineSoupAiQuestions();
 await resumeEligibleOnlineSoupAiFinishVotes();
+const onlineSoupAiRecoveryTimer = setInterval(() => {
+  void resumePendingOnlineSoupAiQuestions().catch((error) => {
+    console.error("Online soup AI pending question recovery failed:", error);
+  });
+}, 30_000);
+onlineSoupAiRecoveryTimer.unref();
 const fillMissingAiKeyFacts = async () => {
   const count = await backfillMissingAiKeyFacts(pool, splitKeyFactsForSoup);
   if (count > 0) console.log(`AI key fact backfill checked ${count} soup(s)`);
@@ -7306,10 +7328,11 @@ const aiKeyFactBackfillTimer = setInterval(() => {
 }, AI_KEY_FACT_BACKFILL_INTERVAL_MS);
 aiKeyFactBackfillTimer.unref();
 const onlineSoupSeatCleanupTimer = setInterval(() => {
-  Promise.all([
-    cleanupOnlineSoupStaleSeats(),
-    cleanupOnlineSoupInactiveHostRooms()
-  ]).catch((error) => console.error("Online soup cleanup failed:", error));
+  void (async () => {
+    await cleanupOnlineSoupStaleSeats();
+    await cleanupOnlineSoupInactiveHostRooms();
+    await cleanupOnlineSoupIdleSingleUserRooms();
+  })().catch((error) => console.error("Online soup cleanup failed:", error));
 }, 60_000);
 onlineSoupSeatCleanupTimer.unref();
 await refreshEquippedSpecialBadgeMetadata();

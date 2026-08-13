@@ -121,7 +121,7 @@ test("房间 AI 压缩历史只保留最近五轮并移除内部计分字段", (
   assert.equal(JSON.stringify(compacted).includes("revealedKeyIds"), false);
 });
 
-test("复杂否定、多重判断与含糊指代会进入完整审阅", () => {
+test("可以识别复杂否定、多重判断与含糊指代风险", () => {
   assert.deepEqual(roomAiQuestionRisks("死者认识凶手吗？"), []);
   assert.deepEqual(roomAiQuestionRisks("他认识死者吗？"), ["ambiguous_reference"]);
   assert.ok(roomAiQuestionRisks("他不是没有见过死者吗？").includes("negation"));

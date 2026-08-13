@@ -667,6 +667,7 @@ export async function initDatabase() {
       status ENUM('preparing','playing','ended','closed') NOT NULL DEFAULT 'preparing',
       current_soup_id VARCHAR(64) NULL,
       current_round_id VARCHAR(64) NULL,
+      last_action_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       host_last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       host_grace_started_at DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -695,6 +696,7 @@ export async function initDatabase() {
       ai_version INT UNSIGNED NOT NULL DEFAULT 0,
       ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle',
       ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0,
+      ai_soup_snapshot JSON NULL,
       published_surface_indices JSON NULL,
       published_bottom_indices JSON NULL,
       started_at DATETIME NULL,
@@ -827,10 +829,12 @@ export async function initDatabase() {
       content_index INT UNSIGNED NULL,
       question_number INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      ai_preliminary_answer ENUM('yes','no','both','unknown','irrelevant') NULL,
       ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none',
       ai_error VARCHAR(255) NULL,
       ai_progress_delta INT UNSIGNED NULL,
       ai_progress_after INT UNSIGNED NULL,
+      ai_scoring_degraded TINYINT(1) NOT NULL DEFAULT 0,
       target_message_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
       reply_to_message_id VARCHAR(64) NULL,
@@ -876,11 +880,14 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rounds", "ai_version", "ai_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_progress");
   await ensureColumn("online_soup_rounds", "ai_status", "ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle' AFTER ai_version");
   await ensureColumn("online_soup_rounds", "ai_hint_count", "ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_status");
+  await ensureColumn("online_soup_rounds", "ai_soup_snapshot", "ai_soup_snapshot JSON NULL AFTER ai_hint_count");
   await ensureColumn("online_soup_messages", "ai_status", "ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none' AFTER answer");
+  await ensureColumn("online_soup_messages", "ai_preliminary_answer", "ai_preliminary_answer ENUM('yes','no','both','unknown','irrelevant') NULL AFTER answer");
   await ensureColumn("online_soup_messages", "ai_error", "ai_error VARCHAR(255) NULL AFTER ai_status");
   await ensureColumn("online_soup_messages", "ai_progress_delta", "ai_progress_delta INT UNSIGNED NULL AFTER ai_error");
   await ensureColumn("online_soup_messages", "ai_progress_after", "ai_progress_after INT UNSIGNED NULL AFTER ai_progress_delta");
   await ensureColumn("online_soup_messages", "ai_feedback", "ai_feedback VARCHAR(255) NULL AFTER ai_progress_after");
+  await ensureColumn("online_soup_messages", "ai_scoring_degraded", "ai_scoring_degraded TINYINT(1) NOT NULL DEFAULT 0 AFTER ai_feedback");
   await ensureColumn(
     "online_soup_rounds",
     "published_surface_indices",
@@ -970,6 +977,16 @@ export async function initDatabase() {
     "online_soup_rooms",
     "host_grace_started_at",
     "host_grace_started_at DATETIME NULL AFTER host_last_seen_at"
+  );
+  await ensureColumn(
+    "online_soup_rooms",
+    "last_action_at",
+    "last_action_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER current_round_id"
+  );
+  await ensureIndex(
+    "online_soup_rooms",
+    "idx_online_rooms_idle",
+    "status, last_action_at"
   );
   await ensureIndex(
     "online_soup_rooms",

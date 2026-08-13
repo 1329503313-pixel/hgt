@@ -34,7 +34,22 @@ export function hasEmptyManualAiKeyFacts(input: {
   keyFactsCustomized: boolean;
   keyFacts: unknown[];
 }) {
-  return input.keyFactsCustomized && input.keyFacts.length === 0;
+  return input.enableAiGame && input.keyFactsCustomized && input.keyFacts.length === 0;
+}
+
+export function normalizeSoupAiConfigurationInput(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const candidate = input as Record<string, unknown>;
+  const enableAiGameMissing = !("enableAiGame" in candidate);
+  const keyFactsCustomizedMissing = !("keyFactsCustomized" in candidate);
+
+  if (candidate.enableAiGame === false || enableAiGameMissing) {
+    return { ...candidate, enableAiGame: false, keyFacts: [], keyFactsCustomized: false };
+  }
+  if (candidate.enableAiGame === true && (candidate.keyFactsCustomized === false || keyFactsCustomizedMissing)) {
+    return { ...candidate, keyFacts: [], keyFactsCustomized: false };
+  }
+  return input;
 }
 
 type SoupValidationIssue = {

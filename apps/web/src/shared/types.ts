@@ -489,11 +489,13 @@ export type OnlineSoupMessage = {
   contentIndex: number | null;
   questionNumber: number | null;
   answer: OnlineSoupAnswer | null;
+  aiPreliminaryAnswer: OnlineSoupAnswer | null;
   aiStatus: "none" | "pending" | "answering" | "scoring" | "completed" | "failed" | "cancelled";
   aiError: string | null;
   aiProgressDelta: number | null;
   aiProgressAfter: number | null;
   aiFeedback: string | null;
+  aiQueuePosition: number | null;
   targetMessageId: string | null;
   mentions: Array<{ userId: string; nickname: string }>;
   replyTo: {

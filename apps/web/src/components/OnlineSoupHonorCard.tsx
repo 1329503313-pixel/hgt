@@ -1,5 +1,5 @@
-import { Award, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { Award, MessageCircleQuestion, Sparkles } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import type { OnlineSoupAiHonors, OnlineSoupAnswer } from "../shared/types";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = {
@@ -10,45 +10,59 @@ const answerLabels: Record<OnlineSoupAnswer, string> = {
   irrelevant: "不重要",
 };
 
-function HonorAvatar({
-  avatar,
-  nickname,
-  size = "large",
-}: {
-  avatar: string | null;
-  nickname: string;
-  size?: "large" | "small";
-}) {
+function HonorAvatar({ avatar, nickname, compact }: { avatar: string | null; nickname: string; compact: boolean }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
-  const sizeClass = size === "large" ? "h-14 w-14 text-lg" : "h-10 w-10 text-sm";
+  const sizeClass = compact ? "h-9 w-9 text-xs" : "h-11 w-11 text-sm";
+  const frameClass = "ring-2 ring-indigo-300/70 shadow-[0_4px_16px_rgba(15,23,42,0.35)]";
   return avatar && !avatarFailed
-    ? <img className={`${sizeClass} shrink-0 rounded-full object-cover ring-2 ring-white shadow-sm`} src={avatar} alt={`${nickname}头像`} loading="lazy" decoding="async" onError={() => setAvatarFailed(true)} />
-    : <span className={`grid ${sizeClass} shrink-0 place-items-center rounded-full bg-blue-100 font-black text-primary ring-2 ring-white shadow-sm`} aria-label={`${nickname}头像`}>{nickname.slice(0, 1)}</span>;
+    ? <img className={`${sizeClass} ${frameClass} shrink-0 rounded-full object-cover`} src={avatar} alt={`${nickname}头像`} loading="lazy" decoding="async" onError={() => setAvatarFailed(true)} />
+    : <span className={`grid ${sizeClass} ${frameClass} shrink-0 place-items-center rounded-full bg-white/15 font-black text-white`} aria-label={`${nickname}头像`}>{nickname.slice(0, 1)}</span>;
 }
 
-function HonorUserRow({
+function HonorUser({
   avatar,
   nickname,
   userId,
-  size,
+  compact,
   onOpenUser,
-  ariaLabel,
-  gapClass,
-  nameClass,
 }: {
   avatar: string | null;
   nickname: string;
   userId: string;
-  size: "large" | "small";
+  compact: boolean;
   onOpenUser?: (userId: string) => void;
-  ariaLabel: string;
-  gapClass: string;
-  nameClass: string;
 }) {
-  const content = <><HonorAvatar avatar={avatar} nickname={nickname} size={size} /><strong className={nameClass}>{nickname}</strong></>;
+  const content = <>
+    <HonorAvatar avatar={avatar} nickname={nickname} compact={compact} />
+    <strong className={`${compact ? "text-sm" : "text-base"} whitespace-nowrap font-black text-white`}>{nickname}</strong>
+  </>;
+  const className = "flex min-h-11 min-w-0 max-w-full items-center gap-2.5 rounded-xl text-left";
   return onOpenUser
-    ? <button type="button" className={`mt-2 flex min-h-11 max-w-full items-center ${gapClass} rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`} onClick={() => onOpenUser(userId)} aria-label={ariaLabel}>{content}</button>
-    : <div className={`mt-2 flex min-h-11 max-w-full items-center ${gapClass}`}>{content}</div>;
+    ? <button type="button" className={`${className} -m-1 cursor-pointer p-1 transition-colors hover:bg-white/[0.06] active:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200`} onClick={() => onOpenUser(userId)} aria-label={`查看 ${nickname} 的主页`}>{content}</button>
+    : <div className={className}>{content}</div>;
+}
+
+function HonorSection({
+  title,
+  icon,
+  compact,
+  identity,
+  children,
+}: {
+  title: string;
+  icon: ReactNode;
+  compact: boolean;
+  identity: ReactNode;
+  children?: ReactNode;
+}) {
+  return <section className={`rounded-2xl border border-indigo-300/30 bg-white/[0.06] ${compact ? "p-2.5" : "p-3"}`} aria-label={title}>
+    <div className={`flex items-center gap-2 font-black text-white ${compact ? "text-xs" : "text-sm"}`}>
+      <span className={`grid shrink-0 place-items-center rounded-full border border-amber-200/30 bg-amber-300/15 text-amber-200 ${compact ? "h-7 w-7" : "h-8 w-8"}`} aria-hidden="true">{icon}</span>
+      <h4>{title}</h4>
+    </div>
+    <div className={compact ? "mt-1.5" : "mt-2"}>{identity}</div>
+    {children && <div className={`${compact ? "mt-1.5 pt-1.5" : "mt-2 pt-2"} border-t border-white/10`}>{children}</div>}
+  </section>;
 }
 
 export function OnlineSoupHonorCard({
@@ -63,23 +77,33 @@ export function OnlineSoupHonorCard({
   const best = honors.bestQuestion;
   const bestAnswer = answerLabels[best.answer] ?? best.answer;
   return (
-    <article className={`overflow-hidden rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-violet-50 shadow-sm ${compact ? "p-3" : "p-4"}`} aria-label="AI 本轮荣誉评选">
-      <div className="flex items-center gap-2 text-amber-800">
-        <Sparkles size={compact ? 15 : 18} className="shrink-0" />
-        <h3 className={`${compact ? "text-xs" : "text-sm"} font-black`}>AI 本轮评选</h3>
+    <article className={`overflow-hidden border border-indigo-400/40 bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-900 text-white shadow-soft ${compact ? "rounded-2xl p-3" : "rounded-3xl p-4 sm:p-5"}`} aria-label="本轮高光荣誉卡片">
+      <header className={`flex items-center gap-2.5 border-b border-white/10 ${compact ? "pb-2.5" : "pb-3"}`}>
+        <Sparkles size={compact ? 19 : 23} className="shrink-0 fill-amber-300 text-amber-200" aria-hidden="true" />
+        <h3 className={`${compact ? "text-lg" : "text-xl"} font-black tracking-tight text-white`}>本轮高光</h3>
+      </header>
+
+      <div className={compact ? "mt-2.5 space-y-2" : "mt-3 space-y-2.5"}>
+        <HonorSection
+          title="本场 MVP"
+          icon={<Award size={compact ? 14 : 16} strokeWidth={2.25} />}
+          compact={compact}
+          identity={<HonorUser avatar={honors.mvp.avatar} nickname={honors.mvp.nickname} userId={honors.mvp.userId} compact={compact} onOpenUser={onOpenUser} />}
+        />
+
+        <HonorSection
+          title="最具价值提问"
+          icon={<MessageCircleQuestion size={compact ? 14 : 16} strokeWidth={2.25} />}
+          compact={compact}
+          identity={<HonorUser avatar={best.avatar} nickname={best.nickname} userId={best.userId} compact={compact} onOpenUser={onOpenUser} />}
+        >
+          <blockquote className={`${compact ? "text-xs leading-5" : "text-sm leading-6"} whitespace-pre-wrap break-words font-bold text-blue-50`}>{best.question}</blockquote>
+          <div className={`${compact ? "mt-1.5 text-[11px]" : "mt-2 text-xs"} flex items-center gap-2 font-bold text-blue-200`}>
+            <span>答案</span>
+            <strong className="rounded-full border border-blue-300/35 bg-blue-400/20 px-2.5 py-1 font-black text-white">{bestAnswer}</strong>
+          </div>
+        </HonorSection>
       </div>
-
-      <section className={`mt-3 rounded-xl border border-amber-100 bg-white/90 ${compact ? "p-2.5" : "p-3"}`}>
-        <div className="flex items-center gap-1.5 text-[11px] font-black text-amber-700"><Award size={14} />本场 MVP</div>
-        <HonorUserRow avatar={honors.mvp.avatar} nickname={honors.mvp.nickname} userId={honors.mvp.userId} size={compact ? "small" : "large"} onOpenUser={onOpenUser} ariaLabel={`查看本场MVP ${honors.mvp.nickname} 的主页`} gapClass="gap-3" nameClass={`${compact ? "text-sm" : "text-base"} truncate text-ink`} />
-      </section>
-
-      <section className={`mt-2 rounded-xl border border-violet-100 bg-white/90 ${compact ? "p-2.5" : "p-3"}`}>
-        <div className="flex items-center gap-1.5 text-[11px] font-black text-violet-700"><Sparkles size={14} />最具价值提问</div>
-        <HonorUserRow avatar={best.avatar} nickname={best.nickname} userId={best.userId} size="small" onOpenUser={onOpenUser} ariaLabel={`查看提问者 ${best.nickname} 的主页`} gapClass="gap-2.5" nameClass="truncate text-sm text-ink" />
-        <blockquote className={`${compact ? "mt-2 text-xs leading-5" : "mt-3 text-sm leading-6"} whitespace-pre-wrap break-words rounded-xl bg-violet-50 px-3 py-2 font-bold text-slate-800`}>{best.question}</blockquote>
-        <p className={`${compact ? "mt-1.5 text-[11px]" : "mt-2 text-xs"} font-bold text-violet-700`}>AI主持人回答：{bestAnswer}</p>
-      </section>
     </article>
   );
 }

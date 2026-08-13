@@ -237,7 +237,6 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
         <MiniMessageList
           messages={session.snapshot.messages}
           currentUserId={user?.id ?? ""}
-          currentAiProgress={session.snapshot.room.aiProgress}
           onRecall={recallMessage}
           showAnswerChangeNotices={!session.snapshot.me.isHost}
           onLocate={(messageId) => {
@@ -267,19 +266,19 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   </OnlineSoupDockContext.Provider>;
 }
 
-function MiniMessageList({ messages, currentUserId, currentAiProgress, onRecall, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; currentUserId: string; currentAiProgress: number | null; onRecall: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
+function MiniMessageList({ messages, currentUserId, onRecall, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "end" }); }, [messages]);
   const visibleMessages = messages.filter((message) => showAnswerChangeNotices || !message.targetMessageId).slice(-60);
   return <div className="online-soup-mini-messages">
     {giftTimelineEntries(visibleMessages).map((entry) => entry.kind === "gift_bundle"
       ? <GiftMessageBundle key={entry.key} gifts={entry.gifts} align={entry.gifts[0]?.sender.id === currentUserId ? "right" : "left"} />
-      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} currentUserId={currentUserId} currentAiProgress={currentAiProgress} onRecall={onRecall} onLocate={onLocate} />)}
+      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} currentUserId={currentUserId} onRecall={onRecall} onLocate={onLocate} />)}
     <div ref={bottomRef} />
   </div>;
 }
 
-function MiniMessage({ message, currentUserId, currentAiProgress, onRecall, onLocate }: { message: OnlineSoupMessage; currentUserId: string; currentAiProgress: number | null; onRecall: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
+function MiniMessage({ message, currentUserId, onRecall, onLocate }: { message: OnlineSoupMessage; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
@@ -313,8 +312,8 @@ function MiniMessage({ message, currentUserId, currentAiProgress, onRecall, onLo
       <MessageActionMenu actions={canRecall ? [{ label: "撤回", tone: "danger", availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => onRecall(message) }] : []}>
         <div className="online-soup-mini-bubble"><p>{message.type === "sticker" ? "[表情包]" : message.content}</p></div>
       </MessageActionMenu>
-      {question && <small>{message.answer ? `${onlineSoupAnswerPrefix(message.aiStatus)}${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}${message.aiStatus === "scoring" ? " · 正在核对本次发现" : message.aiStatus === "failed" ? " · 进度核对失败，请到完整房间重新核对" : ""}` : ["answering", "scoring"].includes(message.aiStatus) ? "AI 正在判断" : "等待主持人回复"}</small>}
-      {question && Boolean(message.aiProgressDelta) && (currentAiProgress ?? message.aiProgressAfter) != null && <small>— 进度+{message.aiProgressDelta}，当前进度：{currentAiProgress ?? message.aiProgressAfter}% —</small>}
+      {question && <small role={message.aiStatus === "failed" ? "alert" : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "status" : undefined}>{message.answer ? `${onlineSoupAnswerPrefix(message.aiStatus)}${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}` : message.aiStatus === "failed" ? "AI 回复失败，请到完整房间重新请求" : message.aiStatus === "pending" && message.aiQueuePosition && message.aiQueuePosition > 1 ? `AI 队列第 ${message.aiQueuePosition} 位` : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "AI 正在结合汤底与上下文判断" : message.aiStatus === "cancelled" ? "本轮已结束，提问已取消" : "等待主持人回复"}</small>}
+      {question && Boolean(message.aiProgressDelta) && message.aiProgressAfter != null && <small>— 进度+{message.aiProgressDelta}，该题完成后进度：{message.aiProgressAfter}% —</small>}
       {question && message.aiStatus === "completed" && message.aiFeedback && <small>{message.aiFeedback}</small>}
       <time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
     </div>

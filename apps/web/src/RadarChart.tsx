@@ -8,6 +8,7 @@ import {
   RadialLinearScale,
   Tooltip
 } from "chart.js";
+import { useEffect, useRef } from "react";
 import { Radar } from "react-chartjs-2";
 import type { RadarStats } from "./shared/types";
 
@@ -55,8 +56,39 @@ const radarScoreLabels: Plugin<"radar"> = {
 };
 
 export function RadarChart({ radar, compact = false }: { radar: RadarStats; compact?: boolean }) {
+  const chartRef = useRef<ChartJS<"radar"> | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const values = [radar.writing, radar.logic, radar.share, radar.mechanism, radar.twist, radar.depth];
   const hasData = values.some((value) => value != null);
+
+  useEffect(() => {
+    if (!hasData) return;
+    let animationFrame = 0;
+    let settleTimer = 0;
+    const resizeChart = () => {
+      cancelAnimationFrame(animationFrame);
+      window.clearTimeout(settleTimer);
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = requestAnimationFrame(() => chartRef.current?.resize());
+      });
+      // iOS/微信 WebView 在 orientationchange 后会分两次更新可视视口。
+      settleTimer = window.setTimeout(() => chartRef.current?.resize(), 250);
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resizeChart);
+    if (containerRef.current) observer?.observe(containerRef.current);
+    window.addEventListener("resize", resizeChart, { passive: true });
+    window.addEventListener("orientationchange", resizeChart, { passive: true });
+    window.visualViewport?.addEventListener("resize", resizeChart, { passive: true });
+    resizeChart();
+    return () => {
+      observer?.disconnect();
+      cancelAnimationFrame(animationFrame);
+      window.clearTimeout(settleTimer);
+      window.removeEventListener("resize", resizeChart);
+      window.removeEventListener("orientationchange", resizeChart);
+      window.visualViewport?.removeEventListener("resize", resizeChart);
+    };
+  }, [hasData]);
 
   if (!hasData) {
     return (
@@ -67,8 +99,9 @@ export function RadarChart({ radar, compact = false }: { radar: RadarStats; comp
   }
 
   return (
-    <div className={compact ? "relative h-full min-h-24" : "relative h-full min-h-0"}>
+    <div ref={containerRef} className={`radar-chart-shell ${compact ? "relative h-full min-h-24" : "relative h-full min-h-0"}`}>
       <Radar
+        ref={chartRef}
         plugins={[radarScoreLabels]}
         data={{
           labels,

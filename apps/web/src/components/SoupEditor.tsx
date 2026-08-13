@@ -130,7 +130,9 @@ export function SoupEditor() {
   const invalidKeyFactWeightIndex = value.keyFacts.findIndex(
     (keyFact) => !Number.isInteger(keyFact.weight) || keyFact.weight < 1 || keyFact.weight > 99
   );
-  const aiAdvancedSettingsError = value.keyFactsCustomized && value.keyFacts.length === 0
+  const aiAdvancedSettingsError = !value.enableAiGame || !value.keyFactsCustomized
+    ? ""
+    : value.keyFacts.length === 0
     ? "AI 玩汤高级设置：手动管理关键点时至少保留 1 个关键点"
     : emptyKeyFactIndex >= 0
     ? `AI 玩汤高级设置：第 ${emptyKeyFactIndex + 1} 个关键点未填写`
@@ -190,7 +192,7 @@ export function SoupEditor() {
     event.preventDefault();
     if (submittingRef.current) return;
     if (!termsAccepted) { setTermsError("请先勾选同意用户使用条款"); return; }
-    if (canEnableAiGame && aiAdvancedSettingsError) {
+    if (canEnableAiGame && value.enableAiGame && aiAdvancedSettingsError) {
       setAdvSettingsOpen(true);
       showToast(aiAdvancedSettingsError);
       return;
@@ -205,8 +207,8 @@ export function SoupEditor() {
     const payload = {
       ...formValue,
       enableAiGame: canEnableAiGame ? value.enableAiGame : false,
-      keyFacts: canEnableAiGame ? value.keyFacts : [],
-      keyFactsCustomized: canEnableAiGame ? value.keyFactsCustomized : false,
+      keyFacts: canEnableAiGame && value.enableAiGame && value.keyFactsCustomized ? value.keyFacts : [],
+      keyFactsCustomized: canEnableAiGame && value.enableAiGame ? value.keyFactsCustomized : false,
       supplementalSurfaces: value.supplementalSurfaces.map((s: string) => s.trim()).filter(Boolean),
       supplementalBottoms: value.supplementalBottoms.map((s: string) => s.trim()).filter(Boolean),
       author: value.isOriginal ? authorName : "佚名"
@@ -361,7 +363,10 @@ export function SoupEditor() {
           <CheckRow label="公开汤底和主持人手册" desc="勾选后，其他用户无需申请即可查看完整内容。" checked={value.isBottomPublic} onChange={(c) => patch({ isBottomPublic: c })} />
           {canEnableAiGame && <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <CheckRow label="开启 AI 玩汤" desc="" checked={value.enableAiGame} onChange={(c) => patch({ enableAiGame: c })} />
+              <CheckRow label="开启 AI 玩汤" desc="" checked={value.enableAiGame} onChange={(c) => {
+                patch({ enableAiGame: c });
+                if (!c) setAdvSettingsOpen(false);
+              }} />
               {value.enableAiGame && (
                 <button
                   type="button"

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
+import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
 
 test("编辑海龟汤时将当前 OSS 封面转换为站内封面标记", () => {
   const body = {
@@ -41,8 +41,39 @@ test("编辑无 AI 配置权限的旧作品时将数据库 JSON 对象安全序�
 test("开启 AI 玩汤并手动管理关键点时禁止保存空列表", () => {
   assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: true, keyFactsCustomized: true, keyFacts: [] }), true);
   assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: true, keyFactsCustomized: false, keyFacts: [] }), false);
-  assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: false, keyFactsCustomized: true, keyFacts: [] }), true);
+  assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: false, keyFactsCustomized: true, keyFacts: [] }), false);
   assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: true, keyFactsCustomized: true, keyFacts: [{}] }), false);
+});
+
+test("未开启 AI 玩汤时忽略残留关键点，开启自动关键点时也不采信客户端残留", () => {
+  assert.deepEqual(normalizeSoupAiConfigurationInput({
+    title: "测试汤",
+    enableAiGame: false,
+    keyFactsCustomized: true,
+    keyFacts: [{ id: 1, content: "", weight: 10 }],
+  }), {
+    title: "测试汤",
+    enableAiGame: false,
+    keyFactsCustomized: false,
+    keyFacts: [],
+  });
+  assert.deepEqual(normalizeSoupAiConfigurationInput({
+    enableAiGame: true,
+    keyFactsCustomized: false,
+    keyFacts: [{ id: 1, content: "残留数据", weight: 10 }],
+  }), {
+    enableAiGame: true,
+    keyFactsCustomized: false,
+    keyFacts: [],
+  });
+  const manual = {
+    enableAiGame: true,
+    keyFactsCustomized: true,
+    keyFacts: [{ id: 1, content: "关键点", weight: 100 }],
+  };
+  assert.equal(normalizeSoupAiConfigurationInput(manual), manual);
+  const malformedSwitch = { enableAiGame: "false", keyFactsCustomized: true, keyFacts: [] };
+  assert.equal(normalizeSoupAiConfigurationInput(malformedSwitch), malformedSwitch);
 });
 
 test("海龟汤校验错误明确指出 AI 高级设置中的问题", () => {
