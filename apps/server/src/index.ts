@@ -6611,6 +6611,35 @@ app.post("/api/admin/android-releases", async (req, res) => {
   res.status(201).json({ id });
 });
 
+app.put("/api/admin/android-releases/:id", async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const parsed = androidReleaseSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "Android 发布信息不正确");
+  try {
+    const [result] = await pool.query<mysql.ResultSetHeader>(
+      `UPDATE android_app_releases
+       SET version_code = ?, version_name = ?, min_supported_version_code = ?, apk_url = ?,
+         release_notes = ?, published_at = ?, enabled = ?
+       WHERE id = ?`,
+      [
+        parsed.data.versionCode,
+        parsed.data.versionName,
+        parsed.data.minSupportedVersionCode,
+        parsed.data.apkUrl,
+        JSON.stringify(parsed.data.releaseNotes),
+        parsed.data.publishedAt,
+        parsed.data.enabled ? 1 : 0,
+        req.params.id
+      ]
+    );
+    if (result.affectedRows === 0) return sendError(res, 404, "Android 发布版本不存在");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") return sendError(res, 409, "该 versionCode 已存在");
+    throw error;
+  }
+  res.json({ ok: true });
+});
+
 app.patch("/api/admin/android-releases/:id/enabled", async (req, res) => {
   if (!(await requireAdmin(req, res))) return;
   const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
