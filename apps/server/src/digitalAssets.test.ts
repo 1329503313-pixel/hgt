@@ -26,6 +26,17 @@ test("保底为10、60、150且同时触发时优先最高品质", () => {
   assert.equal(digitalAssetRules.pityTrigger({ rare_count: 9, epic_count: 59, legend_count: 149 }), "legend");
 });
 
+test("保底仅在同类型卡包之间共享", () => {
+  const permanentScope = digitalAssetRules.pityScopeForPackType("permanent");
+  const limitedScope = digitalAssetRules.pityScopeForPackType("limited");
+  const collaborationScope = digitalAssetRules.pityScopeForPackType("collaboration");
+
+  assert.equal(permanentScope, digitalAssetRules.pityScopeForPackType("permanent"));
+  assert.equal(limitedScope, digitalAssetRules.pityScopeForPackType("limited"));
+  assert.equal(collaborationScope, digitalAssetRules.pityScopeForPackType("collaboration"));
+  assert.equal(new Set([permanentScope, limitedScope, collaborationScope]).size, 3);
+});
+
 test("高品质卡同时重置覆盖的低品质保底", () => {
   const state = { rare_count: 7, epic_count: 20, legend_count: 40 };
   assert.deepEqual(digitalAssetRules.updatePity(state, "rare"), { rare: 0, epic: 21, legend: 41 });

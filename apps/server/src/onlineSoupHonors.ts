@@ -30,6 +30,13 @@ export type OnlineSoupAiHonors = {
   };
 };
 
+export type OnlineSoupHumanHonorSelection = {
+  mvpUserId: string;
+  bestQuestionMessageId: string;
+};
+
+const honorAnswerValues = new Set(["yes", "no", "both", "unknown", "irrelevant"]);
+
 function sequenceValue(value: string | number | bigint) {
   try { return BigInt(value); }
   catch { return 0n; }
@@ -98,6 +105,48 @@ export function selectOnlineSoupAiHonors(questions: readonly OnlineSoupHonorQues
       question: bestQuestion.content,
       answer: bestQuestion.answer,
       progressDelta: bestQuestion.progressDelta,
+    },
+  };
+}
+
+/**
+ * 真人主持由房主人工选择本场 MVP 与最佳提问。MVP 只要求本轮至少提问一次；
+ * 最佳提问必须已有真人主持的五态回答，确保荣誉卡能完整复用 AI 结算样式。
+ */
+export function selectOnlineSoupHumanHonors(
+  questions: readonly OnlineSoupHonorQuestion[],
+  selection: OnlineSoupHumanHonorSelection,
+): OnlineSoupAiHonors | null {
+  const askedQuestions = questions
+    .filter((question) => question.senderId && question.content)
+    .sort((left, right) => {
+      const leftSequence = sequenceValue(left.sequence);
+      const rightSequence = sequenceValue(right.sequence);
+      return leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : left.id.localeCompare(right.id);
+    });
+  const mvpQuestion = askedQuestions.find((question) => question.senderId === selection.mvpUserId);
+  const bestQuestion = askedQuestions.find((question) =>
+    question.id === selection.bestQuestionMessageId && honorAnswerValues.has(question.answer)
+  );
+  if (!mvpQuestion || !bestQuestion) return null;
+
+  return {
+    version: 1,
+    mvp: {
+      userId: mvpQuestion.senderId,
+      nickname: mvpQuestion.senderNickname,
+      avatar: mvpQuestion.senderAvatar,
+      progressContribution: 0,
+    },
+    bestQuestion: {
+      messageId: bestQuestion.id,
+      questionNumber: bestQuestion.questionNumber,
+      userId: bestQuestion.senderId,
+      nickname: bestQuestion.senderNickname,
+      avatar: bestQuestion.senderAvatar,
+      question: bestQuestion.content,
+      answer: bestQuestion.answer,
+      progressDelta: 0,
     },
   };
 }

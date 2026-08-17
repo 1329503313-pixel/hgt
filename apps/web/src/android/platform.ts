@@ -23,7 +23,12 @@ type AndroidUpdatePlugin = {
   downloadAndInstall(options: { url: string }): Promise<{ downloadId: string }>;
 };
 
+type WechatSharePlugin = {
+  shareImage(options: { uri: string; title: string; text: string }): Promise<void>;
+};
+
 const AndroidUpdate = registerPlugin<AndroidUpdatePlugin>("AndroidUpdate");
+const WechatShare = registerPlugin<WechatSharePlugin>("WechatShare");
 
 export const IS_NATIVE_ANDROID = IS_ANDROID_APP && Capacitor.getPlatform() === "android";
 
@@ -55,16 +60,20 @@ function webDownload(file: File) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+async function writeAndroidShareFile(file: File) {
+  const path = `share/${Date.now()}-${safeFileName(file.name)}`;
+  await Filesystem.writeFile({
+    path,
+    data: await fileToBase64(file),
+    directory: Directory.Cache,
+    recursive: true
+  });
+  return Filesystem.getUri({ path, directory: Directory.Cache });
+}
+
 export async function shareImage(options: { file: File; title: string; text: string }) {
   if (IS_NATIVE_ANDROID) {
-    const path = `share/${Date.now()}-${safeFileName(options.file.name)}`;
-    await Filesystem.writeFile({
-      path,
-      data: await fileToBase64(options.file),
-      directory: Directory.Cache,
-      recursive: true
-    });
-    const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
+    const { uri } = await writeAndroidShareFile(options.file);
     await Share.share({ title: options.title, text: options.text, files: [uri], dialogTitle: "分享到" });
     return "shared" as const;
   }
@@ -75,6 +84,21 @@ export async function shareImage(options: { file: File; title: string; text: str
   }
   webDownload(options.file);
   return "downloaded" as const;
+}
+
+export async function shareImageToWechat(options: { file: File; title: string; text: string }) {
+  if (IS_NATIVE_ANDROID) {
+    const { uri } = await writeAndroidShareFile(options.file);
+    await WechatShare.shareImage({ uri, title: options.title, text: options.text });
+    return;
+  }
+
+  if (navigator.share && navigator.canShare?.({ files: [options.file] })) {
+    await navigator.share({ title: options.title, text: options.text, files: [options.file] });
+    return;
+  }
+
+  throw new Error("当前环境无法直接调起微信，请在 Android APP 或支持图片分享的手机浏览器中使用");
 }
 
 export function isShareCancelled(error: unknown) {

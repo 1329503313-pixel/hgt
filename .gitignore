@@ -37,6 +37,7 @@ docs/*
 artifacts/
 .local/
 # Agent working memory; not part of the product source.
+.claude/
 task_plan.md
 findings.md
 progress.md

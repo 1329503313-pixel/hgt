@@ -20,7 +20,7 @@ import { parseAiSoupRoundSnapshot, type AiSoupRoundSnapshot } from "./aiSoupRoun
 import { canCommitOnlineSoupAiQuestion } from "./onlineSoupAiState.js";
 import { renderProgressiveHint, roomAiProgressFeedback, roomAiQuestionRisks, shouldPublishRoomAiStallHint } from "./gameLogic.js";
 import { recordChatMessageForRateLimit, stickerCooldownMessage } from "./chatMessageRateLimit.js";
-import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors } from "./onlineSoupHonors.js";
+import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors, selectOnlineSoupHumanHonors, type OnlineSoupAiHonors } from "./onlineSoupHonors.js";
 import { ONLINE_SOUP_SINGLE_USER_IDLE_MINUTES, shouldAutoCloseIdleOnlineSoupRoom } from "./onlineSoupRoomIdle.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
@@ -1064,7 +1064,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderLevel: levelForExperience(row.sender_experience),
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
     type: String(row.message_type),
-    content: recalledAt ? "" : aiHonors ? "AI 本轮评选" : String(row.content),
+    content: recalledAt ? "" : aiHonors ? "本轮评选" : String(row.content),
     aiHonors,
     gift: !recalledAt && row.message_type === "gift" ? parseGiftMessage(row.content) : null,
     stickerId: row.sticker_id ? String(row.sticker_id) : null,
@@ -2693,7 +2693,11 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
   const context = await requireHumanHost(req, res);
   if (!context) return;
   if (context.room.status !== "playing" || !context.room.current_soup_id || !context.room.current_round_id) return fail(res, 409, "当前没有进行中的推理");
-  const parsed = z.object({ bottomIndex: z.number().int().min(0).default(0) }).safeParse(req.body ?? {});
+  const parsed = z.object({
+    bottomIndex: z.number().int().min(0).default(0),
+    mvpUserId: z.string().trim().min(1).optional(),
+    bestQuestionMessageId: z.string().trim().min(1).optional(),
+  }).safeParse(req.body ?? {});
   if (!parsed.success) return fail(res, 400, "请选择要发布的汤底");
   const bottoms = [String(context.room.soup_bottom), ...jsonList<string>(context.room.soup_supplemental_bottoms)];
   const content = bottoms[parsed.data.bottomIndex];
@@ -2702,6 +2706,7 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
   const connection = await pool.getConnection();
   let ended = false;
   let completedRound = false;
+  let humanHonors: OnlineSoupAiHonors | null = null;
   try {
     await connection.beginTransaction();
     const [[round]] = await connection.query<mysql.RowDataPacket[]>(
@@ -2715,6 +2720,41 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
     }
     const nextPublished = [...published, parsed.data.bottomIndex].sort((a, b) => a - b);
     ended = nextPublished.length === bottoms.length;
+    if (ended) {
+      if (!parsed.data.mvpUserId || !parsed.data.bestQuestionMessageId) {
+        await connection.rollback();
+        return fail(res, 400, "发布最后一条汤底前，请先选择本场 MVP 和最佳提问");
+      }
+      const [honorQuestions] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT m.id, m.message_sequence, m.question_number, m.sender_id, m.content, m.answer,
+           u.nickname, u.avatar IS NOT NULL AS has_avatar
+         FROM online_soup_messages m
+         JOIN users u ON u.id = m.sender_id
+         WHERE m.round_id = ? AND m.message_type = 'question' AND m.recalled_at IS NULL
+         ORDER BY m.message_sequence ASC`,
+        [context.room.current_round_id],
+      );
+      humanHonors = selectOnlineSoupHumanHonors(honorQuestions.map((question) => ({
+        id: String(question.id),
+        sequence: String(question.message_sequence),
+        questionNumber: Number(question.question_number ?? 0),
+        senderId: String(question.sender_id),
+        senderNickname: String(question.nickname),
+        senderAvatar: question.has_avatar
+          ? `/api/media/users/${encodeURIComponent(String(question.sender_id))}/avatar`
+          : null,
+        content: String(question.content),
+        answer: String(question.answer ?? ""),
+        progressDelta: 0,
+      })), {
+        mvpUserId: parsed.data.mvpUserId,
+        bestQuestionMessageId: parsed.data.bestQuestionMessageId,
+      });
+      if (!humanHonors) {
+        await connection.rollback();
+        return fail(res, 400, "MVP 必须是本轮提问玩家，最佳提问必须存在且已回答");
+      }
+    }
     await connection.query(
       "UPDATE online_soup_rounds SET published_bottom_indices = ?, status = ?, ended_at = ? WHERE id = ?",
       [JSON.stringify(nextPublished), ended ? "ended" : "playing", ended ? new Date() : null, context.room.current_round_id]
@@ -2749,6 +2789,12 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
         );
         await systemMessage(context.room.id, context.room.current_round_id, "主持人手册已自动发布", connection);
       }
+      await connection.query(
+        `INSERT INTO online_soup_messages
+         (id, room_id, round_id, sender_id, message_type, content)
+         VALUES (?, ?, ?, NULL, 'ai_honor', ?)`,
+        [nanoid(), context.room.id, context.room.current_round_id, JSON.stringify(humanHonors)],
+      );
       const settlement = await settleOnlineSoupRound(connection, String(context.room.current_round_id));
       completedRound = settlement.completed;
     } else {

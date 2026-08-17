@@ -98,6 +98,7 @@ function queueCardMotionTranscode(
 
 type Rarity = "normal" | "rare" | "epic" | "legend";
 type PackType = "permanent" | "limited" | "collaboration";
+type PityScope = PackType;
 type PityType = "rare" | "epic" | "legend";
 type PityState = { rare_count: number; epic_count: number; legend_count: number };
 
@@ -112,6 +113,11 @@ const COLLECTION_VALUES: Record<Rarity, readonly [number, number, number, number
 const FULL_STAR_REFUNDS: Record<Rarity, number> = { normal: 0, rare: 1, epic: 2, legend: 5 };
 const PITY_LIMITS: Record<PityType, number> = { rare: 10, epic: 60, legend: 150 };
 const PACK_TYPE_LABELS: Record<PackType, string> = { permanent: "常驻卡包", limited: "限定卡包", collaboration: "联动卡包" };
+const PITY_SCOPE_BY_PACK_TYPE: Record<PackType, PityScope> = {
+  permanent: "permanent",
+  limited: "limited",
+  collaboration: "collaboration"
+};
 const PUBLIC_PACK_COLUMNS = `id, name, '' AS cover_url, description, pack_story, pack_type,
   single_price, ten_price, daily_free_draws, sale_start_at, sale_end_at, enabled,
   sort_order, probability_notice, created_at, updated_at`;
@@ -195,6 +201,10 @@ function rarity(value: unknown): Rarity {
 function packType(value: unknown): PackType {
   const candidate = String(value) as PackType;
   return candidate in PACK_TYPE_LABELS ? candidate : "permanent";
+}
+
+function pityScopeForPackType(value: unknown): PityScope {
+  return PITY_SCOPE_BY_PACK_TYPE[packType(value)];
 }
 
 async function optimizedAssetImages(value: string, entityId: string, fullWidth: number, thumbnailWidth: number) {
@@ -486,7 +496,7 @@ async function drawOrderPayload(orderId: string) {
   const [orderRows, results] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
       `SELECT o.id, o.request_id, o.pack_id, o.draw_mode, o.shell_cost, o.used_free_draw, o.created_at,
-        p.name AS pack_name, p.updated_at AS pack_updated_at
+        p.name AS pack_name, p.pack_type, p.updated_at AS pack_updated_at
        FROM asset_draw_orders o INNER JOIN asset_packs p ON p.id = o.pack_id
        WHERE o.id = ? LIMIT 1`,
       [orderId]
@@ -506,6 +516,7 @@ async function drawOrderPayload(orderId: string) {
     requestId: String(order.request_id),
     packId: String(order.pack_id),
     packName: String(order.pack_name),
+    packType: packType(order.pack_type),
     packCoverUrl: packMediaUrl({ id: order.pack_id, updated_at: order.pack_updated_at } as mysql.RowDataPacket, "cover"),
     drawMode: String(order.draw_mode),
     shellCost: Number(order.shell_cost),
@@ -608,14 +619,14 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
       );
     }
 
-    const type = packType(pack.pack_type);
+    const pityScope = pityScopeForPackType(pack.pack_type);
     await connection.query(
       "INSERT IGNORE INTO asset_pity_progress (user_id, pack_type, rare_count, epic_count, legend_count) VALUES (?, ?, 0, 0, 0)",
-      [userId, type]
+      [userId, pityScope]
     );
     const [[pity]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT rare_count, epic_count, legend_count FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? FOR UPDATE",
-      [userId, type]
+      [userId, pityScope]
     );
     await connection.query("INSERT IGNORE INTO user_asset_summaries (user_id) VALUES (?)", [userId]);
     await connection.query<mysql.RowDataPacket[]>(
@@ -702,7 +713,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
     await connection.query(
       `UPDATE asset_pity_progress SET rare_count = ?, epic_count = ?, legend_count = ?
        WHERE user_id = ? AND pack_type = ?`,
-      [pityState.rare_count, pityState.epic_count, pityState.legend_count, userId, type]
+      [pityState.rare_count, pityState.epic_count, pityState.legend_count, userId, pityScope]
     );
     if (collectionDelta > 0 || unlockedDelta > 0) {
       await connection.query(
@@ -777,7 +788,7 @@ async function cabinetPayload(userId: string, compact = false) {
        WHERE uc.user_id = ? ${compact ? "AND uc.display_order IS NOT NULL ORDER BY uc.display_order ASC LIMIT 8" : "ORDER BY c.card_no ASC"}`,
       [userId]
     ).then(([rows]) => rows),
-    compact ? Promise.resolve([] as mysql.RowDataPacket[]) : pool.query<mysql.RowDataPacket[]>(
+    pool.query<mysql.RowDataPacket[]>(
       `SELECT pc.card_id, p.id, p.name, p.pack_type, p.sort_order
        FROM asset_pack_cards pc INNER JOIN asset_packs p ON p.id = pc.pack_id
        WHERE pc.card_id IN (SELECT card_id FROM user_asset_cards WHERE user_id = ?)
@@ -922,8 +933,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       const configuration = await packConfiguration(String(pack.id));
       const previewCards = configuration.enabled.slice(0, 3).map((card) => cardPayload(card, true));
       const coverCard = packCoverCard(configuration);
-      const type = packType(pack.pack_type);
-      const pity = (pityByType.get(type) ?? {}) as mysql.RowDataPacket;
+      const pityScope = pityScopeForPackType(pack.pack_type);
+      const pity = (pityByType.get(pityScope) ?? {}) as mysql.RowDataPacket;
       return {
         ...packPayload(pack, "thumbnail"),
         coverCard: coverCard ? cardPayload(coverCard, true) : null,
@@ -947,9 +958,9 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       packConfiguration(req.params.id, pool, true)
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
-    const type = packType(pack.pack_type);
+    const pityScope = pityScopeForPackType(pack.pack_type);
     const [pityRows, usageRows, userRows, ownedRows] = await Promise.all([
-      pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, type]).then(([rows]) => rows),
+      pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, pityScope]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ?", [user.id]).then(([rows]) => rows)
@@ -1348,8 +1359,27 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
     const offset = Math.max(0, Number(req.query.offset ?? 0));
     const keyword = String(req.query.keyword ?? "").trim();
-    const where = keyword ? "WHERE u.nickname LIKE ? OR p.name LIKE ? OR c.name LIKE ?" : "";
-    const params = keyword ? [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`] : [];
+    const matchedRarity = (Object.entries(RARITY_LABELS) as Array<[Rarity, string]>).find(([, label]) => keyword.includes(label))?.[0];
+    const matchedPackType: PackType | undefined = keyword.includes("限定")
+      ? "limited"
+      : keyword.includes("联动")
+        ? "collaboration"
+        : keyword.includes("常驻")
+          ? "permanent"
+          : undefined;
+    const conditions = keyword ? ["u.nickname LIKE ?", "p.name LIKE ?", "c.name LIKE ?"] : [];
+    const params: unknown[] = keyword ? [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`] : [];
+    if (matchedRarity && matchedPackType) {
+      conditions.push("(c.rarity = ? AND p.pack_type = ?)");
+      params.push(matchedRarity, matchedPackType);
+    } else if (matchedRarity) {
+      conditions.push("c.rarity = ?");
+      params.push(matchedRarity);
+    } else if (matchedPackType) {
+      conditions.push("p.pack_type = ?");
+      params.push(matchedPackType);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" OR ")}` : "";
     const [[totalRow], rows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(
         `SELECT COUNT(*) AS total FROM asset_draw_results r
@@ -1361,7 +1391,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         `SELECT r.id, r.draw_index, r.rarity, r.pity_type, r.star_before, r.star_after, r.first_obtained,
           r.star_upgraded, r.full_star_duplicate, r.shell_refund, r.created_at,
           o.id AS order_id, o.draw_mode, o.shell_cost, o.used_free_draw,
-          u.id AS user_id, u.nickname, p.id AS pack_id, p.name AS pack_name,
+          u.id AS user_id, u.nickname, p.id AS pack_id, p.name AS pack_name, p.pack_type,
           c.id AS card_id, c.card_no, c.name AS card_name
          FROM asset_draw_results r
          INNER JOIN asset_draw_orders o ON o.id = r.order_id INNER JOIN users u ON u.id = o.user_id
@@ -1375,7 +1405,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       records: rows.map((row) => ({
         id: String(row.id), orderId: String(row.order_id), drawIndex: Number(row.draw_index), drawMode: String(row.draw_mode),
         shellCost: Number(row.shell_cost), usedFreeDraw: bool(row.used_free_draw), userId: String(row.user_id), nickname: String(row.nickname),
-        packId: String(row.pack_id), packName: String(row.pack_name), cardId: String(row.card_id), cardNo: String(row.card_no), cardName: String(row.card_name),
+        packId: String(row.pack_id), packName: String(row.pack_name), packType: packType(row.pack_type), cardId: String(row.card_id), cardNo: String(row.card_no), cardName: String(row.card_name),
         rarity: rarity(row.rarity), pityType: row.pity_type ? String(row.pity_type) : null,
         starBefore: row.star_before == null ? null : Number(row.star_before), starAfter: Number(row.star_after),
         firstObtained: bool(row.first_obtained), starUpgraded: bool(row.star_upgraded), fullStarDuplicate: bool(row.full_star_duplicate),
@@ -1776,5 +1806,6 @@ export const digitalAssetRules = {
   lowestLegendCard,
   packDrawStatistics,
   pityTrigger,
+  pityScopeForPackType,
   updatePity
 };

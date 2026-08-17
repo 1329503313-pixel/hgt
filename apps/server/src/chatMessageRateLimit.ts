@@ -17,7 +17,8 @@ export function stickerCooldownRemainingMs(
 /**
  * 原子记录同一用户在一个聊天范围内的发送序列。
  * 连续 3 个表情后，第 4 个及之后的每个表情都必须与前一个至少间隔 10 秒；
- * 用户自己发送任意非表情消息后重置。数据库行锁保证多实例及并发请求也无法绕过。
+ * 用户自己发送任意非表情消息，或其他用户成功发送任意消息后重置。
+ * 会话范围行锁保证多实例及并发请求也无法绕过或错误保留旧计数。
  */
 export async function recordChatMessageForRateLimit(
   connection: mysql.PoolConnection,
@@ -28,6 +29,18 @@ export async function recordChatMessageForRateLimit(
     messageType: string;
   },
 ): Promise<number> {
+  await connection.query(
+    `INSERT INTO chat_message_rate_limit_scopes (scope_type, scope_id)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE scope_id = VALUES(scope_id)`,
+    [input.scopeType, input.scopeId],
+  );
+  await connection.query(
+    `SELECT scope_id FROM chat_message_rate_limit_scopes
+     WHERE scope_type = ? AND scope_id = ?
+     FOR UPDATE`,
+    [input.scopeType, input.scopeId],
+  );
   await connection.query(
     `INSERT INTO chat_message_rate_limits
        (scope_type, scope_id, user_id, consecutive_sticker_count, last_sticker_at)
@@ -50,8 +63,8 @@ export async function recordChatMessageForRateLimit(
     await connection.query(
       `UPDATE chat_message_rate_limits
        SET consecutive_sticker_count = 0, last_sticker_at = NULL
-       WHERE scope_type = ? AND scope_id = ? AND user_id = ?`,
-      [input.scopeType, input.scopeId, input.userId],
+       WHERE scope_type = ? AND scope_id = ?`,
+      [input.scopeType, input.scopeId],
     );
     return 0;
   }
@@ -67,6 +80,12 @@ export async function recordChatMessageForRateLimit(
      SET consecutive_sticker_count = consecutive_sticker_count + 1,
          last_sticker_at = CURRENT_TIMESTAMP(6)
      WHERE scope_type = ? AND scope_id = ? AND user_id = ?`,
+    [input.scopeType, input.scopeId, input.userId],
+  );
+  await connection.query(
+    `UPDATE chat_message_rate_limits
+     SET consecutive_sticker_count = 0, last_sticker_at = NULL
+     WHERE scope_type = ? AND scope_id = ? AND user_id <> ?`,
     [input.scopeType, input.scopeId, input.userId],
   );
   return 0;

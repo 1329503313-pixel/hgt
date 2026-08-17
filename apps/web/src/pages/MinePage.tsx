@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Award, Check, ChevronLeft, ChevronRight, GalleryVerticalEnd, ListChecks, Medal, Plus, Settings2, Shell, ShoppingBag, Trophy } from "lucide-react";
+import { ArrowLeft, ArrowRight, Award, Check, GalleryVerticalEnd, ListChecks, Medal, Plus, Settings2, Shell, ShoppingBag, Trophy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, prefetchApi, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -15,6 +15,7 @@ import { MINE_CONTENT_CACHE_MAX_AGE, mineCountsCacheKey, mineListCacheKey, type 
 import { SoupExportButton } from "../components/SoupExportButton";
 import { useShellBalance } from "../shared/useShellBalance";
 import { LevelBadge } from "../components/LevelBadge";
+import { ContentPagination } from "../components/ContentPagination";
 
 type BadgeCollectionResponse = { badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; equippedBadge: EquippedBadge | null };
 type TabKey = MineContentTab;
@@ -27,13 +28,6 @@ const listEndpoints: Record<TabKey, string> = { published: "/api/me/soups", favo
 const tabLabels: Record<TabKey, string> = { published: "发布", favorites: "收藏", likes: "点赞" };
 const pageSize = 10;
 const desktopHiddenFeaturePaths = new Set(["/mine/store", "/mine/rankings", "/mine/tasks"]);
-
-function paginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
-  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
-  if (currentPage <= 4) return [1, 2, 3, 4, 5, "ellipsis", totalPages];
-  if (currentPage >= totalPages - 3) return [1, "ellipsis", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
-  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages];
-}
 
 export default function MinePage() {
   const { user, loadingUser, openAuth, showToast, setUser } = useApp();
@@ -320,17 +314,7 @@ export default function MinePage() {
         </div>
         {tabs[activeTab].loading && !tabs[activeTab].loaded ? <CoverGridSkeleton /> : <>
           <SoupCoverGrid className="lg:grid-cols-4 lg:gap-4 lg:p-5" soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} returnTo="/mine" />
-          {tabs[activeTab].total > pageSize && (
-            <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-line p-3">
-              <button className="btn btn-secondary h-9 px-2.5 text-xs" disabled={pages[activeTab] <= 1 || tabs[activeTab].loading} onClick={() => changePage(activeTab, pages[activeTab] - 1)}><ChevronLeft size={15} />上一页</button>
-              {paginationItems(pages[activeTab], Math.ceil(tabs[activeTab].total / pageSize)).map((item, index) => item === "ellipsis" ? (
-                <span key={`ellipsis-${index}`} className="grid h-9 w-7 place-items-center text-sm text-muted">…</span>
-              ) : (
-                <button key={item} className={`grid h-9 min-w-9 place-items-center rounded-lg px-2 text-sm font-bold ${item === pages[activeTab] ? "bg-primary text-white" : "border border-line bg-white text-ink"}`} disabled={tabs[activeTab].loading} onClick={() => changePage(activeTab, item)}>{item}</button>
-              ))}
-              <button className="btn btn-secondary h-9 px-2.5 text-xs" disabled={pages[activeTab] >= Math.ceil(tabs[activeTab].total / pageSize) || tabs[activeTab].loading} onClick={() => changePage(activeTab, pages[activeTab] + 1)}>下一页<ChevronRight size={15} /></button>
-            </div>
-          )}
+          <ContentPagination page={pages[activeTab]} pageSize={pageSize} total={tabs[activeTab].total} loading={tabs[activeTab].loading} ariaLabel={`${tabLabels[activeTab]}海龟汤分页`} onPageChange={(page) => changePage(activeTab, page)} />
         </>}
       </div>
 

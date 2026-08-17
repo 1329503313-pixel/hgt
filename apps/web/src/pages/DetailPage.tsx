@@ -20,6 +20,7 @@ import { seoDescription, setDocumentSeo } from "../shared/seo";
 import { canAccessAdmin } from "../shared/roles";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { EvaluationCard } from "../components/EvaluationCard";
+import { getRandomOnlineSoupRoomName } from "../shared/onlineSoupRoomNames";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -491,7 +492,7 @@ export default function DetailPage() {
           <p className="text-xs font-black tracking-[0.14em] text-primary">ACTIONS</p>
           <h2 className="mt-1 font-black text-ink">开始推理</h2>
           <div className="mt-4 grid gap-2">
-            {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "", hostMode: "human" }); setShowRoomCreate(true); }}><DoorOpen size={17} />开房间</button>}
+            {soup.canViewFull && isReviewApproved && <button className="btn btn-primary w-full" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: getRandomOnlineSoupRoomName(), type: "public", password: "", hostMode: "human" }); setShowRoomCreate(true); }}><DoorOpen size={17} />开房间</button>}
             <button className="btn btn-secondary w-full" onClick={() => setShowShare(true)}><Share2 size={17} />分享作品</button>
           </div>
         </div>
@@ -507,7 +508,7 @@ export default function DetailPage() {
       </aside>
 
       <div className="card mt-4 grid grid-cols-2 gap-3 p-3 lg:hidden" aria-label="作品操作">
-        {soup.canViewFull && isReviewApproved && <button className="btn btn-primary" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: `${soup.title}玩汤房`.slice(0, 50), type: "public", password: "", hostMode: "human" }); setShowRoomCreate(true); }}><DoorOpen size={18} />开房间</button>}
+        {soup.canViewFull && isReviewApproved && <button className="btn btn-primary" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: getRandomOnlineSoupRoomName(), type: "public", password: "", hostMode: "human" }); setShowRoomCreate(true); }}><DoorOpen size={18} />开房间</button>}
         <button className="btn btn-secondary" onClick={() => setShowShare(true)}><Share2 size={18} />分享</button>
         {soup.canEdit && <button className="btn btn-secondary col-span-2" onClick={() => openSoupEditor(soup)}><Pencil size={18} />编辑</button>}
       </div>

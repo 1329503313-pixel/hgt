@@ -39,6 +39,7 @@ git diff --stat
 ```
 
 - 明确所有受版本控制差异；不得把未跟踪的用户文件带入发布。
+- Android Release 的准备脚本和底层构建脚本都会检查包含未跟踪文件在内的完整工作区；任一差异存在时必须中止，不得让工作区外内容进入绑定 Git 提交的 APK。
 - APP 业务源是 `apps/web`，Android 套壳是 `apps/app-android`；禁止修改历史目录 `apps/app`。
 - 先确定发布说明，再改版本，再提交。不要先构建 APK 后为了版本/文档再提交，否则 APK 文件名中的提交号会过期并导致第二次完整构建。
 
@@ -133,7 +134,7 @@ npm run release:production:deploy -- -ConfirmFullDeployment
 2. 上传到 `/opt/hgt-releases/incoming/`，服务端校验 SHA-256；
 3. 锁定当前容器 ID，防止审计后线上状态被其他操作改变；
 4. 旁路构建 `hgt:<shortCommit>` 并审计镜像无 `.env`；
-5. 从当前容器继承完整环境，JWT 原文仅保留在远端进程内，用 `-e JWT_SECRET` 注入；
+5. 从当前容器继承完整环境与全部命名卷/绑定挂载，JWT 原文仅保留在远端进程内，用 `-e JWT_SECRET` 注入；候选与正式容器的规范化挂载清单必须和旧容器完全一致；
 6. 在 `127.0.0.1:4001` 以 `RELEASE_CANDIDATE=true` 启动只读候选，不运行迁移、清理、奖励结算、AI 恢复或定时任务，然后验证健康和环境整体哈希；
 7. 旧容器改名为 `hgt-app-rollback-<shortCommit>`，新容器接管 4000；
 8. 再次验证环境/JWT 哈希与 Cookie；任何一步失败自动恢复旧容器。

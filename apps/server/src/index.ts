@@ -2720,6 +2720,10 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const target = rows[0];
   if (!target) return sendError(res, 404, "用户不存在");
   const includeSoups = req.query.includeSoups !== "false";
+  const requestedLimit = Number(req.query.limit ?? 10);
+  const limit = Math.min(50, Math.max(1, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 10));
+  const requestedOffset = Number(req.query.offset ?? 0);
+  const offset = Math.max(0, Number.isFinite(requestedOffset) ? Math.floor(requestedOffset) : 0);
   const soupPromise = includeSoups ? pool.query<mysql.RowDataPacket[]>(
       `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
         u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
@@ -2740,11 +2744,15 @@ app.get("/api/users/:id/profile", async (req, res) => {
        ${scoringEvaluationJoin("e", "s")}
        WHERE s.creator_id = ? AND s.review_status = 'approved' AND s.is_surface_public = TRUE
        GROUP BY s.id
-       ORDER BY s.created_at DESC
-       LIMIT 10`,
-      [viewer.id, viewer.id, req.params.id]
+       ORDER BY s.created_at DESC, s.id DESC
+       LIMIT ? OFFSET ?`,
+      [viewer.id, viewer.id, req.params.id, limit, offset]
     ) : Promise.resolve([[], []] as unknown as [mysql.RowDataPacket[], mysql.FieldPacket[]]);
-  const [[likeRows], [followRows], [soupRows]] = await Promise.all([
+  const soupTotalPromise = includeSoups ? pool.query<mysql.RowDataPacket[]>(
+    "SELECT COUNT(*) AS total FROM soups WHERE creator_id = ? AND review_status = 'approved' AND is_surface_public = TRUE",
+    [req.params.id]
+  ) : Promise.resolve([[], []] as unknown as [mysql.RowDataPacket[], mysql.FieldPacket[]]);
+  const [[likeRows], [followRows], [soupRows], [soupTotalRows]] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
       `SELECT COUNT(*) AS received_like_count
        FROM soup_likes sl INNER JOIN soups s ON s.id = sl.soup_id
@@ -2758,7 +2766,8 @@ app.get("/api/users/:id/profile", async (req, res) => {
          EXISTS (SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?) AS is_following`,
       [req.params.id, req.params.id, viewer.id, req.params.id]
     ),
-    soupPromise
+    soupPromise,
+    soupTotalPromise
   ]);
   const follow = followRows[0] ?? {};
   const backgroundMotionEnabled = target.background_card_rarity === "legend"
@@ -2787,7 +2796,9 @@ app.get("/api/users/:id/profile", async (req, res) => {
         zoom: Number(target.profile_background_zoom ?? 1)
       }
     },
-    soups: soupRows.map(mapSoupSummary)
+    soups: soupRows.map(mapSoupSummary),
+    total: Number(soupTotalRows[0]?.total ?? 0),
+    hasMore: offset + soupRows.length < Number(soupTotalRows[0]?.total ?? 0)
   });
 });
 
@@ -6550,7 +6561,7 @@ app.post(
   "/api/admin/notices/images",
   express.raw({ type: ["image/png", "image/jpeg", "image/webp", "image/gif"], limit: "2mb" }),
   async (req, res) => {
-    if (!(await requireAdmin(req, res))) return;
+    if (!(await requireBackofficeAdmin(req, res))) return;
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) return sendError(res, 400, "图片文件无效");
     try {
       const output = await sharp(req.body)
@@ -6723,7 +6734,7 @@ app.patch("/api/admin/web-resource-releases/:id/enabled", async (req, res) => {
 });
 
 app.get("/api/admin/notices", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const keyword = req.query.keyword ? String(req.query.keyword).trim().slice(0, 200) : "";
   const requestedLimit = Number(req.query.limit ?? 10);
   const limit = [10, 20, 50].includes(requestedLimit) ? requestedLimit : 10;
@@ -6747,7 +6758,7 @@ app.get("/api/admin/notices", async (req, res) => {
 });
 
 app.post("/api/admin/notices", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireBackofficeAdmin(req, res);
   if (!admin) return;
   const parsed = adminNoticeSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "通知内容不正确");
@@ -6764,7 +6775,7 @@ app.post("/api/admin/notices", async (req, res) => {
 });
 
 app.post("/api/admin/notices/bulk-delete", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const parsed = z.object({ ids: z.array(z.string().min(1)).min(1).max(100) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "请选择要删除的通知");
   const ids = [...new Set(parsed.data.ids)];
@@ -6778,7 +6789,7 @@ app.post("/api/admin/notices/bulk-delete", async (req, res) => {
 });
 
 app.get("/api/admin/notices/:id/readers", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const [noticeRows] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id, title FROM admin_notices WHERE id = ? LIMIT 1",
     [req.params.id]
@@ -6804,7 +6815,7 @@ app.get("/api/admin/notices/:id/readers", async (req, res) => {
 });
 
 app.get("/api/admin/notices/:id", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireBackofficeAdmin(req, res);
   if (!admin) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT n.*,
@@ -6828,7 +6839,7 @@ app.get("/api/admin/notices/:id", async (req, res) => {
 });
 
 app.put("/api/admin/notices/:id", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const parsed = adminNoticeSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "通知内容不正确");
   const validDurationMinutes = parsed.data.validDays * 1440 + parsed.data.validHours * 60;
@@ -6845,7 +6856,7 @@ app.put("/api/admin/notices/:id", async (req, res) => {
 });
 
 app.delete("/api/admin/notices/:id", async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  if (!(await requireBackofficeAdmin(req, res))) return;
   const [result] = await pool.query<mysql.ResultSetHeader>(
     "DELETE FROM admin_notices WHERE id = ?",
     [req.params.id]

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors, type OnlineSoupHonorQuestion } from "./onlineSoupHonors.js";
+import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors, selectOnlineSoupHumanHonors, type OnlineSoupHonorQuestion } from "./onlineSoupHonors.js";
 
 function question(overrides: Partial<OnlineSoupHonorQuestion> = {}): OnlineSoupHonorQuestion {
   return {
@@ -49,4 +49,26 @@ test("持久化评选快照可以安全解析，损坏内容返回空", () => {
   const honors = selectOnlineSoupAiHonors([question()]);
   assert.deepEqual(parseOnlineSoupAiHonors(JSON.stringify(honors)), honors);
   assert.equal(parseOnlineSoupAiHonors("not-json"), null);
+});
+
+test("真人主持可从所有提问者中选择 MVP，并从已回答问题中选择最佳提问", () => {
+  const honors = selectOnlineSoupHumanHonors([
+    question({ id: "pending", senderId: "u2", senderNickname: "乙", answer: "", progressDelta: 0 }),
+    question({ id: "answered", sequence: "2", questionNumber: 2, answer: "both", progressDelta: 0 }),
+  ], { mvpUserId: "u2", bestQuestionMessageId: "answered" });
+  assert.equal(honors?.mvp.userId, "u2");
+  assert.equal(honors?.bestQuestion.messageId, "answered");
+  assert.equal(honors?.bestQuestion.answer, "both");
+});
+
+test("真人主持不能选择未提问玩家或未回答问题", () => {
+  const questions = [question({ answer: "", progressDelta: 0 })];
+  assert.equal(selectOnlineSoupHumanHonors(questions, {
+    mvpUserId: "not-a-questioner",
+    bestQuestionMessageId: "q1",
+  }), null);
+  assert.equal(selectOnlineSoupHumanHonors(questions, {
+    mvpUserId: "u1",
+    bestQuestionMessageId: "q1",
+  }), null);
 });

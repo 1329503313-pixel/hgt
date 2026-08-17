@@ -91,6 +91,7 @@ export type AssetDrawOrder = {
   requestId: string;
   packId: string;
   packName: string;
+  packType: AssetPackType;
   packCoverUrl: string;
   drawMode: "single" | "ten";
   shellCost: number;
@@ -111,6 +112,25 @@ export const ASSET_PACK_TYPE_LABELS: Record<AssetPackType, string> = {
   limited: "限定卡包",
   collaboration: "联动卡包"
 };
+
+const ASSET_RARITY_PREFIXES: Record<AssetPackType, string> = {
+  permanent: "",
+  limited: "限定",
+  collaboration: "联动"
+};
+
+export function assetRarityLabel(rarity: AssetRarity, packType?: AssetPackType | null) {
+  return `${packType ? ASSET_RARITY_PREFIXES[packType] : ""}${ASSET_RARITY_LABELS[rarity]}`;
+}
+
+export function assetRarityMatchesQuery(rarity: AssetRarity, query: string) {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  return ([undefined, "permanent", "limited", "collaboration"] as const).some((packType) => {
+    const label = assetRarityLabel(rarity, packType).toLocaleLowerCase();
+    return label.includes(normalized) || normalized.includes(label);
+  });
+}
 
 const warmedAssetImages = new Set<string>();
 

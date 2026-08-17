@@ -13,7 +13,7 @@ async function sha256(path) {
   return createHash("sha256").update(await readFile(pathOf(path))).digest("hex");
 }
 
-const [manifest, config, launchTheme, launchSplash, mainActivity, plugin, policy, paths, userApp, webApp, androidApp, version, packageJson, brandManifest] = await Promise.all([
+const [manifest, config, launchTheme, launchSplash, mainActivity, plugin, policy, wechatSharePlugin, paths, userApp, webApp, androidApp, version, packageJson, brandManifest] = await Promise.all([
   read("apps/app-android/android/app/src/main/AndroidManifest.xml"),
   read("apps/app-android/capacitor.config.ts"),
   read("apps/app-android/android/app/src/main/res/values/styles.xml"),
@@ -21,6 +21,7 @@ const [manifest, config, launchTheme, launchSplash, mainActivity, plugin, policy
   read("apps/app-android/android/app/src/main/java/com/caqis/hgt/MainActivity.java"),
   read("apps/app-android/android/app/src/main/java/com/caqis/hgt/AndroidUpdatePlugin.java"),
   read("apps/app-android/android/app/src/main/java/com/caqis/hgt/AndroidUpdatePolicy.java"),
+  read("apps/app-android/android/app/src/main/java/com/caqis/hgt/WechatSharePlugin.java"),
   read("apps/app-android/android/app/src/main/res/xml/file_paths.xml"),
   read("apps/web/src/UserApp.tsx"),
   read("apps/web/src/App.tsx"),
@@ -49,12 +50,17 @@ expect(config.includes('layoutName: "launch_splash"'), "Android splash must use 
 expect(launchTheme.includes('<item name="android:background">@color/brand_splash_background</item>'), "Launch window background must not stretch the splash bitmap.");
 expect(launchSplash.includes('android:scaleType="centerCrop"'), "Launch splash layout must preserve the bitmap aspect ratio.");
 expect(mainActivity.includes("registerPlugin(AndroidUpdatePlugin.class)"), "Android update plugin is not registered.");
+expect(mainActivity.includes("registerPlugin(WechatSharePlugin.class)"), "WeChat share plugin is not registered.");
+expect(manifest.includes('<package android:name="com.tencent.mm"'), "WeChat package visibility declaration is missing.");
+expect(wechatSharePlugin.includes('setPackage(WECHAT_PACKAGE)'), "WeChat image sharing must target the WeChat package.");
+expect(wechatSharePlugin.includes("getCacheDir().getCanonicalFile()"), "WeChat sharing must only expose files from app cache.");
 expect(plugin.includes("AndroidUpdatePolicy.requireAllowedApkUrl"), "Update plugin must validate APK URLs.");
 expect(policy.includes('ALLOWED_HOST = "zgkc-storage.kjcxchina.com"'), "Official OSS host allowlist changed.");
 expect(policy.includes('ALLOWED_PATH_PREFIX = "/hgt/apps/"'), "Official OSS path allowlist changed.");
 expect(!userApp.includes("AdminPage"), "UserApp must not depend on the admin app.");
 expect(webApp.includes('import UserApp from "./UserApp"'), "Web user routes must use shared UserApp.");
 expect(androidApp.includes('import UserApp from "./UserApp"'), "Android routes must use shared UserApp.");
+expect(androidApp.includes("<GlobalToast />"), "Android app must render global feedback messages.");
 expect(packageJson.version === version.versionName, "Android package version and release versionName differ.");
 for (const name of ["@capacitor/app", "@capacitor/share", "@capacitor/filesystem", "@capacitor/browser", "@capacitor/splash-screen"]) {
   expect(Boolean(packageJson.dependencies[name]), `Missing official plugin dependency: ${name}.`);

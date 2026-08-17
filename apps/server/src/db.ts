@@ -1698,6 +1698,16 @@ export async function initDatabase() {
   await ensureIndex("circle_messages", "idx_circle_messages_reply", "reply_to_message_id");
   await ensureIndex("circle_messages", "idx_circle_messages_gift_send", "gift_send_id");
 
+  // 会话级锁串行化同一聊天范围的表情计数，确保其他用户发言可以原子重置连发状态。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_message_rate_limit_scopes (
+      scope_type ENUM('private','circle','online_soup') NOT NULL,
+      scope_id VARCHAR(64) NOT NULL,
+      updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+      PRIMARY KEY (scope_type, scope_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   // 跨进程共享的聊天表情连发状态：按用户和当前会话独立计数。
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chat_message_rate_limits (

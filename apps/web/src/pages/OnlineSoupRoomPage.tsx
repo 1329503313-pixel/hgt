@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightLeft, ArrowUp, Bot, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, Minimize2, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowRightLeft, ArrowUp, Award, Bot, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, MessageCircleQuestion, Minimize2, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Users, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
@@ -46,6 +46,22 @@ type RoundClue = Pick<OnlineSoupMessage, "id" | "sequence" | "content" | "create
 type ProgressPage = { roundId: string | null; aiProgress: number | null; questions: ProgressQuestion[]; hasMore: boolean; nextCursor: string | null };
 type CluePage = { roundId: string | null; clues: RoundClue[]; hasMore: boolean; nextCursor: string | null };
 type MentionRequest = { userId: string; nickname: string; key: number };
+type MaterialPublishTarget = {
+  kind: "surface" | "bottom";
+  index: number;
+  title: string;
+  content: string;
+  endsRound: boolean;
+  honors?: { mvpUserId: string; bestQuestionMessageId: string };
+};
+type HumanHonorSelection = {
+  bottomIndex: number;
+  step: "mvp" | "question";
+  questions: ProgressQuestion[];
+  mvpUserId: string;
+  bestQuestionMessageId: string;
+  submitting: boolean;
+};
 const structuralRoomEvents = new Set([
   "member_joined", "member_left", "member_kicked", "host_transferred", "soup_selected", "round_started",
   "supplemental_surface_published", "bottom_published", "round_ended", "host_mode_changed",
@@ -156,6 +172,10 @@ export default function OnlineSoupRoomPage() {
   const [surfacePublishOpen, setSurfacePublishOpen] = useState(false);
   const [clue, setClue] = useState("");
   const [publishOpen, setPublishOpen] = useState(false);
+  const [materialPublishTarget, setMaterialPublishTarget] = useState<MaterialPublishTarget | null>(null);
+  const [materialPublishing, setMaterialPublishing] = useState(false);
+  const [honorSelection, setHonorSelection] = useState<HumanHonorSelection | null>(null);
+  const [preparingHonorBottomIndex, setPreparingHonorBottomIndex] = useState<number | null>(null);
   const [changingHostMode, setChangingHostMode] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
   const [stickersLoading, setStickersLoading] = useState(true);
@@ -305,7 +325,9 @@ export default function OnlineSoupRoomPage() {
     entryStarted.current = true;
     if (!user) {
       sessionStorage.setItem("onlineSoupPendingInvite", JSON.stringify({ roomId, inviteToken }));
-      navigate("/online-soup", { replace: true });
+      const pendingInviteQuery = new URLSearchParams({ room: roomId });
+      if (inviteToken) pendingInviteQuery.set("invite", inviteToken);
+      navigate(`/online-soup?${pendingInviteQuery.toString()}`, { replace: true });
       window.setTimeout(openAuth, 0);
       return;
     }
@@ -902,15 +924,121 @@ export default function OnlineSoupRoomPage() {
   }
 
   async function publishSurface(surfaceIndex: number) {
-    try { await hostAction("publish-surface", { surfaceIndex }); setSurfacePublishOpen(false); }
-    catch { /* toast above */ }
+    try {
+      await hostAction("publish-surface", { surfaceIndex });
+      setSurfacePublishOpen(false);
+      return true;
+    } catch { return false; }
   }
 
-  async function publishBottom(bottomIndex: number) {
+  async function publishBottom(bottomIndex: number, honors?: { mvpUserId: string; bestQuestionMessageId: string }) {
     try {
-      await hostAction("publish-bottom", { bottomIndex });
+      await hostAction("publish-bottom", { bottomIndex, ...honors });
       setPublishOpen(false);
-    } catch { /* toast above */ }
+      setHonorSelection(null);
+      return true;
+    } catch { return false; }
+  }
+
+  async function confirmMaterialPublish() {
+    if (!materialPublishTarget || materialPublishing) return;
+    setMaterialPublishing(true);
+    try {
+      const published = materialPublishTarget.kind === "surface"
+        ? await publishSurface(materialPublishTarget.index)
+        : await publishBottom(materialPublishTarget.index, materialPublishTarget.honors);
+      if (published) {
+        if (materialPublishTarget.endsRound) showToast("汤底、主持人手册和本轮高光已发布");
+        setMaterialPublishTarget(null);
+      }
+    } finally {
+      setMaterialPublishing(false);
+    }
+  }
+
+  async function prepareBottomPublish(bottomIndex: number) {
+    const soup = snapshot?.room.soup;
+    if (!soup || preparingHonorBottomIndex != null) return;
+    const bottomsCount = 1 + (soup.supplementalBottoms?.length ?? 0);
+    const published = new Set(soup.publishedBottomIndices ?? []);
+    const publishesLastBottom = !published.has(bottomIndex) && published.size + 1 === bottomsCount;
+    if (!publishesLastBottom) {
+      const content = bottomIndex === 0 ? soup.bottom ?? "" : soup.supplementalBottoms?.[bottomIndex - 1] ?? "";
+      setMaterialPublishTarget({
+        kind: "bottom",
+        index: bottomIndex,
+        title: bottomIndex === 0 ? "主汤底" : `补充汤底 ${bottomIndex}`,
+        content,
+        endsRound: false,
+      });
+      return;
+    }
+
+    setPreparingHonorBottomIndex(bottomIndex);
+    try {
+      let after = "";
+      let hasMore = true;
+      const questions: ProgressQuestion[] = [];
+      const expectedRoundId = snapshot.room.currentRoundId;
+      while (hasMore) {
+        const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
+        const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false });
+        if (page.roundId !== expectedRoundId) throw new Error("本轮状态已变化，请重新选择汤底");
+        questions.push(...page.questions);
+        hasMore = page.hasMore;
+        if (!page.nextCursor) break;
+        after = page.nextCursor;
+      }
+      const questionerIds = new Set(questions.map((question) => question.sender.id).filter(Boolean));
+      if (questionerIds.size === 0) {
+        showToast("本轮暂无提问玩家，无法进行 MVP 结算");
+        return;
+      }
+      if (!questions.some((question) => question.answer)) {
+        showToast("本轮暂无已回答提问，请先完成至少一次回答");
+        return;
+      }
+      setProgressQuestions(questions);
+      progressLoadedRoundId.current = expectedRoundId;
+      setPublishOpen(false);
+      setHonorSelection({
+        bottomIndex,
+        step: "mvp",
+        questions,
+        mvpUserId: "",
+        bestQuestionMessageId: "",
+        submitting: false,
+      });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "评选候选加载失败");
+    } finally {
+      setPreparingHonorBottomIndex(null);
+    }
+  }
+
+  async function confirmHumanHonors() {
+    if (!honorSelection) return;
+    if (honorSelection.step === "mvp") {
+      if (!honorSelection.mvpUserId) return showToast("请选择本场 MVP");
+      setHonorSelection((current) => current ? { ...current, step: "question" } : current);
+      return;
+    }
+    if (!honorSelection.bestQuestionMessageId || honorSelection.submitting) return showToast("请选择本场最佳提问");
+    const soup = snapshot?.room.soup;
+    if (!soup) return showToast("当前海龟汤状态已变化，请重新操作");
+    const bottomIndex = honorSelection.bottomIndex;
+    const bottomContent = bottomIndex === 0 ? soup.bottom ?? "" : soup.supplementalBottoms?.[bottomIndex - 1] ?? "";
+    setMaterialPublishTarget({
+      kind: "bottom",
+      index: bottomIndex,
+      title: bottomIndex === 0 ? "主汤底" : `补充汤底 ${bottomIndex}`,
+      content: bottomContent,
+      endsRound: true,
+      honors: {
+        mvpUserId: honorSelection.mvpUserId,
+        bestQuestionMessageId: honorSelection.bestQuestionMessageId,
+      },
+    });
   }
 
   function openSoupSelector() {
@@ -1085,6 +1213,13 @@ export default function OnlineSoupRoomPage() {
     players: snapshot?.members.filter((member) => member.role === "player") ?? [],
     spectators: snapshot?.members.filter((member) => member.role === "spectator") ?? []
   }), [snapshot?.members]);
+  const honorMvpCandidates = useMemo(() => {
+    const byId = new Map<string, ProgressQuestion["sender"] & { id: string }>();
+    for (const question of honorSelection?.questions ?? []) {
+      if (question.sender.id && !byId.has(question.sender.id)) byId.set(question.sender.id, { ...question.sender, id: question.sender.id });
+    }
+    return [...byId.values()];
+  }, [honorSelection?.questions]);
   const managedMember = snapshot?.members.find((member) => member.id === managedMemberId) ?? null;
   const unpublishedSurfaces = (snapshot?.room.soup?.supplementalSurfaces ?? [])
     .map((content, index) => ({ content, index }))
@@ -1320,7 +1455,7 @@ export default function OnlineSoupRoomPage() {
         <section className="card relative flex min-h-0 flex-col overflow-hidden lg:order-2">
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">讨论、正式提问、主持人回复和线索会实时同步</p></div>
           <div className="relative min-h-0 flex-1">
-            <div ref={messagesRef} className="h-full space-y-3 overflow-y-auto overscroll-contain px-4 pb-16 pt-4" onScroll={updateMessagesScrollPosition}>
+            <div ref={messagesRef} className={`h-full space-y-3 overflow-y-auto overscroll-contain px-4 pt-4 ${showScrollToLatest ? "pb-16" : "pb-3"}`} onScroll={updateMessagesScrollPosition}>
               {snapshot.messagesHasMore && <button className="mx-auto block rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-blue-50 disabled:opacity-50" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
               {giftTimelineEntries(snapshot.messages).map((entry) => {
                 if (entry.kind === "gift_bundle") {
@@ -1425,10 +1560,68 @@ export default function OnlineSoupRoomPage() {
       {exitChoiceOpen && <Modal onClose={() => setExitChoiceOpen(false)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">离开完整房间</h2><p className="mt-2 text-sm leading-6 text-muted">收起后会继续保持在线，并在桌面右下角接收聊天、线索和进度。</p></div><button className="btn btn-primary !hidden w-full lg:!flex" onClick={minimizeCurrentRoom}><Minimize2 size={17} />收起到右下角</button><button className="btn w-full bg-red-50 text-red-600 hover:bg-red-100" onClick={() => { setExitChoiceOpen(false); setConfirmAction("leave"); }}><LogOut size={17} />{isHost ? "退出房间" : "退出并释放席位"}</button><button className="btn btn-secondary w-full" onClick={() => setExitChoiceOpen(false)}>取消</button></div></Modal>}
       {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "end-round" ? "确认关闭本轮？" : confirmAction === "close" ? "确认解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "end-round" ? "关闭后将结束本轮推理，但不会解散房间，也不会自动发布尚未公布的汤底。" : confirmAction === "close" ? "解散后所有成员都会退出，此操作无法撤销。" : isHost ? snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的本轮会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "end-round") void endRound(); else if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{confirmAction === "end-round" ? "关闭本轮" : confirmAction === "close" ? "确认解散" : "确认退出"}</button></div></div></Modal>}
       {clueOpen && <Modal onClose={() => setClueOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">发布主持人线索</h2><textarea className="field min-h-32 w-full" maxLength={2000} value={clue} onChange={(e) => setClue(e.target.value)} placeholder="输入给所有玩家看的线索…" /><button className="btn btn-primary w-full" onClick={publishClue}><Lightbulb size={16} /> 发布线索</button></div></Modal>}
-      {surfacePublishOpen && <Modal onClose={() => setSurfacePublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">发布补充汤面</h2><p className="mt-1 text-sm text-muted">选择一条尚未发布的补充汤面。</p></div><div className="space-y-2">{unpublishedSurfaces.map(({ content: surface, index }) => <button key={index} className="w-full rounded-xl border border-blue-200 bg-blue-50 p-3 text-left transition hover:border-blue-400" onClick={() => void publishSurface(index)}><span className="text-sm font-black text-blue-800">补充汤面 {index + 1}</span><span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{surface.replace(/<[^>]*>/g, "")}</span></button>)}</div><button className="btn btn-secondary w-full" onClick={() => setSurfacePublishOpen(false)}>取消</button></div></Modal>}
-      {publishOpen && snapshot.room.soup && <Modal onClose={() => setPublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">选择要发布的汤底</h2><p className="mt-1 text-sm leading-6 text-muted">汤底可以按任意顺序发布。全部发布后本轮结束，并自动发布主持人手册。</p></div><div className="space-y-2">{[snapshot.room.soup.bottom ?? "", ...(snapshot.room.soup.supplementalBottoms ?? [])].map((bottom, index) => { const published = snapshot.room.soup?.publishedBottomIndices?.includes(index) ?? false; return <button key={index} className={`w-full rounded-xl border p-3 text-left transition ${published ? "border-slate-200 bg-slate-50 text-muted" : "border-amber-200 bg-amber-50 hover:border-amber-400"}`} disabled={published} onClick={() => void publishBottom(index)}><span className="text-sm font-black">{index === 0 ? "主汤底" : `补充汤底 ${index}`}{published ? " · 已发布" : ""}</span><span className="mt-1 block line-clamp-2 text-xs leading-5">{bottom.replace(/<[^>]*>/g, "")}</span></button>; })}</div><button className="btn btn-secondary w-full" onClick={() => setPublishOpen(false)}>取消</button></div></Modal>}
+      {surfacePublishOpen && <Modal onClose={() => setSurfacePublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">发布补充汤面</h2><p className="mt-1 text-sm text-muted">选择一条尚未发布的补充汤面。</p></div><div className="space-y-2">{unpublishedSurfaces.map(({ content: surface, index }) => <button key={index} className="w-full rounded-xl border border-blue-200 bg-blue-50 p-3 text-left transition hover:border-blue-400" onClick={() => setMaterialPublishTarget({ kind: "surface", index, title: `补充汤面 ${index + 1}`, content: surface, endsRound: false })}><span className="text-sm font-black text-blue-800">补充汤面 {index + 1}</span><span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{surface.replace(/<[^>]*>/g, "")}</span></button>)}</div><button className="btn btn-secondary w-full" onClick={() => setSurfacePublishOpen(false)}>取消</button></div></Modal>}
+      {honorSelection && !materialPublishTarget && <Modal onClose={() => { if (!honorSelection.submitting) setHonorSelection(null); }} hideClose={honorSelection.submitting}>
+        <div className="space-y-4">
+          <div>
+            <div className="mb-3 flex items-center gap-2" aria-label={`评选步骤 ${honorSelection.step === "mvp" ? "1" : "2"}/2`}>
+              <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${honorSelection.step === "mvp" ? "bg-primary text-white" : "bg-emerald-500 text-white"}`}>{honorSelection.step === "mvp" ? "1" : <Check size={15} />}</span>
+              <span className={`h-1 flex-1 rounded-full ${honorSelection.step === "question" ? "bg-primary" : "bg-slate-200"}`} />
+              <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${honorSelection.step === "question" ? "bg-primary text-white" : "bg-slate-100 text-muted"}`}>2</span>
+            </div>
+            <h2 className="flex items-center gap-2 text-xl font-black text-ink">{honorSelection.step === "mvp" ? <Award className="text-amber-500" size={22} /> : <MessageCircleQuestion className="text-violet-600" size={22} />}{honorSelection.step === "mvp" ? "请选择本场 MVP" : "请选择本场最佳提问"}</h2>
+            <p className="mt-1 text-sm leading-6 text-muted">{honorSelection.step === "mvp" ? "候选人为本轮所有至少提出过一次问题的玩家。" : "以下为本轮进度中的全部提问和回答；尚未回答的问题暂不可选择。"}</p>
+          </div>
+
+          {honorSelection.step === "mvp" ? <div className="max-h-[52dvh] space-y-2 overflow-y-auto overscroll-contain pr-1" role="radiogroup" aria-label="本场 MVP 候选人">
+            {honorMvpCandidates.map((candidate) => {
+              const selected = honorSelection.mvpUserId === candidate.id;
+              return <label key={candidate.id} className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-2xl border p-3 transition focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 ${selected ? "border-primary bg-blue-50 ring-2 ring-blue-100" : "border-line bg-white hover:border-blue-300 hover:bg-slate-50"}`}>
+                <input className="sr-only" type="radio" name="human-honor-mvp" value={candidate.id} checked={selected} onChange={() => setHonorSelection((current) => current ? { ...current, mvpUserId: candidate.id } : current)} />
+                <HonorCandidateAvatar avatar={candidate.avatar} nickname={candidate.nickname} />
+                <span className="min-w-0 flex-1 truncate font-black text-ink">{candidate.nickname}</span>
+                <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${selected ? "border-primary bg-primary text-white" : "border-slate-300 text-transparent"}`} aria-hidden="true"><Check size={14} /></span>
+              </label>;
+            })}
+          </div> : <div className="max-h-[52dvh] space-y-2 overflow-y-auto overscroll-contain pr-1" role="radiogroup" aria-label="本场最佳提问候选">
+            {honorSelection.questions.map((question) => {
+              const selectable = Boolean(question.answer);
+              const selected = honorSelection.bestQuestionMessageId === question.id;
+              return <label key={question.id} className={`block rounded-2xl border p-3 transition focus-within:ring-2 focus-within:ring-violet-500 focus-within:ring-offset-2 ${!selectable ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-70" : selected ? "cursor-pointer border-violet-500 bg-violet-50 ring-2 ring-violet-100" : "cursor-pointer border-line bg-white hover:border-violet-300"}`}>
+                <input className="sr-only" type="radio" name="human-honor-question" value={question.id} disabled={!selectable} checked={selected} onChange={() => setHonorSelection((current) => current ? { ...current, bestQuestionMessageId: question.id } : current)} />
+                <span className="flex items-center gap-2">
+                  <HonorCandidateAvatar avatar={question.sender.avatar} nickname={question.sender.nickname} small />
+                  <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><strong className="shrink-0 text-xs text-violet-700">#{question.number}</strong><strong className="truncate text-xs text-ink">{question.sender.nickname}</strong></span><span className="mt-1 block whitespace-pre-wrap break-words text-sm font-bold leading-6 text-ink">{question.content}</span></span>
+                  <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${selected ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300 text-transparent"}`} aria-hidden="true"><Check size={14} /></span>
+                </span>
+                <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-black ${question.answer ? "bg-primary text-white" : "bg-slate-200 text-muted"}`}>{question.answer ? `主持人回答：${answerLabels[question.answer]}` : "等待主持人回答"}</span>
+              </label>;
+            })}
+          </div>}
+
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" className="btn btn-secondary min-h-11" disabled={honorSelection.submitting} onClick={() => honorSelection.step === "question" ? setHonorSelection((current) => current ? { ...current, step: "mvp" } : current) : setHonorSelection(null)}>{honorSelection.step === "question" ? "上一步" : "取消"}</button>
+            <button type="button" className="btn btn-primary min-h-11" disabled={honorSelection.submitting || (honorSelection.step === "mvp" ? !honorSelection.mvpUserId : !honorSelection.bestQuestionMessageId)} onClick={() => void confirmHumanHonors()}>{honorSelection.step === "mvp" ? "确定" : "确认评选"}</button>
+          </div>
+        </div>
+      </Modal>}
+      {publishOpen && snapshot.room.soup && <Modal onClose={() => setPublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">选择要发布的汤底</h2><p className="mt-1 text-sm leading-6 text-muted">汤底可以按任意顺序发布。发布最后一条汤底前，需要先评选本场 MVP 和最佳提问；完成后将一并发布主持人手册和本轮高光。</p></div><div className="space-y-2">{[snapshot.room.soup.bottom ?? "", ...(snapshot.room.soup.supplementalBottoms ?? [])].map((bottom, index) => { const published = snapshot.room.soup?.publishedBottomIndices?.includes(index) ?? false; const preparing = preparingHonorBottomIndex === index; return <button key={index} className={`w-full rounded-xl border p-3 text-left transition ${published ? "border-slate-200 bg-slate-50 text-muted" : "border-amber-200 bg-amber-50 hover:border-amber-400"}`} disabled={published || preparingHonorBottomIndex != null} onClick={() => void prepareBottomPublish(index)}><span className="flex items-center gap-2 text-sm font-black">{preparing && <LoaderCircle size={15} className="animate-spin" />}{index === 0 ? "主汤底" : `补充汤底 ${index}`}{published ? " · 已发布" : ""}</span><span className="mt-1 block line-clamp-2 text-xs leading-5">{bottom.replace(/<[^>]*>/g, "")}</span></button>; })}</div><button className="btn btn-secondary w-full" disabled={preparingHonorBottomIndex != null} onClick={() => setPublishOpen(false)}>取消</button></div></Modal>}
+      {materialPublishTarget && <Modal onClose={() => { if (!materialPublishing) setMaterialPublishTarget(null); }} hideClose={materialPublishing}><div className="space-y-4">
+        <div className="text-center"><h2 className="text-xl font-black text-ink">确认发布{materialPublishTarget.title}？</h2><p className="mt-2 text-sm leading-6 text-muted">发布后房间内所有成员将立即看到该内容，无法撤回。</p></div>
+        <div className={`rounded-xl border p-3 ${materialPublishTarget.kind === "surface" ? "border-blue-200 bg-blue-50" : "border-amber-200 bg-amber-50"}`}><p className="text-xs font-black text-muted">即将发布</p><p className="mt-1 font-black text-ink">{materialPublishTarget.title}</p><p className="mt-2 line-clamp-3 text-sm leading-6 text-muted">{materialPublishTarget.content.replace(/<[^>]*>/g, "")}</p></div>
+        {materialPublishTarget.endsRound && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-bold leading-6 text-red-700">这是最后一条尚未发布的汤底。确认后本轮将结束，并自动发布主持人手册和本轮高光。</p>}
+        <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={materialPublishing} onClick={() => setMaterialPublishTarget(null)}>取消</button><button className="btn btn-primary" disabled={materialPublishing} onClick={() => void confirmMaterialPublish()}>{materialPublishing ? <><LoaderCircle size={16} className="animate-spin" />发布中…</> : "确认发布"}</button></div>
+      </div></Modal>}
     </div>
   );
+}
+
+function HonorCandidateAvatar({ avatar, nickname, small = false }: { avatar: string | null; nickname: string; small?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  const size = small ? "h-9 w-9 text-xs" : "h-11 w-11 text-sm";
+  return avatar && !failed
+    ? <img className={`${size} shrink-0 rounded-full object-cover`} src={avatar} alt={`${nickname}头像`} loading="lazy" decoding="async" onError={() => setFailed(true)} />
+    : <span className={`grid ${size} shrink-0 place-items-center rounded-full bg-blue-100 font-black text-primary`} aria-label={`${nickname}头像`}>{nickname.slice(0, 1)}</span>;
 }
 
 function MemberRow({ member, onOpenUser, canManage }: { member: OnlineSoupSnapshot["members"][number]; onOpenUser: (id: string) => void; canManage: boolean }) {
@@ -1479,7 +1672,7 @@ function ProgressQuestionCard({
     </div>
     <div className="mt-2 space-y-1.5 pl-10">
       {question.answer
-        ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />AI 最终回答：{answerLabels[question.answer]}</span>
+        ? <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-black text-white"><Check size={11} className="mr-1" />{onlineSoupAnswerPrefix(question.aiStatus)}{answerLabels[question.answer]}</span>
         : statusText
             ? <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-bold text-muted" role={active ? "status" : undefined}>{active && <LoaderCircle size={12} className="animate-spin" />}{statusText}</span>
             : null}

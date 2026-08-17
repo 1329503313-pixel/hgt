@@ -12,6 +12,14 @@ $androidRoot = Join-Path $appRoot 'android'
 $versionFile = Join-Path $appRoot 'release\version.json'
 $version = Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8 | ConvertFrom-Json
 
+if ($Configuration -eq 'release') {
+    $worktreeStatus = @(& git -C $repoRoot status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the Git worktree before building a release APK.' }
+    if ($worktreeStatus.Count -gt 0) {
+        throw 'Release APK builds require a completely clean Git worktree, including no untracked files.'
+    }
+}
+
 if (-not ($version.versionCode -is [int]) -or $version.versionCode -le 0) {
     throw 'release/version.json versionCode must be a positive integer.'
 }

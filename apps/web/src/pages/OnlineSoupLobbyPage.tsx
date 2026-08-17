@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Crown, DoorOpen, LockKeyhole, MessageCircleQuestion, Plus, RefreshCw, Search, Users } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
 import { Modal } from "../components/Modal";
 import { useApp } from "../context/AppContext";
 import { connectOnlineSoupLobbySocket } from "../shared/onlineSoupSocket";
+import { getRandomOnlineSoupRoomName } from "../shared/onlineSoupRoomNames";
 import type { OnlineSoupLobbyRoom } from "../shared/types";
 
 const statusText = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -22,6 +23,7 @@ type PendingInvite = { roomId: string; inviteToken: string; room: InvitePreview 
 export default function OnlineSoupLobbyPage() {
   const { user, openAuth, showToast } = useApp();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rooms, setRooms] = useState<OnlineSoupLobbyRoom[]>([]);
   const [loading, setLoading] = useState(true);
   const [socketConnected, setSocketConnected] = useState(false);
@@ -36,6 +38,7 @@ export default function OnlineSoupLobbyPage() {
   const [pendingInvitePassword, setPendingInvitePassword] = useState("");
   const [joiningInvite, setJoiningInvite] = useState(false);
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
+  const restoringInvite = useRef(false);
   const [form, setForm] = useState({ name: "", type: "public" as "public" | "password", password: "", hostMode: "human" as "human" | "ai" });
 
   const loadRooms = useCallback(async () => {
@@ -70,25 +73,52 @@ export default function OnlineSoupLobbyPage() {
   }, [loadRooms]);
 
   useEffect(() => {
-    if (!user || pendingInvite) return;
+    if (!user || pendingInvite || restoringInvite.current) return;
+    const roomIdFromUrl = searchParams.get("room")?.trim() ?? "";
+    const inviteTokenFromUrl = searchParams.get("invite")?.trim() ?? "";
     const raw = sessionStorage.getItem("onlineSoupPendingInvite");
-    if (!raw) return;
     try {
-      const saved = JSON.parse(raw) as { roomId?: string; inviteToken?: string };
-      if (!saved.roomId) throw new Error("invalid invite");
-      void api<{ room: InvitePreview }>(`/api/online-soup/rooms/${saved.roomId}/invite-preview`, { bypassCache: true })
-        .then(({ room }) => setPendingInvite({ roomId: saved.roomId!, inviteToken: saved.inviteToken ?? "", room }))
-        .catch((error) => {
-          sessionStorage.removeItem("onlineSoupPendingInvite");
-          showToast(error instanceof Error ? error.message : "邀请房间不存在或已关闭");
-        });
+      let saved: { roomId?: string; inviteToken?: string } | null = null;
+      if (raw) {
+        try { saved = JSON.parse(raw) as { roomId?: string; inviteToken?: string }; }
+        catch { sessionStorage.removeItem("onlineSoupPendingInvite"); }
+      }
+      const roomId = roomIdFromUrl || saved?.roomId?.trim() || "";
+      const inviteToken = inviteTokenFromUrl || saved?.inviteToken?.trim() || "";
+      if (!roomId) return;
+      restoringInvite.current = true;
+      void (async () => {
+        const { room } = await api<{ room: InvitePreview }>(`/api/online-soup/rooms/${roomId}/invite-preview`, { bypassCache: true, dedupe: false });
+        let validInviteToken = inviteToken;
+        if (inviteToken) {
+          try {
+            await api(`/api/online-soup/rooms/${roomId}/invite-status?inviteToken=${encodeURIComponent(inviteToken)}`, { bypassCache: true, dedupe: false });
+          } catch (error) {
+            if (!(error instanceof ApiError) || error.status !== 403) throw error;
+            validInviteToken = "";
+            showToast(room.hasPassword ? "邀请验证已失效，请输入房间密码" : "邀请验证已失效，将按普通方式加入房间");
+          }
+        }
+        setPendingInvite({ roomId, inviteToken: validInviteToken, room });
+      })().catch((error) => {
+        sessionStorage.removeItem("onlineSoupPendingInvite");
+        const next = new URLSearchParams(searchParams);
+        next.delete("room");
+        next.delete("invite");
+        setSearchParams(next, { replace: true });
+        showToast(error instanceof Error ? error.message : "邀请房间不存在或已关闭");
+      }).finally(() => { restoringInvite.current = false; });
     } catch {
       sessionStorage.removeItem("onlineSoupPendingInvite");
     }
-  }, [pendingInvite, showToast, user]);
+  }, [pendingInvite, searchParams, setSearchParams, showToast, user]);
 
   function cancelPendingInvite() {
     sessionStorage.removeItem("onlineSoupPendingInvite");
+    const next = new URLSearchParams(searchParams);
+    next.delete("room");
+    next.delete("invite");
+    setSearchParams(next, { replace: true });
     setPendingInvite(null);
     setPendingInvitePassword("");
   }
@@ -121,6 +151,7 @@ export default function OnlineSoupLobbyPage() {
 
   function openCreate() {
     if (!user) { openAuth(); return; }
+    setForm({ name: getRandomOnlineSoupRoomName(), type: "public", password: "", hostMode: "human" });
     setCreateOpen(true);
   }
 

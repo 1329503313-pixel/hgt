@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(AndroidUpdatePlugin.class);
         registerPlugin(WebResourceProviderPlugin.class);
+        registerPlugin(WechatSharePlugin.class);
         super.onCreate(savedInstanceState);
     }
 

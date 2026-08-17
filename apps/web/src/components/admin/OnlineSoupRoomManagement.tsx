@@ -12,7 +12,7 @@ function messageContent(message: OnlineSoupMessage) {
   if (message.recalledAt) return "[消息已撤回]";
   if (message.type === "sticker") return "[表情包]";
   if (message.type === "gift") return `[礼物] ${message.gift?.giftName ?? "礼物"} ×${message.gift?.quantity ?? 1}`;
-  if (message.type === "ai_honor") return `[AI 本轮评选] MVP：${message.aiHonors?.mvp.nickname ?? "—"}；最具价值提问：${message.aiHonors?.bestQuestion.question ?? "—"}`;
+  if (message.type === "ai_honor") return `[本轮评选] MVP：${message.aiHonors?.mvp.nickname ?? "—"}；最具价值提问：${message.aiHonors?.bestQuestion.question ?? "—"}`;
   return message.content || "[空消息]";
 }
 

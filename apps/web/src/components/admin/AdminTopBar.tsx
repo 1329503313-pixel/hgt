@@ -38,7 +38,7 @@ const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "notices", label: "通知", icon: <Bell size={17} /> },
   { key: "feedback", label: "建议", icon: <MessageSquareText size={17} /> }
 ];
-const backofficeTabs = new Set<AdminTab>(["data", "users", "soups", "evaluations", "approvals", "feedback"]);
+const backofficeTabs = new Set<AdminTab>(["data", "users", "soups", "evaluations", "approvals", "notices", "feedback"]);
 
 export function AdminTopBar() {
   const navigate = useNavigate();

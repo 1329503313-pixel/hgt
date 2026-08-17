@@ -102,7 +102,7 @@ export default function AdminPage() {
           {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}
           {activeTab === "circles" && isSuperAdmin && <CircleManagement />}
           {activeTab === "assets" && isSuperAdmin && <StoreManagement />}
-          {activeTab === "notices" && isSuperAdmin && <NoticeManagement />}
+          {activeTab === "notices" && <NoticeManagement />}
           {activeTab === "feedback" && <FeedbackManagement />}
         </div>
       </div>

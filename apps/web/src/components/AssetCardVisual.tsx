@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Star } from "lucide-react";
-import type { AssetCard, AssetDrawResult, OwnedAssetCard } from "../shared/digitalAssets";
-import { ASSET_RARITY_LABELS, warmAssetImage } from "../shared/digitalAssets";
+import type { AssetCard, AssetDrawResult, AssetPackType, OwnedAssetCard } from "../shared/digitalAssets";
+import { assetRarityLabel, warmAssetImage } from "../shared/digitalAssets";
 
 let legendVisibilityObserver: IntersectionObserver | null = null;
 
@@ -29,6 +29,7 @@ export function AssetCardVisual({
   highDetail = false,
   historyCompact = false,
   compactBadges = false,
+  packType,
   selected = false,
   onClick,
   ariaLabel,
@@ -42,6 +43,7 @@ export function AssetCardVisual({
   highDetail?: boolean;
   historyCompact?: boolean;
   compactBadges?: boolean;
+  packType?: AssetPackType;
   selected?: boolean;
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
@@ -58,6 +60,8 @@ export function AssetCardVisual({
     && card.rarity === "legend"
     && Boolean(card.motionMp4Url)
     && motionAllowed;
+  const displayPackType = packType ?? ("packs" in card ? card.packs[0]?.packType : undefined);
+  const rarityLabel = assetRarityLabel(card.rarity, displayPackType);
 
   useEffect(() => {
     if (card.rarity !== "legend" || !motionAllowed || !ref.current) return;
@@ -99,14 +103,14 @@ export function AssetCardVisual({
       onPointerLeave={animated ? reset : undefined}
       onClick={onClick}
       style={card.rarity === "legend" ? ({ "--legend-effect-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s` } as React.CSSProperties) : undefined}
-      aria-label={ariaLabel ?? `${card.name}，${ASSET_RARITY_LABELS[card.rarity]}${displayedStarLevel != null ? `，${displayedStarLevel}星` : ""}${owned === false ? "，未获得" : ""}`}
+      aria-label={ariaLabel ?? `${card.name}，${rarityLabel}${displayedStarLevel != null ? `，${displayedStarLevel}星` : ""}${owned === false ? "，未获得" : ""}`}
     >
       <span className="asset-card-frame">
         {showMotion
           ? <AssetMotionMedia card={card} className="asset-card-image" eager={highDetail || forceMotion} />
           : <img src={highDetail ? card.imageUrl : (card.thumbnailUrl || card.imageUrl)} alt="" className="asset-card-image" loading={highDetail ? "eager" : "lazy"} decoding="async" draggable={false} />}
         {!historyCompact && <span className="asset-card-number" aria-hidden="true">NO.{card.cardNo}</span>}
-        <span className="asset-card-rarity" aria-hidden="true"><span className="asset-card-rarity-text">{ASSET_RARITY_LABELS[card.rarity]}</span></span>
+        <span className="asset-card-rarity" aria-hidden="true"><span className="asset-card-rarity-text">{rarityLabel}</span></span>
         <span className="asset-card-caption">
           <span className="min-w-0 flex-1">
             {displayedStarLevel != null && (

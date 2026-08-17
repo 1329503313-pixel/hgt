@@ -9,10 +9,11 @@ $repoRoot = Resolve-Path (Join-Path $scriptRoot '..\..')
 
 Push-Location $repoRoot
 try {
-    & git diff --quiet
-    if ($LASTEXITCODE -ne 0) { throw 'Commit tracked changes before building a release APK.' }
-    & git diff --cached --quiet
-    if ($LASTEXITCODE -ne 0) { throw 'Commit staged changes before building a release APK.' }
+    $worktreeStatus = @(& git status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the Git worktree before building a release APK.' }
+    if ($worktreeStatus.Count -gt 0) {
+        throw 'Release APK builds require a completely clean Git worktree, including no untracked files.'
+    }
     if (-not $SigningProperties) {
         $defaultSigning = Join-Path $repoRoot '.local\android-signing\signing.properties'
         if (Test-Path -LiteralPath $defaultSigning) { $SigningProperties = $defaultSigning }
