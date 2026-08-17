@@ -78,9 +78,10 @@ test "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$current")" = un
 test "$(docker inspect -f '{{json .HostConfig.PortBindings}}' "$current")" = '{"4000/tcp":[{"HostIp":"","HostPort":"4000"}]}'
 
 # --volumes-from preserves every named volume and bind mount, including its
-# original read/write mode. Keep a normalized snapshot so candidate and final
-# containers cannot silently lose persistent media or secret mounts.
-docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .Mode "|" .RW "|" .Propagation}}{{end}}' "$current" | sort > "$old_mounts"
+# effective read/write permission. Docker may normalize an inherited
+# read-only mount from Mode=ro to Mode="", while RW remains false, so compare
+# the effective permission rather than that presentation-only Mode field.
+docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .RW "|" .Propagation}}{{end}}' "$current" | sort > "$old_mounts"
 test -s "$old_mounts"
 
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$current" | sort > "$old_env"
@@ -122,7 +123,7 @@ test "$(grep -c '^RELEASE_CANDIDATE=true$' "$candidate_env")" -eq 1
 grep -v '^RELEASE_CANDIDATE=' "$candidate_env" > "$candidate_comparable_env"
 test "$(sha256sum "$candidate_comparable_env" | cut -d ' ' -f1)" = "$(sha256sum "$old_env" | cut -d ' ' -f1)"
 test "$(printf %s "$(sed -n 's/^JWT_SECRET=//p' "$candidate_env")" | sha256sum | cut -d ' ' -f1)" = "$jwt_hash"
-docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .Mode "|" .RW "|" .Propagation}}{{end}}' "$candidate" | sort > "$candidate_mounts"
+docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .RW "|" .Propagation}}{{end}}' "$candidate" | sort > "$candidate_mounts"
 cmp -s "$candidate_mounts" "$old_mounts"
 docker rm -f "$candidate" >/dev/null
 
@@ -154,7 +155,7 @@ test "$(sha256sum "$final_env" | cut -d ' ' -f1)" = "$(sha256sum "$old_env" | cu
 test "$(printf %s "$(sed -n 's/^JWT_SECRET=//p' "$final_env")" | sha256sum | cut -d ' ' -f1)" = "$jwt_hash"
 test "$(sed -n 's/^COOKIE_DOMAIN=//p' "$final_env")" = .caqis.com
 test "$(sed -n 's/^COOKIE_SECURE=//p' "$final_env")" = false
-docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .Mode "|" .RW "|" .Propagation}}{{end}}' "$current" | sort > "$final_mounts"
+docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .RW "|" .Propagation}}{{end}}' "$current" | sort > "$final_mounts"
 cmp -s "$final_mounts" "$old_mounts"
 
 # Keep the rollback armed until public routing and Android credentialed CORS
