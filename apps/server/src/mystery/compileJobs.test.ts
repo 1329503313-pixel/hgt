@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mysteryCompileFailure, mysteryCompileRetryDelaySeconds } from "./compileJobs.js";
-import { classifyMysteryModelNetworkError, MysteryModelError, normalizeCompilerCondition } from "./models.js";
+import {
+  classifyMysteryModelNetworkError,
+  MYSTERY_COMPILATION_REPAIR_ATTEMPTS,
+  mysteryCompilationRepairPrompt,
+  MysteryModelError,
+  normalizeCompilerCondition,
+  normalizeCompilerPackageSyntax,
+} from "./models.js";
 import { mysteryRunAuditSummary, normalizeMysteryAuditPagination } from "./audit.js";
 
 test("谜局编译任务按上限进行指数退避", () => {
@@ -44,6 +51,96 @@ test("故事编译器把常见人物知识路径规范化为数组包含条件",
     normalizeCompilerCondition({ op: "includes", path: "actors.PLAYER_1.knownFactIds", value: "FACT_1" }, "PLAYER_1"),
     { op: "includes", path: "knowledgeByActor.PLAYER_1", value: "FACT_1" },
   );
+});
+
+test("故事编译器把唯一匹配的地点名称引用转换为地点 ID", () => {
+  const candidate = {
+    package: {
+      entityResourceGraph: {
+        locations: [
+          { locationId: "LOC_HALL", name: "大厅", connections: [{ toLocationId: "地下室" }] },
+          { locationId: "LOC_BASEMENT", name: "地下室", connections: [] },
+        ],
+        actors: [{ actorId: "NPC_GUARD", name: "守卫", initialLocationId: "大厅" }],
+        items: [{ itemInstanceId: "ITEM_KEY", name: "钥匙", initialLocationId: "地下室" }],
+      },
+    },
+  };
+  normalizeCompilerPackageSyntax(candidate, "PLAYER_1");
+  assert.equal(candidate.package.entityResourceGraph.locations[0].connections[0].toLocationId, "LOC_BASEMENT");
+  assert.equal(candidate.package.entityResourceGraph.actors[0].initialLocationId, "LOC_HALL");
+  assert.equal(candidate.package.entityResourceGraph.items[0].initialLocationId, "LOC_BASEMENT");
+});
+
+test("故事编译器把地点内唯一匹配的人物名和物品名转换为实体 ID", () => {
+  const candidate = {
+    package: {
+      entityResourceGraph: {
+        locations: [{
+          locationId: "LOC_HALL", name: "大厅", connections: [], initialActorIds: ["守卫"],
+          initialItemInstanceIds: ["钥匙"], interactiveObjectIds: ["钥匙"], hiddenAreaIds: ["大厅"],
+        }],
+        actors: [{ actorId: "NPC_GUARD", name: "守卫" }],
+        items: [{ itemInstanceId: "ITEM_KEY", name: "钥匙" }],
+      },
+    },
+  };
+  normalizeCompilerPackageSyntax(candidate, "PLAYER_1");
+  const location = candidate.package.entityResourceGraph.locations[0];
+  assert.deepEqual(location.initialActorIds, ["NPC_GUARD"]);
+  assert.deepEqual(location.initialItemInstanceIds, ["ITEM_KEY"]);
+  assert.deepEqual(location.interactiveObjectIds, ["ITEM_KEY"]);
+  assert.deepEqual(location.hiddenAreaIds, ["LOC_HALL"]);
+});
+
+test("故事编译失败会进行有限多轮修复并携带具体错误", () => {
+  assert.equal(MYSTERY_COMPILATION_REPAIR_ATTEMPTS, 3);
+  const prompt = mysteryCompilationRepairPrompt(["地点第 1 项的初始人物编号第 2 项格式错误"]);
+  assert.match(prompt, /完整 JSON/);
+  assert.match(prompt, /initialActorIds/);
+  assert.match(prompt, /地点第 1 项的初始人物编号第 2 项格式错误/);
+});
+
+test("故事编译器统一修复效果、知识、世界事件和结局中的唯一名称引用", () => {
+  const candidate = {
+    package: {
+      coreFactGraph: { facts: [] },
+      entityResourceGraph: {
+        locations: [{ locationId: "LOC_HALL", name: "大厅", connections: [] }],
+        actors: [{ actorId: "NPC_GUARD", name: "守卫", initialLocationId: "大厅", scheduleIds: ["巡逻"] }],
+        items: [{ itemInstanceId: "ITEM_KEY", name: "钥匙", initialOwnerId: "守卫" }],
+        resources: [{ resourceId: "RESOURCE_ENERGY", name: "体力", ownerId: "守卫" }],
+      },
+      knowledgeGraph: { knowledge: [{
+        knowledgeId: "KNOWLEDGE_KEY", objectiveStatement: "钥匙藏在大厅", holderActorIds: ["守卫"],
+        evidenceItemIds: ["钥匙"], evidenceLocationIds: ["大厅"], relatedEndingIds: ["逃脱"],
+      }] },
+      actionTransitionGraph: {
+        transitions: [{ description: "开门", successEffectIds: ["获得钥匙"], audibleToLocationIds: ["大厅"] }],
+        effects: [{
+          effectId: "EFFECT_KEY", description: "获得钥匙", resourceChanges: [{ resourceId: "体力" }],
+          itemChanges: [{ itemInstanceId: "钥匙", ownerId: "守卫", locationId: "大厅" }],
+          actorChanges: [{ actorId: "守卫", locationId: "大厅" }],
+          knowledgeChanges: [{ actorId: "守卫", knowledgeId: "钥匙藏在大厅" }],
+        }],
+      },
+      timelineGraph: { scheduledEvents: [{ scheduledEventId: "SCHEDULE_PATROL", name: "巡逻", effectIds: ["获得钥匙"], visibleToLocationIds: ["大厅"] }] },
+      endingStateGraph: { endings: [{ endingId: "ENDING_ESCAPE", name: "逃脱" }], fallbackEndingIds: ["逃脱"] },
+    },
+  };
+  normalizeCompilerPackageSyntax(candidate, "PLAYER_1");
+  const graph = candidate.package;
+  assert.equal(graph.entityResourceGraph.actors[0].initialLocationId, "LOC_HALL");
+  assert.deepEqual(graph.entityResourceGraph.actors[0].scheduleIds, ["SCHEDULE_PATROL"]);
+  assert.equal(graph.entityResourceGraph.items[0].initialOwnerId, "NPC_GUARD");
+  assert.equal(graph.entityResourceGraph.resources[0].ownerId, "NPC_GUARD");
+  assert.deepEqual(graph.knowledgeGraph.knowledge[0].holderActorIds, ["NPC_GUARD"]);
+  assert.deepEqual(graph.knowledgeGraph.knowledge[0].evidenceItemIds, ["ITEM_KEY"]);
+  assert.deepEqual(graph.knowledgeGraph.knowledge[0].relatedEndingIds, ["ENDING_ESCAPE"]);
+  assert.deepEqual(graph.actionTransitionGraph.transitions[0].successEffectIds, ["EFFECT_KEY"]);
+  assert.equal(graph.actionTransitionGraph.effects[0].knowledgeChanges[0].knowledgeId, "KNOWLEDGE_KEY");
+  assert.deepEqual(graph.timelineGraph.scheduledEvents[0].effectIds, ["EFFECT_KEY"]);
+  assert.deepEqual(graph.endingStateGraph.fallbackEndingIds, ["ENDING_ESCAPE"]);
 });
 
 test("谜局运行审计分页使用稳定默认值并限制单页数量", () => {

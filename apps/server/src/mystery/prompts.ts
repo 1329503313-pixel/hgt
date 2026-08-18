@@ -51,7 +51,8 @@ export const MYSTERY_COMPILER_PROMPT = String.raw`你是互动故事发布阶段
    coreFactGraph.facts 数组中的每一项都必须是包含 factId、factKind、statement 等完整字段的对象，严禁使用字符串、编号或其他简写代替事实对象；
 2. 每个人物的知识、错误认知和秘密严格分离；
 3. 每件物品使用唯一实例 ID，并定义初始所有者或位置；
-   管理员配置的 playerRole 必须映射为唯一 kind=player 的人物，并原样落实 actorId、初始地点、初始身体状态、知识、物品和资源；不得用默认值覆盖已填写内容；
+   地点的 locationId、connections[].toLocationId、initialActorIds、initialItemInstanceIds，以及人物和物品的 initialLocationId 必须引用已定义的实体 ID，不能用人物名、物品名或地点名代替 ID；
+   管理员配置的 playerRole 必须映射为唯一 kind=player 的人物，并原样落实 actorId、初始目标、能力、不具备的能力、初始地点、初始身体状态、知识、物品和资源；不得改写、概括或用默认值覆盖已填写内容；
 4. 行动转换必须有前置条件、效果、耗时和感知范围，不能把所有裁决留给模型临场发挥；
 5. 概率仅用于实际不确定的行动，并提供基于能力、准备、工具、环境、对手和风险的修正条件；
 6. 时间线描述玩家不行动时世界如何继续；

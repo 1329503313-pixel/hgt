@@ -44,3 +44,13 @@ test("事实对象被模型简写为文本时明确提示期望和实际类型",
   if (result.success) return;
   assert.equal(formatMysteryValidationError(result.error), "事实第 2 项必须填写为对象，当前为文本");
 });
+
+test("地点通行关系错误显示具体序号和目标字段", () => {
+  const schema = z.object({ storyPackage: z.object({ entityResourceGraph: z.object({ locations: z.array(z.object({
+    connections: z.array(z.object({ toLocationId: z.string().regex(/^[A-Z_]+$/) })),
+  })) }) }) });
+  const result = schema.safeParse({ storyPackage: { entityResourceGraph: { locations: [{ connections: [{ toLocationId: "中文地点" }] }] } } });
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.equal(formatMysteryValidationError(result.error), "地点第 1 项的通行关系第 1 项的目标地点编号只能使用英文字母、数字、冒号、下划线和短横线");
+});

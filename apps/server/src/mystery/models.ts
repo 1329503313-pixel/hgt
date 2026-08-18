@@ -193,10 +193,155 @@ export function normalizeCompilerCondition(value: unknown, playerActorId: string
   return normalized;
 }
 
-function normalizeCompilerPackageSyntax(parsed: { package?: unknown; diagnostics?: unknown }, playerActorId: string) {
+export function normalizeCompilerPackageSyntax(parsed: { package?: unknown; diagnostics?: unknown }, playerActorId: string) {
   if (!isPlainRecord(parsed.package)) return parsed;
   const storyPackage = parsed.package;
   const entityResourceGraph = isPlainRecord(storyPackage.entityResourceGraph) ? storyPackage.entityResourceGraph : null;
+  if (entityResourceGraph && Array.isArray(entityResourceGraph.locations)) {
+    const referenceMap = (entries: unknown[], idKey: string, nameKey = "name") => {
+      const idsByName = new Map<string, string[]>();
+      for (const entry of entries) {
+        if (!isPlainRecord(entry) || typeof entry[nameKey] !== "string" || typeof entry[idKey] !== "string") continue;
+        const name = entry[nameKey].trim();
+        if (!name) continue;
+        idsByName.set(name, [...(idsByName.get(name) ?? []), entry[idKey] as string]);
+      }
+      return (value: unknown) => {
+        if (typeof value !== "string") return value;
+        const matches = idsByName.get(value.trim());
+        return matches?.length === 1 ? matches[0] : value;
+      };
+    };
+    const normalizeLocationId = referenceMap(entityResourceGraph.locations, "locationId");
+    const normalizeActorId = referenceMap(Array.isArray(entityResourceGraph.actors) ? entityResourceGraph.actors : [], "actorId");
+    const normalizeItemId = referenceMap(Array.isArray(entityResourceGraph.items) ? entityResourceGraph.items : [], "itemInstanceId");
+    const normalizeResourceId = referenceMap(Array.isArray(entityResourceGraph.resources) ? entityResourceGraph.resources : [], "resourceId");
+    const rawFactGraph = isPlainRecord(storyPackage.coreFactGraph) ? storyPackage.coreFactGraph : null;
+    const rawFacts = rawFactGraph && Array.isArray(rawFactGraph.facts) ? rawFactGraph.facts : [];
+    const rawKnowledgeGraph = isPlainRecord(storyPackage.knowledgeGraph) ? storyPackage.knowledgeGraph : null;
+    const rawKnowledge = rawKnowledgeGraph && Array.isArray(rawKnowledgeGraph.knowledge) ? rawKnowledgeGraph.knowledge : [];
+    const rawActionGraph = isPlainRecord(storyPackage.actionTransitionGraph) ? storyPackage.actionTransitionGraph : null;
+    const rawTransitions = rawActionGraph && Array.isArray(rawActionGraph.transitions) ? rawActionGraph.transitions : [];
+    const rawEffects = rawActionGraph && Array.isArray(rawActionGraph.effects) ? rawActionGraph.effects : [];
+    const rawTimelineGraph = isPlainRecord(storyPackage.timelineGraph) ? storyPackage.timelineGraph : null;
+    const rawScheduledEvents = rawTimelineGraph && Array.isArray(rawTimelineGraph.scheduledEvents) ? rawTimelineGraph.scheduledEvents : [];
+    const rawEndingGraph = isPlainRecord(storyPackage.endingStateGraph) ? storyPackage.endingStateGraph : null;
+    const rawEndings = rawEndingGraph && Array.isArray(rawEndingGraph.endings) ? rawEndingGraph.endings : [];
+    const normalizeFactId = referenceMap(rawFacts, "factId", "statement");
+    const normalizeKnowledgeId = referenceMap(rawKnowledge, "knowledgeId", "objectiveStatement");
+    const normalizeTransitionId = referenceMap(rawTransitions, "transitionId", "description");
+    const normalizeEffectId = referenceMap(rawEffects, "effectId", "description");
+    const normalizeScheduledEventId = referenceMap(rawScheduledEvents, "scheduledEventId");
+    const normalizeEndingId = referenceMap(rawEndings, "endingId");
+    const normalizeList = (value: unknown, normalize: (entry: unknown) => unknown) => Array.isArray(value) ? value.map(normalize) : value;
+    const normalizeUniqueAcross = (value: unknown, normalizers: Array<(entry: unknown) => unknown>) => {
+      const matches = [...new Set(normalizers.map((normalize) => normalize(value)).filter((result) => result !== value))];
+      return matches.length === 1 ? matches[0] : value;
+    };
+    const normalizeFactOrKnowledgeId = (value: unknown) => normalizeUniqueAcross(value, [normalizeFactId, normalizeKnowledgeId]);
+    const normalizeEndingEventId = (value: unknown) => normalizeUniqueAcross(value, [normalizeScheduledEventId, normalizeTransitionId, normalizeEffectId]);
+    const normalizeInteractiveObjectId = (value: unknown) => {
+      if (typeof value !== "string") return value;
+      const itemId = normalizeItemId(value);
+      return itemId !== value ? itemId : normalizeLocationId(value);
+    };
+    for (const location of entityResourceGraph.locations) {
+      if (!isPlainRecord(location)) continue;
+      if (Array.isArray(location.connections)) {
+        for (const connection of location.connections) {
+          if (isPlainRecord(connection)) connection.toLocationId = normalizeLocationId(connection.toLocationId);
+        }
+      }
+      location.initialActorIds = normalizeList(location.initialActorIds, normalizeActorId);
+      location.initialItemInstanceIds = normalizeList(location.initialItemInstanceIds, normalizeItemId);
+      location.interactiveObjectIds = normalizeList(location.interactiveObjectIds, normalizeInteractiveObjectId);
+      location.hiddenAreaIds = normalizeList(location.hiddenAreaIds, normalizeLocationId);
+      location.timedChangeIds = normalizeList(location.timedChangeIds, normalizeScheduledEventId);
+    }
+    if (Array.isArray(entityResourceGraph.actors)) {
+      for (const actor of entityResourceGraph.actors) {
+        if (!isPlainRecord(actor)) continue;
+        actor.initialLocationId = normalizeLocationId(actor.initialLocationId);
+        actor.scheduleIds = normalizeList(actor.scheduleIds, normalizeScheduledEventId);
+        actor.knownFactIds = normalizeList(actor.knownFactIds, normalizeFactOrKnowledgeId);
+        actor.unknownFactIds = normalizeList(actor.unknownFactIds, normalizeFactOrKnowledgeId);
+        actor.mistakenFactIds = normalizeList(actor.mistakenFactIds, normalizeFactOrKnowledgeId);
+        actor.secretIds = normalizeList(actor.secretIds, normalizeFactOrKnowledgeId);
+      }
+    }
+    if (Array.isArray(entityResourceGraph.items)) {
+      for (const item of entityResourceGraph.items) {
+        if (!isPlainRecord(item)) continue;
+        if (item.initialLocationId != null) item.initialLocationId = normalizeLocationId(item.initialLocationId);
+        if (item.initialOwnerId != null) item.initialOwnerId = normalizeActorId(item.initialOwnerId);
+        item.recognizedByActorIds = normalizeList(item.recognizedByActorIds, normalizeActorId);
+      }
+    }
+    if (Array.isArray(entityResourceGraph.resources)) {
+      for (const resource of entityResourceGraph.resources) if (isPlainRecord(resource)) resource.ownerId = normalizeActorId(resource.ownerId);
+    }
+    if (Array.isArray(entityResourceGraph.organizations)) {
+      for (const organization of entityResourceGraph.organizations) {
+        if (isPlainRecord(organization)) organization.memberActorIds = normalizeList(organization.memberActorIds, normalizeActorId);
+      }
+    }
+    for (const fact of rawFacts) {
+      if (!isPlainRecord(fact)) continue;
+      fact.subjectId = normalizeUniqueAcross(fact.subjectId, [normalizeActorId, normalizeItemId, normalizeLocationId]);
+      fact.objectId = normalizeUniqueAcross(fact.objectId, [normalizeActorId, normalizeItemId, normalizeLocationId]);
+      fact.locationId = normalizeLocationId(fact.locationId);
+      fact.knowledgeHolderIds = normalizeList(fact.knowledgeHolderIds, normalizeActorId);
+      fact.dependencyFactIds = normalizeList(fact.dependencyFactIds, normalizeFactId);
+      fact.conflictFactIds = normalizeList(fact.conflictFactIds, normalizeFactId);
+    }
+    for (const knowledge of rawKnowledge) {
+      if (!isPlainRecord(knowledge)) continue;
+      knowledge.holderActorIds = normalizeList(knowledge.holderActorIds, normalizeActorId);
+      knowledge.mistakenHolderActorIds = normalizeList(knowledge.mistakenHolderActorIds, normalizeActorId);
+      knowledge.hiddenByActorIds = normalizeList(knowledge.hiddenByActorIds, normalizeActorId);
+      knowledge.affectedActorIds = normalizeList(knowledge.affectedActorIds, normalizeActorId);
+      knowledge.evidenceItemIds = normalizeList(knowledge.evidenceItemIds, normalizeItemId);
+      knowledge.evidenceLocationIds = normalizeList(knowledge.evidenceLocationIds, normalizeLocationId);
+      knowledge.relatedEndingIds = normalizeList(knowledge.relatedEndingIds, normalizeEndingId);
+    }
+    for (const transition of rawTransitions) {
+      if (!isPlainRecord(transition)) continue;
+      transition.successEffectIds = normalizeList(transition.successEffectIds, normalizeEffectId);
+      transition.failureEffectIds = normalizeList(transition.failureEffectIds, normalizeEffectId);
+      transition.audibleToLocationIds = normalizeList(transition.audibleToLocationIds, normalizeLocationId);
+      transition.visibleToLocationIds = normalizeList(transition.visibleToLocationIds, normalizeLocationId);
+    }
+    for (const effect of rawEffects) {
+      if (!isPlainRecord(effect)) continue;
+      if (Array.isArray(effect.resourceChanges)) for (const change of effect.resourceChanges) if (isPlainRecord(change)) change.resourceId = normalizeResourceId(change.resourceId);
+      if (Array.isArray(effect.itemChanges)) for (const change of effect.itemChanges) if (isPlainRecord(change)) {
+        change.itemInstanceId = normalizeItemId(change.itemInstanceId);
+        if (change.ownerId != null) change.ownerId = normalizeActorId(change.ownerId);
+        if (change.locationId != null) change.locationId = normalizeLocationId(change.locationId);
+      }
+      if (Array.isArray(effect.actorChanges)) for (const change of effect.actorChanges) if (isPlainRecord(change)) {
+        change.actorId = normalizeActorId(change.actorId);
+        if (change.locationId != null) change.locationId = normalizeLocationId(change.locationId);
+      }
+      if (Array.isArray(effect.knowledgeChanges)) for (const change of effect.knowledgeChanges) if (isPlainRecord(change)) {
+        change.actorId = normalizeActorId(change.actorId);
+        change.knowledgeId = normalizeKnowledgeId(change.knowledgeId);
+      }
+    }
+    for (const event of rawScheduledEvents) {
+      if (!isPlainRecord(event)) continue;
+      event.effectIds = normalizeList(event.effectIds, normalizeEffectId);
+      event.visibleToLocationIds = normalizeList(event.visibleToLocationIds, normalizeLocationId);
+      event.audibleToLocationIds = normalizeList(event.audibleToLocationIds, normalizeLocationId);
+    }
+    for (const ending of rawEndings) {
+      if (!isPlainRecord(ending)) continue;
+      ending.lockEventIds = normalizeList(ending.lockEventIds, normalizeEndingEventId);
+      ending.unlockEventIds = normalizeList(ending.unlockEventIds, normalizeEndingEventId);
+      ending.invalidateEventIds = normalizeList(ending.invalidateEventIds, normalizeEndingEventId);
+    }
+    if (rawEndingGraph) rawEndingGraph.fallbackEndingIds = normalizeList(rawEndingGraph.fallbackEndingIds, normalizeEndingId);
+  }
   if (entityResourceGraph && Array.isArray(entityResourceGraph.items)) {
     const ownedItemIds = new Set<string>();
     for (const item of entityResourceGraph.items) {
@@ -259,6 +404,12 @@ function normalizeCompilerPackageSyntax(parsed: { package?: unknown; diagnostics
   return parsed;
 }
 
+export const MYSTERY_COMPILATION_REPAIR_ATTEMPTS = 3;
+
+export function mysteryCompilationRepairPrompt(issues: string[]) {
+  return `上一个候选未通过服务端校验。请根据以下错误修复并重新输出完整 JSON，不要解释，也不要省略任何图谱。特别注意：coreFactGraph.facts 的每一项必须是完整事实对象，严禁使用纯文本字符串或编号简写；即使原内容是一句话，也必须补齐 schema 样例列出的全部事实字段。地点的 locationId、connections[].toLocationId、initialActorIds、initialItemInstanceIds，以及人物和物品引用的 initialLocationId 必须使用已定义的实体 ID，不能填写中文人物名、物品名或地点名。所有条件必须且只能使用 {"op":"all","conditions":[...]}、{"op":"any","conditions":[...]}、{"op":"not","condition":...} 或 {"op":"eq|neq|gt|gte|lt|lte|includes|exists","path":"actors.ID.locationId","value":...}，不得使用 and/or/operator/field、方括号路径或空 conditions。人物能力和弱点分别使用 actors.ID.abilities、actors.ID.weaknesses，并通过 includes 与人物定义中的完整文本匹配。知识判断必须写成 {"op":"includes","path":"knowledgeByActor.角色ID","value":"知识ID"}，知识 ID 绝不能拼进 path。物品若配置 initialOwnerId，则 initialLocationId 必须为 null，且任何地点的 initialItemInstanceIds 都不得再包含该物品：\n${issues.join("\n")}`;
+}
+
 export async function compileMysteryStory(input: { storyId: string; versionNumber: number; source: MysteryStorySource }) {
   const requestCompilation = (messages: DeepSeekMessage[]) => deepSeekRequest({
     model: config.mysteryCompileModel,
@@ -311,6 +462,26 @@ export async function compileMysteryStory(input: { storyId: string; versionNumbe
     if (player?.actorId !== input.source.playerRole.actorId) integrityIssues.push("玩家 actorId 未按后台配置编译");
     if (player?.initialLocationId !== input.source.playerRole.initialLocationId) integrityIssues.push("玩家初始地点未按后台配置编译");
     if (player?.initialPhysicalState !== input.source.playerRole.initialPhysicalState) integrityIssues.push("玩家初始身体状态未按后台配置编译");
+    if (player) {
+      for (const goal of input.source.playerRole.initialGoals) {
+        if (!player.goals.includes(goal)) integrityIssues.push(`玩家初始目标未原样编译：${goal}`);
+      }
+      for (const skill of input.source.playerRole.skills) {
+        if (!player.abilities.includes(skill)) integrityIssues.push(`玩家能力未原样编译：${skill}`);
+      }
+      for (const excludedAbility of input.source.playerRole.excludedAbilities) {
+        if (!player.weaknesses.includes(excludedAbility) && !player.prohibitions.includes(excludedAbility)) {
+          integrityIssues.push(`玩家不具备的能力未落实：${excludedAbility}`);
+        }
+      }
+      for (const knowledgeId of input.source.playerRole.initialKnowledgeIds) {
+        const fact = storyPackage.coreFactGraph.facts.find((entry) => entry.factId === knowledgeId);
+        const knowledge = storyPackage.knowledgeGraph.knowledge.find((entry) => entry.knowledgeId === knowledgeId);
+        if (fact ? !fact.knowledgeHolderIds.includes(player.actorId) : knowledge ? !knowledge.holderActorIds.includes(player.actorId) : true) {
+          integrityIssues.push(`玩家初始知识 ${knowledgeId} 未正确编译`);
+        }
+      }
+    }
     for (const itemId of input.source.playerRole.initialItemInstanceIds) {
       const item = storyPackage.entityResourceGraph.items.find((entry) => entry.itemInstanceId === itemId);
       if (item?.initialOwnerId !== input.source.playerRole.actorId) integrityIssues.push(`玩家初始物品 ${itemId} 未正确归属`);
@@ -328,33 +499,41 @@ export async function compileMysteryStory(input: { storyId: string; versionNumbe
     { role: "user", content: `请输出 JSON。storyId=${input.storyId}，versionNumber=${input.versionNumber}\n\n管理员素材：\n${JSON.stringify(input.source)}` },
   ];
   const firstResult = await requestCompilation(baseMessages);
-  let validated = validateCompilation(firstResult.content);
-  if (!("storyPackage" in validated)) {
+  let candidateContent = firstResult.content;
+  let candidateFinishReason = firstResult.finishReason;
+  let validated = validateCompilation(candidateContent);
+  let repairAttempt = 0;
+  while (!("storyPackage" in validated) && repairAttempt < MYSTERY_COMPILATION_REPAIR_ATTEMPTS) {
+    repairAttempt += 1;
     console.warn("Mystery compilation candidate requires repair:", {
       code: validated.code,
-      finishReason: firstResult.finishReason,
+      repairAttempt,
+      finishReason: candidateFinishReason,
       issues: validated.issues.slice(0, 5),
     });
     const repairResult = await requestCompilation([
       ...baseMessages,
       {
         role: "assistant",
-        content: firstResult.content.slice(0, 400_000),
+        content: candidateContent.slice(0, 400_000),
       },
       {
         role: "user",
-        content: `上一个候选未通过服务端校验。请根据以下错误修复并重新输出完整 JSON，不要解释，也不要省略任何图谱。特别注意：coreFactGraph.facts 的每一项必须是完整事实对象，严禁使用纯文本字符串或编号简写；即使原内容是一句话，也必须补齐 schema 样例列出的全部事实字段。所有条件必须且只能使用 {"op":"all","conditions":[...]}、{"op":"any","conditions":[...]}、{"op":"not","condition":...} 或 {"op":"eq|neq|gt|gte|lt|lte|includes|exists","path":"actors.ID.locationId","value":...}，不得使用 and/or/operator/field、方括号路径或空 conditions。人物能力和弱点分别使用 actors.ID.abilities、actors.ID.weaknesses，并通过 includes 与人物定义中的完整文本匹配。知识判断必须写成 {"op":"includes","path":"knowledgeByActor.角色ID","value":"知识ID"}，知识 ID 绝不能拼进 path。物品若配置 initialOwnerId，则 initialLocationId 必须为 null，且任何地点的 initialItemInstanceIds 都不得再包含该物品：\n${validated.issues.join("\n")}`,
+        content: mysteryCompilationRepairPrompt(validated.issues),
       },
     ]);
-    validated = validateCompilation(repairResult.content);
-    if (!("storyPackage" in validated)) {
-      console.warn("Mystery compilation repair rejected:", {
-        code: validated.code,
-        finishReason: repairResult.finishReason,
-        issues: validated.issues.slice(0, 5),
-      });
-      throw new MysteryModelError(validated.code, `${validated.message}：${validated.issues.slice(0, 3).join("；")}`, false);
-    }
+    candidateContent = repairResult.content;
+    candidateFinishReason = repairResult.finishReason;
+    validated = validateCompilation(candidateContent);
+  }
+  if (!("storyPackage" in validated)) {
+    console.warn("Mystery compilation repairs exhausted:", {
+      code: validated.code,
+      repairAttempts: repairAttempt,
+      finishReason: candidateFinishReason,
+      issues: validated.issues.slice(0, 5),
+    });
+    throw new MysteryModelError(validated.code, `${validated.message}：${validated.issues.slice(0, 3).join("；")}`, false);
   }
   return { storyPackage: validated.storyPackage, diagnostics: validated.diagnostics, model: config.mysteryCompileModel };
 }
