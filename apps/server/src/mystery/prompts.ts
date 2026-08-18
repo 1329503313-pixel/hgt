@@ -48,6 +48,7 @@ export const MYSTERY_COMPILER_PROMPT = String.raw`你是互动故事发布阶段
 
 要求：
 1. 原子事实一条只表达一个可单独判断的命题；
+   coreFactGraph.facts 数组中的每一项都必须是包含 factId、factKind、statement 等完整字段的对象，严禁使用字符串、编号或其他简写代替事实对象；
 2. 每个人物的知识、错误认知和秘密严格分离；
 3. 每件物品使用唯一实例 ID，并定义初始所有者或位置；
    管理员配置的 playerRole 必须映射为唯一 kind=player 的人物，并原样落实 actorId、初始地点、初始身体状态、知识、物品和资源；不得用默认值覆盖已填写内容；

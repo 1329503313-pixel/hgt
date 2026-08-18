@@ -343,7 +343,7 @@ export async function compileMysteryStory(input: { storyId: string; versionNumbe
       },
       {
         role: "user",
-        content: `上一个候选未通过服务端校验。请根据以下错误修复并重新输出完整 JSON，不要解释，也不要省略任何图谱。特别注意：所有条件必须且只能使用 {"op":"all","conditions":[...]}、{"op":"any","conditions":[...]}、{"op":"not","condition":...} 或 {"op":"eq|neq|gt|gte|lt|lte|includes|exists","path":"actors.ID.locationId","value":...}，不得使用 and/or/operator/field、方括号路径或空 conditions。人物能力和弱点分别使用 actors.ID.abilities、actors.ID.weaknesses，并通过 includes 与人物定义中的完整文本匹配。知识判断必须写成 {"op":"includes","path":"knowledgeByActor.角色ID","value":"知识ID"}，知识 ID 绝不能拼进 path。物品若配置 initialOwnerId，则 initialLocationId 必须为 null，且任何地点的 initialItemInstanceIds 都不得再包含该物品：\n${validated.issues.join("\n")}`,
+        content: `上一个候选未通过服务端校验。请根据以下错误修复并重新输出完整 JSON，不要解释，也不要省略任何图谱。特别注意：coreFactGraph.facts 的每一项必须是完整事实对象，严禁使用纯文本字符串或编号简写；即使原内容是一句话，也必须补齐 schema 样例列出的全部事实字段。所有条件必须且只能使用 {"op":"all","conditions":[...]}、{"op":"any","conditions":[...]}、{"op":"not","condition":...} 或 {"op":"eq|neq|gt|gte|lt|lte|includes|exists","path":"actors.ID.locationId","value":...}，不得使用 and/or/operator/field、方括号路径或空 conditions。人物能力和弱点分别使用 actors.ID.abilities、actors.ID.weaknesses，并通过 includes 与人物定义中的完整文本匹配。知识判断必须写成 {"op":"includes","path":"knowledgeByActor.角色ID","value":"知识ID"}，知识 ID 绝不能拼进 path。物品若配置 initialOwnerId，则 initialLocationId 必须为 null，且任何地点的 initialItemInstanceIds 都不得再包含该物品：\n${validated.issues.join("\n")}`,
       },
     ]);
     validated = validateCompilation(repairResult.content);

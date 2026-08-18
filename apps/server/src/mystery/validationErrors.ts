@@ -46,13 +46,41 @@ function hasChinese(message: string) {
   return /[\u3400-\u9fff]/u.test(message);
 }
 
+function dataTypeName(type: string) {
+  const names: Record<string, string> = {
+    string: "文本",
+    number: "数字",
+    nan: "有效数字",
+    integer: "整数",
+    float: "小数",
+    boolean: "布尔值",
+    date: "日期",
+    bigint: "大整数",
+    symbol: "符号",
+    function: "函数",
+    undefined: "缺失值",
+    null: "空值",
+    array: "数组",
+    object: "对象",
+    unknown: "未知内容",
+    promise: "异步结果",
+    void: "空内容",
+    never: "不允许的内容",
+    map: "映射表",
+    set: "集合",
+  };
+  return names[type] ?? "正确格式的数据";
+}
+
 export function formatMysteryValidationIssue(issue: ZodIssue, fallback = "谜局数据") {
   const field = fieldName(issue.path, fallback);
   if (hasChinese(issue.message)) return `${field}：${issue.message}`;
 
   switch (issue.code) {
     case z.ZodIssueCode.invalid_type:
-      return issue.received === "undefined" ? `${field}为必填项` : `${field}的格式不正确`;
+      return issue.received === "undefined"
+        ? `${field}为必填项`
+        : `${field}必须填写为${dataTypeName(issue.expected)}，当前为${dataTypeName(issue.received)}`;
     case z.ZodIssueCode.too_big:
       if (issue.type === "string") return `${field}最多填写 ${issue.maximum} 个字符`;
       if (issue.type === "array") return `${field}最多包含 ${issue.maximum} 项`;

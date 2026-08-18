@@ -36,3 +36,11 @@ test("故事结构包错误保留集合序号和中文子字段名称", () => {
   if (result.success) return;
   assert.equal(formatMysteryValidationError(result.error), "资源第 2 项的资源单位最多填写 2 个字符");
 });
+
+test("事实对象被模型简写为文本时明确提示期望和实际类型", () => {
+  const schema = z.object({ storyPackage: z.object({ coreFactGraph: z.object({ facts: z.array(z.object({ statement: z.string() })) }) }) });
+  const result = schema.safeParse({ storyPackage: { coreFactGraph: { facts: [{ statement: "完整事实" }, "错误的事实简写"] } } });
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.equal(formatMysteryValidationError(result.error), "事实第 2 项必须填写为对象，当前为文本");
+});
