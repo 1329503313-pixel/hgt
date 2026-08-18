@@ -41,10 +41,14 @@ export function MessageActionMenu({
   function open(x: number, y: number) {
     const available = actions.filter((action) => action.availableUntil == null || Date.now() <= action.availableUntil);
     if (!available.length) return;
+    const horizontalInset = Math.min(
+      Math.max(72, available.length * 32),
+      Math.max(8, window.innerWidth / 2 - 8)
+    );
     suppressClickRef.current = true;
     setVisibleActions(available);
     setPosition({
-      x: Math.max(72, Math.min(window.innerWidth - 72, x)),
+      x: Math.max(horizontalInset, Math.min(window.innerWidth - horizontalInset, x)),
       y: Math.max(64, Math.min(window.innerHeight - 12, y))
     });
   }
@@ -119,7 +123,7 @@ export function MessageActionMenu({
                 key={action.label}
                 type="button"
                 role="menuitem"
-                className={`min-w-16 whitespace-nowrap px-4 py-2.5 transition hover:bg-white/10 active:bg-white/15 ${
+                className={`min-h-11 min-w-16 whitespace-nowrap px-4 py-2.5 transition hover:bg-white/10 active:bg-white/15 ${
                   action.tone === "danger" ? "text-red-300" : "text-white"
                 }`}
                 onClick={() => {

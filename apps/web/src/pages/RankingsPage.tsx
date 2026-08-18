@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Crown, Dices, Flame, GalleryVerticalEnd, Gift, Heart, Medal, Sparkles, TrendingUp, Trophy } from "lucide-react";
 import { api } from "../api";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 import { PageTopBar } from "../components/PageTopBar";
 import { MineBackButton } from "../components/MineBackButton";
 import { useApp } from "../context/AppContext";
@@ -23,6 +24,8 @@ type AchievementUserRank = {
   nickname: string;
   avatar: string | null;
   achievementPoints: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type CollectionUserRank = {
@@ -50,6 +53,8 @@ type LevelUserRank = {
   avatar: string | null;
   level: number;
   experience: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type CharmUserRank = {
@@ -58,6 +63,8 @@ type CharmUserRank = {
   nickname: string;
   avatar: string | null;
   charmValue: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type GenerosityUserRank = {
@@ -66,6 +73,8 @@ type GenerosityUserRank = {
   nickname: string;
   avatar: string | null;
   generosityValue: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type RankingsResponse = {
@@ -399,14 +408,14 @@ export default function RankingsPage() {
             {(data?.achievementUsers ?? []).map((item) => (
               <button key={item.id} className="ranking-table-row grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-blue-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
-                <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
+                <VipIdentity nickname={item.nickname} vipLevel={item.vipLevel} vipActive={item.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="text-right text-sm font-black text-amber-600">{metricText(item.achievementPoints)}</span>
               </button>
             ))}
             {data?.achievementOwn && (
               <button className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-t-2 border-amber-200 bg-amber-50 px-3 py-3 text-left hover:bg-amber-100/70 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${data.achievementOwn!.id}`)}>
                 <RankMark rank={data.achievementOwn.rank} />
-                <span className="truncate text-sm font-bold text-ink">{data.achievementOwn.nickname}</span>
+                <VipIdentity nickname={data.achievementOwn.nickname} vipLevel={data.achievementOwn.vipLevel} vipActive={data.achievementOwn.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="text-right text-sm font-black text-amber-600">{metricText(data.achievementOwn.achievementPoints)}</span>
               </button>
             )}
@@ -420,7 +429,7 @@ export default function RankingsPage() {
             {(data?.levelUsers ?? []).map((item) => (
               <button key={item.id} className="ranking-table-row grid w-full grid-cols-[52px_minmax(0,1fr)_68px_92px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-blue-50/50 sm:grid-cols-[80px_minmax(0,1fr)_110px_150px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
-                <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
+                <VipIdentity nickname={item.nickname} vipLevel={item.vipLevel} vipActive={item.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="flex justify-center"><LevelBadge level={item.level} /></span>
                 <span className="text-right text-sm font-black text-violet-600">{metricText(item.experience)}</span>
               </button>
@@ -428,7 +437,7 @@ export default function RankingsPage() {
             {data?.levelOwn && (
               <button className="grid w-full grid-cols-[52px_minmax(0,1fr)_68px_92px] items-center gap-2 border-t-2 border-violet-200 bg-violet-50 px-3 py-3 text-left hover:bg-violet-100/70 sm:grid-cols-[80px_minmax(0,1fr)_110px_150px]" onClick={() => navigate(`/users/${data.levelOwn!.id}`)}>
                 <RankMark rank={data.levelOwn.rank} />
-                <span className="truncate text-sm font-bold text-ink">{data.levelOwn.nickname}</span>
+                <VipIdentity nickname={data.levelOwn.nickname} vipLevel={data.levelOwn.vipLevel} vipActive={data.levelOwn.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="flex justify-center"><LevelBadge level={data.levelOwn.level} /></span>
                 <span className="text-right text-sm font-black text-violet-600">{metricText(data.levelOwn.experience)}</span>
               </button>
@@ -443,14 +452,14 @@ export default function RankingsPage() {
             {(data?.charmUsers ?? []).map((item) => (
               <button key={item.id} className="ranking-table-row grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-rose-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
-                <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
+                <VipIdentity nickname={item.nickname} vipLevel={item.vipLevel} vipActive={item.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="text-right text-sm font-black text-rose-600">{metricText(item.charmValue)}</span>
               </button>
             ))}
             {data?.charmOwn && (
               <button className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-t-2 border-rose-200 bg-rose-50 px-3 py-3 text-left hover:bg-rose-100/70 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${data.charmOwn!.id}`)}>
                 <RankMark rank={data.charmOwn.rank} />
-                <span className="truncate text-sm font-bold text-ink">{data.charmOwn.nickname}</span>
+                <VipIdentity nickname={data.charmOwn.nickname} vipLevel={data.charmOwn.vipLevel} vipActive={data.charmOwn.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="text-right text-sm font-black text-rose-600">{metricText(data.charmOwn.charmValue)}</span>
               </button>
             )}
@@ -464,14 +473,14 @@ export default function RankingsPage() {
             {(data?.generosityUsers ?? []).map((item) => (
               <button key={item.id} className="ranking-table-row grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left last:border-0 hover:bg-amber-50/50 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${item.id}`)}>
                 <RankMark rank={item.rank} />
-                <span className="truncate text-sm font-bold text-ink">{item.nickname}</span>
+                <VipIdentity nickname={item.nickname} vipLevel={item.vipLevel} vipActive={item.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="text-right text-sm font-black text-amber-600">{metricText(item.generosityValue)}</span>
               </button>
             ))}
             {data?.generosityOwn && (
               <button className="grid w-full grid-cols-[60px_minmax(0,1fr)_100px] items-center gap-2 border-t-2 border-amber-200 bg-amber-50 px-3 py-3 text-left hover:bg-amber-100/70 sm:grid-cols-[80px_minmax(0,1fr)_160px]" onClick={() => navigate(`/users/${data.generosityOwn!.id}`)}>
                 <RankMark rank={data.generosityOwn.rank} />
-                <span className="truncate text-sm font-bold text-ink">{data.generosityOwn.nickname}</span>
+                <VipIdentity nickname={data.generosityOwn.nickname} vipLevel={data.generosityOwn.vipLevel} vipActive={data.generosityOwn.vipActive} className="max-w-full text-sm font-bold text-ink" />
                 <span className="text-right text-sm font-black text-amber-600">{metricText(data.generosityOwn.generosityValue)}</span>
               </button>
             )}

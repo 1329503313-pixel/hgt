@@ -2,6 +2,7 @@ import { User } from "lucide-react";
 import type { Evaluation } from "../shared/types";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
 import { LevelBadge } from "./LevelBadge";
+import { VipIdentity } from "./VipIdentity";
 
 export function EvaluationCard({ evaluation, compact = false }: { evaluation: Evaluation; compact?: boolean }) {
   return (
@@ -13,9 +14,7 @@ export function EvaluationCard({ evaluation, compact = false }: { evaluation: Ev
           ) : (
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-blue-100 text-primary"><User size={14} /></span>
           )}
-          <strong className="truncate">{evaluation.reviewer}</strong>
-          <LevelBadge level={evaluation.reviewerLevel} />
-          <EquippedBadgeIcon badge={evaluation.reviewerEquippedBadge} className="h-5 w-5" />
+          <VipIdentity nickname={evaluation.reviewer} userLevel={evaluation.reviewerLevel} vipLevel={evaluation.reviewerVipLevel} vipActive={evaluation.reviewerVipActive} equippedBadge={evaluation.reviewerEquippedBadge} className="min-w-0" iconClassName="h-4 w-4" badgeClassName="h-5 w-5" />
           {evaluation.isCreatorEvaluation ? (
             <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">上传者评价 · 仅展示</span>
           ) : !evaluation.countsTowardScore ? (

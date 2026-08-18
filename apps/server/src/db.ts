@@ -788,7 +788,7 @@ export async function initDatabase() {
       raw_input TEXT NOT NULL,
       input_classification VARCHAR(40) NULL,
       injection_risk ENUM('none','suspicious','blocked') NULL,
-      status ENUM('received','processing','completed','failed') NOT NULL DEFAULT 'received',
+      status ENUM('received','processing','completed','failed','cancelled') NOT NULL DEFAULT 'received',
       attempt_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
       processing_token VARCHAR(64) NULL,
       processing_expires_at DATETIME NULL,
@@ -799,6 +799,7 @@ export async function initDatabase() {
       narrative LONGTEXT NULL,
       error_code VARCHAR(80) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      cancelled_at DATETIME NULL,
       completed_at DATETIME NULL,
       UNIQUE KEY uq_mystery_turn_idempotency (run_id, idempotency_key),
       UNIQUE KEY uq_mystery_turn_sequence (run_id, turn_sequence),
@@ -853,6 +854,16 @@ export async function initDatabase() {
   await ensureColumn("mystery_turns", "attempt_count", "attempt_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER status");
   await ensureColumn("mystery_turns", "processing_token", "processing_token VARCHAR(64) NULL AFTER attempt_count");
   await ensureColumn("mystery_turns", "processing_expires_at", "processing_expires_at DATETIME NULL AFTER processing_token");
+  await ensureColumn("mystery_turns", "cancelled_at", "cancelled_at DATETIME NULL AFTER created_at");
+  const [[mysteryTurnStatusColumn]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mystery_turns' AND COLUMN_NAME = 'status'`,
+  );
+  if (!String(mysteryTurnStatusColumn?.COLUMN_TYPE ?? "").includes("'cancelled'")) {
+    await pool.query(
+      "ALTER TABLE mystery_turns MODIFY COLUMN status ENUM('received','processing','completed','failed','cancelled') NOT NULL DEFAULT 'received'",
+    );
+  }
   const [[mysteryTurnAttemptColumn]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mystery_turns' AND COLUMN_NAME = 'attempt_count'`,
@@ -861,7 +872,7 @@ export async function initDatabase() {
     await pool.query("ALTER TABLE mystery_turns MODIFY COLUMN attempt_count INT UNSIGNED NOT NULL DEFAULT 0");
   }
   await pool.query("ALTER TABLE mystery_turns MODIFY COLUMN turn_sequence INT UNSIGNED NULL");
-  await pool.query("UPDATE mystery_turns SET turn_sequence = NULL WHERE status = 'failed'");
+  await pool.query("UPDATE mystery_turns SET turn_sequence = NULL WHERE status IN ('failed','cancelled')");
   await ensureIndex("mystery_runs", "idx_mystery_run_story_audit", "story_id, status, updated_at");
   await ensureIndex("mystery_turns", "idx_mystery_turn_run_created", "run_id, created_at");
   await ensureIndex("mystery_turns", "idx_mystery_turn_recovery", "status, processing_expires_at, created_at");
@@ -972,6 +983,7 @@ export async function initDatabase() {
   `);
   await ensureColumn("users", "vip_expires_at", "vip_expires_at DATETIME NULL AFTER role");
   await ensureColumn("users", "vip_legacy_active", "vip_legacy_active TINYINT(1) NOT NULL DEFAULT 0 AFTER vip_expires_at");
+  await ensureColumn("users", "vip_growth_value", "vip_growth_value BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER vip_legacy_active");
   // 旧版 VIP 只有角色、没有到期时间。保留其有效身份，直到管理员明确赠送新时长或取消。
   await pool.query(
     "UPDATE users SET vip_legacy_active = 1 WHERE role = 'vip' AND vip_expires_at IS NULL AND vip_legacy_active = 0"
@@ -1002,6 +1014,33 @@ export async function initDatabase() {
       INDEX idx_vip_orders_username_number (user_username, order_number),
       CONSTRAINT fk_vip_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
       CONSTRAINT fk_vip_orders_operator FOREIGN KEY (operator_user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS vip_growth_events (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      event_type ENUM('grant','daily_active','daily_inactive','adjustment') NOT NULL,
+      amount BIGINT NOT NULL,
+      event_key VARCHAR(180) NOT NULL,
+      event_date DATE NULL,
+      remark VARCHAR(255) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_vip_growth_event_key (event_key),
+      INDEX idx_vip_growth_events_user_time (user_id, created_at),
+      INDEX idx_vip_growth_events_user_date (user_id, event_date),
+      CONSTRAINT fk_vip_growth_event_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS vip_growth_daily_settlements (
+      user_id VARCHAR(64) NOT NULL,
+      growth_date DATE NOT NULL,
+      active_at_settlement TINYINT(1) NOT NULL,
+      amount BIGINT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, growth_date),
+      CONSTRAINT fk_vip_growth_daily_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -2597,9 +2636,28 @@ export async function initDatabase() {
     }
   }
 
+  await initializeVipGrowthValues();
   await seedAdmin();
   await backfillInviteCodes();
   await seedDefaultCircles();
+}
+
+const VIP_GROWTH_INITIALIZATION_MIGRATION = "vip-growth-initialization-v1";
+
+async function initializeVipGrowthValues() {
+  const [[completed]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+    [VIP_GROWTH_INITIALIZATION_MIGRATION]
+  );
+  if (completed) return;
+  await pool.query(
+    `UPDATE users
+     SET vip_growth_value = 5
+     WHERE vip_growth_value = 0
+       AND role = 'vip'
+       AND (vip_legacy_active = 1 OR vip_expires_at IS NULL OR vip_expires_at > UTC_TIMESTAMP())`
+  );
+  await pool.query("INSERT IGNORE INTO app_data_migrations (migration_key) VALUES (?)", [VIP_GROWTH_INITIALIZATION_MIGRATION]);
 }
 
 async function backfillInviteCodes() {

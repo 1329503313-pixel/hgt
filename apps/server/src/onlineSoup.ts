@@ -27,6 +27,7 @@ import { publicOssUrl } from "./ossStorage.js";
 import { mysteryTurnConflictAction, processMysteryTurn, startOrContinueMysteryRun } from "./mystery/runtime.js";
 import { MysteryInvariantError } from "./mystery/engine.js";
 import { MysteryModelError } from "./mystery/models.js";
+import { vipGrowthSnapshot } from "./vipGrowth.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -530,6 +531,19 @@ export async function resumePendingOnlineSoupAiQuestions() {
 }
 
 export async function resumePendingMysteryTurns() {
+  // 撤回或房间状态变更已经取消的行动不能在重启后被当作失败回合重新领取。
+  await pool.query(
+    `UPDATE mystery_turns turns
+     JOIN online_soup_messages messages
+       ON turns.run_id = messages.mystery_run_id
+      AND turns.idempotency_key = CONCAT('room:', messages.room_id, ':message:', messages.id)
+     SET turns.status = 'cancelled', turns.turn_sequence = NULL,
+       turns.processing_token = NULL, turns.processing_expires_at = NULL,
+       turns.error_code = 'TURN_CANCELLED', turns.cancelled_at = COALESCE(turns.cancelled_at, CURRENT_TIMESTAMP),
+       turns.completed_at = NULL
+     WHERE turns.status IN ('received','processing','failed')
+       AND (messages.recalled_at IS NOT NULL OR messages.ai_status = 'cancelled')`,
+  );
   // 进程在模型调用中重启时，世界事务尚未提交；只回收租约已经过期的回合。
   await pool.query(
     `UPDATE mystery_turns SET status = 'failed', turn_sequence = NULL,
@@ -610,10 +624,10 @@ async function touch(roomId: string, user: OnlineUser, isHost: boolean) {
   }
 }
 
-async function systemMessage(roomId: string, roundId: string | null, content: string, db: mysql.Pool | mysql.PoolConnection = pool) {
+async function systemMessage(roomId: string, roundId: string | null, content: string, db: mysql.Pool | mysql.PoolConnection = pool, senderId: string | null = null) {
   await db.query(
-    "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, NULL, 'system', ?)",
-    [nanoid(), roomId, roundId, content]
+    "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, ?, 'system', ?)",
+    [nanoid(), roomId, roundId, senderId, content]
   );
 }
 
@@ -1093,6 +1107,7 @@ async function processRoomAiQuestions(roomId: string) {
 }
 
 const activeMysteryRooms = new Set<string>();
+const activeMysteryTurnControllers = new Map<string, AbortController>();
 
 async function processMysteryRoomTurns(roomId: string) {
   if (activeMysteryRooms.has(roomId)) return;
@@ -1125,11 +1140,16 @@ async function processMysteryRoomTurns(roomId: string) {
         );
         continue;
       }
-      await pool.query(
-        "UPDATE online_soup_messages SET ai_status = 'scoring', ai_error = NULL WHERE id = ? AND ai_status IN ('pending','answering','scoring')",
+      const [claimed] = await pool.query<mysql.ResultSetHeader>(
+        `UPDATE online_soup_messages SET ai_status = 'scoring', ai_error = NULL
+         WHERE id = ? AND recalled_at IS NULL AND ai_status IN ('pending','answering','scoring')`,
         [pending.id],
       );
+      if (claimed.affectedRows !== 1) continue;
       void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "scoring", aiError: null });
+      const actionMessageId = String(pending.id);
+      const actionController = new AbortController();
+      activeMysteryTurnControllers.set(actionMessageId, actionController);
       try {
         const narrativeMessageId = nanoid();
         let ended = false;
@@ -1137,7 +1157,15 @@ async function processMysteryRoomTurns(roomId: string) {
           runId: String(pending.mystery_run_id),
           ownerUserId: String(pending.host_id),
           rawInput: String(pending.content),
-          idempotencyKey: `room:${roomId}:message:${String(pending.id)}`,
+          idempotencyKey: `room:${roomId}:message:${actionMessageId}`,
+          signal: actionController.signal,
+          isCancellationRequested: async () => {
+            const [[action]] = await pool.query<mysql.RowDataPacket[]>(
+              "SELECT ai_status, recalled_at FROM online_soup_messages WHERE id = ? AND room_id = ? LIMIT 1",
+              [actionMessageId, roomId],
+            );
+            return !action || Boolean(action.recalled_at) || String(action.ai_status) === "cancelled";
+          },
           commitSideEffects: async ({ connection, narrative, playerVisiblePacket }) => {
             const [[locked]] = await connection.query<mysql.RowDataPacket[]>(
               `SELECT messages.ai_status, messages.recalled_at, rooms.status AS room_status,
@@ -1202,15 +1230,26 @@ async function processMysteryRoomTurns(roomId: string) {
           });
           break;
         }
-        const publicMessage = error instanceof MysteryModelError || error instanceof MysteryInvariantError
+        if (conflictAction === "cancel") {
+          // 撤回接口已经同步消息占位；这里仅停止当前处理，不生成失败提示或重试任务。
+          continue;
+        }
+        const publicMessage = error instanceof MysteryInvariantError
+          && ["RUN_NOT_FOUND", "RUN_NOT_ACTIVE", "TURN_CONTEXT_CHANGED"].includes(error.code)
           ? error.message
-          : "谜局裁决暂时失败，请稍后重新提交行动";
+          : error instanceof MysteryModelError && error.code === "MODEL_NOT_CONFIGURED"
+            ? error.message
+            : "谜局裁决暂时失败，请稍后重新提交行动";
         console.error("Mystery room turn failed", { roomId, messageId: pending.id, error: error instanceof Error ? error.message : String(error) });
         await pool.query(
           "UPDATE online_soup_messages SET ai_status = 'failed', ai_error = ? WHERE id = ? AND ai_status IN ('pending','answering','scoring')",
           [publicMessage.slice(0, 255), pending.id],
         );
         void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "failed", aiError: publicMessage.slice(0, 255) });
+      } finally {
+        if (activeMysteryTurnControllers.get(actionMessageId) === actionController) {
+          activeMysteryTurnControllers.delete(actionMessageId);
+        }
       }
     }
   } finally {
@@ -1289,6 +1328,9 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderName: row.sender_name ? String(row.sender_name) : null,
     senderAvatar: row.sender_id && row.sender_has_avatar ? `/api/media/users/${encodeURIComponent(String(row.sender_id))}/avatar` : null,
     senderLevel: levelForExperience(row.sender_experience),
+    senderVipGrowthValue: Number(row.sender_vip_growth_value ?? 0),
+    senderVipLevel: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).level,
+    senderVipActive: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).active,
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
     type: String(row.message_type),
     content: recalledAt ? "" : aiHonors ? "本轮评选" : String(row.content),
@@ -1336,7 +1378,9 @@ async function roomMessagePage(room: mysql.RowDataPacket, before?: string, limit
   if (after) params.push(after);
   params.push(safeLimit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_name, u.experience AS sender_experience, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_name, u.experience AS sender_experience, u.role AS sender_role,
+       u.vip_growth_value AS sender_vip_growth_value, u.vip_expires_at AS sender_vip_expires_at, u.vip_legacy_active AS sender_vip_legacy_active,
+       u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
        sender_lb.name AS sender_special_badge_name, sender_lb.tier AS sender_special_badge_tier,
        r.soup_id AS message_soup_id, r.status AS message_round_status,
@@ -1386,7 +1430,8 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   if (!room) return null;
   const [[memberRows], messagePage, finishVote] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, u.nickname, u.experience, u.avatar IS NOT NULL AS has_avatar,
+    `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, u.nickname, u.experience, u.role,
+       u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.avatar IS NOT NULL AS has_avatar,
        u.equipped_badge_key, u.equipped_badge_icon_url, lb.name AS special_badge_name, lb.tier AS special_badge_tier
      FROM online_soup_members m JOIN users u ON u.id = m.user_id
      LEFT JOIN legendary_badges lb ON u.equipped_badge_key = CONCAT('legendary:', lb.id)
@@ -1489,6 +1534,9 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
     members: memberRows.map((row) => ({
       id: String(row.user_id), nickname: String(row.nickname), role: String(row.member_role),
       level: levelForExperience(row.experience),
+      vipGrowthValue: Number(row.vip_growth_value ?? 0),
+      vipLevel: vipGrowthSnapshot(row).level,
+      vipActive: vipGrowthSnapshot(row).active,
       avatar: row.has_avatar ? `/api/media/users/${encodeURIComponent(String(row.user_id))}/avatar` : null,
       equippedBadge: memberBadge(row.equipped_badge_key, row.equipped_badge_icon_url, row.special_badge_name, row.special_badge_tier),
       joinedAt: iso(row.joined_at)
@@ -1693,7 +1741,7 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
        ON DUPLICATE KEY UPDATE member_role = VALUES(member_role), is_active = 1, joined_at = NOW(), last_seen_at = NOW(), left_at = NULL`,
       [room.id, user.id, role]
     );
-    await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection);
+    await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection, user.id);
     await connection.commit();
     recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role, joined: true });
@@ -1998,7 +2046,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
           ? (String(room.host_mode ?? "human") === "ai" ? "player" : "host")
           : parsed.data.role]
       );
-      await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection);
+      await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection, user.id);
     }
     const role = existing?.member_role ?? (room.host_id === user.id
       ? (String(room.host_mode ?? "human") === "ai" ? "player" : "host")
@@ -3027,6 +3075,7 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
   if (!context) return;
   const connection = await pool.getConnection();
   let recalledAt = "";
+  let recalledMysteryRunId: string | null = null;
   try {
     await connection.beginTransaction();
     const [[message]] = await connection.query<mysql.RowDataPacket[]>(
@@ -3064,6 +3113,9 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
       await connection.rollback();
       return fail(res, 409, "该谜局行动已写入事件账本，无法撤回");
     }
+    if (message.message_type === "question" && message.mystery_run_id) {
+      recalledMysteryRunId = String(message.mystery_run_id);
+    }
     const [result] = await connection.query<mysql.ResultSetHeader>(
       `UPDATE online_soup_messages
        SET content = '', sticker_id = NULL, mentions_json = NULL, recalled_at = CURRENT_TIMESTAMP,
@@ -3090,6 +3142,22 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
     throw error;
   } finally {
     connection.release();
+  }
+  activeMysteryTurnControllers.get(req.params.messageId)?.abort("mystery_action_recalled");
+  if (recalledMysteryRunId) {
+    await pool.query(
+      `UPDATE mystery_turns
+       SET status = 'cancelled', turn_sequence = NULL, processing_token = NULL, processing_expires_at = NULL,
+         error_code = 'TURN_CANCELLED', cancelled_at = COALESCE(cancelled_at, CURRENT_TIMESTAMP), completed_at = NULL
+       WHERE run_id = ? AND idempotency_key = ? AND status IN ('received','processing','failed')`,
+      [recalledMysteryRunId, `room:${context.room.id}:message:${req.params.messageId}`],
+    ).catch((error) => {
+      console.error("Mystery recalled turn persistence failed:", {
+        roomId: context.room.id,
+        messageId: req.params.messageId,
+        error,
+      });
+    });
   }
   res.json({ ok: true, messageId: req.params.messageId, recalledAt });
   void notifyRoom(context.room.id, "message_recalled", {

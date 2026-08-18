@@ -10,6 +10,7 @@ import { subscribeServerEvent } from "../shared/serverEvents";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 
 const followsCacheKey = (viewerId: string, targetId: string, type: "following" | "followers") => `hgt:user-follows:${viewerId}:${targetId}:${type}`;
 
@@ -69,7 +70,7 @@ export default function UserFollowsPage({ type }: { type: "following" | "followe
               <span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 font-black text-primary">{item.avatar ? <img className="h-full w-full object-cover" src={item.avatar} alt="" /> : item.nickname.slice(0, 1)}</span>
               {item.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}
             </button>
-            <button className="min-w-0 flex-1 text-left" onClick={() => navigate(`/users/${item.id}`)}><span className="flex min-w-0 items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{item.nickname}</span><LevelBadge level={item.level} /><EquippedBadgeIcon badge={item.equippedBadge} className="h-4 w-4" animated={false} /></span><span className={`mt-1 block text-xs ${item.isOnline ? "font-bold text-emerald-600" : "text-muted"}`}>{item.isOnline ? "在线" : "离线"}</span></button>
+            <button className="min-w-0 flex-1 text-left" onClick={() => navigate(`/users/${item.id}`)}><VipIdentity nickname={item.nickname} userLevel={item.level} vipLevel={item.vipLevel} vipActive={item.vipActive} equippedBadge={item.equippedBadge} className="max-w-full text-sm font-black text-ink" /><span className={`mt-1 block text-xs ${item.isOnline ? "font-bold text-emerald-600" : "text-muted"}`}>{item.isOnline ? "在线" : "离线"}</span></button>
             {!item.isSelf && <button className={`rounded-lg px-3 py-2 text-xs font-bold ${item.isFollowing ? "bg-slate-100 text-ink" : "bg-primary text-white"}`} onClick={() => void toggleFollow(item)}>{item.isFollowing ? "已关注" : "关注"}</button>}
           </div>
         ))}

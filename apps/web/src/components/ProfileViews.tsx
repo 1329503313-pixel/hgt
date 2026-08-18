@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import type { SocialProfile, SoupSummary } from "../shared/types";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
 import { LevelBadge } from "./LevelBadge";
+import { VipIdentity } from "./VipIdentity";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import { AssetMotionMedia } from "./AssetCardVisual";
 
@@ -226,9 +227,7 @@ export function ProfileHero({
           </button>
           <div className="profile-hero-copy min-w-0 flex-1">
             <div className="profile-hero-name-row flex min-w-0 items-center gap-2">
-              <h1 className="min-w-0 truncate text-xl font-black">{profile.nickname}</h1>
-              <LevelBadge level={profile.level} />
-              {showBadge && profile.equippedBadge && <EquippedBadgeIcon badge={profile.equippedBadge} className="h-8 w-8 rounded-lg" title={profile.equippedBadge.name} animated={false} />}
+              <VipIdentity nickname={profile.nickname} userLevel={profile.level} vipLevel={profile.vipLevel} vipActive={profile.vipActive} equippedBadge={showBadge ? profile.equippedBadge : null} className="min-w-0 text-xl font-black text-white" badgeClassName="h-8 w-8 rounded-lg" />
             </div>
             {meta && <div className="mt-1">{meta}</div>}
           </div>

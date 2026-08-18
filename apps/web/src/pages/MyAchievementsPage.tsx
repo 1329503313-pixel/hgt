@@ -1,9 +1,12 @@
 import { cloneElement, isValidElement, useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
 import { MineBackButton } from "../components/MineBackButton";
 import { api, StatsResponse } from "../api";
 import { BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
+import { resolveBadgeOwnership } from "../shared/badgeOwnership";
 
 // ============================================================
 // 类型定义
@@ -190,7 +193,13 @@ export const BADGES: BadgeDef[] = BADGE_DEFINITIONS.map((badge) => ({
   icon: versionBadgeIcon(badge.icon)
 }));
 
-export function buildBadgesFromStats(stats: StatsResponse, unlockDates: Record<string, string> = {}, ownershipRates: Record<string, number> = {}): BadgeDef[] {
+export function buildBadgesFromStats(
+  stats: StatsResponse,
+  unlockDates: Record<string, string> = {},
+  ownershipRates: Record<string, number> = {},
+  badgeKeys: readonly string[] = []
+): BadgeDef[] {
+  const permanentlyOwnedBadgeKeys = new Set([...badgeKeys, ...Object.keys(unlockDates)]);
   const progressBySeries: Record<string, number> = {
     publish: stats.soupCount,
     insight: stats.criticalHitCount,
@@ -217,15 +226,20 @@ export function buildBadgesFromStats(stats: StatsResponse, unlockDates: Record<s
     shellBalance: stats.shellBalance,
   };
   return BADGES.map((badge) => {
-    const unlockedAt = unlockDates[getBadgeKey(badge)] ?? null;
+    const badgeKey = getBadgeKey(badge);
     const approvalBased = badge.series === "excellentAuthor";
-    const progressCurrent = approvalBased ? (unlockedAt ? 1 : 0) : (progressBySeries[badge.series] ?? 0);
+    const ownership = resolveBadgeOwnership({
+      badgeKey,
+      approvalBased,
+      currentProgress: progressBySeries[badge.series] ?? 0,
+      progressTarget: badge.progressTarget,
+      permanentlyOwnedBadgeKeys,
+      unlockDates
+    });
     return {
       ...badge,
-      ownershipRate: ownershipRates[getBadgeKey(badge)] ?? 0,
-      progressCurrent,
-      earned: approvalBased ? Boolean(unlockedAt) : progressCurrent >= badge.progressTarget,
-      unlockedAt,
+      ownershipRate: ownershipRates[badgeKey] ?? 0,
+      ...ownership,
     };
   });
 }
@@ -437,8 +451,8 @@ function AnimatingBadge({
     return () => cancelAnimationFrame(raf);
   }, [show3D]);
 
-  return (
-    <div className="fixed inset-0 z-50 !mt-0" onClick={onClickBackdrop}>
+  return createPortal(
+    <div className="fixed inset-0 z-[100]" onClick={onClickBackdrop}>
       {/* 正向加深遮罩，反向淡出遮罩 */}
       <div
         className="absolute inset-0 bg-slate-900"
@@ -498,7 +512,8 @@ function AnimatingBadge({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -541,17 +556,34 @@ function BadgeDetail({
   const nextUnearnedTier = allTiers.find((tier) => !tier.earned);
   const progressBadge = def.earned && nextUnearnedTier ? nextUnearnedTier : def;
 
-  return (
+  return createPortal(
     <div
-      className={`fixed inset-0 z-50 !mt-0 flex items-center justify-center ${
+      className={`fixed inset-0 z-[100] flex items-center justify-center ${
         visible ? "visible" : "invisible pointer-events-none"
       }`}
       onClick={onClickBackdrop}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="badge-detail-title"
     >
       <div className="absolute inset-0 bg-slate-900/65" />
 
+      <button
+        type="button"
+        className="absolute right-4 top-[max(16px,env(safe-area-inset-top))] z-20 grid h-11 w-11 place-items-center rounded-full border border-white/30 bg-slate-950/55 text-white shadow-lg backdrop-blur transition hover:bg-slate-950/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/90"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClickBackdrop();
+        }}
+        aria-label="关闭徽章详情"
+        title="关闭"
+      >
+        <X size={21} aria-hidden="true" />
+      </button>
+
       <div
         className="relative z-10 flex flex-col items-center text-center"
+        onClick={(event) => event.stopPropagation()}
       >
         {/* 徽章 — ref 挂载点 */}
         <div
@@ -576,7 +608,7 @@ function BadgeDetail({
             transitionTimingFunction: textVisible ? "ease-out" : "ease-in",
           }}
         >
-          <h3 className="mt-5 text-lg font-black text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7),0_0_8px_rgba(0,0,0,0.4)]">{def.label}</h3>
+          <h3 id="badge-detail-title" className="mt-5 text-lg font-black text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7),0_0_8px_rgba(0,0,0,0.4)]">{def.label}</h3>
           <p className="mt-2 text-sm font-semibold leading-relaxed max-w-64 text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7),0_0_8px_rgba(0,0,0,0.4)]">
             {def.description}
           </p>
@@ -641,7 +673,8 @@ function BadgeDetail({
           })()}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -665,10 +698,10 @@ export default function MyAchievementsPage() {
   useEffect(() => {
     Promise.all([
       api<StatsResponse>("/api/me/stats", { cacheTtlMs: 60_000 }),
-      api<{ legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string>; ownershipRates: Record<string, number> }>("/api/me/badge-collection")
+      api<{ badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string>; ownershipRates: Record<string, number> }>("/api/me/badge-collection")
     ])
       .then(([stats, collection]) => {
-        setBadges(buildBadgesFromStats(stats, collection.unlockDates, collection.ownershipRates));
+        setBadges(buildBadgesFromStats(stats, collection.unlockDates, collection.ownershipRates, collection.badgeKeys));
         setLegendaryBadges(collection.legendaryBadges.map((badge) => ({ ...badge, ownershipRate: collection.ownershipRates[badge.key] ?? 0 })));
       }).catch(() => {});
   }, []);

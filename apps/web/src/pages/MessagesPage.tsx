@@ -10,6 +10,7 @@ import { subscribeServerEvent } from "../shared/serverEvents";
 import { privateMessagePreview } from "../shared/messagePreview";
 import { useMessageUnreadCounts } from "../shared/useMessageUnread";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 
 export default function MessagesPage() {
@@ -112,9 +113,7 @@ export default function MessagesPage() {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-sm font-black text-ink">{conversation.otherUser.nickname}</span>
-                    <LevelBadge level={conversation.otherUser.level} />
-                    <EquippedBadgeIcon badge={conversation.otherUser.equippedBadge} className="h-4 w-4" animated={false} />
+                    <VipIdentity nickname={conversation.otherUser.nickname} userLevel={conversation.otherUser.level} vipLevel={conversation.otherUser.vipLevel} vipActive={conversation.otherUser.vipActive} equippedBadge={conversation.otherUser.equippedBadge} className="max-w-full text-sm font-black text-ink" />
                   </span>
                   <span className="mt-1 block truncate text-sm text-muted">{conversation.lastMessage ? conversation.lastMessage.recalledAt ? `${conversation.lastMessage.isMine ? "你" : "对方"}撤回了一条消息` : `${conversation.lastMessage.isMine ? "我：" : ""}${privateMessagePreview(conversation.lastMessage)}` : "开始聊天吧"}</span>
                 </span>

@@ -3,6 +3,8 @@ import type mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { isSuperAdminRole, normalizeUserRole, type UserRole } from "./roles.js";
+import { effectiveEntitlementPlans } from "./entitlements.js";
+import { recordVipGrowthEvent, vipBenefitValue, vipGrowthSnapshot, VIP_GRANT_GROWTH_PER_DAY } from "./vipGrowth.js";
 
 export const VIP_DAY_MS = 24 * 60 * 60 * 1000;
 export const VIP_MONTH_DAYS = 31;
@@ -135,6 +137,7 @@ function mapVipUser(row: mysql.RowDataPacket) {
   const now = new Date();
   const vipActive = legacyActive || Boolean(expiresAt && expiresAt.getTime() > now.getTime());
   const role = normalizeUserRole(row.role);
+  const growth = vipGrowthSnapshot(row);
   const currentIdentity = role === "super_admin"
     ? "super_admin"
     : role === "backoffice_admin"
@@ -147,6 +150,9 @@ function mapVipUser(row: mysql.RowDataPacket) {
     nickname: String(row.nickname),
     username: String(row.username),
     role,
+    vipGrowthValue: growth.growthValue,
+    vipLevel: growth.level,
+    vipActive: growth.active,
     currentIdentity,
     vipExpiresAt: expiresAt?.toISOString() ?? null,
     legacyActive,
@@ -189,6 +195,76 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
     return sendError(res, 501, "VIP购买功能暂未开放");
   });
 
+  app.get("/api/vip/overview", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, role, vip_expires_at, vip_legacy_active, vip_growth_value
+       FROM users WHERE id = ? LIMIT 1`,
+      [user.id]
+    );
+    if (!row) return sendError(res, 404, "用户不存在");
+    const growth = vipGrowthSnapshot(row);
+    const previousThreshold = [0, 5, 300, 800, 1500, 2800, 4500, 7000, 10000, 15000][growth.level] ?? 0;
+    const nextThreshold = growth.level >= 9 ? null : [0, 5, 300, 800, 1500, 2800, 4500, 7000, 10000, 15000][growth.level + 1];
+    const progressPercent = nextThreshold == null
+      ? 100
+      : Math.max(0, Math.min(100, Math.round(((growth.growthValue - previousThreshold) / Math.max(1, nextThreshold - previousThreshold)) * 100)));
+    const currentPlans = await effectiveEntitlementPlans();
+    const basePlan = growth.active ? currentPlans.plans.vip : currentPlans.plans.user;
+    const vipPreviewPlan = currentPlans.plans.vip;
+    const adjustedVipPlan = {
+      ...vipPreviewPlan,
+      dailyAutoShellGrant: vipBenefitValue(vipPreviewPlan.dailyAutoShellGrant, growth.level) ?? 0,
+      dailyAutoExperienceGrant: vipBenefitValue(vipPreviewPlan.dailyAutoExperienceGrant, growth.level) ?? 0,
+      dailyExtraFreeDraws: vipBenefitValue(vipPreviewPlan.dailyExtraFreeDraws, growth.level)
+    };
+    const [events] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, event_type, amount, event_date, remark, created_at
+       FROM vip_growth_events WHERE user_id = ?
+       ORDER BY created_at DESC, id DESC LIMIT 100`,
+      [user.id]
+    );
+    res.json({
+      growthValue: growth.growthValue,
+      level: growth.level,
+      active: growth.active,
+      vipExpiresAt: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
+      vipExpired: !growth.active && !row.vip_legacy_active && Boolean(row.vip_expires_at && new Date(row.vip_expires_at).getTime() <= Date.now()),
+      multiplier: growth.multiplier,
+      previousThreshold,
+      nextThreshold,
+      progressPercent,
+      benefits: adjustedVipPlan,
+      activePlan: basePlan,
+      events: events.map((event) => ({
+        id: String(event.id),
+        type: String(event.event_type),
+        amount: Number(event.amount ?? 0),
+        date: event.event_date ? String(event.event_date).slice(0, 10) : null,
+        remark: String(event.remark),
+        createdAt: new Date(event.created_at).toISOString()
+      }))
+    });
+  });
+
+  app.get("/api/vip/growth-events", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(req.query.limit ?? 50) || 50)));
+    const [events] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, event_type, amount, event_date, remark, created_at
+       FROM vip_growth_events WHERE user_id = ?
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+      [user.id, limit]
+    );
+    res.json({ events: events.map((event) => ({
+      id: String(event.id), type: String(event.event_type), amount: Number(event.amount ?? 0),
+      date: event.event_date ? String(event.event_date).slice(0, 10) : null,
+      remark: String(event.remark), createdAt: new Date(event.created_at).toISOString()
+    })) });
+  });
+
   app.get("/api/admin/vip/users/search", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     const query = String(req.query.query ?? "").trim();
@@ -196,7 +272,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
     if (!query) return res.json({ users: [] });
     const column = mode === "nickname" ? "nickname" : "username";
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, nickname, username, role, vip_expires_at, vip_legacy_active
+      `SELECT id, nickname, username, role, vip_expires_at, vip_legacy_active, vip_growth_value
        FROM users WHERE ${column} LIKE ?
        ORDER BY CASE WHEN ${column} = ? THEN 0 ELSE 1 END, created_at ASC, id ASC
        LIMIT 20`,
@@ -223,7 +299,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
     }
     const where = `WHERE ${conditions.join(" AND ")}`;
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.username, u.role, u.vip_expires_at, u.vip_legacy_active
+      `SELECT u.id, u.nickname, u.username, u.role, u.vip_expires_at, u.vip_legacy_active, u.vip_growth_value
        FROM users u ${where}
        ORDER BY
          CASE
@@ -301,7 +377,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
       const lookup = parsed.data.userId ? "id = ?" : "username = ?";
       const lookupValue = parsed.data.userId ?? parsed.data.username;
       const [[target]] = await connection.query<mysql.RowDataPacket[]>(
-        `SELECT id, nickname, username, role, vip_expires_at, vip_legacy_active
+        `SELECT id, nickname, username, role, vip_expires_at, vip_legacy_active, vip_growth_value
          FROM users WHERE ${lookup} LIMIT 1 FOR UPDATE`,
         [lookupValue]
       );
@@ -317,6 +393,10 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
       const orderNumber = await insertVipOrder(connection, {
         userId: String(target.id), nickname: String(target.nickname), username: String(target.username),
         type: "gift", dayChange: days, balanceAfterDays: vipBalanceDays(expiresAt, now), operatorUserId: actor.id
+      });
+      await recordVipGrowthEvent(connection, {
+        userId: String(target.id), amount: days * VIP_GRANT_GROWTH_PER_DAY, eventType: "grant",
+        eventKey: `vip-growth:order:${orderNumber}`, remark: `VIP赠送/开通 ${days} 天`
       });
       await connection.commit();
       await syncEntitlement(String(target.id));
@@ -340,7 +420,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
     try {
       await connection.beginTransaction();
       const [[target]] = await connection.query<mysql.RowDataPacket[]>(
-        `SELECT id, nickname, username, role, vip_expires_at, vip_legacy_active
+        `SELECT id, nickname, username, role, vip_expires_at, vip_legacy_active, vip_growth_value
          FROM users WHERE id = ? LIMIT 1 FOR UPDATE`,
         [req.params.id]
       );
@@ -375,7 +455,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
     try {
       await connection.beginTransaction();
       const [[target]] = await connection.query<mysql.RowDataPacket[]>(
-        "SELECT id, nickname, username, role FROM users WHERE id = ? LIMIT 1 FOR UPDATE",
+        "SELECT id, nickname, username, role, vip_growth_value FROM users WHERE id = ? LIMIT 1 FOR UPDATE",
         [req.params.id]
       );
       if (!target) throw new Error("VIP_USER_NOT_FOUND");

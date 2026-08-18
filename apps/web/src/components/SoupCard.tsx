@@ -3,6 +3,7 @@ import { Flame, Star, User, ThumbsUp, Sparkles } from "lucide-react";
 import { formatViews } from "../context/AppContext";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
 import { LevelBadge } from "./LevelBadge";
+import { VipIdentity } from "./VipIdentity";
 import { defaultCoverUrl } from "../shared/staticAssets";
 
 export function SoupCard({
@@ -53,8 +54,7 @@ export function SoupCard({
             <User size={14} />
           )}
           {soup.isOriginal ? (soup.author || soup.creatorName) : "佚名"}
-          {soup.isOriginal && <LevelBadge level={soup.creatorLevel} />}
-          {soup.isOriginal && <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-[13px] w-[13px]" />}
+          {soup.isOriginal && <VipIdentity nickname={soup.author || soup.creatorName} userLevel={soup.creatorLevel} vipLevel={soup.creatorVipLevel} vipActive={soup.creatorVipActive} equippedBadge={soup.creatorEquippedBadge} className="min-w-0" iconClassName="h-[13px] w-[13px]" badgeClassName="h-[13px] w-[13px]" />}
         </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {tags.map((tag) => (

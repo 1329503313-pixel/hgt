@@ -1,4 +1,20 @@
 export type UserRole = "super_admin" | "backoffice_admin" | "vip" | "user";
+export type VipLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+export type VipGrowthEvent = { id: string; type: string; amount: number; date: string | null; remark: string; createdAt: string };
+export type VipOverview = {
+  growthValue: number;
+  level: VipLevel;
+  active: boolean;
+  vipExpiresAt: string | null;
+  vipExpired: boolean;
+  multiplier: number;
+  previousThreshold: number;
+  nextThreshold: number | null;
+  progressPercent: number;
+  benefits: Record<string, number | null>;
+  activePlan: Record<string, number | null>;
+  events: VipGrowthEvent[];
+};
 export type RequestStatus = "pending" | "approved" | "rejected";
 export type BottomPublicFilter = "all" | "surface" | "bottom";
 export type RatingFilter = "all" | "2" | "3" | "4";
@@ -20,6 +36,9 @@ export type PublicUser = {
   createdAt: string;
   level: number;
   equippedBadge: EquippedBadge | null;
+  vipGrowthValue: number;
+  vipLevel: VipLevel;
+  vipActive: boolean;
 };
 
 export type RadarStats = {
@@ -44,6 +63,9 @@ export type SoupSummary = {
   creatorName: string;
   creatorAvatar: string | null;
   creatorLevel: number;
+  creatorVipGrowthValue: number;
+  creatorVipLevel: VipLevel;
+  creatorVipActive: boolean;
   creatorEquippedBadge: EquippedBadge | null;
   isSurfacePublic: boolean;
   isBottomPublic: boolean;
@@ -71,6 +93,9 @@ export type Evaluation = {
   reviewerId: string;
   reviewerAvatar: string | null;
   reviewerLevel: number;
+  reviewerVipGrowthValue: number;
+  reviewerVipLevel: VipLevel;
+  reviewerVipActive: boolean;
   reviewerEquippedBadge: EquippedBadge | null;
   isCreatorEvaluation: boolean;
   countsTowardScore: boolean;
@@ -309,7 +334,7 @@ export type GiftCatalogItem = {
 
 export type ConversationItem = {
   id: string;
-  otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean };
+  otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge" | "vipGrowthValue" | "vipLevel" | "vipActive"> & { isOnline: boolean };
   lastMessage: { content: string; type: "text" | "sticker" | "room_invite" | "soup_share" | "gift"; stickerId: string | null; stickerName?: string | null; roomInvite?: OnlineSoupRoomInvite | null; soupShare?: SoupShare | null; gift?: GiftMessage | null; isMine: boolean; createdAt: string; recalledAt: string | null } | null;
   unreadCount: number;
   updatedAt: string;
@@ -397,7 +422,7 @@ export type CircleMessage = {
   id: string;
   sequence: number;
   circleId: string;
-  sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean }) | null;
+  sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge" | "vipGrowthValue" | "vipLevel" | "vipActive"> & { isOnline: boolean }) | null;
   content: string;
   type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
   stickerId: string | null;
@@ -484,6 +509,9 @@ export type OnlineSoupMessage = {
   senderName: string | null;
   senderAvatar: string | null;
   senderLevel: number;
+  senderVipGrowthValue: number;
+  senderVipLevel: VipLevel;
+  senderVipActive: boolean;
   senderEquippedBadge: EquippedBadge | null;
   type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system" | "ai_advice" | "ai_honor" | "mystery_narrative";
   content: string;
@@ -570,7 +598,7 @@ export type OnlineSoupSnapshot = {
     createdAt: string;
   };
   me: { role: OnlineSoupMemberRole; isHost: boolean };
-  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; joinedAt: string }>;
+  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; joinedAt: string }>;
   messages: OnlineSoupMessage[];
   messagesHasMore: boolean;
   messagesNextCursor: string | null;

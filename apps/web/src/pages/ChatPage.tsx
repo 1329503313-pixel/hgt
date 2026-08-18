@@ -13,13 +13,14 @@ import { GiftMessageBundle, GiftMessageCard } from "../components/GiftMessageCar
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 import { GiftDrawer } from "../components/GiftDrawer";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { giftTimelineEntries } from "../shared/giftTimeline";
 
 type ChatResponse = {
-  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge"> & { isOnline: boolean; isFollowing: boolean } };
+  conversation: { id: string; otherUser: Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge" | "vipLevel" | "vipActive" | "vipGrowthValue"> & { isOnline: boolean; isFollowing: boolean } };
   messages: PrivateMessageItem[];
   hasMore?: boolean;
   nextCursor?: string | null;
@@ -258,8 +259,7 @@ export default function ChatPage() {
               </span>
               {chat.conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
             </span>
-            <span className="max-w-36 truncate text-base font-black text-ink sm:max-w-56 sm:text-lg">{chat.conversation.otherUser.nickname}</span>
-            <LevelBadge level={chat.conversation.otherUser.level} />
+            <VipIdentity nickname={chat.conversation.otherUser.nickname} userLevel={chat.conversation.otherUser.level} vipLevel={chat.conversation.otherUser.vipLevel} vipActive={chat.conversation.otherUser.vipActive} className="max-w-56 text-base font-black text-ink sm:text-lg" />
           </span>
         )}
         titleTo={`/users/${chat.conversation.otherUser.id}`}
@@ -271,7 +271,7 @@ export default function ChatPage() {
           <div className="flex min-w-0 items-center gap-4">
             <button className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-slate-50 text-ink transition hover:border-blue-200 hover:bg-blue-50 hover:text-primary" onClick={() => navigate("/messages")} aria-label="返回消息中心"><ArrowLeft size={21} /></button>
             <span className="relative grid h-12 w-12 shrink-0 place-items-center"><span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 font-black text-primary">{chat.conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt="" /> : chat.conversation.otherUser.nickname.slice(0, 1)}</span>{chat.conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}</span>
-            <div className="min-w-0"><div className="flex items-center gap-2"><h1 className="truncate text-xl font-black text-ink">{chat.conversation.otherUser.nickname}</h1><LevelBadge level={chat.conversation.otherUser.level} /><EquippedBadgeIcon badge={chat.conversation.otherUser.equippedBadge} className="h-4 w-4" animated={false} /></div><p className={`mt-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "text-emerald-600" : "text-muted"}`}>{chat.conversation.otherUser.isOnline ? "在线 · 消息实时送达" : "离线 · 上线后可查看消息"}</p></div>
+            <div className="min-w-0"><VipIdentity nickname={chat.conversation.otherUser.nickname} userLevel={chat.conversation.otherUser.level} vipLevel={chat.conversation.otherUser.vipLevel} vipActive={chat.conversation.otherUser.vipActive} equippedBadge={chat.conversation.otherUser.equippedBadge} className="text-xl font-black text-ink" /><p className={`mt-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "text-emerald-600" : "text-muted"}`}>{chat.conversation.otherUser.isOnline ? "在线 · 消息实时送达" : "离线 · 上线后可查看消息"}</p></div>
           </div>
           <button className="btn btn-secondary" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`, { state: { privateConversationId: id } })}><UserRound size={17} />查看主页</button>
         </header>
@@ -380,8 +380,7 @@ export default function ChatPage() {
 
           <aside className="hidden min-h-0 flex-col items-center bg-white px-6 py-8 text-center lg:flex">
             <span className="relative grid h-24 w-24 place-items-center"><span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-3xl font-black text-primary">{chat.conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt={`${chat.conversation.otherUser.nickname}头像`} /> : chat.conversation.otherUser.nickname.slice(0, 1)}</span>{chat.conversation.otherUser.isOnline && <span className="absolute bottom-1 right-1 h-5 w-5 rounded-full border-[3px] border-white bg-emerald-500" />}</span>
-            <h2 className="mt-4 max-w-full truncate text-lg font-black text-ink">{chat.conversation.otherUser.nickname}</h2>
-            <div className="mt-2 flex items-center gap-1.5"><LevelBadge level={chat.conversation.otherUser.level} /><EquippedBadgeIcon badge={chat.conversation.otherUser.equippedBadge} className="h-5 w-5" animated={false} /></div>
+            <VipIdentity nickname={chat.conversation.otherUser.nickname} userLevel={chat.conversation.otherUser.level} vipLevel={chat.conversation.otherUser.vipLevel} vipActive={chat.conversation.otherUser.vipActive} equippedBadge={chat.conversation.otherUser.equippedBadge} className="mt-4 max-w-full justify-center text-lg font-black text-ink" badgeClassName="h-5 w-5" />
             <span className={`mt-3 rounded-full px-3 py-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{chat.conversation.otherUser.isOnline ? "当前在线" : "当前离线"}</span>
             <div className="mt-6 w-full border-t border-line pt-5"><button className="btn btn-secondary w-full" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`, { state: { privateConversationId: id } })}><UserRound size={17} />查看个人主页</button></div>
             <p className="mt-auto text-xs leading-5 text-muted">聊天记录仅你和对方可见。发送表情或文字后会自动滚动到最新消息。</p>

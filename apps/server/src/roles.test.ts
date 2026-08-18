@@ -22,10 +22,11 @@ test("only administrator roles can access the management console", () => {
   assert.equal(isBackofficeAdminRole("user"), false);
 });
 
-test("VIP and administrator roles can view restricted soup content", () => {
+test("only administrator roles can bypass restricted soup content access", () => {
+  assert.equal(canViewAllSoupContentRole("admin"), true);
   assert.equal(canViewAllSoupContentRole("super_admin"), true);
   assert.equal(canViewAllSoupContentRole("backoffice_admin"), true);
-  assert.equal(canViewAllSoupContentRole("vip"), true);
+  assert.equal(canViewAllSoupContentRole("vip"), false);
   assert.equal(canViewAllSoupContentRole("user"), false);
 });
 

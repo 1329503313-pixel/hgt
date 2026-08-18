@@ -7,6 +7,7 @@ import { MineBackButton } from "../components/MineBackButton";
 import { ListSkeleton } from "../components/Skeletons";
 import { LevelBadge } from "../components/LevelBadge";
 import { useApp } from "../context/AppContext";
+import { VipIdentity } from "../components/VipIdentity";
 
 type InvitationSummary = {
   inviteCode: string;
@@ -18,6 +19,9 @@ type InvitedUser = {
   nickname: string;
   avatar: string | null;
   level: number;
+  vipGrowthValue: number;
+  vipLevel: number;
+  vipActive: boolean;
   emailBound: boolean;
   registeredAt: string;
 };
@@ -142,10 +146,7 @@ export default function MyInvitationsPage() {
                   {item.avatar ? <img className="h-full w-full object-cover" src={item.avatar} alt="" /> : item.nickname.slice(0, 1)}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-sm font-black text-ink">{item.nickname}</span>
-                    <LevelBadge level={item.level} />
-                  </span>
+                  <VipIdentity nickname={item.nickname} userLevel={item.level} vipLevel={item.vipLevel} vipActive={item.vipActive} className="max-w-full text-sm font-black text-ink" />
                   <span className={`mt-1 inline-flex items-center gap-1 text-xs ${item.emailBound ? "font-bold text-emerald-600" : "text-muted"}`}>
                     {item.emailBound ? <Mail size={14} /> : <MailX size={14} />}
                     {item.emailBound ? "已绑定邮箱" : "未绑定邮箱"}

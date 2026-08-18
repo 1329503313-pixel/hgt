@@ -1,4 +1,6 @@
 export type UserRole = "super_admin" | "backoffice_admin" | "vip" | "user";
+export declare const VIP_GROWTH_LEVELS: readonly [0, 5, 300, 800, 1500, 2800, 4500, 7000, 10000, 15000];
+export type VipLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 export type RequestStatus = "pending" | "approved" | "rejected";
 export type BottomPublicFilter = "all" | "surface" | "bottom";
 export type RatingFilter = "all" | "2" | "3" | "4";

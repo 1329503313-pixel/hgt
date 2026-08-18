@@ -12,6 +12,7 @@ import { useApp } from "../../context/AppContext";
 import type { ActivityBadgeCondition } from "../BadgeVisuals";
 import { ActivityConditionsEditor, newActivityCondition } from "./ActivityConditionsEditor";
 import { LevelBadge } from "../LevelBadge";
+import { VipIdentity } from "../VipIdentity";
 import { USER_ROLE_LABELS } from "../../shared/roles";
 import { ACCOUNT_PASSWORD_MAX_LENGTH, ACCOUNT_PASSWORD_MIN_LENGTH } from "../../shared/accountRules";
 import { MAX_EXPERIENCE } from "../../shared/levelSystem";
@@ -31,15 +32,16 @@ type AdminUser = PublicUser & {
 
 type UsersResponseExt = { users: AdminUser[]; total: number };
 type TodayFilter = "all" | "yes" | "no";
-type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "charmValue" | "collectionValue" | "achievementPoints" | "experience";
+type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "charmValue" | "collectionValue" | "achievementPoints" | "experience" | "vipGrowth";
 type SortOrder = "asc" | "desc";
-type UserColumn = "user" | "role" | "level" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "charmValue" | "collectionValue" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
+type UserColumn = "user" | "role" | "level" | "vipGrowth" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "charmValue" | "collectionValue" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
 type BulkShellPreview = { matchedCount: number; eligibleCount: number; skippedCount: number };
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
   { key: "user", label: "用户", width: "minmax(190px, 1fr)" },
   { key: "role", label: "角色", width: "110px" },
   { key: "level", label: "等级 / 当前经验", width: "150px" },
+  { key: "vipGrowth", label: "VIP成长值", width: "120px" },
   { key: "createdAt", label: "加入时间", width: "110px" },
   { key: "lastLoginAt", label: "最后登录时间", width: "160px" },
   { key: "loggedToday", label: "今日登录", width: "90px" },
@@ -357,6 +359,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
           <option value="collectionValue">按收藏值</option>
           <option value="achievementPoints">按成就点</option>
           <option value="experience">按经验</option>
+          <option value="vipGrowth">按VIP成长值</option>
         </select>
         <button
           className="btn btn-secondary h-10 px-3 text-xs whitespace-nowrap"
@@ -382,7 +385,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                       <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{(user.nickname || user.username).slice(0, 1)}</div>
                     )}
                     <div className="min-w-0">
-                      <div className="truncate font-semibold text-ink">{user.nickname}</div>
+                      <VipIdentity nickname={user.nickname} vipLevel={user.vipLevel} vipActive={user.vipActive} equippedBadge={user.equippedBadge} className="max-w-full font-semibold text-ink" />
                       <div className="truncate text-xs text-muted">@{user.username}</div>
                     </div>
                   </div>
@@ -408,6 +411,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                     <span className="text-[11px]">{user.experience.toLocaleString()} EXP</span>
                   </button>
                 )}
+                {visibleColumns.has("vipGrowth") && <span className="inline-flex flex-col items-center gap-0.5 text-xs font-black text-amber-700"><VipIdentity nickname={`VIP${user.vipLevel}`} vipLevel={user.vipLevel} vipActive={user.vipActive} className="justify-center" iconClassName="h-4 w-4" badgeClassName="hidden" /><span>{user.vipGrowthValue.toLocaleString()}</span></span>}
                 {visibleColumns.has("createdAt") && <span className="text-xs text-muted">{new Date(user.createdAt).toLocaleDateString()}</span>}
                 {visibleColumns.has("lastLoginAt") && <span className={`text-xs font-bold ${user.isOnline ? "text-emerald-600" : "text-muted"}`}>{user.isOnline ? "在线" : user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "从未登录"}</span>}
                 {visibleColumns.has("loggedToday") && <span className={`rounded-full px-2 py-1 text-xs font-bold ${user.loggedInToday ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-muted"}`}>{user.loggedInToday ? "已登录" : "未登录"}</span>}

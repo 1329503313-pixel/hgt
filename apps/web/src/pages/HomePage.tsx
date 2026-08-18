@@ -11,6 +11,7 @@ import { CoverGridSkeleton, SoupCardSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 import { useMessageUnread } from "../shared/useMessageUnread";
 import { desktopNavigationBannerUrl } from "../shared/staticAssets";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
@@ -23,7 +24,7 @@ import { homeCategoryRoutes, type HomeCategory } from "../shared/homeRoutes";
 import { Modal } from "../components/Modal";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "total" | "hasMore">;
-type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge">;
+type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge" | "vipLevel" | "vipActive" | "vipGrowthValue">;
 type UserSearchResponse = { users: SearchUser[]; total: number };
 type HomeFilters = {
   keyword: string;
@@ -807,12 +808,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
                   {matchedUser.avatar ? <img className="h-full w-full object-cover" src={matchedUser.avatar} alt="" /> : matchedUser.nickname.slice(0, 1)}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{matchedUser.nickname}</span><LevelBadge level={matchedUser.level} /></span>
-                  {matchedUser.equippedBadge && (
-                    <span className="mt-1 inline-flex max-w-full">
-                      <EquippedBadgeIcon badge={matchedUser.equippedBadge} className="h-5 w-5 rounded-md" animated={false} />
-                    </span>
-                  )}
+                  <VipIdentity nickname={matchedUser.nickname} userLevel={matchedUser.level} vipLevel={matchedUser.vipLevel} vipActive={matchedUser.vipActive} equippedBadge={matchedUser.equippedBadge} className="max-w-full text-sm font-black text-ink" />
                 </span>
               </button>
             ))}

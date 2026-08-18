@@ -3,21 +3,82 @@ import { Star } from "lucide-react";
 import type { AssetCard, AssetDrawResult, AssetPackType, OwnedAssetCard } from "../shared/digitalAssets";
 import { assetRarityLabel, warmAssetImage } from "../shared/digitalAssets";
 
-let legendVisibilityObserver: IntersectionObserver | null = null;
+type AssetCardGlitterEffect = "gold" | "rainbow" | null;
+export const ASSET_CARD_STAR_POINT_COUNT = 12;
 
-function observeLegendCard(element: HTMLElement) {
+type CardEffectVisibilityListener = (isVisible: boolean, clockTimeMs: number) => void;
+
+let cardEffectVisibilityObserver: IntersectionObserver | null = null;
+const cardEffectVisibilityListeners = new WeakMap<HTMLElement, CardEffectVisibilityListener>();
+
+function readAssetCardEffectClockMs() {
+  if (typeof document !== "undefined") {
+    const timelineTime = document.timeline.currentTime;
+    if (typeof timelineTime === "number") return timelineTime;
+  }
+  return typeof performance !== "undefined" ? performance.now() : 0;
+}
+
+export function assetCardEffectClockDelay(clockTimeMs: number) {
+  const elapsed = Math.max(0, Math.round(clockTimeMs * 100) / 100);
+  return elapsed === 0 ? "0ms" : `-${elapsed}ms`;
+}
+
+function observeCardEffects(element: HTMLElement, onVisibilityChange?: CardEffectVisibilityListener) {
   if (typeof IntersectionObserver === "undefined") {
     element.classList.add("asset-card-in-view");
+    onVisibilityChange?.(true, readAssetCardEffectClockMs());
     return () => element.classList.remove("asset-card-in-view");
   }
-  legendVisibilityObserver ??= new IntersectionObserver((entries) => {
-    for (const entry of entries) entry.target.classList.toggle("asset-card-in-view", entry.isIntersecting);
+  if (onVisibilityChange) cardEffectVisibilityListeners.set(element, onVisibilityChange);
+  cardEffectVisibilityObserver ??= new IntersectionObserver((entries) => {
+    const clockTimeMs = readAssetCardEffectClockMs();
+    for (const entry of entries) {
+      const element = entry.target as HTMLElement;
+      element.classList.toggle("asset-card-in-view", entry.isIntersecting);
+      cardEffectVisibilityListeners.get(element)?.(entry.isIntersecting, clockTimeMs);
+    }
   }, { rootMargin: "120px 0px", threshold: 0.01 });
-  legendVisibilityObserver.observe(element);
+  cardEffectVisibilityObserver.observe(element);
   return () => {
-    legendVisibilityObserver?.unobserve(element);
+    cardEffectVisibilityObserver?.unobserve(element);
+    cardEffectVisibilityListeners.delete(element);
     element.classList.remove("asset-card-in-view");
   };
+}
+
+export function assetCardGlitterEffect(rarity: AssetCard["rarity"], starLevel: number | null): AssetCardGlitterEffect {
+  if (starLevel == null || starLevel < 2) return null;
+  if (starLevel >= 3 && (rarity === "epic" || rarity === "legend")) return "rainbow";
+  if (starLevel === 2 && rarity === "epic") return "gold";
+  return null;
+}
+
+export function AssetCardEffectTimer({
+  effect,
+  clockDelay
+}: {
+  effect: Exclude<AssetCardGlitterEffect, null>;
+  clockDelay: string;
+}) {
+  return (
+    <span
+      className={`asset-card-glitter asset-card-glitter-${effect}`}
+      style={{ "--asset-card-effect-delay": clockDelay } as React.CSSProperties}
+      aria-hidden="true"
+    >
+      {effect === "gold" && (
+        <span className="asset-card-gold-stars">
+          {Array.from({ length: ASSET_CARD_STAR_POINT_COUNT }, (_, index) => <span key={index} className="asset-card-gold-star" />)}
+        </span>
+      )}
+      {effect === "rainbow" && (
+        <span className="asset-card-rainbow-stars">
+          {Array.from({ length: ASSET_CARD_STAR_POINT_COUNT }, (_, index) => <span key={index} className="asset-card-rainbow-star" />)}
+        </span>
+      )}
+    </span>
+  );
 }
 
 export function AssetCardVisual({
@@ -56,17 +117,26 @@ export function AssetCardVisual({
       ? card.starAfter
       : null;
   const motionAllowed = forceMotion || (displayedStarLevel ?? 0) >= 2;
+  const glitterEffect = assetCardGlitterEffect(card.rarity, displayedStarLevel);
   const showMotion = motion
     && card.rarity === "legend"
     && Boolean(card.motionMp4Url)
     && motionAllowed;
   const displayPackType = packType ?? ("packs" in card ? card.packs[0]?.packType : undefined);
   const rarityLabel = assetRarityLabel(card.rarity, displayPackType);
+  const needsVisibilityEffects = (card.rarity === "legend" && motionAllowed) || glitterEffect != null;
+  const [effectTimer, setEffectTimer] = useState({ clockDelay: "0ms", revision: 0 });
 
   useEffect(() => {
-    if (card.rarity !== "legend" || !motionAllowed || !ref.current) return;
-    return observeLegendCard(ref.current);
-  }, [card.rarity, motionAllowed]);
+    if (!needsVisibilityEffects || !ref.current) return;
+    return observeCardEffects(ref.current, (isVisible, clockTimeMs) => {
+      if (!isVisible || glitterEffect == null) return;
+      setEffectTimer((current) => ({
+        clockDelay: assetCardEffectClockDelay(clockTimeMs),
+        revision: current.revision + 1
+      }));
+    });
+  }, [glitterEffect, needsVisibilityEffects]);
 
   function move(event: React.PointerEvent<HTMLButtonElement>) {
     if (
@@ -102,13 +172,16 @@ export function AssetCardVisual({
       onTouchStart={warmHighDetail}
       onPointerLeave={animated ? reset : undefined}
       onClick={onClick}
-      style={card.rarity === "legend" ? ({ "--legend-effect-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s` } as React.CSSProperties) : undefined}
+      style={needsVisibilityEffects ? ({
+        "--legend-effect-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s`
+      } as React.CSSProperties) : undefined}
       aria-label={ariaLabel ?? `${card.name}，${rarityLabel}${displayedStarLevel != null ? `，${displayedStarLevel}星` : ""}${owned === false ? "，未获得" : ""}`}
     >
       <span className="asset-card-frame">
         {showMotion
           ? <AssetMotionMedia card={card} className="asset-card-image" eager={highDetail || forceMotion} />
           : <img src={highDetail ? card.imageUrl : (card.thumbnailUrl || card.imageUrl)} alt="" className="asset-card-image" loading={highDetail ? "eager" : "lazy"} decoding="async" draggable={false} />}
+        {glitterEffect && <AssetCardEffectTimer key={effectTimer.revision} effect={glitterEffect} clockDelay={effectTimer.clockDelay} />}
         {!historyCompact && <span className="asset-card-number" aria-hidden="true">NO.{card.cardNo}</span>}
         <span className="asset-card-rarity" aria-hidden="true"><span className="asset-card-rarity-text">{rarityLabel}</span></span>
         <span className="asset-card-caption">

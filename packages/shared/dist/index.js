@@ -1,1 +1,1 @@
-export {};
+export const VIP_GROWTH_LEVELS = [0, 5, 300, 800, 1500, 2800, 4500, 7000, 10000, 15000];

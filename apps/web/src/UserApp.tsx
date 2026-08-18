@@ -7,6 +7,7 @@ import MainLayout from "./layouts/MainLayout";
 import ContentNavLayout from "./layouts/ContentNavLayout";
 import { RouteScrollManager } from "./components/RouteScrollManager";
 import { GlobalNoticeModal } from "./components/GlobalNoticeModal";
+import { VipOnlineBanner } from "./components/VipOnlineBanner";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const DetailPage = lazy(() => import("./pages/DetailPage"));
@@ -62,6 +63,7 @@ export default function UserApp() {
   return (
     <div className="app-shell min-h-screen bg-page">
       <RouteScrollManager />
+      <VipOnlineBanner />
       <ErrorBoundary>
         <Suspense fallback={<RouteFallback />}>
           <Routes>

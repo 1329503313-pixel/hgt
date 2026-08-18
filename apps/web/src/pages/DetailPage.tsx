@@ -9,6 +9,7 @@ import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import { DetailSkeleton } from "../components/Skeletons";
 import { refreshMineContentCache } from "../shared/mineContentCache";
@@ -359,11 +360,9 @@ export default function DetailPage() {
               </button>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-muted">作者 {soup.author} · 发布者</p>
-                <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                  <button className="truncate text-sm font-black text-primary hover:underline" onClick={() => navigate(`/users/${soup.creatorId}`)}>{soup.creatorName}</button>
-                  <LevelBadge level={soup.creatorLevel} />
-                  <EquippedBadgeIcon badge={soup.creatorEquippedBadge} className="h-4 w-4" />
-                </div>
+                <button className="mt-1 block min-w-0 text-left hover:underline" onClick={() => navigate(`/users/${soup.creatorId}`)}>
+                  <VipIdentity nickname={soup.creatorName} userLevel={soup.creatorLevel} vipLevel={soup.creatorVipLevel} vipActive={soup.creatorVipActive} equippedBadge={soup.creatorEquippedBadge} className="text-sm font-black text-primary" />
+                </button>
               </div>
             </div>
           </div>

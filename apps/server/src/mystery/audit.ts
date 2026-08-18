@@ -121,6 +121,7 @@ function turnAuditPayload(row: mysql.RowDataPacket) {
     playerVisiblePacket: row.player_visible_packet == null ? null : jsonValue(row.player_visible_packet),
     narrative: row.narrative ? String(row.narrative) : null,
     createdAt: iso(row.created_at)!,
+    cancelledAt: iso(row.cancelled_at),
     completedAt: iso(row.completed_at),
   };
 }
@@ -134,7 +135,7 @@ export async function getMysteryRunAudit(storyId: string, runId: string) {
   const [turns] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT id, turn_sequence, idempotency_key, raw_input, input_classification, injection_risk, status,
       attempt_count, processing_expires_at, state_version_before, state_version_after,
-      resolution_json, player_visible_packet, narrative, error_code, created_at, completed_at
+      resolution_json, player_visible_packet, narrative, error_code, created_at, cancelled_at, completed_at
      FROM mystery_turns WHERE run_id = ?
      ORDER BY created_at DESC, id DESC LIMIT 50`,
     [runId],

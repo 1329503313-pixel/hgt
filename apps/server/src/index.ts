@@ -113,6 +113,7 @@ import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.j
 import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
 import { registerVipRoutes, syncExpiredVipRoles } from "./vip.js";
+import { vipGrowthSnapshot } from "./vipGrowth.js";
 import {
   consumeDailyEntitlement,
   dailyEntitlementStatus,
@@ -206,8 +207,20 @@ function isUserOnline(userId: unknown) {
   return visiblyOnlineUsers.has(String(userId));
 }
 
-function broadcastPresenceChanged(userId: string, online: boolean) {
-  const payload = { userId, online, at: new Date().toISOString() };
+async function broadcastPresenceChanged(userId: string, online: boolean) {
+  const payload: Record<string, unknown> = { userId, online, at: new Date().toISOString() };
+  if (online) {
+    const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT nickname, role, vip_growth_value, vip_expires_at, vip_legacy_active FROM users WHERE id = ? LIMIT 1",
+      [userId]
+    );
+    if (row) {
+      const vip = vipGrowthSnapshot(row);
+      payload.nickname = String(row.nickname ?? "");
+      payload.vipLevel = vip.level;
+      payload.vipActive = vip.active;
+    }
+  }
   const data = `event: presence_changed\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const clients of userEventClients.values()) {
     for (const client of clients) client.write(data);
@@ -224,7 +237,7 @@ function registerPresenceConnection(userId: string) {
   presenceConnectionCounts.set(userId, (presenceConnectionCounts.get(userId) ?? 0) + 1);
   if (!visiblyOnlineUsers.has(userId)) {
     visiblyOnlineUsers.add(userId);
-    broadcastPresenceChanged(userId, true);
+    void broadcastPresenceChanged(userId, true);
   }
 }
 
@@ -239,7 +252,7 @@ function unregisterPresenceConnection(userId: string) {
   const timer = setTimeout(() => {
     presenceOfflineTimers.delete(userId);
     if ((presenceConnectionCounts.get(userId) ?? 0) > 0 || !visiblyOnlineUsers.delete(userId)) return;
-    broadcastPresenceChanged(userId, false);
+    void broadcastPresenceChanged(userId, false);
   }, 8_000);
   timer.unref();
   presenceOfflineTimers.set(userId, timer);
@@ -890,7 +903,7 @@ async function currentUser(req: express.Request): Promise<AuthenticatedUser | nu
            WHEN role = 'vip' AND vip_legacy_active = 0 AND vip_expires_at IS NOT NULL AND vip_expires_at <= UTC_TIMESTAMP() THEN 'user'
            ELSE role
          END AS role,
-         token_version, created_at, experience,
+         token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
          equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
        FROM users WHERE id = ? LIMIT 1`,
       [claims.id]
@@ -980,12 +993,16 @@ async function recordSoupAutoReject(userId: string, date: string) {
 }
 
 function toUser(row: mysql.RowDataPacket): PublicUser {
+  const vip = vipGrowthSnapshot(row);
   return {
     id: row.id,
     username: row.username,
     nickname: row.nickname,
     avatar: avatarUrl(row.id, row.avatar, Boolean(row.has_avatar)),
     role: normalizeUserRole(row.role),
+    vipGrowthValue: vip.growthValue,
+    vipLevel: vip.level,
+    vipActive: vip.active,
     createdAt: new Date(row.created_at).toISOString(),
     level: levelForExperience(row.experience),
     equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
@@ -1106,6 +1123,19 @@ function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true, cr
     reviewerId: row.reviewer_id,
     reviewerAvatar: avatarUrl(row.reviewer_id, row.reviewer_avatar, bool(row.reviewer_has_avatar)),
     reviewerLevel: levelForExperience(row.reviewer_experience),
+    reviewerVipGrowthValue: Number(row.reviewer_vip_growth_value ?? 0),
+    reviewerVipLevel: vipGrowthSnapshot({
+      role: row.reviewer_role,
+      vip_growth_value: row.reviewer_vip_growth_value,
+      vip_expires_at: row.reviewer_vip_expires_at,
+      vip_legacy_active: row.reviewer_vip_legacy_active
+    }).level,
+    reviewerVipActive: vipGrowthSnapshot({
+      role: row.reviewer_role,
+      vip_growth_value: row.reviewer_vip_growth_value,
+      vip_expires_at: row.reviewer_vip_expires_at,
+      vip_legacy_active: row.reviewer_vip_legacy_active
+    }).active,
     reviewerEquippedBadge: equippedBadge(row.reviewer_badge_key, row.reviewer_badge_icon_url),
     isCreatorEvaluation,
     countsTowardScore,
@@ -1140,6 +1170,19 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     creatorName: row.creator_name,
     creatorAvatar: avatarUrl(row.creator_id, row.creator_avatar, bool(row.creator_has_avatar)),
     creatorLevel: levelForExperience(row.creator_experience),
+    creatorVipGrowthValue: Number(row.creator_vip_growth_value ?? 0),
+    creatorVipLevel: vipGrowthSnapshot({
+      role: row.creator_role,
+      vip_growth_value: row.creator_vip_growth_value,
+      vip_expires_at: row.creator_vip_expires_at,
+      vip_legacy_active: row.creator_vip_legacy_active
+    }).level,
+    creatorVipActive: vipGrowthSnapshot({
+      role: row.creator_role,
+      vip_growth_value: row.creator_vip_growth_value,
+      vip_expires_at: row.creator_vip_expires_at,
+      vip_legacy_active: row.creator_vip_legacy_active
+    }).active,
     creatorEquippedBadge: equippedBadge(row.creator_badge_key, row.creator_badge_icon_url),
     isSurfacePublic: bool(row.is_surface_public),
     isBottomPublic: bool(row.is_bottom_public),
@@ -1193,7 +1236,7 @@ type CertificationSoupSummary = ReturnType<typeof mapSoupSummary> & { enableAiGa
 async function getSoupSummariesWhere(whereSql: string, params: unknown[]): Promise<CertificationSoupSummary[]> {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.role AS creator_role, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.role AS creator_role, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -2187,7 +2230,7 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   await ensureDailyEntitlementGrantForUser(id);
   queueActivityBadgeSync([id]);
 
-  const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null };
+  const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null, vipGrowthValue: 0, vipLevel: 0, vipActive: false };
   const token = signToken({ id, tokenVersion: 0 });
   setAuthCookie(res, token);
   res.json({ user, token });
@@ -2198,7 +2241,7 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   if (!parsed.success) return sendError(res, 400, "请输入账号和密码");
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, password, nickname, role, token_version, created_at, experience,
+    `SELECT id, username, password, nickname, role, token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
        equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
      FROM users WHERE username = ? LIMIT 1`,
     [parsed.data.username]
@@ -2353,7 +2396,7 @@ app.get("/api/me/invited-users", async (req, res) => {
       [user.id]
     ).then(([result]) => result),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT invited.id, invited.nickname, invited.experience, invited.created_at,
+      `SELECT invited.id, invited.nickname, invited.experience, invited.role, invited.vip_growth_value, invited.vip_expires_at, invited.vip_legacy_active, invited.created_at,
         invited.avatar IS NOT NULL AS has_avatar,
         EXISTS(
           SELECT 1 FROM user_identities identity_row
@@ -2375,6 +2418,9 @@ app.get("/api/me/invited-users", async (req, res) => {
       nickname: String(row.nickname),
       avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
       level: levelForExperience(row.experience),
+      vipGrowthValue: Number(row.vip_growth_value ?? 0),
+      vipLevel: vipGrowthSnapshot(row).level,
+      vipActive: vipGrowthSnapshot(row).active,
       emailBound: bool(row.email_bound),
       registeredAt: new Date(row.created_at).toISOString()
     })),
@@ -2553,7 +2599,7 @@ app.get("/api/me/soups", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -2685,7 +2731,7 @@ app.get("/api/users/search", async (req, res) => {
   const likeKeyword = `%${escapedKeyword}%`;
   const prefixKeyword = `${escapedKeyword}%`;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, nickname, avatar, role, created_at, experience, equipped_badge_key, equipped_badge_icon_url
+    `SELECT id, nickname, avatar, role, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active, equipped_badge_key, equipped_badge_icon_url
      FROM users
      WHERE nickname LIKE ?
      ORDER BY CASE WHEN nickname = ? THEN 0 WHEN nickname LIKE ? THEN 1 ELSE 2 END, created_at DESC
@@ -2705,6 +2751,9 @@ app.get("/api/users/search", async (req, res) => {
       role: String(row.role),
       createdAt: new Date(row.created_at).toISOString(),
       level: levelForExperience(row.experience),
+      vipGrowthValue: Number(row.vip_growth_value ?? 0),
+      vipLevel: vipGrowthSnapshot(row).level,
+      vipActive: vipGrowthSnapshot(row).active,
       equippedBadge: equippedBadge(row.equipped_badge_key, row.equipped_badge_icon_url)
     }))
   });
@@ -2714,7 +2763,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const viewer = await requireAuth(req, res);
   if (!viewer) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.charm_value, u.generosity_value, u.equipped_badge_key, u.equipped_badge_icon_url,
+    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.charm_value, u.generosity_value, u.equipped_badge_key, u.equipped_badge_icon_url,
        u.avatar IS NOT NULL AS has_avatar, u.profile_background IS NOT NULL AS has_profile_background,
        u.profile_background_updated_at, u.profile_background_crop_x, u.profile_background_crop_y, u.profile_background_zoom,
        c.id AS background_card_id, c.name AS background_card_name, c.rarity AS background_card_rarity,
@@ -2737,7 +2786,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const offset = Math.max(0, Number.isFinite(requestedOffset) ? Math.floor(requestedOffset) : 0);
   const soupPromise = includeSoups ? pool.query<mysql.RowDataPacket[]>(
       `SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-        u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+        u.experience AS creator_experience, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
         (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
         (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
         EXISTS (SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,
@@ -2994,6 +3043,9 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
       id: String(row.sender_id),
       nickname: String(row.sender_nickname),
       level: levelForExperience(row.sender_experience),
+      vipGrowthValue: Number(row.sender_vip_growth_value ?? 0),
+      vipLevel: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).level,
+      vipActive: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).active,
       avatar: avatarUrl(row.sender_id, row.sender_avatar, bool(row.sender_has_avatar)),
       equippedBadge: equippedBadge(row.sender_badge_key, row.sender_badge_icon_url),
       isOnline: isUserOnline(row.sender_id)
@@ -3028,6 +3080,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
 async function circleMembers(circleId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT u.id, u.nickname, u.avatar, u.created_at, u.role, u.experience,
+       u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active,
        u.equipped_badge_key, u.equipped_badge_icon_url, m.joined_at
      FROM circle_members m
      INNER JOIN users u ON u.id = m.user_id
@@ -3253,7 +3306,9 @@ app.get("/api/circles/:id/messages", async (req, res) => {
   }
   params.push(limit + 1);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, u.role AS sender_role,
+       u.vip_growth_value AS sender_vip_growth_value, u.vip_expires_at AS sender_vip_expires_at, u.vip_legacy_active AS sender_vip_legacy_active,
+       NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
        reply.id AS reply_id, reply.message_sequence AS reply_sequence,
        reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
@@ -3429,7 +3484,9 @@ app.post("/api/circles/:id/messages", async (req, res) => {
     recordUserBehavior("speak_circle");
   }
   const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, u.role AS sender_role,
+       u.vip_growth_value AS sender_vip_growth_value, u.vip_expires_at AS sender_vip_expires_at, u.vip_legacy_active AS sender_vip_legacy_active,
+       NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
        reply.id AS reply_id, reply.message_sequence AS reply_sequence,
        reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
@@ -3508,7 +3565,9 @@ app.get("/api/admin/circles/:id/messages", async (req, res) => {
   }
   params.push(51);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, u.role AS sender_role,
+       u.vip_growth_value AS sender_vip_growth_value, u.vip_expires_at AS sender_vip_expires_at, u.vip_legacy_active AS sender_vip_legacy_active,
+       NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
        reply.id AS reply_id, reply.message_sequence AS reply_sequence,
        reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,
@@ -3740,7 +3799,7 @@ app.get("/api/conversations", async (req, res) => {
   if (!user) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
      `SELECT c.id, c.last_message_at,
-       u.id AS other_id, u.nickname AS other_nickname, u.experience AS other_experience, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
+       u.id AS other_id, u.nickname AS other_nickname, u.experience AS other_experience, u.role AS other_role, u.vip_growth_value AS other_vip_growth_value, u.vip_expires_at AS other_vip_expires_at, u.vip_legacy_active AS other_vip_legacy_active, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
        u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url,
        pm.content AS last_content, pm.message_type AS last_message_type, pm.sticker_id AS last_sticker_id,
        pm.recalled_at AS last_recalled_at,
@@ -3761,7 +3820,7 @@ app.get("/api/conversations", async (req, res) => {
   res.json({ conversations: rows.map((row) => ({
     id: String(row.id),
     otherUser: {
-      ...conversationOtherUserIdentity(row.other_id, row.other_nickname, row.other_experience),
+      ...conversationOtherUserIdentity(row.other_id, row.other_nickname, row.other_experience, { role: row.other_role, vip_growth_value: row.other_vip_growth_value, vip_expires_at: row.other_vip_expires_at, vip_legacy_active: row.other_vip_legacy_active }),
       avatar: avatarUrl(row.other_id, row.other_avatar, bool(row.other_has_avatar)),
       equippedBadge: equippedBadge(row.other_badge_key, row.other_badge_icon_url),
       isOnline: isUserOnline(row.other_id)
@@ -3854,7 +3913,7 @@ app.get("/api/messages/unread-counts", async (req, res) => {
 async function conversationForUser(conversationId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT c.*, u.id AS other_id, u.nickname AS other_nickname, NULL AS other_avatar, u.avatar IS NOT NULL AS other_has_avatar,
-       u.experience AS other_experience,
+       u.experience AS other_experience, u.role AS other_role, u.vip_growth_value AS other_vip_growth_value, u.vip_expires_at AS other_vip_expires_at, u.vip_legacy_active AS other_vip_legacy_active,
        u.equipped_badge_key AS other_badge_key, u.equipped_badge_icon_url AS other_badge_icon_url,
        EXISTS(SELECT 1 FROM user_follows follow_state WHERE follow_state.follower_id = ? AND follow_state.following_id = u.id) AS is_following
      FROM conversations c
@@ -3904,7 +3963,7 @@ app.get("/api/conversations/:id/messages", async (req, res) => {
     conversation: {
       id: String(conversation.id),
       otherUser: {
-        ...conversationOtherUserIdentity(conversation.other_id, conversation.other_nickname, conversation.other_experience),
+        ...conversationOtherUserIdentity(conversation.other_id, conversation.other_nickname, conversation.other_experience, { role: conversation.other_role, vip_growth_value: conversation.other_vip_growth_value, vip_expires_at: conversation.other_vip_expires_at, vip_legacy_active: conversation.other_vip_legacy_active }),
         avatar: avatarUrl(conversation.other_id, conversation.other_avatar, bool(conversation.other_has_avatar)),
         equippedBadge: equippedBadge(conversation.other_badge_key, conversation.other_badge_icon_url),
         isOnline: isUserOnline(conversation.other_id),
@@ -4124,7 +4183,7 @@ app.get("/api/me/badge-collection", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
   const [unlockRows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT badge_key FROM user_badge_unlocks WHERE user_id = ? ORDER BY unlocked_at DESC",
+    "SELECT badge_key, unlocked_at FROM user_badge_unlocks WHERE user_id = ? ORDER BY unlocked_at DESC",
     [user.id]
   );
   const [legendaryRows] = await pool.query<mysql.RowDataPacket[]>(
@@ -4142,6 +4201,10 @@ app.get("/api/me/badge-collection", async (req, res) => {
   );
   res.json({
     badgeKeys: unlockRows.map((row) => String(row.badge_key)),
+    unlockDates: Object.fromEntries(unlockRows.map((row) => [
+      String(row.badge_key),
+      new Date(row.unlocked_at).toISOString()
+    ])),
     ownershipRates: cachedBadgeOwnershipRates(),
     legendaryBadges: legendaryRows.map((row) => ({
       id: String(row.id),
@@ -4197,6 +4260,8 @@ type AchievementRankingItem = {
   nickname: string;
   avatar: string | null;
   achievementPoints: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type LevelRankingItem = {
@@ -4206,6 +4271,8 @@ type LevelRankingItem = {
   avatar: string | null;
   level: number;
   experience: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type CharmRankingItem = {
@@ -4214,6 +4281,8 @@ type CharmRankingItem = {
   nickname: string;
   avatar: string | null;
   charmValue: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type GenerosityRankingItem = {
@@ -4222,6 +4291,8 @@ type GenerosityRankingItem = {
   nickname: string;
   avatar: string | null;
   generosityValue: number;
+  vipLevel: number;
+  vipActive: boolean;
 };
 
 type RankingPeriod = "7d" | "30d" | "all";
@@ -4299,7 +4370,7 @@ app.get("/api/rankings", async (req, res) => {
     );
 
     const [achievementRows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+      `SELECT u.id, u.nickname, u.role, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.created_at, u.avatar IS NOT NULL AS has_avatar,
          ubu.badge_key, ubu.unlocked_at,
          lb.achievement_points AS legendary_points
        FROM users u
@@ -4310,7 +4381,7 @@ app.get("/api/rankings", async (req, res) => {
     );
 
     const [levelRows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.experience, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+      `SELECT u.id, u.nickname, u.role, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.experience, u.created_at, u.avatar IS NOT NULL AS has_avatar,
          COALESCE(task_gain.value, 0) + COALESCE(beginner_gain.value, 0)
            + COALESCE(adjustment_gain.value, 0) + COALESCE(invite_email_gain.value, 0)
            + COALESCE(invite_milestone_gain.value, 0) AS period_experience,
@@ -4351,7 +4422,7 @@ app.get("/api/rankings", async (req, res) => {
     );
 
     const [charmRows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.charm_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+      `SELECT u.id, u.nickname, u.role, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.charm_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
          COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_charm,
          MAX(CASE WHEN gs.created_at >= ? THEN gs.created_at END) AS reached_at
        FROM users u
@@ -4363,7 +4434,7 @@ app.get("/api/rankings", async (req, res) => {
     );
 
     const [generosityRows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, u.generosity_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
+      `SELECT u.id, u.nickname, u.role, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.generosity_value, u.created_at, u.avatar IS NOT NULL AS has_avatar,
          COALESCE(SUM(CASE WHEN gs.created_at >= ? THEN gs.total_reward_charm ELSE 0 END), 0) AS period_generosity,
          MAX(CASE WHEN gs.created_at >= ? THEN gs.created_at END) AS reached_at
        FROM users u
@@ -4374,7 +4445,7 @@ app.get("/api/rankings", async (req, res) => {
       [cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
 
-    const users = new Map<string, { id: string; nickname: string; avatar: string | null; achievementPoints: number; reachedAt: number; createdAt: number }>();
+    const users = new Map<string, { id: string; nickname: string; avatar: string | null; achievementPoints: number; reachedAt: number; createdAt: number; vipLevel: number; vipActive: boolean }>();
     for (const row of achievementRows) {
       const id = String(row.id);
       const createdAt = new Date(row.created_at).getTime();
@@ -4384,7 +4455,9 @@ app.get("/api/rankings", async (req, res) => {
         avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
         achievementPoints: 0,
         reachedAt: createdAt,
-        createdAt
+        createdAt,
+        vipLevel: vipGrowthSnapshot(row).level,
+        vipActive: vipGrowthSnapshot(row).active
       };
       if (row.badge_key && (!cutoff || new Date(row.unlocked_at).getTime() >= cutoff.getTime())) {
         const key = String(row.badge_key);
@@ -4435,7 +4508,9 @@ app.get("/api/rankings", async (req, res) => {
         id: item.id,
         nickname: item.nickname,
         avatar: item.avatar,
-        achievementPoints: item.achievementPoints
+        achievementPoints: item.achievementPoints,
+        vipLevel: item.vipLevel,
+        vipActive: item.vipActive
       }));
     const levelUsers = levelRows.map((row) => {
       const totalExperience = Math.max(0, Math.floor(Number(row.experience) || 0));
@@ -4445,6 +4520,8 @@ app.get("/api/rankings", async (req, res) => {
         avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
         level: levelForExperience(totalExperience),
         experience: cutoff ? Math.floor(Number(row.period_experience) || 0) : totalExperience,
+        vipLevel: vipGrowthSnapshot(row).level,
+        vipActive: vipGrowthSnapshot(row).active,
         reachedAt: new Date(row.reached_at ?? row.created_at).getTime(),
         createdAt: new Date(row.created_at).getTime()
       };
@@ -4458,6 +4535,8 @@ app.get("/api/rankings", async (req, res) => {
         nickname: String(row.nickname),
         avatar: avatarUrl(row.id, null, bool(row.has_avatar)),
         charmValue: cutoff ? Math.floor(Number(row.period_charm) || 0) : Math.floor(Number(row.charm_value) || 0),
+        vipLevel: vipGrowthSnapshot(row).level,
+        vipActive: vipGrowthSnapshot(row).active,
         reachedAt: new Date(row.reached_at ?? row.created_at).getTime(),
         createdAt: new Date(row.created_at).getTime()
       }))
@@ -4472,6 +4551,8 @@ app.get("/api/rankings", async (req, res) => {
         generosityValue: cutoff
           ? Math.floor(Number(row.period_generosity) || 0)
           : Math.floor(Number(row.generosity_value) || 0),
+        vipLevel: vipGrowthSnapshot(row).level,
+        vipActive: vipGrowthSnapshot(row).active,
         reachedAt: new Date(row.reached_at ?? row.created_at).getTime(),
         createdAt: new Date(row.created_at).getTime()
       }))
@@ -4522,7 +4603,7 @@ app.get("/api/me/favorites", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -4554,7 +4635,7 @@ app.get("/api/me/evaluations", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e2.id) AS evaluation_count,
@@ -4751,7 +4832,7 @@ app.get("/api/soups", async (req, res) => {
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.enable_ai_game, s.view_count, s.created_at,
       s.review_status, s.review_reason, s.review_version,
       NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.role AS creator_role, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.role AS creator_role, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       ${user ? `EXISTS(SELECT 1 FROM soup_likes WHERE soup_id = s.id AND user_id = ?) AS is_liked,` : "FALSE AS is_liked,"}
@@ -4971,7 +5052,7 @@ app.get("/api/soups/:id", async (req, res) => {
   const [[statsRows], [evalRows], full] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(`
     SELECT s.id, s.view_count, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
-      u.experience AS creator_experience, u.role AS creator_role, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
+      u.experience AS creator_experience, u.role AS creator_role, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -4992,6 +5073,10 @@ app.get("/api/soups/:id", async (req, res) => {
     [req.params.id]),
     pool.query<mysql.RowDataPacket[]>(`SELECT e.*, NULL AS reviewer_avatar, reviewer.avatar IS NOT NULL AS reviewer_has_avatar,
        reviewer.experience AS reviewer_experience,
+       reviewer.role AS reviewer_role,
+       reviewer.vip_growth_value AS reviewer_vip_growth_value,
+       reviewer.vip_expires_at AS reviewer_vip_expires_at,
+       reviewer.vip_legacy_active AS reviewer_vip_legacy_active,
        reviewer.equipped_badge_key AS reviewer_badge_key,
        reviewer.equipped_badge_icon_url AS reviewer_badge_icon_url
      FROM evaluations e
@@ -5135,7 +5220,7 @@ app.get("/api/me/likes", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
     SELECT ${soupSummaryColumns("s")}, NULL AS creator_avatar, u2.avatar IS NOT NULL AS creator_has_avatar,
-      u2.experience AS creator_experience, u2.equipped_badge_key AS creator_badge_key, u2.equipped_badge_icon_url AS creator_badge_icon_url,
+       u2.experience AS creator_experience, u2.vip_growth_value AS creator_vip_growth_value, u2.vip_expires_at AS creator_vip_expires_at, u2.vip_legacy_active AS creator_vip_legacy_active, u2.equipped_badge_key AS creator_badge_key, u2.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
       COUNT(e.id) AS evaluation_count,
@@ -6930,7 +7015,8 @@ app.get("/api/admin/users", async (req, res) => {
     charmValue: "u.charm_value",
     collectionValue: "collection_value",
     achievementPoints: "achievement_points",
-    experience: "u.experience"
+    experience: "u.experience",
+    vipGrowth: "u.vip_growth_value"
   };
   const sortColumn = sortColumns[String(req.query.sortBy ?? "createdAt")] ?? sortColumns.createdAt;
   const sortOrder = req.query.sortOrder === "asc" ? "ASC" : "DESC";
@@ -6943,7 +7029,7 @@ app.get("/api/admin/users", async (req, res) => {
     : "";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at, u.shell_balance,
-      u.experience, u.charm_value, COALESCE(uas.total_collection_value, 0) AS collection_value,
+      u.experience, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.charm_value, COALESCE(uas.total_collection_value, 0) AS collection_value,
       EXISTS (
         SELECT 1 FROM user_login_days uld
         WHERE uld.user_id = u.id
@@ -7317,7 +7403,9 @@ registerGiftRoutes(app, {
   },
   onCircleGift: async (circleId, messageId, senderId) => {
     const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
+    `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, u.role AS sender_role,
+       u.vip_growth_value AS sender_vip_growth_value, u.vip_expires_at AS sender_vip_expires_at, u.vip_legacy_active AS sender_vip_legacy_active,
+       NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
          u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
          reply.id AS reply_id, reply.message_sequence AS reply_sequence,
          reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_nickname,

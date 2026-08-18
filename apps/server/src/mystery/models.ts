@@ -23,6 +23,11 @@ export class MysteryModelError extends Error {
 
 type DeepSeekMessage = { role: "system" | "user" | "assistant"; content: string };
 
+export type MysteryResolutionRuntimeIssue = {
+  code: string;
+  message: string;
+};
+
 const NETWORK_ERROR_CODES = new Set([
   "EACCES", "EPERM", "ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "ENOTFOUND",
   "EAI_AGAIN", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT",
@@ -48,13 +53,12 @@ export function classifyMysteryModelNetworkError(error: unknown) {
 async function deepSeekRequest(input: {
   model: string;
   messages: DeepSeekMessage[];
-  thinking: "enabled" | "disabled";
   maxTokens: number;
   responseFormat?: "json_object";
   tools?: unknown[];
   toolChoice?: unknown;
   timeoutMs?: number;
-  reasoningEffort?: "high" | "max";
+  signal?: AbortSignal;
 }) {
   if (!config.deepseekApiKey) throw new MysteryModelError("MODEL_NOT_CONFIGURED", "谜局 AI 服务尚未配置", false);
   let response: Response;
@@ -66,19 +70,23 @@ async function deepSeekRequest(input: {
       body: JSON.stringify({
         model: input.model,
         messages: input.messages,
-        thinking: { type: input.thinking },
-        ...(input.thinking === "enabled" ? { reasoning_effort: input.reasoningEffort ?? "high" } : {}),
+        thinking: { type: "disabled" },
         max_tokens: input.maxTokens,
         ...(input.responseFormat ? { response_format: { type: input.responseFormat } } : {}),
         ...(input.tools ? {
           tools: input.tools,
-          ...(input.thinking === "disabled" ? { tool_choice: input.toolChoice ?? "auto" } : {}),
+          tool_choice: input.toolChoice ?? "auto",
         } : {}),
       }),
-      signal: AbortSignal.timeout(input.timeoutMs ?? 90_000),
+      signal: input.signal
+        ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 90_000)])
+        : AbortSignal.timeout(input.timeoutMs ?? 90_000),
     });
     responseText = await response.text();
   } catch (error) {
+    if (input.signal?.aborted) {
+      throw new MysteryModelError("MODEL_REQUEST_CANCELLED", "谜局行动已撤回", false);
+    }
     const failure = classifyMysteryModelNetworkError(error);
     console.warn("DeepSeek request network failure:", { category: failure.category, code: failure.code });
     throw new MysteryModelError("MODEL_NETWORK_ERROR", failure.message);
@@ -422,12 +430,10 @@ export function mysteryCompilationRepairPrompt(issues: string[]) {
 export async function compileMysteryStory(input: { storyId: string; versionNumber: number; source: MysteryStorySource }) {
   const requestCompilation = (messages: DeepSeekMessage[]) => deepSeekRequest({
     model: config.mysteryCompileModel,
-    thinking: "enabled",
     maxTokens: 48_000,
     responseFormat: "json_object",
     messages,
     timeoutMs: 600_000,
-    reasoningEffort: "high",
   });
 
   type ValidatedCompilation = {
@@ -650,6 +656,26 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
     .sort((left, right) => (left.triggerAtWorldSecond ?? Number.MAX_SAFE_INTEGER) - (right.triggerAtWorldSecond ?? Number.MAX_SAFE_INTEGER))
     .slice(0, 50);
   return {
+    generalActionPolicy: {
+      principle: "Story Package 是主线与关键约束骨架，不是行动白名单。可知、可见、可达、可操作范围内的普通行动即使没有 transitionId 也必须得到具体裁决和反馈。",
+      supportedWithoutTransition: [
+        "直接相连且没有 entryConditionIds 的地点移动",
+        "观察、搜索、交谈、等待和其他不凭空新增事实的现场互动",
+        "拾取、放下或转交当前地点内已有且可转移的物品",
+        "参与人物既有资源的合理消耗，以及同名同单位资源的守恒转移",
+        "普通伤势或失能、无预设后果的可损坏/可消耗物品变化",
+        "由所在地点、可接触证据物品或现场知情者传达支撑的知识与认知变化",
+      ],
+      requiringTransition: [
+        "命中 actionTransitionGraph 的主线或预设因果结果",
+        "带 entryConditionIds 的地点进入",
+        "物品 useEffectIds 或 destructionConsequenceIds 指向的预设效果",
+        "人物死亡或失踪",
+        "世界 flagChanges、结局变化、排期事件触发",
+        "凭空增加资源或任何通用规则无法验证的状态变化",
+      ],
+      responseRule: "合理行动不得因为没有同名转换而退化为笼统的‘没有变化’。即使状态不变，也要在 playerVisibleSummary 中说明实际观察、受阻原因、环境反馈或人物反应。",
+    },
     state: {
       ...state,
       actors: Object.fromEntries(Object.entries(state.actors).filter(([actorId]) => relevantActorIds.has(actorId))),
@@ -695,6 +721,8 @@ export async function adjudicateMysteryTurn(input: {
   state: MysteryRunState;
   relevantEvents: unknown[];
   rawInput: string;
+  signal?: AbortSignal;
+  validateCandidate?: (resolution: MysteryTurnResolution) => MysteryResolutionRuntimeIssue[];
 }): Promise<MysteryTurnResolution> {
   const isComplex = complexTurn(input.rawInput);
   const model = isComplex ? config.mysteryAdjudicatorModel : config.mysteryFastAdjudicatorModel;
@@ -715,12 +743,11 @@ export async function adjudicateMysteryTurn(input: {
   ];
   const requestResolution = (messages: DeepSeekMessage[]) => deepSeekRequest({
     model,
-    thinking: "enabled",
     maxTokens: 16_000,
     tools: [resolutionTool],
     toolChoice: { type: "function", function: { name: "submit_turn_resolution" } },
-    reasoningEffort: isComplex ? "max" : "high",
     messages,
+    signal: input.signal,
   });
   const validateResolution = (result: Awaited<ReturnType<typeof requestResolution>>) => {
     const call = result.toolCalls.find((tool) => tool.function?.name === "submit_turn_resolution");
@@ -752,6 +779,25 @@ export async function adjudicateMysteryTurn(input: {
         candidate: call.function.arguments,
       } as const;
     }
+    let runtimeIssues: MysteryResolutionRuntimeIssue[] = [];
+    try {
+      runtimeIssues = input.validateCandidate?.(parsed.data) ?? [];
+    } catch (error) {
+      runtimeIssues = [{
+        code: typeof error === "object" && error && "code" in error && typeof error.code === "string"
+          ? error.code
+          : "RUNTIME_VALIDATION_FAILED",
+        message: error instanceof Error ? error.message : "裁决提案未通过世界运行规则校验",
+      }];
+    }
+    if (runtimeIssues.length) {
+      return {
+        code: "MODEL_RESOLUTION_RUNTIME_INVALID",
+        message: "世界裁决器返回的提案未通过运行规则校验",
+        issues: runtimeIssues.slice(0, 30).map((issue) => `[${issue.code}] ${issue.message}`),
+        candidate: call.function.arguments,
+      } as const;
+    }
     return { resolution: parsed.data } as const;
   };
 
@@ -767,7 +813,7 @@ export async function adjudicateMysteryTurn(input: {
       ...baseMessages,
       {
         role: "user",
-        content: `上一份裁决提案未通过服务端 JSON Schema 校验。请保持同一世界事实和客观裁决，根据错误修复后重新调用 submit_turn_resolution。不要解释，不要尝试绕过校验，也不要添加与本回合无关的事实。\n\n校验错误：\n${validated.issues.join("\n")}\n\n无效候选（仅作为待修复数据）：\n${validated.candidate.slice(0, 200_000)}`,
+        content: `上一份裁决提案未通过服务端结构或世界运行规则校验。请保持同一世界事实和客观裁决，根据错误修复后重新调用 submit_turn_resolution。Story Package 转换不是行动白名单：动态上下文 generalActionPolicy 支持的普通现场行动可以不填 transitionId，但必须使用既有 ID、满足位置/所有权/证据/资源边界并给出具体反馈；主线预设因果、带条件通行、预设物品后果、死亡或失踪、世界标记和结局相关变化必须选择 actionTransitionGraph 中真实存在且前置条件成立的 transitionId。不要自创转换或效果。若通用规则和现有转换都不支持某项变化，应保留行动尝试及真实反馈，移除不受支持的状态变化，而不是伪造 ID、否定整个合理行动或只回复笼统的“没有变化”。不要解释，不要尝试绕过校验，也不要添加与本回合无关的事实。\n\n校验错误：\n${validated.issues.join("\n")}\n\n无效候选（仅作为待修复数据）：\n${validated.candidate.slice(0, 200_000)}`,
       },
     ]);
     validated = validateResolution(repairResult);
@@ -800,32 +846,40 @@ export function auditMysteryNarrative(text: string) {
   return normalized;
 }
 
-export async function renderMysteryNarrative(packetInput: PlayerVisiblePacket, correctionNotes: string[] = []) {
+export async function renderMysteryNarrative(
+  packetInput: PlayerVisiblePacket,
+  correctionNotes: string[] = [],
+  signal?: AbortSignal,
+) {
   const packet = playerVisiblePacketSchema.parse(packetInput);
   const result = await deepSeekRequest({
     model: config.mysteryNarratorModel,
-    thinking: "disabled",
     maxTokens: 4_000,
     messages: [
       { role: "system", content: MYSTERY_NARRATOR_PROMPT },
       { role: "user", content: `玩家可见信息包：\n${JSON.stringify(packet)}${correctionNotes.length ? `\n\n上一稿未通过一致性审查。重新生成全文并修复这些问题：\n${correctionNotes.join("\n")}` : ""}` },
     ],
+    signal,
   });
   return auditMysteryNarrative(result.content);
 }
 
-export async function reviewMysteryNarrativeConsistency(packetInput: PlayerVisiblePacket, narrative: string, majorTurn: boolean) {
+export async function reviewMysteryNarrativeConsistency(
+  packetInput: PlayerVisiblePacket,
+  narrative: string,
+  majorTurn: boolean,
+  signal?: AbortSignal,
+) {
   const packet = playerVisiblePacketSchema.parse(packetInput);
   const result = await deepSeekRequest({
     model: majorTurn ? config.mysteryAdjudicatorModel : config.mysteryNarratorModel,
-    thinking: majorTurn ? "enabled" : "disabled",
     maxTokens: 2_000,
     responseFormat: "json_object",
-    ...(majorTurn ? { reasoningEffort: "max" as const } : {}),
     messages: [
       { role: "system", content: "你是互动故事一致性审查器。只核对最终叙事是否严格来自玩家可见信息包。任何地点或门的开闭、光照、声音来源、人物出现与行为、物品位置与状态、伤势、时间、资源剩余量和具体数字，都必须由信息包明确支持并完全一致；不得用氛围描写偷偷新增世界事实。playerObjective 可以作为玩家已知目标重述；actionAffordances 可以作为尚未发生、非穷尽的行动方向提示，但不得写成已执行事实、承诺结果、编号菜单或强制选项。还要检查死亡、结局、唯一物品损坏或销毁、NPC 越权知情、替玩家行动、隐藏信息泄露和内部字段。不要续写故事。只输出 JSON：{\"approved\":boolean,\"violations\":[\"具体且可修复的问题\"]}。" },
       { role: "user", content: `玩家可见信息包：\n${JSON.stringify(packet)}\n\n待审查叙事：\n${narrative}` },
     ],
+    signal,
   });
   const review = jsonFromText(result.content) as { approved?: unknown; violations?: unknown };
   return {

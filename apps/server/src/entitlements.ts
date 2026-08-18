@@ -5,6 +5,7 @@ import { z } from "zod";
 import { pool } from "./db.js";
 import { MAX_EXPERIENCE } from "./levelSystem.js";
 import { isSuperAdminRole, normalizeUserRole, type UserRole } from "./roles.js";
+import { settleVipGrowthThroughDate, vipBenefitValue, vipGrowthSnapshot } from "./vipGrowth.js";
 
 export type EntitlementTier = "user" | "vip";
 
@@ -229,6 +230,35 @@ export async function entitlementLimitForRole(role: EntitlementRoleInput, metric
   return plan[metricPlanKey[metric]] as number | null;
 }
 
+async function effectiveEntitlementPlanForUser(
+  userId: string,
+  role: EntitlementRoleInput,
+  connection: QueryConnection,
+  now = new Date()
+) {
+  const tier = entitlementTierForRole(role);
+  if (!tier) return { tier: null, plan: null } as const;
+  const current = await effectiveEntitlementPlans(now);
+  const base = current.plans[tier];
+  if (tier !== "vip") return { tier, plan: base } as const;
+  const [rows] = await connection.query<mysql.RowDataPacket[]>(
+    `SELECT role, vip_expires_at, vip_legacy_active, vip_growth_value
+     FROM users WHERE id = ? LIMIT 1`,
+    [userId]
+  );
+  const snapshot = vipGrowthSnapshot(rows[0] ?? { role, vip_growth_value: 0 });
+  if (!snapshot.active) return { tier, plan: base } as const;
+  return {
+    tier,
+    plan: {
+      ...base,
+      dailyAutoShellGrant: vipBenefitValue(base.dailyAutoShellGrant, snapshot.level) ?? 0,
+      dailyAutoExperienceGrant: vipBenefitValue(base.dailyAutoExperienceGrant, snapshot.level) ?? 0,
+      dailyExtraFreeDraws: vipBenefitValue(base.dailyExtraFreeDraws, snapshot.level)
+    }
+  } as const;
+}
+
 async function existingEventAmount(connection: QueryConnection, userId: string, date: string, metric: EntitlementMetric, eventKey: string) {
   const [rows] = await connection.query<mysql.RowDataPacket[]>(
     `SELECT granted_amount FROM entitlement_daily_events
@@ -255,7 +285,8 @@ async function reserveDailyAmount(options: {
   const duplicateAmount = await existingEventAmount(connection, userId, date, metric, eventKey);
   if (duplicateAmount != null) return { grantedAmount: duplicateAmount, duplicate: true };
 
-  const limit = await entitlementLimitForRole(role, metric, options.now);
+  const { plan } = await effectiveEntitlementPlanForUser(userId, role, connection, options.now);
+  const limit = plan ? plan[metricPlanKey[metric]] as number | null : null;
   let grantedAmount = requestedAmount;
   if (limit != null) {
     await connection.query(
@@ -337,7 +368,8 @@ export async function capDailyEntitlement(
 
 export async function dailyEntitlementStatus(userId: string, role: EntitlementRoleInput, metric: EntitlementMetric, now = new Date()) {
   const date = beijingEntitlementDate(now);
-  const limit = await entitlementLimitForRole(role, metric, now);
+  const { plan } = await effectiveEntitlementPlanForUser(userId, role, pool, now);
+  const limit = plan ? plan[metricPlanKey[metric]] as number | null : null;
   if (limit == null) return { allowed: true, used: 0, remaining: null, limit: null };
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT used_amount FROM entitlement_daily_usage
@@ -362,7 +394,7 @@ export async function ensureDailyEntitlementGrantForUser(userId: string, now = n
   try {
     await connection.beginTransaction();
     const [rows] = await connection.query<mysql.RowDataPacket[]>(
-      `SELECT id, role, vip_expires_at, vip_legacy_active, shell_balance, experience
+      `SELECT id, role, vip_expires_at, vip_legacy_active, vip_growth_value, shell_balance, experience
        FROM users WHERE id = ? LIMIT 1 FOR UPDATE`,
       [userId]
     );
@@ -371,14 +403,18 @@ export async function ensureDailyEntitlementGrantForUser(userId: string, now = n
       await connection.rollback();
       return;
     }
+    await settleVipGrowthThroughDate(connection, user, date);
     const role = effectiveRoleFromUserRow(user);
     const tier = entitlementTierForRole(role);
     if (!tier) {
       await connection.commit();
       return;
     }
-    const current = await effectiveEntitlementPlans(now);
-    const plan = current.plans[tier];
+    const { plan } = await effectiveEntitlementPlanForUser(userId, role, connection, now);
+    if (!plan) {
+      await connection.commit();
+      return;
+    }
     await connection.query(
       `INSERT IGNORE INTO entitlement_daily_grants
        (user_id, grant_date, shell_target_processed, experience_target_processed, shell_actual_granted, experience_actual_granted, tier)

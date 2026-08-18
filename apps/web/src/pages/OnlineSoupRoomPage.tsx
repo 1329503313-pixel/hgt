@@ -6,6 +6,7 @@ import { Modal } from "../components/Modal";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 import { OnlineSoupInviteModal } from "../components/OnlineSoupInviteModal";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
@@ -20,6 +21,7 @@ import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
 import { isOnlineSoupAlreadyExited } from "../shared/onlineSoupExit";
 import { giftTimelineEntries } from "../shared/giftTimeline";
 import { onlineSoupAnswerPrefix } from "../shared/onlineSoupAnswerLabel";
+import { copyTextToClipboard } from "../shared/clipboard";
 import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
@@ -1488,7 +1490,7 @@ export default function OnlineSoupRoomPage() {
                   key={message.id}
                   className={`scroll-mt-24 rounded-2xl transition duration-500 ${highlightedMessageId === message.id ? "bg-violet-100/80 ring-2 ring-violet-400 ring-offset-4" : ""}`}
                 >
-                  <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={canHumanHost} mysteryMode={mysteryMode} canRetryAi={!mysteryMode && snapshot.me.isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
+                  <MessageItem message={message} currentUserId={user?.id ?? ""} isHost={canHumanHost} mysteryMode={mysteryMode} canRetryAi={!mysteryMode && snapshot.me.isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onCopy={async (copyText) => { try { await copyTextToClipboard(copyText); showToast("消息已复制"); } catch { showToast("复制失败，请稍后重试"); } }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
                 </div>;
               })}
             </div>
@@ -1502,7 +1504,7 @@ export default function OnlineSoupRoomPage() {
             </button>}
           </div>
           {canDiscuss && <div className="relative shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
-            {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-40 border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-bold text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} /></span></span></button>)}</div></div>}
+            {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-40 border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full" /></span></button>)}</div></div>}
             {replyingTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-2"><Reply size={16} className="shrink-0 text-primary" /><p className="min-w-0 flex-1 truncate text-xs text-muted"><span className="font-bold text-primary">回复 {replyingTo.senderName ?? "已注销用户"}：</span>{onlineMessagePreview(replyingTo)}</p><button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-white hover:text-ink" onClick={() => setReplyingTo(null)} aria-label="取消回复"><X size={16} /></button></div>}
             <div className="flex items-end gap-1">
               {(mysteryMode ? isHost : snapshot.me.role === "player") && <div className="relative shrink-0">
@@ -1638,7 +1640,7 @@ function HonorCandidateAvatar({ avatar, nickname, small = false }: { avatar: str
 }
 
 function MemberRow({ member, onOpenUser, canManage }: { member: OnlineSoupSnapshot["members"][number]; onOpenUser: (id: string) => void; canManage: boolean }) {
-  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={canManage ? `管理成员${member.nickname}` : `查看${member.nickname}的主页`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}</button><div className="flex min-w-0 flex-1 items-center gap-1.5"><span className="truncate font-bold text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" /></div>{member.role === "host" && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 主持人</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
+  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={canManage ? `管理成员${member.nickname}` : `查看${member.nickname}的主页`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}</button><div className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full" /></div>{member.role === "host" && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 主持人</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
 }
 
 function ProgressQuestionCard({
@@ -1728,11 +1730,11 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
   return <button className={`group relative grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-full border px-1 text-center text-[12px] font-black leading-[1.25] ring-1 ring-white/80 transition duration-200 hover:-translate-y-1 hover:scale-[1.03] active:translate-y-0 active:scale-95 ${tones[tone]}`} onClick={onClick} aria-label={label} title={label}><span className="pointer-events-none absolute inset-1 rounded-full border border-white/80" /><span className="pointer-events-none absolute inset-0 grid place-items-center opacity-[0.12] transition duration-200 group-hover:scale-110 group-hover:opacity-[0.18]">{icon}</span><span className="relative drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]">{lines.map((line) => <span className="block" key={line}>{line}</span>)}</span></button>;
 }
 
-const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, mysteryMode, canRetryAi, canReply, onAnswer, onRetryAi, retryingAi, onRecall, onReply, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; mysteryMode: boolean; canRetryAi: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
+const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, mysteryMode, canRetryAi, canReply, onAnswer, onRetryAi, retryingAi, onRecall, onReply, onCopy, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; isHost: boolean; mysteryMode: boolean; canRetryAi: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onCopy: (copyText: string) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
-  if (message.type === "system") return <div className="py-1 text-center text-xs font-bold text-muted">— {message.content} {message.targetMessageId && !isHost && <button type="button" className="ml-1 font-black text-primary underline-offset-2 hover:underline" onClick={() => void onLocate(message.targetMessageId!)} aria-label={`定位到${message.content.match(/#\d+/)?.[0] ?? "被变更回答的提问"}`}>【定位】</button>} —</div>;
+  if (message.type === "system") return <div className="py-1 text-center text-xs font-bold text-muted">— {message.senderId && message.content.endsWith("进入了房间") ? <><VipIdentity nickname={message.senderName ?? "用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} className="mx-1 inline-flex" /><span>进入了房间</span></> : message.content} {message.targetMessageId && !isHost && <button type="button" className="ml-1 font-black text-primary underline-offset-2 hover:underline" onClick={() => void onLocate(message.targetMessageId!)} aria-label={`定位到${message.content.match(/#\d+/)?.[0] ?? "被变更回答的提问"}`}>【定位】</button>} —</div>;
   if (message.type === "ai_honor" && message.aiHonors) return <OnlineSoupHonorCard honors={message.aiHonors} onOpenUser={onOpenUser} />;
   if (message.type === "ai_advice") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Sparkles size={17} />AI 玩汤建议</div><ul className="mt-2 space-y-1.5 text-sm leading-6 text-slate-700">{message.content.split("\n").filter(Boolean).map((line) => <li key={line} className="flex gap-2"><span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /><span>{line}</span></li>)}</ul></article>;
   if (message.type === "mystery_narrative") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-white to-blue-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><BookOpen size={17} />故事回应</div><p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-ink">{message.content}</p></article>;
@@ -1771,15 +1773,14 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
       </MentionableAvatarButton>
       <div className={`flex min-w-0 max-w-[78%] flex-col ${question ? "w-full max-w-[84%]" : ""} ${mine ? "items-end" : "items-start"}`}>
         <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] font-bold text-muted ${mine ? "flex-row-reverse" : ""}`}>
-          <span className="max-w-28 truncate text-ink">{message.senderName ?? "未知用户"}</span>
-          <LevelBadge level={message.senderLevel} />
-          <EquippedBadgeIcon badge={message.senderEquippedBadge} className="h-4 w-4" animated={false} />
+          <VipIdentity nickname={message.senderName ?? "未知用户"} userLevel={message.senderLevel} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} equippedBadge={message.senderEquippedBadge} className="max-w-full" />
           {host && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700"><Crown size={11} />主持人</span>}
           {question && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-black text-violet-700"><MessageCircle size={11} />{mysteryMode ? "正式行动" : "正式提问"} #{message.questionNumber}</span>}
         </div>
         <MessageActionMenu
           actions={[
             ...(canReply ? [{ label: "回复", onSelect: () => onReply(message) }] : []),
+            { label: "复制", onSelect: () => onCopy(message.type === "sticker" ? `[表情] ${sticker?.text ?? "表情已下架"}` : message.content) },
             ...(canRecall ? [{ label: "撤回", tone: "danger" as const, availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => onRecall(message) }] : [])
           ]}
           className="max-w-full"
@@ -1838,7 +1839,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
         {question && message.aiStatus === "completed" && message.aiFeedback && (
           <div className={`mt-1.5 max-w-full rounded-lg px-2.5 py-1.5 text-xs font-bold ${message.aiProgressDelta ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"} ${mine ? "text-right" : "text-left"}`} role="status">{message.aiFeedback}</div>
         )}
-        <time className="mt-1 px-1 text-[10px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
+        <time className="mt-1 select-none px-1 text-[10px] text-muted [-webkit-touch-callout:none]">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
       </div>
     </div>
   );

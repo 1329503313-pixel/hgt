@@ -7,6 +7,7 @@ import { useMessageUnread } from "../shared/useMessageUnread";
 import { UnifiedBackButton } from "./UnifiedBackButton";
 import { canAccessAdmin } from "../shared/roles";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
+import { VipName, VipIcon } from "./VipVisuals";
 
 export function PageTopBar({ title, titleContent, titleTo = "/", titleState, backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; titleState?: Record<string, unknown>; backTo?: string; rightAction?: React.ReactNode }) {
   const { user } = useApp();
@@ -74,9 +75,8 @@ function UserMenuDropdown({ user }: { user: AccountUser }) {
             {(user.nickname || user.username).slice(0, 1)}
           </div>
         )}
-        <span className="max-w-[52px] truncate text-[13px] font-semibold text-ink sm:max-w-24 sm:text-sm">
-          {(user.nickname || user.username).slice(0, 8)}
-        </span>
+        <VipName nickname={(user.nickname || user.username).slice(0, 8)} level={user.vipLevel} active={user.vipActive} className="max-w-[52px] truncate text-[13px] font-semibold sm:max-w-24 sm:text-sm" />
+        <VipIcon level={user.vipLevel} active={user.vipActive} className="h-3.5 w-3.5" />
       </summary>
       <div className="user-menu-panel left-0 top-[calc(100%+8px)] sm:left-auto sm:right-0">
         <button className="user-menu-item" onClick={logout}>

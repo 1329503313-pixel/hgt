@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { config } from "../config.js";
 import { commitEventBatch, createInitialRunState, deterministicRoll, evaluateStateCondition, hydrateImmutableActorCapabilities, isScheduledWorldEventDue, MysteryInvariantError, replayMysteryEvents, resolveProbability } from "./engine.js";
-import { mysteryStoryPackageSchema, type MysteryEventProposal, type MysteryStoryPackage } from "./contracts.js";
+import { mysteryStoryPackageSchema, type MysteryEventProposal, type MysteryStoryPackage, type MysteryTurnResolution } from "./contracts.js";
 import { MYSTERY_COMPILER_SCHEMA_GUIDE } from "./compilerSchemaGuide.js";
 import { validateMysteryStoryPackageIntegrity } from "./packageValidation.js";
-import { buildMysteryNarrativeFallback, buildMysteryPlayerVisiblePacket, canonicalizeAgentProposals, classifyBlockedMysteryInput, detectMysteryInputRisk, mysteryRunBindingAction, mysteryTurnConflictAction, mysteryTurnLeaseCanBeClaimed } from "./runtime.js";
+import { buildMysteryNarrativeFallback, buildMysteryPlayerVisiblePacket, canonicalizeAgentProposals, classifyBlockedMysteryInput, detectMysteryInputRisk, isMysteryTurnCancellation, mysteryRunBindingAction, mysteryTurnConflictAction, mysteryTurnLeaseCanBeClaimed, validateMysteryResolutionForRuntime } from "./runtime.js";
+import { adjudicateMysteryTurn, MysteryModelError } from "./models.js";
 
 const storyPackage: MysteryStoryPackage = {
   schemaVersion: 1,
@@ -41,6 +43,29 @@ function proposal(overrides: Partial<MysteryEventProposal> = {}): MysteryEventPr
     requiredItemInstanceIds: [], scheduledEventTriggers: [],
     resourceChanges: [], itemChanges: [], actorChanges: [], knowledgeChanges: [], endingChanges: [], flagChanges: {},
     irreversible: false, keyNode: false, keyNodeType: null, playerVisibleSummary: "行动完成", ...overrides,
+  };
+}
+
+function resolution(event: MysteryEventProposal): MysteryTurnResolution {
+  return {
+    inputClassification: "attack",
+    injectionRisk: "none",
+    normalizedIntents: [{
+      sequence: 1,
+      kind: "attack",
+      actorId: "PLAYER_1",
+      targetIds: [],
+      description: "测试行动",
+      executionStatus: "considered",
+    }],
+    ignoredResultClaims: [],
+    adjudication: [{ intentSequence: 1, outcome: "success", reason: "测试裁决", probabilityBasis: null }],
+    totalTimeCostSeconds: event.timeCostSeconds,
+    proposedEvents: [event],
+    playerVisibleResults: ["行动完成"],
+    scheduledWorldEvents: [],
+    endingSignals: [],
+    consistencyWarnings: [],
   };
 }
 
@@ -227,16 +252,25 @@ test("谜局回合只有在失败、未处理或处理租约过期时才能重�
   assert.equal(mysteryTurnLeaseCanBeClaimed({ status: "processing", processingExpiresAt: "2026-08-17T11:59:59.000Z", now }), true);
   assert.equal(mysteryTurnLeaseCanBeClaimed({ status: "processing", processingExpiresAt: "2026-08-17T12:00:01.000Z", now }), false);
   assert.equal(mysteryTurnLeaseCanBeClaimed({ status: "completed", processingExpiresAt: null, now }), false);
+  assert.equal(mysteryTurnLeaseCanBeClaimed({ status: "cancelled", processingExpiresAt: null, now }), false);
 });
 
 test("谜局回合冲突按租约占用、状态变化和业务失败分别处理", () => {
   assert.equal(mysteryTurnConflictAction("TURN_ALREADY_PROCESSING"), "defer");
   assert.equal(mysteryTurnConflictAction("TURN_STATE_CONFLICT"), "retry");
   assert.equal(mysteryTurnConflictAction("STATE_VERSION_CONFLICT"), "retry");
+  assert.equal(mysteryTurnConflictAction("TURN_CANCELLED"), "cancel");
   assert.equal(mysteryTurnConflictAction("RUN_NOT_ACTIVE"), "fail");
 });
 
-test("状态变化只能采用 Story Package 已定义转换的服务端效果", () => {
+test("房主撤回会被识别为终止而不是可重试失败", () => {
+  assert.equal(isMysteryTurnCancellation(new MysteryInvariantError("TURN_CANCELLED", "已撤回")), true);
+  assert.equal(isMysteryTurnCancellation(new MysteryModelError("MODEL_REQUEST_CANCELLED", "已撤回", false)), true);
+  assert.equal(isMysteryTurnCancellation(new Error("其他错误"), true), true);
+  assert.equal(isMysteryTurnCancellation(new Error("其他错误"), false), false);
+});
+
+test("使用 Story Package 转换时只能采用服务端定义的效果", () => {
   const configured = structuredClone(storyPackage);
   configured.actionTransitionGraph.effects.push({
     effectId: "EFFECT_FIRE", description: "消耗一发弹药",
@@ -264,6 +298,182 @@ test("状态变化只能采用 Story Package 已定义转换的服务端效果",
   assert.equal(canonical.playerVisibleSummary, "开枪；消耗一发弹药");
 });
 
+test("无预设转换的普通行动仍可在当前可知可达范围内改变世界", () => {
+  const configured = structuredClone(storyPackage);
+  configured.entityResourceGraph.locations[0].connections.push({
+    toLocationId: "LOC_2", travelSeconds: 30, entryConditionIds: [],
+  });
+  configured.entityResourceGraph.locations.push({
+    locationId: "LOC_2", name: "走廊", regionId: null, connections: [{ toLocationId: "LOC_1", travelSeconds: 30, entryConditionIds: [] }],
+    visibility: "可以看清整条走廊", audibility: "能听见门厅声响", environment: "狭长的石质走廊",
+    initialActorIds: [], initialItemInstanceIds: ["ITEM_NOTE"], interactiveObjectIds: [], hiddenAreaIds: [],
+    searchDifficulty: "ordinary", traceRules: [], timedChangeIds: [],
+  });
+  configured.entityResourceGraph.items.push({
+    itemInstanceId: "ITEM_NOTE", itemTypeId: "NOTE", name: "便签", unique: true,
+    initialLocationId: "LOC_2", initialOwnerId: null, consumable: false, useConditionIds: [], useEffectIds: [],
+    damageable: true, transferable: true, hideable: true, copyable: false, evidence: false,
+    recognizedByActorIds: [], destructionConsequenceIds: [],
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  const [movement, pickup, consumption] = canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [
+      proposal({
+        eventType: "MOVE_COMPLETED", timeCostSeconds: 1,
+        actorChanges: [{ actorId: "PLAYER_1", locationId: "LOC_2", reason: "沿走廊前进" }],
+        playerVisibleSummary: "你走进了相连的石质走廊。",
+      }),
+      proposal({
+        eventType: "ITEM_PICKED_UP", locationId: "LOC_2", timeCostSeconds: 1,
+        itemChanges: [{ itemInstanceId: "ITEM_NOTE", ownerId: "PLAYER_1", reason: "捡起脚边的便签" }],
+        playerVisibleSummary: "你捡起了脚边的便签。",
+      }),
+      proposal({
+        eventType: "RESOURCE_CHANGED", locationId: "LOC_2", timeCostSeconds: 1,
+        resourceChanges: [{ resourceId: "PLAYER_AMMO", delta: -1, reason: "使用了一发弹药" }],
+        playerVisibleSummary: "你使用了一发弹药。",
+      }),
+    ],
+  });
+  assert.equal(movement.timeCostSeconds, 30);
+  assert.deepEqual(movement.actorChanges, [{ actorId: "PLAYER_1", locationId: "LOC_2", reason: "沿走廊前进" }]);
+  assert.deepEqual(pickup.itemChanges[0], { itemInstanceId: "ITEM_NOTE", ownerId: "PLAYER_1", locationId: null, reason: "捡起脚边的便签" });
+  assert.deepEqual(consumption.resourceChanges, [{ resourceId: "PLAYER_AMMO", delta: -1, reason: "使用了一发弹药" }]);
+});
+
+test("普通观察即使不改变持久状态也保留具体环境反馈", () => {
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage });
+  const [canonical] = canonicalizeAgentProposals({
+    storyPackage, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({
+      eventType: "OBSERVATION_COMPLETED",
+      playerVisibleSummary: "你敲了敲墙面，回声发闷，表面没有松动。",
+    })],
+  });
+  assert.equal(canonical.eventType, "OBSERVATION_COMPLETED");
+  assert.equal(canonical.playerVisibleSummary, "你敲了敲墙面，回声发闷，表面没有松动。");
+});
+
+test("带进入条件的通行和人物死亡仍属于受保护变化", () => {
+  const configured = structuredClone(storyPackage);
+  configured.entityResourceGraph.locations[0].connections.push({
+    toLocationId: "LOC_2", travelSeconds: 30, entryConditionIds: ["DOOR_OPEN"],
+  });
+  configured.entityResourceGraph.locations.push({
+    ...configured.entityResourceGraph.locations[0], locationId: "LOC_2", name: "密室", connections: [],
+    initialActorIds: [],
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({ actorChanges: [{ actorId: "PLAYER_1", locationId: "LOC_2", reason: "穿过上锁的门" }] })],
+  }), (error: unknown) => error instanceof MysteryInvariantError && error.code === "TRANSITION_REQUIRED");
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({
+      targetIds: ["NPC_1"],
+      actorChanges: [{ actorId: "NPC_1", status: "dead", reason: "致命后果" }],
+    })],
+  }), (error: unknown) => error instanceof MysteryInvariantError && error.code === "TRANSITION_REQUIRED");
+});
+
+test("有现场证据支撑的认知变化不要求额外行动转换", () => {
+  const configured = structuredClone(storyPackage);
+  configured.knowledgeGraph.knowledge.push({
+    knowledgeId: "KNOWLEDGE_KEY_MARK", kind: "clue", objectiveStatement: "钥匙上刻着守卫编号",
+    holderActorIds: [], mistakenHolderActorIds: [], hiddenByActorIds: [], evidenceItemIds: ["ITEM_KEY"],
+    evidenceLocationIds: [], acquireConditionIds: [], canBeDestroyed: false, affectedActorIds: ["PLAYER_1"],
+    irreversibleOnceRevealed: false, relatedEndingIds: [], propagationRules: [],
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  const [canonical] = canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({
+      eventType: "OBSERVATION_COMPLETED",
+      knowledgeChanges: [{ actorId: "PLAYER_1", knowledgeId: "KNOWLEDGE_KEY_MARK", operation: "learn", reason: "查看手中钥匙" }],
+      playerVisibleSummary: "你看见钥匙背面刻着守卫编号。",
+    })],
+  });
+  assert.deepEqual(canonical.knowledgeChanges, [{ actorId: "PLAYER_1", knowledgeId: "KNOWLEDGE_KEY_MARK", operation: "learn", reason: "查看手中钥匙" }]);
+  assert.equal(canonical.playerVisibleSummary, "你看见钥匙背面刻着守卫编号。");
+});
+
+test("裁决 Agent 会根据运行时转换错误自行修复提案", async () => {
+  const configured = structuredClone(storyPackage);
+  configured.actionTransitionGraph.effects.push({
+    effectId: "EFFECT_FIRE", description: "消耗一发弹药",
+    resourceChanges: [{ resourceId: "PLAYER_AMMO", delta: -1, reason: "开枪" }],
+    itemChanges: [], actorChanges: [], knowledgeChanges: [], flagChanges: { SHOT_FIRED: true },
+  });
+  configured.actionTransitionGraph.transitions.push({
+    transitionId: "TRANSITION_FIRE", actionKind: "attack", description: "开枪",
+    precondition: { op: "exists", path: "actors.PLAYER_1" }, deterministic: true,
+    baseSuccessProbability: null, probabilityFactors: [], successEffectIds: ["EFFECT_FIRE"],
+    failureEffectIds: [], timeCostSeconds: 2, audibleToLocationIds: ["LOC_1"],
+    visibleToLocationIds: ["LOC_1"], irreversible: false,
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  const invalidCandidate = resolution(proposal({
+    resourceChanges: [{ resourceId: "PLAYER_AMMO", delta: -1, reason: "开枪" }],
+    flagChanges: { SHOT_FIRED: true },
+    timeCostSeconds: 2,
+  }));
+  const repairedCandidate = resolution(proposal({
+    transitionId: "TRANSITION_FIRE",
+    appliedEffectIds: ["EFFECT_FIRE"],
+    resourceChanges: [{ resourceId: "PLAYER_AMMO", delta: -1, reason: "开枪" }],
+    flagChanges: { SHOT_FIRED: true },
+    timeCostSeconds: 2,
+  }));
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = config.deepseekApiKey;
+  const requests: Array<{
+    messages?: Array<{ content?: string }>;
+    thinking?: { type?: string };
+    reasoning_effort?: unknown;
+    tool_choice?: unknown;
+  }> = [];
+  let callCount = 0;
+  config.deepseekApiKey = "test-key";
+  globalThis.fetch = (async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+    const candidate = callCount++ === 0 ? invalidCandidate : repairedCandidate;
+    return new Response(JSON.stringify({
+      choices: [{
+        finish_reason: "tool_calls",
+        message: {
+          content: null,
+          tool_calls: [{ function: { name: "submit_turn_resolution", arguments: JSON.stringify(candidate) } }],
+        },
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const adjudicated = await adjudicateMysteryTurn({
+      storyPackage: configured,
+      state: initial,
+      relevantEvents: [],
+      rawInput: "我开枪",
+      validateCandidate: (candidate) => validateMysteryResolutionForRuntime({
+        storyPackage: configured,
+        state: initial,
+        sessionSeed: "seed_1",
+        resolution: candidate,
+      }),
+    });
+    assert.equal(callCount, 2);
+    assert.equal(adjudicated.proposedEvents[0].transitionId, "TRANSITION_FIRE");
+    assert.match(requests[1].messages?.at(-1)?.content ?? "", /TRANSITION_REQUIRED/);
+    assert.deepEqual(requests.map((request) => request.thinking?.type), ["disabled", "disabled"]);
+    assert.ok(requests.every((request) => !("reasoning_effort" in request)));
+    assert.ok(requests.every((request) => request.tool_choice != null));
+  } finally {
+    globalThis.fetch = originalFetch;
+    config.deepseekApiKey = originalApiKey;
+  }
+});
+
 test("没有 Story Package 转换支撑的事件摘要不能宣称新事实", () => {
   const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage });
   const [canonical] = canonicalizeAgentProposals({
@@ -284,6 +494,20 @@ test("NPC 不能表达自己知识库之外的信息", () => {
       expressedKnowledgeIds: ["ENDING_SECRET"], visibleToPlayer: true,
     })],
   }), (error: unknown) => error instanceof MysteryInvariantError && error.code === "NPC_KNOWLEDGE_LEAK");
+});
+
+test("NPC 的寒暄和性格反应不需要伪造知识依据", () => {
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage });
+  const [canonical] = canonicalizeAgentProposals({
+    storyPackage, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({
+      eventType: "UTTERANCE_OCCURRED", actorIds: ["NPC_1"], rawUtterance: "晚上好。别在门口久站。",
+      expressedKnowledgeIds: [], perceivedBy: [{ actorId: "PLAYER_1", perception: "heard_complete" }],
+      visibleToPlayer: true, playerVisibleSummary: "守卫向你点头，又不耐烦地催你离开门口。",
+    })],
+  });
+  assert.equal(canonical.eventType, "UTTERANCE_OCCURRED");
+  assert.equal(canonical.playerVisibleSummary, "守卫向你点头，又不耐烦地催你离开门口。");
 });
 
 test("叙事可见包包含玩家已知事实和当前环境，但不携带其他隐藏事实", () => {

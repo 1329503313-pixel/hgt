@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Award, Check, GalleryVerticalEnd, ListChecks, Me
 import { useNavigate } from "react-router-dom";
 import { api, prefetchApi, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
-import type { EquippedBadge, ShellTaskCenter, SocialProfile, SoupSummary } from "../shared/types";
+import type { EquippedBadge, ShellTaskCenter, SocialProfile, SoupSummary, VipOverview } from "../shared/types";
 import { PageTopBar } from "../components/PageTopBar";
 import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon, LegendaryBadge, LegendaryBadgeIcon } from "../components/BadgeVisuals";
@@ -16,6 +16,7 @@ import { SoupExportButton } from "../components/SoupExportButton";
 import { useShellBalance } from "../shared/useShellBalance";
 import { LevelBadge } from "../components/LevelBadge";
 import { ContentPagination } from "../components/ContentPagination";
+import { VipCard } from "../components/VipCard";
 
 type BadgeCollectionResponse = { badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; equippedBadge: EquippedBadge | null };
 type TabKey = MineContentTab;
@@ -41,6 +42,7 @@ export default function MinePage() {
   const [badgeCollection, setBadgeCollection] = useState<BadgeCollectionResponse | null>(null);
   const [badgeSaving, setBadgeSaving] = useState(false);
   const [shellSummary, setShellSummary] = useState<ShellTaskCenter | null>(null);
+  const [vipOverview, setVipOverview] = useState<VipOverview | null>(null);
   const liveShellBalance = useShellBalance(user?.id);
 
   async function loadProfile(userId: string) {
@@ -106,6 +108,11 @@ export default function MinePage() {
     if (cachedPublished) setTabs((state) => ({ ...state, published: { ...cachedPublished, loading: false } }));
     setPages({ published: 1, favorites: 1, likes: 1 });
     void loadTab("published", 1);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) { setVipOverview(null); return; }
+    api<VipOverview>("/api/vip/overview", { bypassCache: true }).then(setVipOverview).catch(() => setVipOverview(null));
   }, [user?.id]);
 
   useEffect(() => {
@@ -198,10 +205,12 @@ export default function MinePage() {
   const levelProgress = shellSummary?.levelProgress;
   const shellBalance = liveShellBalance ?? shellSummary?.balance;
   const shellProgress = shellSummary ? Math.min(100, Math.round((shellSummary.earnedToday / Math.max(1, shellSummary.dailyLimit)) * 100)) : 0;
+  const openVip = () => showToast("VIP开通功能暂未开放");
 
   return (
     <section className="mine-page space-y-3 lg:space-y-5">
       <PageTopBar title="我的" />
+      <div className="mine-overview-layout">
       <div className="mine-overview-grid">
         <ProfileHero className="mine-profile-hero" profile={profile} showBadge={false} onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} meta={
           <div className="flex items-center gap-2 text-sm font-bold text-white/90">
@@ -226,8 +235,8 @@ export default function MinePage() {
           <div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>{levelProgress?.isMaxLevel ? "MAX" : `${levelProgress?.currentLevelExperience.toLocaleString() ?? 0} / ${levelProgress?.experienceForNextLevel.toLocaleString() ?? 0}`}</span><span>{levelProgress?.progressPercent ?? 0}%</span></div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600 transition-all" style={{ width: `${levelProgress?.progressPercent ?? 0}%` }} /></div>
           <div className="mt-auto grid grid-cols-2 gap-3 pt-5">
-            <button className="mine-growth-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />查看任务</button>
-            <button className="mine-growth-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />贝壳明细</button>
+            <button className="mine-growth-action mine-card-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />查看任务</button>
+            <button className="mine-growth-action mine-card-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />贝壳明细</button>
           </div>
         </aside>
 
@@ -242,8 +251,16 @@ export default function MinePage() {
           </div>
           <div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>每日上限</span><span>{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span></div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all" style={{ width: `${shellProgress}%` }} /></div>
-          <div className="mt-auto grid grid-cols-2 gap-3 pt-5"><button className="mine-shell-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />赚取贝壳</button><button className="mine-shell-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />收支明细</button></div>
+          <div className="mt-auto grid grid-cols-2 gap-3 pt-5"><button className="mine-shell-action mine-card-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />赚取贝壳</button><button className="mine-shell-action mine-card-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />收支明细</button></div>
         </aside>
+        <div className="hidden min-w-0 lg:flex"><VipCard overview={vipOverview} onOpen={openVip} /></div>
+      </div>
+      <div className="mine-feature-panel mine-feature-panel-desktop hidden rounded-2xl bg-white px-2 py-4 shadow-soft lg:flex lg:p-5">
+        <div className="mb-4 items-end justify-between lg:flex"><div><p className="text-xs font-black tracking-[0.16em] text-primary">PERSONAL HUB</p><h2 className="mt-1 text-xl font-black text-ink">功能导航</h2></div><p className="text-sm text-muted">管理成长记录、数字资产与创作权益</p></div>
+        <div className="mine-feature-grid grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-1">
+        {features.map((feature) => { const Icon = feature.icon; return <button key={feature.path} className={`mine-feature-card flex flex-col items-center gap-2 ${desktopHiddenFeaturePaths.has(feature.path) ? "lg:hidden" : ""}`} onClick={() => navigate(feature.path)}><span className={`mine-feature-icon grid h-12 w-12 place-items-center rounded-2xl ${feature.color}`}><Icon size={23} /></span><span className="mine-feature-copy min-w-0"><span className="block text-xs font-bold text-ink lg:text-base lg:font-black">{feature.label}</span><span className="mt-1 hidden text-xs text-muted lg:block">{feature.description}</span></span><ArrowRight className="mine-feature-arrow hidden shrink-0 text-slate-300 lg:block" size={18} /></button>; })}
+        </div>
+      </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:hidden">
@@ -262,7 +279,7 @@ export default function MinePage() {
               <span className="truncate tabular-nums">{levelProgress.isMaxLevel ? "MAX" : `${levelProgress.currentLevelExperience.toLocaleString()} / ${levelProgress.experienceForNextLevel.toLocaleString()}`}</span>
               <span className="shrink-0">{levelProgress.progressPercent}%</span>
             </div>
-            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600" style={{ width: `${levelProgress.progressPercent}%` }} /></div>
+            <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600" style={{ width: `${levelProgress.progressPercent}%` }} /></div>
           </div>
         )}
         <div className="card min-w-0 p-3 sm:p-4">
@@ -279,11 +296,12 @@ export default function MinePage() {
             <span className="truncate">今日 +{shellSummary?.earnedToday ?? 0}</span>
             <span className="shrink-0 tabular-nums">{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span>
           </div>
-          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${shellProgress}%` }} /></div>
+          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${shellProgress}%` }} /></div>
         </div>
       </div>
+      <div className="lg:hidden"><VipCard overview={vipOverview} onOpen={openVip} /></div>
 
-      <div className="mine-feature-panel rounded-2xl bg-white px-2 py-4 shadow-soft lg:p-5">
+      <div className="mine-feature-panel mine-feature-panel-mobile rounded-2xl bg-white px-2 py-4 shadow-soft lg:hidden lg:p-5">
         <div className="mb-4 hidden items-end justify-between lg:flex">
           <div><p className="text-xs font-black tracking-[0.16em] text-primary">PERSONAL HUB</p><h2 className="mt-1 text-xl font-black text-ink">功能导航</h2></div>
           <p className="text-sm text-muted">管理成长记录、数字资产与创作权益</p>

@@ -24,7 +24,7 @@ import {
   projectMysteryProposal,
   resolveProbability,
 } from "./engine.js";
-import { adjudicateMysteryTurn, MysteryModelError, renderMysteryNarrative, reviewMysteryNarrativeConsistency } from "./models.js";
+import { adjudicateMysteryTurn, MysteryModelError, renderMysteryNarrative, reviewMysteryNarrativeConsistency, type MysteryResolutionRuntimeIssue } from "./models.js";
 import { validateMysteryStoryPackageIntegrity } from "./packageValidation.js";
 
 function jsonValue<T>(value: unknown): T {
@@ -34,6 +34,7 @@ function jsonValue<T>(value: unknown): T {
 
 export const MYSTERY_TURN_LEASE_SECONDS = 120;
 const MYSTERY_TURN_HEARTBEAT_MS = 30_000;
+const MYSTERY_TURN_CANCELLATION_POLL_MS = 750;
 
 export function mysteryTurnLeaseCanBeClaimed(input: {
   status: string;
@@ -48,10 +49,17 @@ export function mysteryTurnLeaseCanBeClaimed(input: {
   return !Number.isFinite(expiresAt) || expiresAt <= now;
 }
 
-export function mysteryTurnConflictAction(code: string): "defer" | "retry" | "fail" {
+export function mysteryTurnConflictAction(code: string): "defer" | "retry" | "cancel" | "fail" {
   if (code === "TURN_ALREADY_PROCESSING") return "defer";
   if (["TURN_STATE_CONFLICT", "STATE_VERSION_CONFLICT"].includes(code)) return "retry";
+  if (code === "TURN_CANCELLED") return "cancel";
   return "fail";
+}
+
+export function isMysteryTurnCancellation(error: unknown, signalAborted = false) {
+  if (signalAborted) return true;
+  if (error instanceof MysteryInvariantError) return error.code === "TURN_CANCELLED";
+  return error instanceof MysteryModelError && error.code === "MODEL_REQUEST_CANCELLED";
 }
 
 export type MysteryRunChoice = "continue" | "restart";
@@ -290,6 +298,278 @@ function commitScheduledEventCascade(input: {
   throw new MysteryInvariantError("WORLD_EVENT_CASCADE_OVERFLOW", "世界事件触发链超过 Story Package 安全上限");
 }
 
+const OPEN_WORLD_EVENT_TYPES = new Set([
+  "META_INSTRUCTION_REJECTED",
+  "UTTERANCE_OCCURRED",
+  "ACTION_DECLARED",
+  "ACTION_ATTEMPTED",
+  "ACTION_SUCCEEDED",
+  "ACTION_FAILED",
+  "ACTION_BLOCKED",
+  "MOVE_COMPLETED",
+  "OBSERVATION_COMPLETED",
+  "SEARCH_COMPLETED",
+  "INTERACTION_COMPLETED",
+  "ITEM_PICKED_UP",
+  "ITEM_DROPPED",
+  "ITEM_TRANSFERRED",
+  "RESOURCE_CHANGED",
+  "WAIT_COMPLETED",
+]);
+
+const UNCONFIRMED_PROTECTED_EVENT_TYPE = /(DEAD|DIED|DEATH|ENDING|SECRET|REVEAL|DESTROY|CONSUME|INCAPACITAT|INJUR|HARM)/i;
+
+function requireStoryTransition(message: string): never {
+  throw new MysteryInvariantError("TRANSITION_REQUIRED", message);
+}
+
+function canonicalizeOpenWorldProposal(input: {
+  storyPackage: MysteryStoryPackage;
+  state: MysteryRunState;
+  proposal: MysteryEventProposal;
+  baseVisibility: boolean;
+  playerActs: boolean;
+  playerLocationId: string | null;
+}): MysteryEventProposal {
+  const { storyPackage, state, proposal } = input;
+  const locationDefinitions = new Map(storyPackage.entityResourceGraph.locations.map((location) => [location.locationId, location]));
+  const itemDefinitions = new Map(storyPackage.entityResourceGraph.items.map((item) => [item.itemInstanceId, item]));
+  const resourceDefinitions = new Map(storyPackage.entityResourceGraph.resources.map((resource) => [resource.resourceId, resource]));
+  const knowledgeDefinitions = new Map(storyPackage.knowledgeGraph.knowledge.map((knowledge) => [knowledge.knowledgeId, knowledge]));
+  const primaryActorId = proposal.actorIds[0] ?? null;
+  const primaryActor = primaryActorId ? state.actors[primaryActorId] : null;
+  const primaryLocationId = primaryActor?.locationId ?? proposal.locationId;
+  const involvedActorIds = new Set([...proposal.actorIds, ...proposal.targetIds.filter((id) => Boolean(state.actors[id]))]);
+
+  if (proposal.appliedEffectIds?.length) {
+    throw new MysteryInvariantError("EFFECT_REQUIRES_TRANSITION", "通用行动不能直接引用 Story Package 效果；如需预设效果请填写对应 transitionId");
+  }
+  if (proposal.endingChanges.length) requireStoryTransition("结局变化只能由结局状态图或 Story Package 行动转换推动");
+  if (Object.keys(proposal.flagChanges).length) requireStoryTransition("主线世界标记变化必须引用 Story Package 中的行动转换");
+  if (proposal.scheduledEventTriggers.length) {
+    throw new MysteryInvariantError("SCHEDULED_EVENT_MANAGED_BY_SERVER", "排期世界事件由服务端世界时钟触发，通用行动不能直接触发");
+  }
+
+  const requireLocalActor = (actorId: string) => {
+    const actor = state.actors[actorId];
+    if (!actor) throw new MysteryInvariantError("ACTOR_NOT_FOUND", `人物 ${actorId} 不存在`);
+    if (!primaryLocationId || actor.locationId !== primaryLocationId) {
+      throw new MysteryInvariantError("ACTOR_OUT_OF_REACH", `人物 ${actorId} 不在行动者当前可交互范围内`);
+    }
+    return actor;
+  };
+
+  let minimumTimeCostSeconds = proposal.rawUtterance ? 1 : 0;
+  const actorChanges = proposal.actorChanges.map((change) => {
+    const actor = state.actors[change.actorId];
+    if (!actor) throw new MysteryInvariantError("ACTOR_NOT_FOUND", `人物 ${change.actorId} 不存在`);
+    if (!involvedActorIds.has(change.actorId)) {
+      throw new MysteryInvariantError("ACTOR_CHANGE_UNRELATED", `人物 ${change.actorId} 未参与本回合，不能被通用行动改变`);
+    }
+    if (change.actorId !== primaryActorId) requireLocalActor(change.actorId);
+    if (change.status === "dead" || change.status === "missing") {
+      requireStoryTransition(`人物 ${change.actorId} 的死亡或失踪属于受保护变化，必须引用 Story Package 行动转换`);
+    }
+    if (change.locationId !== undefined) {
+      if (!change.locationId) requireStoryTransition("人物离开世界地图属于受保护变化，必须引用 Story Package 行动转换");
+      if (!proposal.actorIds.includes(change.actorId)) {
+        throw new MysteryInvariantError("ACTOR_MOVE_UNAUTHORIZED", `人物 ${change.actorId} 没有作为本回合行动者，不能被直接移动`);
+      }
+      const fromLocation = actor.locationId ? locationDefinitions.get(actor.locationId) : null;
+      const connection = fromLocation?.connections.find((entry) => entry.toLocationId === change.locationId);
+      if (!connection) {
+        throw new MysteryInvariantError("LOCATION_NOT_REACHABLE", `人物 ${change.actorId} 无法从当前位置直接到达 ${change.locationId}`);
+      }
+      if (connection.entryConditionIds.length) {
+        requireStoryTransition(`前往 ${change.locationId} 需要满足预设进入条件，必须使用 Story Package 行动转换裁决`);
+      }
+      minimumTimeCostSeconds = Math.max(minimumTimeCostSeconds, connection.travelSeconds);
+    }
+    if (change.status !== undefined || change.physicalState !== undefined) minimumTimeCostSeconds = Math.max(minimumTimeCostSeconds, 5);
+    return change;
+  });
+
+  const actorCanReachItem = (itemId: string) => {
+    const item = state.items[itemId];
+    if (!item) throw new MysteryInvariantError("ITEM_NOT_FOUND", `物品实例 ${itemId} 不存在，不能凭空创建或复制`);
+    if (["destroyed", "consumed", "lost"].includes(item.status)) {
+      throw new MysteryInvariantError("ITEM_UNUSABLE", `物品 ${itemId} 当前不可操作`);
+    }
+    const owner = item.ownerId ? state.actors[item.ownerId] : null;
+    const accessible = Boolean(
+      (item.ownerId && involvedActorIds.has(item.ownerId) && owner?.locationId === primaryLocationId)
+      || (item.ownerId && item.ownerId === primaryActorId)
+      || (item.locationId && item.locationId === primaryLocationId),
+    );
+    if (!accessible) throw new MysteryInvariantError("ITEM_OUT_OF_REACH", `物品 ${itemId} 不在行动者当前可见、可操作范围内`);
+    return item;
+  };
+
+  const itemChanges = proposal.itemChanges.map((change) => {
+    const item = actorCanReachItem(change.itemInstanceId);
+    const definition = itemDefinitions.get(change.itemInstanceId);
+    if (!definition) throw new MysteryInvariantError("ITEM_NOT_FOUND", `物品定义 ${change.itemInstanceId} 不存在`);
+    let ownerId = change.ownerId;
+    let locationId = change.locationId;
+    if (ownerId !== undefined && ownerId !== item.ownerId) {
+      if (item.ownerId && !definition.transferable) {
+        requireStoryTransition(`物品 ${change.itemInstanceId} 不允许普通转移`);
+      }
+      if (ownerId) {
+        requireLocalActor(ownerId);
+        locationId = null;
+      } else if (locationId === undefined) {
+        if (!primaryLocationId) throw new MysteryInvariantError("LOCATION_REQUIRED", `放下物品 ${change.itemInstanceId} 时缺少当前地点`);
+        locationId = primaryLocationId;
+      }
+    }
+    if (locationId !== undefined && locationId !== item.locationId) {
+      const clearsLocationForOwnershipOrRemoval = locationId === null && Boolean(
+        ownerId || change.status === "destroyed" || change.status === "consumed",
+      );
+      if (!clearsLocationForOwnershipOrRemoval && locationId !== primaryLocationId) {
+        throw new MysteryInvariantError("ITEM_TELEPORT_FORBIDDEN", `物品 ${change.itemInstanceId} 不能被通用行动移动到行动者不可达地点`);
+      }
+      if (!clearsLocationForOwnershipOrRemoval) ownerId = null;
+    }
+    if (change.status === "damaged" && !definition.damageable) {
+      requireStoryTransition(`物品 ${change.itemInstanceId} 没有可损坏设定`);
+    }
+    if (change.status === "destroyed") {
+      if (!definition.damageable || definition.destructionConsequenceIds.length) {
+        requireStoryTransition(`物品 ${change.itemInstanceId} 的销毁具有预设约束或后果，必须使用 Story Package 行动转换`);
+      }
+      ownerId = null;
+      locationId = null;
+    }
+    if (change.status === "consumed") {
+      if (!definition.consumable || definition.useEffectIds.length) {
+        requireStoryTransition(`物品 ${change.itemInstanceId} 的使用或消耗具有预设效果，必须使用 Story Package 行动转换`);
+      }
+      ownerId = null;
+      locationId = null;
+    }
+    if (change.status === "lost") requireStoryTransition(`物品 ${change.itemInstanceId} 的遗失必须使用 Story Package 行动转换`);
+    minimumTimeCostSeconds = Math.max(minimumTimeCostSeconds, 2);
+    return { ...change, ownerId, locationId };
+  });
+
+  const resourceChanges = proposal.resourceChanges.map((change) => {
+    const definition = resourceDefinitions.get(change.resourceId);
+    if (!definition) throw new MysteryInvariantError("RESOURCE_NOT_FOUND", `资源 ${change.resourceId} 不存在`);
+    if (!involvedActorIds.has(definition.ownerId)) {
+      throw new MysteryInvariantError("RESOURCE_CHANGE_UNRELATED", `资源 ${change.resourceId} 的持有者未参与本回合`);
+    }
+    if (definition.ownerId !== primaryActorId) requireLocalActor(definition.ownerId);
+    minimumTimeCostSeconds = Math.max(minimumTimeCostSeconds, 1);
+    return change;
+  });
+  const positiveResourceGroups = new Map<string, number>();
+  for (const change of resourceChanges) {
+    if (change.delta <= 0) continue;
+    const definition = resourceDefinitions.get(change.resourceId)!;
+    positiveResourceGroups.set(`${definition.name}\u0000${definition.unit}`, 0);
+  }
+  for (const key of positiveResourceGroups.keys()) {
+    const netDelta = resourceChanges.reduce((sum, change) => {
+      const definition = resourceDefinitions.get(change.resourceId)!;
+      return `${definition.name}\u0000${definition.unit}` === key ? sum + change.delta : sum;
+    }, 0);
+    if (netDelta > 0) requireStoryTransition("通用行动不能凭空增加资源；资源增加必须有同类资源来源或使用 Story Package 行动转换");
+  }
+
+  const communicationSpeakerId = proposal.rawUtterance ? primaryActorId : null;
+  const speakerReferences = communicationSpeakerId
+    ? new Set([...(state.knowledgeByActor[communicationSpeakerId] ?? []), ...(state.beliefsByActor[communicationSpeakerId] ?? [])])
+    : new Set<string>();
+  const knowledgeChanges = proposal.knowledgeChanges.map((change) => {
+    const actor = state.actors[change.actorId];
+    const definition = knowledgeDefinitions.get(change.knowledgeId);
+    if (!actor) throw new MysteryInvariantError("ACTOR_NOT_FOUND", `认知主体 ${change.actorId} 不存在`);
+    if (!definition) throw new MysteryInvariantError("KNOWLEDGE_NOT_FOUND", `知识 ${change.knowledgeId} 不存在`);
+    if (!involvedActorIds.has(change.actorId)) {
+      throw new MysteryInvariantError("KNOWLEDGE_TARGET_UNRELATED", `人物 ${change.actorId} 未参与本回合，不能获得新认知`);
+    }
+    if (change.actorId !== primaryActorId) requireLocalActor(change.actorId);
+    if (definition.acquireConditionIds.length) {
+      requireStoryTransition(`知识 ${change.knowledgeId} 存在预设获取条件，必须使用 Story Package 行动转换`);
+    }
+    const evidenceAtLocation = Boolean(actor.locationId && definition.evidenceLocationIds.includes(actor.locationId));
+    const evidenceInReach = definition.evidenceItemIds.some((itemId) => {
+      const item = state.items[itemId];
+      return Boolean(item && (item.ownerId === change.actorId || (item.locationId && item.locationId === actor.locationId)));
+    });
+    const heardFromHolder = Boolean(
+      communicationSpeakerId
+      && communicationSpeakerId !== change.actorId
+      && speakerReferences.has(change.knowledgeId)
+      && state.actors[communicationSpeakerId]?.locationId === actor.locationId
+      && (proposal.perceivedBy.some((entry) => entry.actorId === change.actorId && entry.perception.startsWith("heard_"))
+        || involvedActorIds.has(change.actorId)),
+    );
+    const alreadyKnown = (state.knowledgeByActor[change.actorId] ?? []).includes(change.knowledgeId);
+    const alreadyBelieved = (state.beliefsByActor[change.actorId] ?? []).includes(change.knowledgeId);
+    const grounded = evidenceAtLocation || evidenceInReach || heardFromHolder;
+    if (change.operation === "learn" && !alreadyKnown && !grounded) {
+      throw new MysteryInvariantError("KNOWLEDGE_BASIS_REQUIRED", `人物 ${change.actorId} 获知 ${change.knowledgeId} 时缺少可见证据或知情者传达`);
+    }
+    if (change.operation === "believe" && !alreadyBelieved && !grounded) {
+      throw new MysteryInvariantError("BELIEF_BASIS_REQUIRED", `人物 ${change.actorId} 形成 ${change.knowledgeId} 的认知时缺少感知依据`);
+    }
+    if (change.operation === "correct_belief" && (!alreadyBelieved || !grounded)) {
+      throw new MysteryInvariantError("BELIEF_CORRECTION_BASIS_REQUIRED", `人物 ${change.actorId} 修正 ${change.knowledgeId} 时缺少原认知或纠正依据`);
+    }
+    minimumTimeCostSeconds = Math.max(minimumTimeCostSeconds, 2);
+    return change;
+  });
+
+  const hasMaterialChanges = resourceChanges.length > 0 || itemChanges.length > 0
+    || actorChanges.length > 0 || knowledgeChanges.length > 0;
+  const unconfirmedProtectedClaim = proposal.eventType !== "META_INSTRUCTION_REJECTED" && !hasMaterialChanges && (
+    proposal.keyNode || proposal.irreversible || UNCONFIRMED_PROTECTED_EVENT_TYPE.test(proposal.eventType)
+  );
+  const safeEventType = proposal.eventType === "META_INSTRUCTION_REJECTED"
+    ? proposal.eventType
+    : proposal.rawUtterance && !hasMaterialChanges
+      ? "UTTERANCE_OCCURRED"
+      : hasMaterialChanges
+        ? OPEN_WORLD_EVENT_TYPES.has(proposal.eventType) ? proposal.eventType : "ACTION_SUCCEEDED"
+        : OPEN_WORLD_EVENT_TYPES.has(proposal.eventType)
+          ? proposal.eventType
+          : proposal.timeCostSeconds > 0 ? "ACTION_ATTEMPTED" : "ACTION_DECLARED";
+  const genericSummary = proposal.timeCostSeconds > 0
+    ? "你完成了这项行动，但没有产生新的已确认变化。"
+    : "这个意图没有改变当前世界状态。";
+  const destroysItem = itemChanges.some((change) => change.status === "destroyed" || change.status === "consumed");
+  const discoversSecret = knowledgeChanges.some((change) => {
+    const definition = knowledgeDefinitions.get(change.knowledgeId);
+    return change.operation === "learn" && definition?.kind === "secret";
+  });
+
+  return {
+    ...proposal,
+    appliedEffectIds: [],
+    eventType: safeEventType,
+    locationId: input.playerActs ? input.playerLocationId : proposal.locationId,
+    normalizedMeaning: proposal.normalizedMeaning,
+    timeCostSeconds: Math.max(proposal.timeCostSeconds, minimumTimeCostSeconds),
+    resourceChanges,
+    itemChanges,
+    actorChanges,
+    knowledgeChanges,
+    endingChanges: [],
+    flagChanges: {},
+    irreversible: destroysItem || knowledgeChanges.some((change) => {
+      const definition = knowledgeDefinitions.get(change.knowledgeId);
+      return change.operation === "learn" && definition?.irreversibleOnceRevealed === true;
+    }),
+    keyNode: destroysItem || discoversSecret,
+    keyNodeType: destroysItem ? "item_irreversible" : discoversSecret ? "secret_discovered" : null,
+    visibleToPlayer: input.baseVisibility,
+    playerVisibleSummary: unconfirmedProtectedClaim ? genericSummary : proposal.playerVisibleSummary,
+  };
+}
+
 function canonicalizeAgentProposal(input: {
   storyPackage: MysteryStoryPackage;
   state: MysteryRunState;
@@ -321,37 +601,15 @@ function canonicalizeAgentProposal(input: {
     const speakerId = proposal.actorIds[0];
     const speaker = storyPackage.entityResourceGraph.actors.find((actor) => actor.actorId === speakerId);
     if (proposal.rawUtterance && speaker?.kind === "npc") {
-      if (!proposal.expressedKnowledgeIds?.length) throw new MysteryInvariantError("NPC_SPEECH_BASIS_REQUIRED", `NPC ${speakerId} 的发言缺少知识依据`);
       const allowedKnowledge = new Set([...(state.knowledgeByActor[speakerId] ?? []), ...(state.beliefsByActor[speakerId] ?? [])]);
-      for (const knowledgeId of proposal.expressedKnowledgeIds) {
+      for (const knowledgeId of proposal.expressedKnowledgeIds ?? []) {
         if (!factualReferenceIds.has(knowledgeId) || !allowedKnowledge.has(knowledgeId)) {
           throw new MysteryInvariantError("NPC_KNOWLEDGE_LEAK", `NPC ${speakerId} 试图表达其未知的信息`);
         }
       }
     }
-    const hasMaterialChanges = proposal.resourceChanges.length > 0 || proposal.itemChanges.length > 0
-      || proposal.actorChanges.length > 0 || proposal.knowledgeChanges.length > 0
-      || Object.keys(proposal.flagChanges).length > 0;
     if (!proposal.transitionId) {
-      if (hasMaterialChanges) throw new MysteryInvariantError("TRANSITION_REQUIRED", "状态变化必须引用 Story Package 中的行动转换");
-      const safeEventType = proposal.eventType === "META_INSTRUCTION_REJECTED"
-        ? proposal.eventType
-        : proposal.rawUtterance
-          ? "UTTERANCE_OCCURRED"
-          : proposal.timeCostSeconds > 0 ? "ACTION_ATTEMPTED" : "ACTION_DECLARED";
-      return {
-        ...proposal,
-        eventType: safeEventType,
-        locationId: playerActs ? playerLocationId : proposal.locationId,
-        normalizedMeaning: proposal.rawUtterance ? proposal.normalizedMeaning : "行动没有产生新的已确认世界变化",
-        endingChanges: [],
-        visibleToPlayer: baseVisibility,
-        playerVisibleSummary: proposal.rawUtterance
-          ? playerActs ? "你说出了这句话。" : "有人说出了一句话。"
-          : proposal.timeCostSeconds > 0
-            ? "你完成了这项行动，但没有产生新的已确认变化。"
-            : "这个意图没有改变当前世界状态。",
-      };
+      return canonicalizeOpenWorldProposal({ storyPackage, state, proposal, baseVisibility, playerActs, playerLocationId });
     }
     const transition = transitionById.get(proposal.transitionId);
     if (!transition) throw new MysteryInvariantError("TRANSITION_NOT_FOUND", `行动转换 ${proposal.transitionId} 不存在`);
@@ -441,6 +699,35 @@ export function canonicalizeAgentProposals(input: {
     projectedState = projectMysteryProposal(projectedState, canonical);
   }
   return output;
+}
+
+export function validateMysteryResolutionForRuntime(input: {
+  storyPackage: MysteryStoryPackage;
+  state: MysteryRunState;
+  sessionSeed: string;
+  resolution: MysteryTurnResolution;
+}): MysteryResolutionRuntimeIssue[] {
+  const proposedTime = input.resolution.proposedEvents.reduce((sum, event) => sum + event.timeCostSeconds, 0);
+  if (proposedTime !== input.resolution.totalTimeCostSeconds) {
+    return [{
+      code: "TIME_COST_MISMATCH",
+      message: "裁决提案的事件耗时与总耗时不一致",
+    }];
+  }
+  try {
+    canonicalizeAgentProposals({
+      storyPackage: input.storyPackage,
+      state: input.state,
+      sessionSeed: input.sessionSeed,
+      proposals: input.resolution.proposedEvents,
+    });
+    return [];
+  } catch (error) {
+    return [{
+      code: error instanceof MysteryInvariantError ? error.code : "RUNTIME_VALIDATION_FAILED",
+      message: error instanceof Error ? error.message : "裁决提案未通过世界运行规则校验",
+    }];
+  }
 }
 
 function endingProposals(storyPackage: MysteryStoryPackage, state: MysteryRunState): MysteryEventProposal[] {
@@ -602,7 +889,11 @@ function playerActionAffordances(storyPackage: MysteryStoryPackage, state: Myste
     "梳理已经掌握的信息并继续追查",
     "等待片刻并观察世界如何变化",
   ].filter((value): value is string => Boolean(value));
-  return [...new Set([...storyActions, ...contextualActions])].slice(0, 6);
+  return [...new Set([
+    ...contextualActions.slice(0, 4),
+    ...storyActions.slice(0, 2),
+    ...contextualActions.slice(4),
+  ])].slice(0, 6);
 }
 
 export function buildMysteryPlayerVisiblePacket(input: {
@@ -685,6 +976,8 @@ export async function processMysteryTurn(input: {
   ownerUserId: string;
   rawInput: string;
   idempotencyKey: string;
+  signal?: AbortSignal;
+  isCancellationRequested?: () => Promise<boolean>;
   commitSideEffects?: (context: {
     connection: mysql.PoolConnection;
     narrative: string;
@@ -692,6 +985,7 @@ export async function processMysteryTurn(input: {
     finalState: MysteryRunState;
   }) => Promise<void>;
 }) {
+  if (input.signal?.aborted) throw new MysteryInvariantError("TURN_CANCELLED", "该行动已撤回，处理已停止");
   const existing = await pool.query<mysql.RowDataPacket[]>(
     `SELECT id, status, narrative, player_visible_packet, state_version_after, processing_expires_at
      FROM mystery_turns WHERE run_id = ? AND idempotency_key = ? LIMIT 1`,
@@ -704,6 +998,9 @@ export async function processMysteryTurn(input: {
       stateVersion: Number(existing.state_version_after),
       idempotent: true,
     };
+    if (String(existing.status) === "cancelled") {
+      throw new MysteryInvariantError("TURN_CANCELLED", "该行动已撤回，不能继续处理");
+    }
     if (!mysteryTurnLeaseCanBeClaimed({
       status: String(existing.status),
       processingExpiresAt: existing.processing_expires_at as Date | string | null,
@@ -734,7 +1031,7 @@ export async function processMysteryTurn(input: {
         `UPDATE mystery_turns
          SET status = 'processing', attempt_count = attempt_count + 1, processing_token = ?,
            processing_expires_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ? SECOND),
-           error_code = NULL, completed_at = NULL, state_version_before = ?, state_version_after = NULL,
+           error_code = NULL, cancelled_at = NULL, completed_at = NULL, state_version_before = ?, state_version_after = NULL,
            resolution_json = NULL, player_visible_packet = NULL, narrative = NULL, turn_sequence = NULL
          WHERE id = ? AND (
            status IN ('received','failed')
@@ -764,7 +1061,32 @@ export async function processMysteryTurn(input: {
     ).catch((error) => console.error("Mystery turn heartbeat failed:", { turnId, error }));
   }, MYSTERY_TURN_HEARTBEAT_MS);
   heartbeat.unref();
+  const cancellationController = new AbortController();
+  const abortFromCaller = () => cancellationController.abort(input.signal?.reason);
+  if (input.signal?.aborted) abortFromCaller();
+  else input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  let cancellationCheckInFlight = false;
+  const refreshCancellation = async () => {
+    if (cancellationController.signal.aborted || !input.isCancellationRequested || cancellationCheckInFlight) return;
+    cancellationCheckInFlight = true;
+    try {
+      if (await input.isCancellationRequested()) cancellationController.abort("mystery_action_recalled");
+    } catch (error) {
+      console.error("Mystery turn cancellation check failed:", { turnId, error });
+    } finally {
+      cancellationCheckInFlight = false;
+    }
+  };
+  const throwIfCancelled = () => {
+    if (cancellationController.signal.aborted) {
+      throw new MysteryInvariantError("TURN_CANCELLED", "该行动已撤回，处理已停止");
+    }
+  };
+  const cancellationPoll = setInterval(() => { void refreshCancellation(); }, MYSTERY_TURN_CANCELLATION_POLL_MS);
+  cancellationPoll.unref();
   try {
+    await refreshCancellation();
+    throwIfCancelled();
     const [recentEvents] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT event_type, world_time_before, world_time_after, event_payload
        FROM mystery_world_events WHERE run_id = ? ORDER BY event_index DESC LIMIT 100`,
@@ -777,7 +1099,15 @@ export async function processMysteryTurn(input: {
         state: initialState,
         relevantEvents: recentEvents.reverse().map((event) => jsonValue(event.event_payload)),
         rawInput: input.rawInput,
+        signal: cancellationController.signal,
+        validateCandidate: (candidate) => validateMysteryResolutionForRuntime({
+          storyPackage,
+          state: initialState,
+          sessionSeed: String(run.session_seed),
+          resolution: candidate,
+        }),
       });
+    throwIfCancelled();
     const proposedTime = resolution.proposedEvents.reduce((sum, event) => sum + event.timeCostSeconds, 0);
     if (proposedTime !== resolution.totalTimeCostSeconds) {
       throw new MysteryInvariantError("TIME_COST_MISMATCH", "裁决提案的事件耗时与总耗时不一致");
@@ -825,20 +1155,26 @@ export async function processMysteryTurn(input: {
     const allEvents = [...firstPass.events, ...secondPass.events, ...thirdPass.events, ...fourthPass.events];
     const allProposals = [...agentProposals, ...worldProposals, ...endingStateChanges, ...finalProposals];
     const packet = buildMysteryPlayerVisiblePacket({ title: String(run.title), storyPackage, state: fourthPass.state, events: allProposals, resolution });
-    let narrative = await renderMysteryNarrative(packet);
+    let narrative = await renderMysteryNarrative(packet, [], cancellationController.signal);
+    throwIfCancelled();
     const majorTurn = allProposals.some((proposal) => proposal.endingChanges.some((change) => change.status === "achieved")
       || proposal.actorChanges.some((change) => change.status === "dead")
       || proposal.itemChanges.some((change) => change.status === "destroyed" || change.status === "consumed"));
-    let narrativeReview = await reviewMysteryNarrativeConsistency(packet, narrative, majorTurn);
+    let narrativeReview = await reviewMysteryNarrativeConsistency(packet, narrative, majorTurn, cancellationController.signal);
+    throwIfCancelled();
     if (!narrativeReview.approved) {
       console.warn("Mystery narrative candidate requires repair:", { violations: narrativeReview.violations.slice(0, 8) });
-      narrative = await renderMysteryNarrative(packet, narrativeReview.violations);
-      narrativeReview = await reviewMysteryNarrativeConsistency(packet, narrative, majorTurn);
+      narrative = await renderMysteryNarrative(packet, narrativeReview.violations, cancellationController.signal);
+      throwIfCancelled();
+      narrativeReview = await reviewMysteryNarrativeConsistency(packet, narrative, majorTurn, cancellationController.signal);
+      throwIfCancelled();
       if (!narrativeReview.approved) {
         console.warn("Mystery narrative repair rejected; using deterministic visible fallback:", { violations: narrativeReview.violations.slice(0, 8) });
         narrative = buildMysteryNarrativeFallback(packet);
       }
     }
+    await refreshCancellation();
+    throwIfCancelled();
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -877,6 +1213,17 @@ export async function processMysteryTurn(input: {
     }
     return { narrative, playerVisiblePacket: packet, stateVersion: fourthPass.state.stateVersion, idempotent: false };
   } catch (error) {
+    await refreshCancellation();
+    if (isMysteryTurnCancellation(error, cancellationController.signal.aborted)) {
+      await pool.query(
+        `UPDATE mystery_turns
+         SET status = 'cancelled', turn_sequence = NULL, processing_token = NULL, processing_expires_at = NULL,
+           error_code = 'TURN_CANCELLED', cancelled_at = COALESCE(cancelled_at, CURRENT_TIMESTAMP), completed_at = NULL
+         WHERE id = ? AND status = 'processing' AND processing_token = ?`,
+        [turnId, processingToken],
+      ).catch(() => {});
+      throw new MysteryInvariantError("TURN_CANCELLED", "该行动已撤回，处理已停止");
+    }
     const code = error instanceof MysteryInvariantError || error instanceof MysteryModelError ? error.code : "TURN_FAILED";
     await pool.query(
       `UPDATE mystery_turns
@@ -888,5 +1235,7 @@ export async function processMysteryTurn(input: {
     throw error;
   } finally {
     clearInterval(heartbeat);
+    clearInterval(cancellationPoll);
+    input.signal?.removeEventListener("abort", abortFromCaller);
   }
 }

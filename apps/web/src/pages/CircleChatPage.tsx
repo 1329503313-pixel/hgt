@@ -9,6 +9,7 @@ import { ListSkeleton } from "../components/Skeletons";
 import { Modal } from "../components/Modal";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
+import { VipIdentity } from "../components/VipIdentity";
 import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
@@ -27,6 +28,18 @@ type MessagePage = { messages: CircleMessage[]; hasMore: boolean; nextCursor: st
 type SendResponse = { message: CircleMessage };
 type UnreadMention = { id: string; sequence: number };
 type MentionRequest = { userId: string; nickname: string; key: number };
+
+function circleMemberOrder(a: CircleMember, b: CircleMember) {
+  const onlineRank = Number(b.isOnline) - Number(a.isOnline);
+  if (onlineRank) return onlineRank;
+  const vipRank = Number(b.vipActive) - Number(a.vipActive);
+  if (vipRank) return vipRank;
+  const levelRank = b.vipLevel - a.vipLevel;
+  if (levelRank) return levelRank;
+  const growthRank = b.vipGrowthValue - a.vipGrowthValue;
+  if (growthRank) return growthRank;
+  return a.joinedAt.localeCompare(b.joinedAt);
+}
 
 function Avatar({ avatar, nickname, online, size = "h-10 w-10" }: { avatar: string | null; nickname: string; online: boolean; size?: string }) {
   return (
@@ -532,9 +545,7 @@ export default function CircleChatPage() {
                 </MentionableAvatarButton>
                 <div className={`flex min-w-0 max-w-[78%] flex-col ${message.type === "soup_share" || message.type === "room_invite" || message.type === "gift" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
                   <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] text-muted ${mine ? "flex-row-reverse" : ""}`}>
-                    <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>
-                    {message.sender && <LevelBadge level={message.sender.level} />}
-                    <EquippedBadgeIcon badge={message.sender?.equippedBadge} className="h-4 w-4" animated={false} />
+                    {message.sender ? <VipIdentity nickname={senderName} userLevel={message.sender.level} vipLevel={message.sender.vipLevel} vipActive={message.sender.vipActive} equippedBadge={message.sender.equippedBadge} className="max-w-full" /> : <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>}
                   </div>
                   <MessageActionMenu
                     actions={messageActions}
@@ -605,7 +616,7 @@ export default function CircleChatPage() {
           <aside className="hidden min-h-0 flex-col bg-white lg:flex">
             <div className="flex items-center justify-between border-b border-line px-5 py-4"><div><h2 className="font-black text-ink">圈子成员</h2><p className="mt-0.5 text-xs text-muted">{state.circle.onlineCount} 人当前在线</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-muted">{state.circle.memberCount}</span></div>
             <div className="min-h-0 flex-1 divide-y divide-line overflow-y-auto px-3">
-              {[...state.members].sort((a, b) => Number(b.isOnline) - Number(a.isOnline)).map((member) => (
+              {[...state.members].sort(circleMemberOrder).map((member) => (
                 <div key={member.id} className="flex w-full items-center gap-3 rounded-xl px-2 py-3 text-left transition hover:bg-slate-50">
                   <MentionableAvatarButton
                     canMention={member.id !== user?.id}
@@ -616,7 +627,7 @@ export default function CircleChatPage() {
                     <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
                   </MentionableAvatarButton>
                   <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openMemberProfile(member)}>
-                    <span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} /></span>
+                    <VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full" />
                     <span className={`mt-1 block text-xs ${member.isOnline ? "font-bold text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span>
                   </button>
                 </div>
@@ -631,7 +642,7 @@ export default function CircleChatPage() {
         <div className="space-y-3">
           <div><h2 className="text-xl font-black text-ink">圈子成员</h2><p className="mt-1 text-sm text-muted">{state.circle.memberCount} 位成员 · {state.circle.onlineCount} 人在线</p></div>
           <div className="max-h-[65vh] divide-y divide-line overflow-y-auto">
-            {[...state.members].sort((a, b) => Number(b.isOnline) - Number(a.isOnline)).map((member) => (
+            {[...state.members].sort(circleMemberOrder).map((member) => (
               <button
                 key={member.id}
                 className="flex w-full items-center gap-3 py-3 text-left"
@@ -640,7 +651,7 @@ export default function CircleChatPage() {
                 })}
               >
                 <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
-                <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-black text-ink">{member.nickname}</span><LevelBadge level={member.level} /><EquippedBadgeIcon badge={member.equippedBadge} className="h-5 w-5" animated={false} /></span><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
+                <span className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full" /><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
               </button>
             ))}
           </div>
@@ -750,11 +761,7 @@ function Composer({ members, currentUserId, mentionRequest, replyTo, sending, st
               >
                 <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-10 w-10" />
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-bold text-ink">{member.nickname}</span>
-                    <LevelBadge level={member.level} />
-                    <EquippedBadgeIcon badge={member.equippedBadge} className="h-4 w-4" animated={false} />
-                  </span>
+                  <VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full text-sm font-bold text-ink" />
                 </span>
               </button>
             ))}
