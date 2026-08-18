@@ -131,12 +131,16 @@ export function AssetMotionMedia({
   card,
   className = "",
   eager = false,
-  style
+  style,
+  onReady,
+  onFailure
 }: {
   card: Pick<AssetCard, "name" | "imageUrl" | "thumbnailUrl" | "motionMp4Url" | "motionWebmUrl" | "motionPosterUrl">;
   className?: string;
   eager?: boolean;
   style?: React.CSSProperties;
+  onReady?: () => void;
+  onFailure?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [nearViewport, setNearViewport] = useState(eager);
@@ -204,9 +208,12 @@ export function AssetMotionMedia({
         loading={eager ? "eager" : "lazy"}
         decoding="async"
         draggable={false}
+        onLoad={onReady}
         onError={() => {
           if (card.motionPosterUrl && fallback === card.motionPosterUrl) {
             setFailedPoster(card.motionPosterUrl);
+          } else {
+            onFailure?.();
           }
         }}
       />
@@ -226,6 +233,7 @@ export function AssetMotionMedia({
       poster={fallback}
       aria-label={`${card.name}动态卡面`}
       onError={() => setFailedSource(mediaSource)}
+      onLoadedData={onReady}
       onCanPlay={(event) => playWhenVisible(event.currentTarget)}
     >
       {card.motionWebmUrl && <source src={card.motionWebmUrl} type="video/webm" />}

@@ -20,6 +20,11 @@ import { recordUserBehavior } from "./behaviorAnalytics.js";
 import type { UserRole } from "./roles.js";
 import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCurrency.js";
 import { ossRefFromPublicUrl, publicOssUrl, readStoredMediaBuffer, storeMediaBuffer } from "./ossStorage.js";
+import {
+  consumeDailyEntitlement,
+  isEntitlementLimitError,
+  tryConsumeDailyEntitlement
+} from "./entitlements.js";
 
 type RouteUser = { id: string; role: UserRole };
 type RouteDependencies = {
@@ -563,12 +568,19 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
     if (!configuration.ready) throw new Error("ASSET_PACK_CONFIGURATION_INVALID");
 
     const drawCount = mode === "ten" ? 10 : 1;
-    const [[userRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? FOR UPDATE", [userId]);
+    const [[userRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT shell_balance, role FROM users WHERE id = ? FOR UPDATE", [userId]);
     if (!userRow) throw new Error("ASSET_USER_NOT_FOUND");
     let balance = Number(userRow.shell_balance ?? 0);
     let usedFreeDraw = false;
     let shellCost = mode === "ten" ? Number(pack.ten_price) : Number(pack.single_price);
     const taskDate = beijingTaskDate();
+    await consumeDailyEntitlement(connection, {
+      userId,
+      role: userRow.role,
+      metric: "draw",
+      amount: drawCount,
+      eventKey: requestId
+    });
 
     if (mode === "single" && Number(pack.daily_free_draws ?? 0) > 0) {
       await connection.query(
@@ -587,6 +599,15 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
           [userId, packId, taskDate]
         );
       }
+    }
+    if (mode === "single" && !usedFreeDraw) {
+      usedFreeDraw = await tryConsumeDailyEntitlement(connection, {
+        userId,
+        role: userRow.role,
+        metric: "extra_free_draw",
+        eventKey: requestId
+      });
+      if (usedFreeDraw) shellCost = 0;
     }
     if (balance < shellCost) throw new Error("ASSET_INSUFFICIENT_SHELLS");
 
@@ -1013,6 +1034,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       );
       res.json({ order, balance: Number(balanceRow?.shell_balance ?? 0) });
     } catch (error) {
+      if (isEntitlementLimitError(error)) return sendError(res, 429, error.message);
       const message = errorMessage(error);
       const status = message === "贝壳余额不足" ? 409 : message.includes("不存在") ? 404 : 400;
       sendError(res, status, message);

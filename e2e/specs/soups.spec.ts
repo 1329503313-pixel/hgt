@@ -1,6 +1,41 @@
 import { expect, test } from "@playwright/test";
 import { createSoupViaApi, dismissBadgeUnlocks, loginAsE2eAdmin, logoutViaApi, registerViaApi } from "../helpers";
 
+test("首页分类使用独立路由并在详情返回时保持原分类", async ({ page }) => {
+  await loginAsE2eAdmin(page);
+  const soup = await createSoupViaApi(page, `分类路由汤${Date.now().toString(36)}`);
+
+  await page.goto("/");
+  await page.getByText("恭喜获得新徽章！", { exact: true })
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .catch(() => undefined);
+  await dismissBadgeUnlocks(page);
+  const routeCases = [
+    { label: "最新", path: "/home/latest" },
+    { label: "关注", path: "/home/following" },
+    { label: "AI", path: "/home/ai" },
+    { label: "玩过", path: "/home/played" },
+    { label: "推荐", path: "/" }
+  ];
+  for (const routeCase of routeCases) {
+    await page.getByRole("tab", { name: routeCase.label, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${routeCase.path === "/" ? "/$" : `${routeCase.path}$`}`));
+    await expect(page.getByRole("tab", { name: routeCase.label, exact: true })).toHaveAttribute("aria-selected", "true");
+  }
+
+  await page.getByRole("tab", { name: "最新", exact: true }).click();
+  await expect(page).toHaveURL(/\/home\/latest$/);
+  const soupCard = page.locator("article.soup-card:visible").filter({ hasText: soup.title }).first();
+  await expect(soupCard).toBeVisible();
+  await soupCard.click();
+  await expect(page).toHaveURL(new RegExp(`/soup/${soup.id}$`));
+
+  await page.getByRole("button", { name: "返回", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/home\/latest$/);
+  await expect(page.getByRole("tab", { name: "最新", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("article.soup-card:visible").filter({ hasText: soup.title }).first()).toBeVisible();
+});
+
 test("用户可以发布并编辑海龟汤", async ({ page }) => {
   await loginAsE2eAdmin(page);
   const title = `回归汤${Date.now().toString(36)}`;
@@ -33,8 +68,8 @@ test("点赞、收藏和评价在刷新后保持", async ({ page }) => {
   await registerViaApi(page, "互动");
   await page.goto(`/soup/${soup.id}`);
 
-  const like = page.getByRole("button", { name: /^点赞/ }).first();
-  const favorite = page.getByRole("button", { name: /^收藏/ }).first();
+  const like = page.locator("button.detail-interaction-button").filter({ hasText: /^点赞/ });
+  const favorite = page.locator("button.detail-interaction-button").filter({ hasText: /^收藏/ });
   await like.click();
   await favorite.click();
   await expect(like).toHaveAttribute("aria-pressed", "true");
@@ -47,7 +82,7 @@ test("点赞、收藏和评价在刷新后保持", async ({ page }) => {
   await expect(page.getByText("自动化评价内容", { exact: true })).toBeVisible();
 
   await page.reload();
-  await expect(page.getByRole("button", { name: /^点赞/ }).first()).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("button", { name: /^收藏/ }).first()).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("button.detail-interaction-button").filter({ hasText: /^点赞/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("button.detail-interaction-button").filter({ hasText: /^收藏/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("自动化评价内容", { exact: true })).toBeVisible();
 });

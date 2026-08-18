@@ -1,4 +1,5 @@
 export const MAX_LEVEL = 40;
+export const MAX_EXPERIENCE = 1_500_000;
 
 export type LevelProgress = {
   level: number;

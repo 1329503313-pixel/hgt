@@ -66,7 +66,13 @@ export default function UserApp() {
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route element={<MainLayout />}>
-              <Route index element={<HomePage />} />
+              <Route index element={<HomePage key="home-recommended-root" category="recommended" />} />
+              <Route path="home/recommended" element={<HomePage key="home-recommended" category="recommended" />} />
+              <Route path="home/latest" element={<HomePage key="home-latest" category="latest" />} />
+              <Route path="home/following" element={<HomePage key="home-following" category="following" />} />
+              <Route path="home/ai" element={<HomePage key="home-ai" category="ai" />} />
+              <Route path="home/played" element={<HomePage key="home-played" category="played" />} />
+              <Route path="home/mystery" element={<HomePage key="home-mystery" category="mystery" />} />
               <Route path="mine" element={<MinePage />} />
               <Route path="mine/soups" element={<MySoupsPage />} />
               <Route path="mine/favorites" element={<MyFavoritesPage />} />

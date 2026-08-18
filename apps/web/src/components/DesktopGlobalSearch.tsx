@@ -5,11 +5,13 @@ export function DesktopGlobalSearch({
   value,
   onChange,
   onSubmit,
+  placeholder = "搜索海龟汤或用户昵称...",
   className = ""
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
+  placeholder?: string;
   className?: string;
 }) {
   const inputId = useId();
@@ -23,12 +25,12 @@ export function DesktopGlobalSearch({
         onSubmit();
       }}
     >
-      <label className="sr-only" htmlFor={inputId}>搜索海龟汤或用户昵称</label>
+      <label className="sr-only" htmlFor={inputId}>{placeholder.replace(/\.{3}$/, "")}</label>
       <input
         id={inputId}
         type="search"
         autoComplete="off"
-        placeholder="搜索海龟汤或用户昵称..."
+        placeholder={placeholder}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />

@@ -22,6 +22,11 @@ import { renderProgressiveHint, roomAiProgressFeedback, roomAiQuestionRisks, sho
 import { recordChatMessageForRateLimit, stickerCooldownMessage } from "./chatMessageRateLimit.js";
 import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors, selectOnlineSoupHumanHonors, type OnlineSoupAiHonors } from "./onlineSoupHonors.js";
 import { ONLINE_SOUP_SINGLE_USER_IDLE_MINUTES, shouldAutoCloseIdleOnlineSoupRoom } from "./onlineSoupRoomIdle.js";
+import { consumeDailyEntitlement, isEntitlementLimitError } from "./entitlements.js";
+import { publicOssUrl } from "./ossStorage.js";
+import { mysteryTurnConflictAction, processMysteryTurn, startOrContinueMysteryRun } from "./mystery/runtime.js";
+import { MysteryInvariantError } from "./mystery/engine.js";
+import { MysteryModelError } from "./mystery/models.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -177,10 +182,13 @@ function memberBadge(keyValue: unknown, iconValue: unknown, specialName: unknown
 
 async function roomByCode(code: string, db: mysql.Pool | mysql.PoolConnection = pool) {
   const [rows] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT r.*, u.nickname AS host_name, s.title AS soup_title
+    `SELECT r.*, u.nickname AS host_name, s.title AS soup_title,
+       COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title
      FROM online_soup_rooms r
      JOIN users u ON u.id = r.host_id
      LEFT JOIN soups s ON s.id = r.current_soup_id
+     LEFT JOIN mystery_stories mystery ON mystery.id = r.current_mystery_id
+     LEFT JOIN mystery_runs mystery_run ON mystery_run.id = r.current_mystery_run_id
      WHERE r.room_code = ? LIMIT 1`,
     [code]
   );
@@ -195,12 +203,18 @@ async function roomById(id: string, db: mysql.Pool | mysql.PoolConnection = pool
        s.host_manual AS soup_manual, s.enable_ai_game AS soup_enable_ai_game,
        soup_creator.role AS soup_creator_role,
        cr.published_surface_indices, cr.published_bottom_indices, cr.ai_progress, cr.ai_hint_count,
-       cr.ai_soup_snapshot
+       cr.ai_soup_snapshot,
+       COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title,
+       COALESCE(mystery_run.story_background_snapshot, mystery.story_background) AS mystery_background,
+       mystery_run.status AS mystery_run_status, mystery_run.final_ending_id AS mystery_final_ending_id,
+       mystery_run.owner_user_id AS mystery_run_owner_id
      FROM online_soup_rooms r
      JOIN users u ON u.id = r.host_id
      LEFT JOIN soups s ON s.id = r.current_soup_id
      LEFT JOIN users soup_creator ON soup_creator.id = s.creator_id
      LEFT JOIN online_soup_rounds cr ON cr.id = r.current_round_id
+     LEFT JOIN mystery_stories mystery ON mystery.id = r.current_mystery_id
+     LEFT JOIN mystery_runs mystery_run ON mystery_run.id = r.current_mystery_run_id
      WHERE r.id = ? LIMIT 1`,
     [id]
   );
@@ -305,7 +319,10 @@ async function transferDepartedHost(
 ) {
   await db.query(
     `UPDATE online_soup_rooms
-     SET host_id = ?, host_last_seen_at = NOW(), host_grace_started_at = NULL
+     SET host_id = ?, host_last_seen_at = NOW(), host_grace_started_at = NULL,
+       status = IF(content_type = 'mystery', 'preparing', status),
+       content_type = IF(content_type = 'mystery', 'soup', content_type),
+       current_mystery_id = NULL, current_mystery_run_id = NULL
      WHERE id = ? AND host_id = ?`,
     [successor.userId, roomId, previousHostId]
   );
@@ -377,11 +394,12 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
           connection
         );
       }
-      clearedSoup = Boolean(room.current_soup_id || room.current_round_id || String(room.status) !== "preparing");
+      clearedSoup = Boolean(room.current_soup_id || room.current_round_id || room.current_mystery_id || room.current_mystery_run_id || String(room.status) !== "preparing");
       if (clearedSoup) {
         await connection.query(
           `UPDATE online_soup_rooms
-           SET status = 'preparing', current_soup_id = NULL, current_round_id = NULL, last_action_at = NOW()
+           SET status = 'preparing', content_type = 'soup', current_soup_id = NULL, current_round_id = NULL,
+             current_mystery_id = NULL, current_mystery_run_id = NULL, last_action_at = NOW()
            WHERE id = ?`,
           [room.id]
         );
@@ -511,6 +529,30 @@ export async function resumePendingOnlineSoupAiQuestions() {
   for (const row of rows) void processRoomAiQuestions(String(row.room_id));
 }
 
+export async function resumePendingMysteryTurns() {
+  // 进程在模型调用中重启时，世界事务尚未提交；只回收租约已经过期的回合。
+  await pool.query(
+    `UPDATE mystery_turns SET status = 'failed', turn_sequence = NULL,
+       processing_token = NULL, processing_expires_at = NULL,
+       error_code = 'PROCESS_INTERRUPTED', completed_at = CURRENT_TIMESTAMP
+     WHERE status = 'processing'
+       AND (processing_expires_at IS NULL OR processing_expires_at <= CURRENT_TIMESTAMP)`,
+  );
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT DISTINCT messages.room_id
+     FROM online_soup_messages messages
+     JOIN online_soup_rooms rooms ON rooms.id = messages.room_id
+     LEFT JOIN mystery_turns turns
+       ON turns.run_id = messages.mystery_run_id
+      AND turns.idempotency_key = CONCAT('room:', messages.room_id, ':message:', messages.id)
+     WHERE messages.message_type = 'question' AND messages.mystery_run_id IS NOT NULL
+       AND messages.recalled_at IS NULL AND messages.ai_status IN ('pending','answering','scoring')
+       AND rooms.status = 'playing' AND rooms.content_type = 'mystery'
+       AND (turns.id IS NULL OR turns.status IN ('received','failed'))`,
+  );
+  for (const row of rows) void processMysteryRoomTurns(String(row.room_id));
+}
+
 /** 服务启动后为已经达到新门槛、但尚未生成投票的进行中回合补开投票。 */
 export async function resumeEligibleOnlineSoupAiFinishVotes() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -573,6 +615,61 @@ async function systemMessage(roomId: string, roundId: string | null, content: st
     "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, NULL, 'system', ?)",
     [nanoid(), roomId, roundId, content]
   );
+}
+
+function mysteryHistoryMessageId(kind: "action" | "narrative", roomId: string, turnId: string) {
+  const digest = createHash("sha256").update(`${roomId}:${turnId}:${kind}`).digest("hex").slice(0, 48);
+  return `${kind === "action" ? "mhq" : "mhn"}_${digest}`;
+}
+
+/**
+ * 将同一存档已经提交的正式回合投影到新绑定的房间。
+ * 世界事实仍只来自 mystery_turns / 事件账本；这里不重新裁决，也不复制旧房间讨论。
+ */
+async function restoreMysteryRunMessages(
+  db: mysql.PoolConnection,
+  input: { roomId: string; runId: string; ownerUserId: string },
+) {
+  const [[existing]] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS message_count
+     FROM online_soup_messages
+     WHERE room_id = ? AND mystery_run_id = ?
+       AND message_type IN ('question', 'mystery_narrative')`,
+    [input.roomId, input.runId],
+  );
+  if (Number(existing?.message_count ?? 0) > 0) return 0;
+
+  const [turns] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT id, turn_sequence, raw_input, narrative, created_at, completed_at
+     FROM mystery_turns
+     WHERE run_id = ? AND status = 'completed' AND turn_sequence IS NOT NULL
+     ORDER BY turn_sequence ASC, created_at ASC, id ASC`,
+    [input.runId],
+  );
+  for (const turn of turns) {
+    const turnId = String(turn.id);
+    const actionMessageId = mysteryHistoryMessageId("action", input.roomId, turnId);
+    await db.query(
+      `INSERT INTO online_soup_messages
+        (id, room_id, round_id, mystery_run_id, sender_id, message_type, content,
+         question_number, ai_status, created_at, updated_at)
+       VALUES (?, ?, NULL, ?, ?, 'question', ?, ?, 'completed', ?, ?)`,
+      [actionMessageId, input.roomId, input.runId, input.ownerUserId, String(turn.raw_input),
+        Number(turn.turn_sequence), turn.created_at, turn.completed_at ?? turn.created_at],
+    );
+    const narrative = turn.narrative == null ? "" : String(turn.narrative).trim();
+    if (!narrative) continue;
+    const narrativeCreatedAt = turn.completed_at ?? turn.created_at;
+    await db.query(
+      `INSERT INTO online_soup_messages
+        (id, room_id, round_id, mystery_run_id, sender_id, message_type, content,
+         ai_status, target_message_id, created_at, updated_at)
+       VALUES (?, ?, NULL, ?, NULL, 'mystery_narrative', ?, 'completed', ?, ?, ?)`,
+      [mysteryHistoryMessageId("narrative", input.roomId, turnId), input.roomId, input.runId,
+        String(turn.narrative), actionMessageId, narrativeCreatedAt, narrativeCreatedAt],
+    );
+  }
+  return turns.length;
 }
 
 async function openAiFinishVote(
@@ -995,6 +1092,133 @@ async function processRoomAiQuestions(roomId: string) {
   }
 }
 
+const activeMysteryRooms = new Set<string>();
+
+async function processMysteryRoomTurns(roomId: string) {
+  if (activeMysteryRooms.has(roomId)) return;
+  activeMysteryRooms.add(roomId);
+  let roomLock: Awaited<ReturnType<typeof acquireRoomAiLock>> = null;
+  try {
+    roomLock = await acquireRoomAiLock(roomId);
+    if (!roomLock) return;
+    while (true) {
+      const [[pending]] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT messages.id, messages.content, messages.sender_id, messages.mystery_run_id,
+          rooms.host_id, rooms.status AS room_status, rooms.content_type,
+          runs.owner_user_id, runs.status AS run_status
+         FROM online_soup_messages messages
+         JOIN online_soup_rooms rooms ON rooms.id = messages.room_id
+         JOIN mystery_runs runs ON runs.id = messages.mystery_run_id
+         WHERE messages.room_id = ? AND messages.message_type = 'question'
+           AND messages.mystery_run_id IS NOT NULL AND messages.recalled_at IS NULL
+           AND messages.ai_status IN ('pending','answering','scoring')
+         ORDER BY messages.message_sequence ASC LIMIT 1`,
+        [roomId],
+      );
+      if (!pending) break;
+      if (pending.content_type !== "mystery" || pending.room_status !== "playing"
+        || pending.run_status !== "active" || String(pending.sender_id) !== String(pending.host_id)
+        || String(pending.owner_user_id) !== String(pending.host_id)) {
+        await pool.query(
+          "UPDATE online_soup_messages SET ai_status = 'cancelled', ai_error = '谜局或房主状态已变化' WHERE id = ?",
+          [pending.id],
+        );
+        continue;
+      }
+      await pool.query(
+        "UPDATE online_soup_messages SET ai_status = 'scoring', ai_error = NULL WHERE id = ? AND ai_status IN ('pending','answering','scoring')",
+        [pending.id],
+      );
+      void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "scoring", aiError: null });
+      try {
+        const narrativeMessageId = nanoid();
+        let ended = false;
+        await processMysteryTurn({
+          runId: String(pending.mystery_run_id),
+          ownerUserId: String(pending.host_id),
+          rawInput: String(pending.content),
+          idempotencyKey: `room:${roomId}:message:${String(pending.id)}`,
+          commitSideEffects: async ({ connection, narrative, playerVisiblePacket }) => {
+            const [[locked]] = await connection.query<mysql.RowDataPacket[]>(
+              `SELECT messages.ai_status, messages.recalled_at, rooms.status AS room_status,
+                rooms.content_type, rooms.host_id, rooms.current_mystery_run_id,
+                runs.owner_user_id, runs.status AS run_status
+               FROM online_soup_messages messages
+               JOIN online_soup_rooms rooms ON rooms.id = messages.room_id
+               JOIN mystery_runs runs ON runs.id = messages.mystery_run_id
+               WHERE messages.id = ? LIMIT 1 FOR UPDATE`,
+              [pending.id],
+            );
+            if (!locked || locked.recalled_at || !["pending", "answering", "scoring"].includes(String(locked.ai_status))
+              || locked.room_status !== "playing" || locked.content_type !== "mystery"
+              || String(locked.host_id) !== String(pending.host_id)
+              || String(locked.owner_user_id) !== String(pending.host_id) || !["active", "completed"].includes(String(locked.run_status))
+              || String(locked.current_mystery_run_id) !== String(pending.mystery_run_id)) {
+              throw new MysteryInvariantError("TURN_CONTEXT_CHANGED", "谜局或房主状态已经变化，本次行动未提交");
+            }
+            await connection.query(
+              "UPDATE online_soup_messages SET ai_status = 'completed', ai_error = NULL WHERE id = ?",
+              [pending.id],
+            );
+            await connection.query(
+              `INSERT INTO online_soup_messages
+                (id, room_id, round_id, mystery_run_id, sender_id, message_type, content, target_message_id)
+               VALUES (?, ?, NULL, ?, NULL, 'mystery_narrative', ?, ?)`,
+              [narrativeMessageId, roomId, pending.mystery_run_id, narrative, pending.id],
+            );
+            ended = playerVisiblePacket.gameEnded;
+            if (ended) {
+              await connection.query(
+                "UPDATE online_soup_rooms SET status = 'ended', last_action_at = CURRENT_TIMESTAMP WHERE id = ? AND current_mystery_run_id = ?",
+                [roomId, pending.mystery_run_id],
+              );
+            }
+          },
+        });
+        const activitySequence = await recordRoomActivity(roomId, "progress", null, narrativeMessageId).catch((error) => {
+          console.error("Mystery room activity record failed after commit", { roomId, messageId: pending.id, error });
+          return "0";
+        });
+        void notifyRoom(roomId, ended ? "round_ended" : "answer_changed", {
+          messageId: String(pending.id), narrativeMessageId, aiStatus: "completed",
+          activitySequence, activityType: "progress", contentType: "mystery",
+        });
+      } catch (error) {
+        const conflictAction = error instanceof MysteryInvariantError ? mysteryTurnConflictAction(error.code) : "fail";
+        if (conflictAction === "defer") {
+          // 另一实例仍持有有效回合租约；保持消息状态，周期恢复器会在租约过期后继续。
+          console.warn("Mystery room turn is still leased; deferring recovery", { roomId, messageId: pending.id });
+          break;
+        }
+        if (conflictAction === "retry") {
+          // 租约被回收或前一回合刚提交时，从最新 Run State 重新裁决，不能把旧提案强行落库。
+          await pool.query(
+            "UPDATE online_soup_messages SET ai_status = 'pending', ai_error = NULL WHERE id = ? AND ai_status IN ('pending','answering','scoring')",
+            [pending.id],
+          );
+          void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "pending", aiError: null });
+          console.warn("Mystery room turn state changed; queued for a fresh adjudication", {
+            roomId, messageId: pending.id, code: error instanceof MysteryInvariantError ? error.code : "UNKNOWN",
+          });
+          break;
+        }
+        const publicMessage = error instanceof MysteryModelError || error instanceof MysteryInvariantError
+          ? error.message
+          : "谜局裁决暂时失败，请稍后重新提交行动";
+        console.error("Mystery room turn failed", { roomId, messageId: pending.id, error: error instanceof Error ? error.message : String(error) });
+        await pool.query(
+          "UPDATE online_soup_messages SET ai_status = 'failed', ai_error = ? WHERE id = ? AND ai_status IN ('pending','answering','scoring')",
+          [publicMessage.slice(0, 255), pending.id],
+        );
+        void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "failed", aiError: publicMessage.slice(0, 255) });
+      }
+    }
+  } finally {
+    await releaseRoomAiLock(roomLock).catch(() => {});
+    activeMysteryRooms.delete(roomId);
+  }
+}
+
 async function requireMember(req: any, res: any) {
   const user = userOf(req);
   if (!user) { fail(res, 401, "请先登录", "LOGIN_REQUIRED"); return null; }
@@ -1032,8 +1256,10 @@ function lobbyRoom(row: mysql.RowDataPacket) {
     type: String(row.room_type),
     status: String(row.status),
     hostMode: String(row.host_mode ?? "human"),
+    contentType: String(row.content_type ?? "soup"),
     host: { id: String(row.host_id), nickname: String(row.host_name) },
     soupTitle: row.soup_title ? String(row.soup_title) : null,
+    mysteryTitle: row.mystery_title ? String(row.mystery_title) : null,
     playerCount,
     playerCapacity: PLAYER_CAPACITY,
     participantCount: playerCount + (aiHosted ? 0 : 1),
@@ -1054,6 +1280,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     id: String(row.id),
     sequence: String(row.message_sequence),
     roundId: row.round_id ? String(row.round_id) : null,
+    mysteryRunId: row.mystery_run_id ? String(row.mystery_run_id) : null,
     soupId: row.message_soup_id ? String(row.message_soup_id) : null,
     roundEnded: row.message_round_status === "ended",
     allBottomsPublished: row.message_round_status === "ended"
@@ -1221,6 +1448,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
       id: String(room.id), code: String(room.room_code), name: String(room.name), type: String(room.room_type),
       status: String(room.status), hostOnline, hostOfflineDeadline,
       hostMode: String(room.host_mode ?? "human"),
+      contentType: String(room.content_type ?? "soup"),
       aiProgress: String(room.host_mode ?? "human") === "ai" && room.current_round_id
         ? Number(room.ai_progress ?? 0)
         : null,
@@ -1247,6 +1475,14 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
           publishedBottomIndices: jsonList<number>(room.published_bottom_indices)
         } : {})
       } : null,
+      mystery: room.current_mystery_id ? {
+        id: String(room.current_mystery_id),
+        title: String(room.mystery_title),
+        background: String(room.mystery_background),
+        runId: room.current_mystery_run_id ? String(room.current_mystery_run_id) : null,
+        runStatus: room.mystery_run_status ? String(room.mystery_run_status) : null,
+        gameEnded: String(room.mystery_run_status ?? "") === "completed",
+      } : null,
       createdAt: iso(room.created_at)
     },
     me: { role: String(viewerMember?.member_role ?? (isSuperAdminRole(viewer.role) ? "admin" : "spectator")), isHost },
@@ -1269,6 +1505,7 @@ router.get("/rooms", async (req, res) => {
   const user = userOf(req);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT r.*, u.nickname AS host_name, s.title AS soup_title,
+       COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title,
        (SELECT viewer_member.member_role
         FROM online_soup_members viewer_member
         WHERE viewer_member.room_id = r.id AND viewer_member.user_id = ? AND viewer_member.is_active = 1
@@ -1276,6 +1513,8 @@ router.get("/rooms", async (req, res) => {
        SUM(CASE WHEN m.member_role = 'player' AND m.is_active = 1 THEN 1 ELSE 0 END) AS player_count
      FROM online_soup_rooms r JOIN users u ON u.id = r.host_id
      LEFT JOIN soups s ON s.id = r.current_soup_id
+     LEFT JOIN mystery_stories mystery ON mystery.id = r.current_mystery_id
+     LEFT JOIN mystery_runs mystery_run ON mystery_run.id = r.current_mystery_run_id
      LEFT JOIN online_soup_members m ON m.room_id = r.id
      WHERE r.status IN ('preparing','playing','ended')
      GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 100`,
@@ -1530,16 +1769,65 @@ router.get("/soups/eligible", async (req, res) => {
   })), hostMode, hasMore, nextPage: hasMore ? page + 1 : null });
 });
 
+router.get("/mysteries/eligible", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const parsed = z.object({
+    roomId: z.string().trim().min(1).max(64),
+    q: z.string().trim().max(100).default(""),
+    page: z.coerce.number().int().min(0).default(0),
+    limit: z.coerce.number().int().min(1).max(60).default(40),
+  }).safeParse(req.query);
+  if (!parsed.success) return fail(res, 400, "谜局筛选条件不正确");
+  const room = await roomById(parsed.data.roomId);
+  if (!room || String(room.host_id) !== user.id) return fail(res, 403, "仅房主可以选择谜局");
+  if (String(room.status) === "playing") return fail(res, 409, "请先结束当前游戏再更换谜局");
+  const params: Array<string | number> = [user.id];
+  const keywordClause = parsed.data.q ? "AND (stories.title LIKE ? OR JSON_SEARCH(stories.tags, 'one', ?) IS NOT NULL)" : "";
+  if (parsed.data.q) params.push(`%${parsed.data.q}%`, `%${parsed.data.q}%`);
+  params.push(parsed.data.limit + 1, parsed.data.page * parsed.data.limit);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT stories.id, stories.title, stories.cover_url, stories.tags, versions.source_snapshot,
+       slots.current_run_id, runs.status AS run_status
+     FROM mystery_stories stories
+     JOIN mystery_story_versions versions ON versions.id = stories.published_version_id
+     LEFT JOIN mystery_save_slots slots ON slots.story_id = stories.id AND slots.owner_user_id = ?
+     LEFT JOIN mystery_runs runs ON runs.id = slots.current_run_id
+     WHERE stories.publication_status = 'published' AND stories.published_version_id IS NOT NULL ${keywordClause}
+     ORDER BY stories.published_at DESC, stories.created_at DESC
+     LIMIT ? OFFSET ?`,
+    params,
+  );
+  const hasMore = rows.length > parsed.data.limit;
+  if (hasMore) rows.pop();
+  res.json({
+    mysteries: rows.map((row) => {
+      const source = jsonObject<{ title?: string; coverUrl?: string | null; tags?: string[] }>(row.source_snapshot);
+      return {
+        id: String(row.id), title: source?.title ?? String(row.title), coverUrl: source?.coverUrl ?? publicOssUrl(row.cover_url),
+        tags: source?.tags ?? jsonList<string>(row.tags), canContinue: Boolean(row.current_run_id) && String(row.run_status) === "active",
+        saveStatus: row.current_run_id ? String(row.run_status) : null,
+      };
+    }),
+    hasMore,
+    nextPage: hasMore ? parsed.data.page + 1 : null,
+  });
+});
+
 router.post("/rooms", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
   const parsed = z.object({
     name: z.string().trim().min(1).max(50), type: z.enum(["public", "password"]),
     password: z.string().max(4).optional().default(""),
-    hostMode: z.enum(["human", "ai"]).default("human")
+    hostMode: z.enum(["human", "ai"]).default("human"),
+    mysteryId: z.string().trim().min(1).max(64).optional(),
+    mysteryChoice: z.enum(["continue", "restart"]).optional(),
   }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "房间信息不正确");
   if (parsed.data.type === "password" && parsed.data.password.length !== 4) return fail(res, 400, "房间密码必须为 4 位");
+  if (parsed.data.mysteryId && !parsed.data.mysteryChoice) return fail(res, 400, "请选择继续谜局或重新开始");
+  if (parsed.data.mysteryId && parsed.data.hostMode !== "human") return fail(res, 400, "谜局固定使用世界裁决器，不能选择 AI 主持模式");
   let code = "";
   for (let i = 0; i < 10; i++) {
     code = String(Math.floor(100000 + Math.random() * 900000));
@@ -1549,6 +1837,7 @@ router.post("/rooms", async (req, res) => {
   const roomId = nanoid();
   const passwordHash = parsed.data.type === "password" ? await bcrypt.hash(parsed.data.password, 10) : null;
   const connection = await pool.getConnection();
+  let mysteryRun: Awaited<ReturnType<typeof startOrContinueMysteryRun>> | null = null;
   try {
     await connection.beginTransaction();
     await connection.query(
@@ -1560,20 +1849,45 @@ router.post("/rooms", async (req, res) => {
       "INSERT INTO online_soup_members (room_id, user_id, member_role) VALUES (?, ?, ?)",
       [roomId, user.id, parsed.data.hostMode === "ai" ? "player" : "host"]
     );
+    if (parsed.data.mysteryId && parsed.data.mysteryChoice) {
+      mysteryRun = await startOrContinueMysteryRun({
+        storyId: parsed.data.mysteryId,
+        ownerUserId: user.id,
+        choice: parsed.data.mysteryChoice,
+        roomId,
+        connection,
+      });
+      await connection.query(
+        `UPDATE online_soup_rooms SET content_type = 'mystery', host_mode = 'human',
+          current_mystery_id = ?, current_mystery_run_id = ? WHERE id = ?`,
+        [parsed.data.mysteryId, mysteryRun.runId, roomId],
+      );
+    }
     await systemMessage(roomId, null, `主持人 ${user.nickname} 创建了房间`, connection);
+    if (mysteryRun) {
+      if (mysteryRun.continued) {
+        await restoreMysteryRunMessages(connection, {
+          roomId,
+          runId: mysteryRun.runId,
+          ownerUserId: user.id,
+        });
+      }
+      await systemMessage(roomId, null, `${mysteryRun.continued ? "继续" : "选择"}谜局《${mysteryRun.title}》`, connection);
+    }
     await connection.commit();
   } catch (error) {
     await connection.rollback();
     throw error;
   } finally { connection.release(); }
   recordUserBehavior("create_online_room");
-  res.status(201).json({ roomId, code });
+  res.status(201).json({ roomId, code, contentType: mysteryRun ? "mystery" : "soup", mysteryRunId: mysteryRun?.runId ?? null });
   notifyLobby("room_created");
 });
 
 router.patch("/rooms/:roomId/host-mode", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
+  if (String(context.room.content_type ?? "soup") === "mystery") return fail(res, 409, "谜局固定由世界裁决器和叙事模型处理，不能切换主持方式");
   if (context.room.status === "playing") return fail(res, 409, "游戏进行中不能更改主持模式，请先结束本轮");
   const parsed = z.object({ hostMode: z.enum(["human", "ai"]) }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "主持模式不正确");
@@ -1812,6 +2126,22 @@ router.post("/rooms/:roomId/ai-hint", async (req, res) => {
     if (!round || round.round_status !== "playing" || round.host_mode !== "ai") return fail(res, 409, "本轮状态已发生变化");
     const aiState = roomAiState(round);
     if (round.ai_soup_snapshot && !aiState.soupSnapshot) return fail(res, 503, "本轮 AI 数据校验失败，请联系房主重新开局");
+    const entitlementConnection = await pool.getConnection();
+    try {
+      await entitlementConnection.beginTransaction();
+      await consumeDailyEntitlement(entitlementConnection, {
+        userId: context.user.id,
+        role: context.user.role,
+        metric: "ai_hint",
+        eventKey: `${round.id}:hint:${Number(round.ai_hint_count ?? 0) + 1}`
+      });
+      await entitlementConnection.commit();
+    } catch (error) {
+      await entitlementConnection.rollback();
+      throw error;
+    } finally {
+      entitlementConnection.release();
+    }
     const turn = await runRoomAiHint(String(round.soup_id), aiState);
     const clueId = nanoid();
     const connection = await pool.getConnection();
@@ -1848,7 +2178,8 @@ router.post("/rooms/:roomId/ai-hint", async (req, res) => {
     }
   } catch (error) {
     if (!res.headersSent) {
-      if (error instanceof AiServiceError) fail(res, error.status, error.message);
+      if (isEntitlementLimitError(error)) fail(res, 429, error.message, error.code);
+      else if (error instanceof AiServiceError) fail(res, error.status, error.message);
       else {
         console.error("Online soup AI hint failed:", error);
         fail(res, 503, "AI 提示暂时不可用");
@@ -1870,6 +2201,29 @@ router.post("/rooms/:roomId/ai-hint", async (req, res) => {
 router.post("/rooms/:roomId/questions/:messageId/retry-ai", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
+  if (String(context.room.content_type ?? "soup") === "mystery") {
+    if (String(context.room.host_id) !== context.user.id) return fail(res, 403, "只有房主可以重试谜局行动");
+    const [[action]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT sender_id, ai_status, mystery_run_id, recalled_at
+       FROM online_soup_messages
+       WHERE id = ? AND room_id = ? AND message_type = 'question' LIMIT 1`,
+      [req.params.messageId, context.room.id],
+    );
+    if (!action || !action.mystery_run_id) return fail(res, 404, "未找到该谜局行动");
+    if (action.recalled_at) return fail(res, 409, "该行动已经撤回");
+    if (String(action.sender_id) !== context.user.id) return fail(res, 403, "只能重试自己提交的行动");
+    if (String(context.room.status) !== "playing" || String(action.mystery_run_id) !== String(context.room.current_mystery_run_id)) return fail(res, 409, "当前谜局已经结束或发生变化");
+    if (String(action.ai_status) !== "failed") return fail(res, 409, "该行动当前无需重试");
+    const [updated] = await pool.query<mysql.ResultSetHeader>(
+      "UPDATE online_soup_messages SET ai_status = 'pending', ai_error = NULL WHERE id = ? AND ai_status = 'failed' AND recalled_at IS NULL",
+      [req.params.messageId],
+    );
+    if (updated.affectedRows !== 1) return fail(res, 409, "该行动状态已更新");
+    res.status(202).json({ ok: true });
+    void notifyRoom(context.room.id, "answer_changed", { messageId: req.params.messageId, aiStatus: "pending", aiError: null });
+    void processMysteryRoomTurns(context.room.id);
+    return;
+  }
   if (String(context.room.host_mode ?? "human") !== "ai") return fail(res, 409, "当前不是 AI 主持模式");
   const [[question]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT m.sender_id, m.answer, m.ai_status, m.round_id, m.recalled_at, r.status AS round_status
@@ -2216,7 +2570,11 @@ router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => 
     }
     targetNickname = String(target.nickname);
     await connection.query(
-      "UPDATE online_soup_rooms SET host_id = ?, host_last_seen_at = NOW(), host_grace_started_at = NULL WHERE id = ?",
+      `UPDATE online_soup_rooms SET host_id = ?, host_last_seen_at = NOW(), host_grace_started_at = NULL,
+        status = IF(content_type = 'mystery', 'preparing', status),
+        content_type = IF(content_type = 'mystery', 'soup', content_type),
+        current_mystery_id = NULL, current_mystery_run_id = NULL
+       WHERE id = ?`,
       [req.params.userId, context.room.id]
     );
     const aiHosted = String(room.host_mode ?? "human") === "ai";
@@ -2247,6 +2605,82 @@ router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => 
     newHostId: req.params.userId,
     previousRole
   });
+});
+
+router.post("/rooms/:roomId/select-mystery", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  if (context.room.status === "playing") return fail(res, 409, "请先结束当前游戏再更换谜局");
+  const parsed = z.object({
+    mysteryId: z.string().trim().min(1).max(64),
+    choice: z.enum(["continue", "restart"]),
+  }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "请选择继续游戏或重新开始");
+  const connection = await pool.getConnection();
+  let runId = "";
+  let continued = false;
+  let title = "";
+  try {
+    await connection.beginTransaction();
+    const [[lockedRoom]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT host_id, status, current_round_id FROM online_soup_rooms WHERE id = ? AND status <> 'closed' LIMIT 1 FOR UPDATE",
+      [context.room.id],
+    );
+    if (!lockedRoom || String(lockedRoom.host_id) !== context.user.id) {
+      await connection.rollback();
+      return fail(res, 403, "仅当前房主可以选择谜局");
+    }
+    if (String(lockedRoom.status) === "playing") {
+      await connection.rollback();
+      return fail(res, 409, "请先结束当前游戏再更换谜局");
+    }
+    if (lockedRoom.current_round_id) {
+      await connection.query(
+        "UPDATE online_soup_rounds SET status = 'ended', ended_at = COALESCE(ended_at, CURRENT_TIMESTAMP) WHERE id = ? AND status = 'preparing'",
+        [lockedRoom.current_round_id],
+      );
+    }
+    const run = await startOrContinueMysteryRun({
+      storyId: parsed.data.mysteryId,
+      ownerUserId: context.user.id,
+      choice: parsed.data.choice,
+      roomId: context.room.id,
+      connection,
+    });
+    runId = run.runId;
+    continued = run.continued;
+    title = run.title;
+    await connection.query(
+      `UPDATE online_soup_rooms
+       SET content_type = 'mystery', host_mode = 'human', current_soup_id = NULL,
+         current_round_id = NULL, current_mystery_id = ?, current_mystery_run_id = ?,
+         status = 'preparing', last_action_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [parsed.data.mysteryId, runId, context.room.id],
+    );
+    await connection.query(
+      `UPDATE online_soup_members SET member_role = CASE WHEN user_id = ? THEN 'host'
+        WHEN member_role = 'host' THEN 'player' ELSE member_role END
+       WHERE room_id = ? AND is_active = 1`,
+      [context.user.id, context.room.id],
+    );
+    if (continued) {
+      await restoreMysteryRunMessages(connection, {
+        roomId: context.room.id,
+        runId,
+        ownerUserId: context.user.id,
+      });
+    }
+    await systemMessage(context.room.id, null, `${context.user.nickname}${continued ? "继续" : "选择"}了谜局「${title}」`, connection);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  res.json({ ok: true, runId, continued });
+  void notifyRoom(context.room.id, "mystery_selected", { mysteryId: parsed.data.mysteryId, runId, continued });
 });
 
 router.post("/rooms/:roomId/select-soup", async (req, res) => {
@@ -2288,7 +2722,8 @@ router.post("/rooms/:roomId/select-soup", async (req, res) => {
     }
     const [roomUpdate] = await connection.query<mysql.ResultSetHeader>(
       `UPDATE online_soup_rooms
-       SET current_soup_id = ?, current_round_id = ?, status = 'preparing', last_action_at = NOW()
+       SET content_type = 'soup', current_soup_id = ?, current_round_id = ?, current_mystery_id = NULL,
+         current_mystery_run_id = NULL, status = 'preparing', last_action_at = NOW()
        WHERE id = ? AND status <> 'closed'`,
       [parsed.data.soupId, roundId, context.room.id]
     );
@@ -2309,6 +2744,55 @@ router.post("/rooms/:roomId/select-soup", async (req, res) => {
 router.post("/rooms/:roomId/start", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
+  if (String(context.room.content_type ?? "soup") === "mystery") {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT host_id, status, current_mystery_id, current_mystery_run_id
+         FROM online_soup_rooms WHERE id = ? AND status <> 'closed' LIMIT 1 FOR UPDATE`,
+        [context.room.id],
+      );
+      if (!room || String(room.host_id) !== context.user.id) {
+        await connection.rollback();
+        return fail(res, 403, "仅当前房主可以开始谜局");
+      }
+      if (!room.current_mystery_id || !room.current_mystery_run_id || !["preparing", "ended"].includes(String(room.status))) {
+        await connection.rollback();
+        return fail(res, 409, "请先选择谜局和存档方式");
+      }
+      const [[run]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT status, owner_user_id FROM mystery_runs WHERE id = ? LIMIT 1 FOR UPDATE",
+        [room.current_mystery_run_id],
+      );
+      if (!run || String(run.owner_user_id) !== context.user.id) {
+        await connection.rollback();
+        return fail(res, 409, "谜局进程属于上一任房主，请重新选择谜局并使用你的存档");
+      }
+      if (String(run.status) !== "active") {
+        await connection.rollback();
+        return fail(res, 409, "该存档已经结束，请重新开始");
+      }
+      await connection.query(
+        "UPDATE online_soup_rooms SET status = 'playing', last_action_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [context.room.id],
+      );
+      await systemMessage(
+        context.room.id,
+        null,
+        "谜局开始：只有房主可以提交正式行动，其他成员可参与讨论。房主可以自由描述观察、交谈、移动、使用物品或等待，世界中的人物与事件会继续行动。",
+        connection,
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      throw error;
+    } finally { connection.release(); }
+    const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, String(context.room.current_mystery_run_id));
+    res.json({ ok: true });
+    void notifyRoom(context.room.id, "round_started", { activitySequence, activityType: "progress", contentType: "mystery" });
+    return;
+  }
   let aiSoupSnapshot: AiSoupRoundSnapshot | null = null;
   if (String(context.room.host_mode ?? "human") === "ai" && context.room.current_soup_id) {
     // 开局冻结完整真相和事实模型；作品后续编辑只影响下一轮。
@@ -2408,9 +2892,14 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   const sticker = parsed.data.type === "sticker" ? getSticker(parsed.data.stickerId) : null;
   if (parsed.data.type === "sticker" && !sticker) return fail(res, 400, "表情不存在或已下架");
   if (parsed.data.type === "sticker" && !(await userOwnsSticker(context.user.id, parsed.data.stickerId))) return fail(res, 403, "尚未拥有该表情，请先前往商城购买");
+  const mysteryMode = String(context.room.content_type ?? "soup") === "mystery";
   if (parsed.data.type === "question") {
-    if (context.member?.member_role !== "player") return fail(res, 403, "只有玩家可以发送正式提问");
+    if (mysteryMode && context.user.id !== String(context.room.host_id)) return fail(res, 403, "谜局中只有房主可以提交正式行动，其他成员只能讨论");
+    if (!mysteryMode && context.member?.member_role !== "player") return fail(res, 403, "只有玩家可以发送正式提问");
     if (context.room.status !== "playing") return fail(res, 409, "当前不在推理阶段");
+    if (mysteryMode && (!context.room.current_mystery_run_id || String(context.room.mystery_run_owner_id ?? "") !== context.user.id)) {
+      return fail(res, 409, "当前谜局存档不属于房主，请重新选择谜局");
+    }
   }
   if (parsed.data.type !== "question" && context.member?.member_role === "spectator") {
     return fail(res, 403, "旁观者只能查看房间内容");
@@ -2420,14 +2909,29 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   let activitySequence = "0";
   try {
     await connection.beginTransaction();
-    const [roomUpdate] = await connection.query<mysql.ResultSetHeader>(
-      `UPDATE online_soup_rooms SET last_action_at = NOW()
-       WHERE id = ? AND status <> 'closed'`,
-      [context.room.id]
-    );
+    const id = nanoid();
+    const roomUpdateSql = parsed.data.type !== "question"
+      ? `UPDATE online_soup_rooms SET last_action_at = NOW()
+         WHERE id = ? AND status <> 'closed'`
+      : mysteryMode
+        ? `UPDATE online_soup_rooms rooms SET rooms.last_action_at = NOW()
+           WHERE rooms.id = ? AND rooms.status = 'playing' AND rooms.content_type = 'mystery'
+             AND rooms.host_id = ? AND rooms.current_mystery_run_id = ?
+             AND EXISTS (
+               SELECT 1 FROM mystery_runs runs
+               WHERE runs.id = rooms.current_mystery_run_id AND runs.owner_user_id = ? AND runs.status = 'active'
+             )`
+        : `UPDATE online_soup_rooms SET last_action_at = NOW()
+           WHERE id = ? AND status = 'playing' AND content_type = 'soup'`;
+    const roomUpdateParams = parsed.data.type !== "question"
+      ? [context.room.id]
+      : mysteryMode
+        ? [context.room.id, context.user.id, context.room.current_mystery_run_id, context.user.id]
+        : [context.room.id];
+    const [roomUpdate] = await connection.query<mysql.ResultSetHeader>(roomUpdateSql, roomUpdateParams);
     if (roomUpdate.affectedRows !== 1) {
       await connection.rollback();
-      return fail(res, 409, "房间已解散，请返回房间列表", "ROOM_CLOSED");
+      return fail(res, 409, parsed.data.type === "question" ? "当前游戏状态已经变化，请刷新房间后重试" : "房间已解散，请返回房间列表", parsed.data.type === "question" ? "GAME_STATE_CHANGED" : "ROOM_CLOSED");
     }
     const stickerCooldownMs = await recordChatMessageForRateLimit(connection, {
       scopeType: "online_soup",
@@ -2476,20 +2980,37 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
       }
     }
     if (parsed.data.type === "question") {
-      await connection.query("UPDATE online_soup_rounds SET question_count = LAST_INSERT_ID(question_count + 1) WHERE id = ?", [context.room.current_round_id]);
-      const [[row]] = await connection.query<mysql.RowDataPacket[]>("SELECT question_count FROM online_soup_rounds WHERE id = ?", [context.room.current_round_id]);
-      questionNumber = Number(row.question_count);
+      if (!mysteryMode && String(context.room.host_mode ?? "human") === "ai") {
+        await consumeDailyEntitlement(connection, {
+          userId: context.user.id,
+          role: context.user.role,
+          metric: "ai_question",
+          eventKey: id
+        });
+      }
+      if (mysteryMode) {
+        const [[row]] = await connection.query<mysql.RowDataPacket[]>(
+          `SELECT COUNT(*) + 1 AS question_count FROM online_soup_messages
+           WHERE room_id = ? AND mystery_run_id = ? AND message_type = 'question'`,
+          [context.room.id, context.room.current_mystery_run_id],
+        );
+        questionNumber = Number(row.question_count);
+      } else {
+        await connection.query("UPDATE online_soup_rounds SET question_count = LAST_INSERT_ID(question_count + 1) WHERE id = ?", [context.room.current_round_id]);
+        const [[row]] = await connection.query<mysql.RowDataPacket[]>("SELECT question_count FROM online_soup_rounds WHERE id = ?", [context.room.current_round_id]);
+        questionNumber = Number(row.question_count);
+      }
     }
     const isHumanHost = String(context.room.host_mode ?? "human") === "human" && context.user.id === context.room.host_id;
     const type = parsed.data.type === "discussion" && isHumanHost ? "host" : parsed.data.type;
     const content = messageContent;
-    const id = nanoid();
     await connection.query(
       `INSERT INTO online_soup_messages
-       (id, room_id, round_id, sender_id, message_type, content, sticker_id, question_number, ai_status, mentions_json, reply_to_message_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, context.room.id, context.room.current_round_id, context.user.id, type, content, sticker?.id ?? null, questionNumber,
-        parsed.data.type === "question" && String(context.room.host_mode ?? "human") === "ai" ? "pending" : "none",
+       (id, room_id, round_id, mystery_run_id, sender_id, message_type, content, sticker_id, question_number, ai_status, mentions_json, reply_to_message_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, context.room.id, mysteryMode ? null : context.room.current_round_id, mysteryMode ? context.room.current_mystery_run_id : null,
+        context.user.id, type, content, sticker?.id ?? null, questionNumber,
+        parsed.data.type === "question" && (mysteryMode || String(context.room.host_mode ?? "human") === "ai") ? "pending" : "none",
         mentions.length ? JSON.stringify(mentions) : null, parsed.data.replyToMessageId ?? null]
     );
     activitySequence = await recordRoomActivity(context.room.id, parsed.data.type === "question" ? "progress" : "chat", context.user.id, id, connection);
@@ -2497,7 +3018,8 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
     res.status(201).json({ id, questionNumber });
   } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
   void notifyRoom(context.room.id, "message", { activitySequence, activityType: parsed.data.type === "question" ? "progress" : "chat" });
-  if (parsed.data.type === "question" && String(context.room.host_mode ?? "human") === "ai") void processRoomAiQuestions(context.room.id);
+  if (parsed.data.type === "question" && mysteryMode) void processMysteryRoomTurns(context.room.id);
+  else if (parsed.data.type === "question" && String(context.room.host_mode ?? "human") === "ai") void processRoomAiQuestions(context.room.id);
 });
 
 router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
@@ -2508,7 +3030,7 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
   try {
     await connection.beginTransaction();
     const [[message]] = await connection.query<mysql.RowDataPacket[]>(
-      `SELECT id, sender_id, message_type, answer, ai_status, recalled_at,
+      `SELECT id, sender_id, message_type, mystery_run_id, answer, ai_status, recalled_at,
          created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
        FROM online_soup_messages
        WHERE id = ? AND room_id = ? LIMIT 1 FOR UPDATE`,
@@ -2537,6 +3059,10 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
     if (message.message_type === "question" && message.answer != null) {
       await connection.rollback();
       return fail(res, 409, "主持人已回复该提问，无法撤回");
+    }
+    if (message.message_type === "question" && message.mystery_run_id && message.ai_status === "completed") {
+      await connection.rollback();
+      return fail(res, 409, "该谜局行动已写入事件账本，无法撤回");
     }
     const [result] = await connection.query<mysql.ResultSetHeader>(
       `UPDATE online_soup_messages
@@ -2579,6 +3105,7 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
 router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
   const context = await requireHumanHost(req, res);
   if (!context) return;
+  if (String(context.room.content_type ?? "soup") === "mystery") return fail(res, 409, "谜局行动由世界裁决器处理，房主不能直接设置结果");
   const parsed = z.object({ answer: z.enum(answerValues).nullable() }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "回答类型不正确");
   const connection = await pool.getConnection();
@@ -2811,6 +3338,9 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
 router.post("/rooms/:roomId/end-round", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
+  if (String(context.room.content_type ?? "soup") === "mystery") {
+    return fail(res, 409, "谜局只能由服务端结局状态机判定结束；你可以关闭房间，存档会保留");
+  }
   const connection = await pool.getConnection();
   let roundId = "";
   let completedRound = false;

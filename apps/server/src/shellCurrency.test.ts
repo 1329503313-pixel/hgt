@@ -44,16 +44,17 @@ test("后端货币类型包含贝壳和明珠", () => {
 
 test("等级门槛按累计经验计算并在 Lv40 封顶", () => {
   assert.deepEqual(LEVEL_THRESHOLDS, [
-    0, 10, 100, 250, 450, 800, 1_200, 1_800, 2_600, 3_600,
-    4_800, 6_000, 7_500, 9_500, 12_000, 15_000, 19_000, 24_000,
-    30_000, 37_000, 45_000, 54_000, 64_000, 75_000, 87_000,
-    100_000, 120_000, 150_000, 190_000, 240_000, 300_000,
-    400_000, 550_000, 750_000, 1_000_000, 1_350_000, 2_000_000,
-    3_000_000, 4_500_000, 6_500_000, 10_000_000
+    0, 10, 50, 100, 200, 350, 550, 800, 1_200, 1_700,
+    2_400, 3_200, 4_200, 5_500, 7_000, 9_000, 12_000, 16_000,
+    21_000, 27_000, 34_000, 42_000, 51_000, 62_000, 75_000,
+    90_000, 110_000, 135_000, 165_000, 200_000, 240_000,
+    290_000, 350_000, 420_000, 500_000, 600_000, 720_000,
+    850_000, 1_000_000, 1_200_000, 1_500_000
   ]);
-  assert.equal(levelForExperience(0), 0);
-  assert.equal(levelForExperience(9), 0);
-  assert.equal(levelForExperience(10), 1);
+  LEVEL_THRESHOLDS.forEach((threshold, level) => {
+    assert.equal(levelForExperience(threshold), level);
+    if (level > 0) assert.equal(levelForExperience(threshold - 1), level - 1);
+  });
   assert.equal(levelForExperience(MAX_EXPERIENCE - 1), 39);
   assert.equal(levelForExperience(MAX_EXPERIENCE), 40);
   assert.equal(levelForExperience(MAX_EXPERIENCE + 1), 40);
@@ -61,14 +62,14 @@ test("等级门槛按累计经验计算并在 Lv40 封顶", () => {
 
 test("等级进度按本级区间计算", () => {
   assert.deepEqual(experienceProgress(55), {
-    level: 1,
+    level: 2,
     experience: 55,
-    levelStartExperience: 10,
+    levelStartExperience: 50,
     nextLevelExperience: 100,
-    currentLevelExperience: 45,
-    experienceForNextLevel: 90,
+    currentLevelExperience: 5,
+    experienceForNextLevel: 50,
     remainingExperience: 45,
-    progressPercent: 50,
+    progressPercent: 10,
     isMaxLevel: false
   });
   assert.equal(experienceProgress(MAX_EXPERIENCE).isMaxLevel, true);

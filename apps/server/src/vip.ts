@@ -16,6 +16,7 @@ type VipRouteDependencies = {
   requireAuth: (req: Request, res: Response) => Promise<AdminActor | null>;
   requireAdmin: (req: Request, res: Response) => Promise<AdminActor | null>;
   sendError: (res: Response, status: number, message: string) => unknown;
+  onEntitlementChanged?: (userId: string) => Promise<void> | void;
 };
 
 const grantDurationSchema = z.discriminatedUnion("unit", [
@@ -171,7 +172,14 @@ function mapVipOrder(row: mysql.RowDataPacket) {
 }
 
 export function registerVipRoutes(app: Express, dependencies: VipRouteDependencies) {
-  const { pool, requireAuth, requireAdmin, sendError } = dependencies;
+  const { pool, requireAuth, requireAdmin, sendError, onEntitlementChanged } = dependencies;
+  const syncEntitlement = async (userId: string) => {
+    try {
+      await onEntitlementChanged?.(userId);
+    } catch (error) {
+      console.error("VIP entitlement top-up failed; the daily grant scheduler will retry:", { userId, error });
+    }
+  };
 
   // 购买接口仅保留协议占位。支付业务接入前，任何用户调用都不会创建订单或变更 VIP。
   app.post("/api/vip/purchase", async (req, res) => {
@@ -311,6 +319,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
         type: "gift", dayChange: days, balanceAfterDays: vipBalanceDays(expiresAt, now), operatorUserId: actor.id
       });
       await connection.commit();
+      await syncEntitlement(String(target.id));
       res.json({ ok: true, orderNumber, expiresAt: expiresAt.toISOString(), balanceAfterDays: vipBalanceDays(expiresAt, now) });
     } catch (error) {
       await connection.rollback();
@@ -402,6 +411,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
       if (isSuperAdminRole(target.role)) return sendError(res, 400, "不能修改超级管理员身份");
       return sendError(res, 409, "该用户已经是后台管理员");
     }
+    await syncEntitlement(req.params.id);
     res.json({ ok: true });
   });
 

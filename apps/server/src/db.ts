@@ -7,6 +7,7 @@ import { BANNER_MAX_BYTES, optimizeBannerImage, storedBannerImageBytes } from ".
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
 import { canonicalConversationUserIds } from "./conversations.js";
 import { generateInviteCode } from "./inviteCodes.js";
+import { MAX_EXPERIENCE } from "./levelSystem.js";
 import {
   mergedRankingRewardNotificationReadState,
   rankingRewardNotificationSummary
@@ -654,6 +655,217 @@ export async function initDatabase() {
   `);
   await ensureColumn("soups", "difficulty", "difficulty ENUM('简单','普通','困难','地狱') NOT NULL DEFAULT '普通' AFTER type");
 
+  // 谜局：故事草稿、不可变发布版本、房主存档、运行状态与只追加事件账本。
+  // Story Package、Run State、Event Ledger 分表保存，禁止复用 AI 玩汤的 game_sessions 快照。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_stories (
+      id VARCHAR(64) PRIMARY KEY,
+      title VARCHAR(120) NOT NULL,
+      cover_url VARCHAR(2048) NULL,
+      tags JSON NOT NULL,
+      story_background LONGTEXT NOT NULL,
+      story_content LONGTEXT NOT NULL,
+      character_design LONGTEXT NOT NULL,
+      preset_endings LONGTEXT NOT NULL,
+      core_settings LONGTEXT NOT NULL,
+      source_config JSON NOT NULL,
+      story_source_hash CHAR(64) NOT NULL,
+      publication_status ENUM('draft','published','unpublished') NOT NULL DEFAULT 'draft',
+      review_status ENUM('not_compiled','compiled','approved','rejected') NOT NULL DEFAULT 'not_compiled',
+      published_version_id VARCHAR(64) NULL,
+      created_by VARCHAR(64) NULL,
+      updated_by VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      published_at DATETIME NULL,
+      INDEX idx_mystery_publication (publication_status, published_at, created_at),
+      INDEX idx_mystery_source_hash (story_source_hash),
+      CONSTRAINT fk_mystery_story_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_mystery_story_updater FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_story_versions (
+      id VARCHAR(64) PRIMARY KEY,
+      story_id VARCHAR(64) NOT NULL,
+      version_number INT UNSIGNED NOT NULL,
+      story_source_hash CHAR(64) NOT NULL,
+      source_snapshot JSON NOT NULL,
+      compiled_package JSON NOT NULL,
+      compiled_diagnostics JSON NOT NULL,
+      compiled_model VARCHAR(120) NOT NULL,
+      compiled_customized TINYINT(1) NOT NULL DEFAULT 0,
+      review_status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+      reviewed_by VARCHAR(64) NULL,
+      reviewed_at DATETIME NULL,
+      review_note TEXT NULL,
+      published_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_mystery_story_version (story_id, version_number),
+      INDEX idx_mystery_version_review (story_id, review_status, version_number),
+      CONSTRAINT fk_mystery_version_story FOREIGN KEY (story_id) REFERENCES mystery_stories(id) ON DELETE CASCADE,
+      CONSTRAINT fk_mystery_version_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_compile_jobs (
+      id VARCHAR(64) PRIMARY KEY,
+      story_id VARCHAR(64) NOT NULL,
+      requested_by VARCHAR(64) NULL,
+      source_hash CHAR(64) NOT NULL,
+      source_snapshot JSON NOT NULL,
+      version_number INT UNSIGNED NOT NULL,
+      force_recompile TINYINT(1) NOT NULL DEFAULT 0,
+      status ENUM('queued','running','succeeded','failed') NOT NULL DEFAULT 'queued',
+      attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+      max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 3,
+      available_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      lease_token VARCHAR(64) NULL,
+      lease_expires_at DATETIME NULL,
+      version_id VARCHAR(64) NULL,
+      compiled_model VARCHAR(120) NULL,
+      error_code VARCHAR(80) NULL,
+      error_message VARCHAR(1000) NULL,
+      started_at DATETIME NULL,
+      finished_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_mystery_compile_queue (status, available_at, created_at),
+      INDEX idx_mystery_compile_story (story_id, created_at),
+      INDEX idx_mystery_compile_lease (status, lease_expires_at),
+      CONSTRAINT fk_mystery_compile_story FOREIGN KEY (story_id) REFERENCES mystery_stories(id) ON DELETE CASCADE,
+      CONSTRAINT fk_mystery_compile_requester FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_mystery_compile_version FOREIGN KEY (version_id) REFERENCES mystery_story_versions(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_runs (
+      id VARCHAR(64) PRIMARY KEY,
+      story_id VARCHAR(64) NOT NULL,
+      story_version_id VARCHAR(64) NOT NULL,
+      owner_user_id VARCHAR(64) NOT NULL,
+      room_id VARCHAR(64) NULL,
+      session_seed CHAR(64) NOT NULL,
+      story_title_snapshot VARCHAR(120) NOT NULL,
+      story_background_snapshot LONGTEXT NOT NULL,
+      status ENUM('active','completed','superseded','abandoned') NOT NULL DEFAULT 'active',
+      state_version INT UNSIGNED NOT NULL DEFAULT 0,
+      turn_sequence INT UNSIGNED NOT NULL DEFAULT 0,
+      event_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      current_world_time_seconds BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      state_snapshot JSON NOT NULL,
+      final_ending_id VARCHAR(96) NULL,
+      started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_mystery_run_owner_story (owner_user_id, story_id, status, updated_at),
+      INDEX idx_mystery_run_story_audit (story_id, status, updated_at),
+      INDEX idx_mystery_run_room (room_id, status),
+      CONSTRAINT fk_mystery_run_story FOREIGN KEY (story_id) REFERENCES mystery_stories(id) ON DELETE RESTRICT,
+      CONSTRAINT fk_mystery_run_version FOREIGN KEY (story_version_id) REFERENCES mystery_story_versions(id) ON DELETE RESTRICT,
+      CONSTRAINT fk_mystery_run_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_save_slots (
+      owner_user_id VARCHAR(64) NOT NULL,
+      story_id VARCHAR(64) NOT NULL,
+      current_run_id VARCHAR(64) NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (owner_user_id, story_id),
+      UNIQUE KEY uq_mystery_save_current_run (current_run_id),
+      CONSTRAINT fk_mystery_save_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_mystery_save_story FOREIGN KEY (story_id) REFERENCES mystery_stories(id) ON DELETE CASCADE,
+      CONSTRAINT fk_mystery_save_run FOREIGN KEY (current_run_id) REFERENCES mystery_runs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_turns (
+      id VARCHAR(64) PRIMARY KEY,
+      run_id VARCHAR(64) NOT NULL,
+      turn_sequence INT UNSIGNED NULL,
+      idempotency_key VARCHAR(128) NOT NULL,
+      raw_input TEXT NOT NULL,
+      input_classification VARCHAR(40) NULL,
+      injection_risk ENUM('none','suspicious','blocked') NULL,
+      status ENUM('received','processing','completed','failed') NOT NULL DEFAULT 'received',
+      attempt_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
+      processing_token VARCHAR(64) NULL,
+      processing_expires_at DATETIME NULL,
+      state_version_before INT UNSIGNED NOT NULL,
+      state_version_after INT UNSIGNED NULL,
+      resolution_json JSON NULL,
+      player_visible_packet JSON NULL,
+      narrative LONGTEXT NULL,
+      error_code VARCHAR(80) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME NULL,
+      UNIQUE KEY uq_mystery_turn_idempotency (run_id, idempotency_key),
+      UNIQUE KEY uq_mystery_turn_sequence (run_id, turn_sequence),
+      INDEX idx_mystery_turn_run_created (run_id, created_at),
+      INDEX idx_mystery_turn_recovery (status, processing_expires_at, created_at),
+      CONSTRAINT fk_mystery_turn_run FOREIGN KEY (run_id) REFERENCES mystery_runs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_world_events (
+      id VARCHAR(64) PRIMARY KEY,
+      run_id VARCHAR(64) NOT NULL,
+      turn_id VARCHAR(64) NOT NULL,
+      event_index BIGINT UNSIGNED NOT NULL,
+      event_type VARCHAR(80) NOT NULL,
+      world_time_before BIGINT UNSIGNED NOT NULL,
+      world_time_after BIGINT UNSIGNED NOT NULL,
+      actor_ids JSON NOT NULL,
+      target_ids JSON NOT NULL,
+      location_id VARCHAR(96) NULL,
+      event_payload JSON NOT NULL,
+      irreversible TINYINT(1) NOT NULL DEFAULT 0,
+      is_key_node TINYINT(1) NOT NULL DEFAULT 0,
+      key_node_type VARCHAR(80) NULL,
+      idempotency_key VARCHAR(128) NOT NULL,
+      committed_state_version INT UNSIGNED NOT NULL,
+      schema_version INT UNSIGNED NOT NULL DEFAULT 1,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_mystery_event_sequence (run_id, event_index),
+      INDEX idx_mystery_event_turn (turn_id, event_index),
+      INDEX idx_mystery_key_nodes (run_id, is_key_node, event_index),
+      CONSTRAINT fk_mystery_event_run FOREIGN KEY (run_id) REFERENCES mystery_runs(id) ON DELETE CASCADE,
+      CONSTRAINT fk_mystery_event_turn FOREIGN KEY (turn_id) REFERENCES mystery_turns(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_state_snapshots (
+      id VARCHAR(96) PRIMARY KEY,
+      run_id VARCHAR(64) NOT NULL,
+      state_version INT UNSIGNED NOT NULL,
+      event_index BIGINT UNSIGNED NOT NULL,
+      state_snapshot JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_mystery_snapshot_version (run_id, state_version),
+      CONSTRAINT fk_mystery_snapshot_run FOREIGN KEY (run_id) REFERENCES mystery_runs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await ensureColumn("mystery_story_versions", "source_snapshot", "source_snapshot JSON NULL AFTER story_source_hash");
+  await ensureColumn("mystery_runs", "story_title_snapshot", "story_title_snapshot VARCHAR(120) NULL AFTER session_seed");
+  await ensureColumn("mystery_runs", "story_background_snapshot", "story_background_snapshot LONGTEXT NULL AFTER story_title_snapshot");
+  await ensureColumn("mystery_turns", "attempt_count", "attempt_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER status");
+  await ensureColumn("mystery_turns", "processing_token", "processing_token VARCHAR(64) NULL AFTER attempt_count");
+  await ensureColumn("mystery_turns", "processing_expires_at", "processing_expires_at DATETIME NULL AFTER processing_token");
+  const [[mysteryTurnAttemptColumn]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mystery_turns' AND COLUMN_NAME = 'attempt_count'`,
+  );
+  if (String(mysteryTurnAttemptColumn?.COLUMN_TYPE ?? "").toLowerCase() !== "int unsigned") {
+    await pool.query("ALTER TABLE mystery_turns MODIFY COLUMN attempt_count INT UNSIGNED NOT NULL DEFAULT 0");
+  }
+  await pool.query("ALTER TABLE mystery_turns MODIFY COLUMN turn_sequence INT UNSIGNED NULL");
+  await pool.query("UPDATE mystery_turns SET turn_sequence = NULL WHERE status = 'failed'");
+  await ensureIndex("mystery_runs", "idx_mystery_run_story_audit", "story_id, status, updated_at");
+  await ensureIndex("mystery_turns", "idx_mystery_turn_run_created", "run_id, created_at");
+  await ensureIndex("mystery_turns", "idx_mystery_turn_recovery", "status, processing_expires_at, created_at");
+
   // 多人在线玩汤（与 AI 玩汤会话完全独立）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS online_soup_rooms (
@@ -662,10 +874,13 @@ export async function initDatabase() {
       name VARCHAR(50) NOT NULL,
       host_id VARCHAR(64) NOT NULL,
       host_mode ENUM('human','ai') NOT NULL DEFAULT 'human',
+      content_type ENUM('soup','mystery') NOT NULL DEFAULT 'soup',
       room_type ENUM('public','password') NOT NULL DEFAULT 'public',
       password_hash VARCHAR(128) NULL,
       status ENUM('preparing','playing','ended','closed') NOT NULL DEFAULT 'preparing',
       current_soup_id VARCHAR(64) NULL,
+      current_mystery_id VARCHAR(64) NULL,
+      current_mystery_run_id VARCHAR(64) NULL,
       current_round_id VARCHAR(64) NULL,
       last_action_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       host_last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -675,7 +890,9 @@ export async function initDatabase() {
       closed_at DATETIME NULL,
       INDEX idx_online_rooms_lobby (room_type, status, updated_at),
       CONSTRAINT fk_online_room_host FOREIGN KEY (host_id) REFERENCES users(id) ON DELETE CASCADE,
-      CONSTRAINT fk_online_room_soup FOREIGN KEY (current_soup_id) REFERENCES soups(id) ON DELETE SET NULL
+      CONSTRAINT fk_online_room_soup FOREIGN KEY (current_soup_id) REFERENCES soups(id) ON DELETE SET NULL,
+      CONSTRAINT fk_online_room_mystery FOREIGN KEY (current_mystery_id) REFERENCES mystery_stories(id) ON DELETE SET NULL,
+      CONSTRAINT fk_online_room_mystery_run FOREIGN KEY (current_mystery_run_id) REFERENCES mystery_runs(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -821,8 +1038,9 @@ export async function initDatabase() {
       message_sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
       room_id VARCHAR(64) NOT NULL,
       round_id VARCHAR(64) NULL,
+      mystery_run_id VARCHAR(64) NULL,
       sender_id VARCHAR(64) NULL,
-      message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor') NOT NULL,
+      message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor','mystery_narrative') NOT NULL,
       content TEXT NOT NULL,
       sticker_id VARCHAR(64) NULL,
       gift_send_id VARCHAR(64) NULL,
@@ -845,6 +1063,7 @@ export async function initDatabase() {
       INDEX idx_online_messages_room_time (room_id, created_at, id),
       CONSTRAINT fk_online_message_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
       CONSTRAINT fk_online_message_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE SET NULL,
+      CONSTRAINT fk_online_message_mystery_run FOREIGN KEY (mystery_run_id) REFERENCES mystery_runs(id) ON DELETE SET NULL,
       CONSTRAINT fk_online_message_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
@@ -867,6 +1086,9 @@ export async function initDatabase() {
     "host_mode",
     "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER host_id"
   );
+  await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery') NOT NULL DEFAULT 'soup' AFTER host_mode");
+  await ensureColumn("online_soup_rooms", "current_mystery_id", "current_mystery_id VARCHAR(64) NULL AFTER current_soup_id");
+  await ensureColumn("online_soup_rooms", "current_mystery_run_id", "current_mystery_run_id VARCHAR(64) NULL AFTER current_mystery_id");
   await ensureColumn(
     "online_soup_rounds",
     "host_mode",
@@ -903,6 +1125,7 @@ export async function initDatabase() {
     "message_sequence",
     "message_sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE AFTER id"
   );
+  await ensureColumn("online_soup_messages", "mystery_run_id", "mystery_run_id VARCHAR(64) NULL AFTER round_id");
   await ensureColumn(
     "online_soup_messages",
     "content_index",
@@ -963,6 +1186,7 @@ export async function initDatabase() {
     "idx_online_messages_reply",
     "reply_to_message_id"
   );
+  await ensureIndex("online_soup_messages", "idx_online_messages_mystery_run", "mystery_run_id, message_sequence");
   await ensureIndex(
     "online_soup_members",
     "idx_online_members_presence",
@@ -997,9 +1221,9 @@ export async function initDatabase() {
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_messages' AND COLUMN_NAME = 'message_type'`
   );
-  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'ai_honor'")) {
+  if (!String(onlineSoupMessageType?.COLUMN_TYPE ?? "").includes("'mystery_narrative'")) {
     await pool.query(
-      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor') NOT NULL"
+      "ALTER TABLE online_soup_messages MODIFY COLUMN message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor','mystery_narrative') NOT NULL"
     );
   }
   const [[onlineSoupAiStatus]] = await pool.query<mysql.RowDataPacket[]>(
@@ -1255,6 +1479,7 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await backfillHistoricalTaskExperience();
+  await capHistoricalUserExperience();
   // Existing ownership and historical unlock notifications are a pre-feature baseline:
   // record them without retroactively changing balances.
   await pool.query(`
@@ -2629,6 +2854,7 @@ async function seedDefaultCircles() {
 
 const BADGE_HISTORY_SHELL_BACKFILL_KEY = "badge-history-shell-rewards-v1";
 const TASK_EXPERIENCE_BACKFILL_KEY = "task-experience-backfill-v1";
+const LEVEL_EXPERIENCE_CAP_MIGRATION_KEY = "level-experience-cap-1500000-v1";
 
 async function backfillHistoricalTaskExperience() {
   const connection = await pool.getConnection();
@@ -2668,7 +2894,7 @@ async function backfillHistoricalTaskExperience() {
     await connection.query(`
       UPDATE users user
       LEFT JOIN (
-        SELECT user_id, LEAST(10000000, COALESCE(SUM(experience_reward), 0)) AS total_experience
+        SELECT user_id, LEAST(${MAX_EXPERIENCE}, COALESCE(SUM(experience_reward), 0)) AS total_experience
         FROM shell_task_events GROUP BY user_id
       ) rewards ON rewards.user_id = user.id
       SET user.experience = COALESCE(rewards.total_experience, 0)
@@ -2875,4 +3101,38 @@ async function seedLegendaryBadges() {
        achievement_points = VALUES(achievement_points), badge_type = 'limited', tier = 'legend', activity_conditions = NULL`,
     ["mist-truth-seeker", "破雾寻真", "雾隐千谜，一语求真", null, "/badges/mist-truth-seeker-legend.webp", 300]
   );
+}
+
+async function capHistoricalUserExperience() {
+  const connection = await pool.getConnection();
+  let lockAcquired = false;
+  try {
+    const [[completed]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+      [LEVEL_EXPERIENCE_CAP_MIGRATION_KEY]
+    );
+    if (completed) return;
+    const [[lockRow]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT GET_LOCK(?, 30) AS acquired",
+      [LEVEL_EXPERIENCE_CAP_MIGRATION_KEY]
+    );
+    lockAcquired = Number(lockRow?.acquired ?? 0) === 1;
+    if (!lockAcquired) return;
+    const [[completedAfterLock]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+      [LEVEL_EXPERIENCE_CAP_MIGRATION_KEY]
+    );
+    if (completedAfterLock) return;
+
+    await connection.beginTransaction();
+    await connection.query("UPDATE users SET experience = ? WHERE experience > ?", [MAX_EXPERIENCE, MAX_EXPERIENCE]);
+    await connection.query("INSERT INTO app_data_migrations (migration_key) VALUES (?)", [LEVEL_EXPERIENCE_CAP_MIGRATION_KEY]);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => undefined);
+    throw error;
+  } finally {
+    if (lockAcquired) await connection.query("SELECT RELEASE_LOCK(?)", [LEVEL_EXPERIENCE_CAP_MIGRATION_KEY]).catch(() => undefined);
+    connection.release();
+  }
 }

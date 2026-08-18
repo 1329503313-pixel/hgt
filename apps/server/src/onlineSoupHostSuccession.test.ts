@@ -13,7 +13,7 @@ test("房主继承优先选择等级更高的在线成员", () => {
 test("等级相同时优先选择更早加入房间的成员", () => {
   const successor = selectOnlineSoupHostSuccessor([
     { userId: "late", experience: 450, joinedAt: "2026-01-01T00:10:00.000Z" },
-    { userId: "early", experience: 799, joinedAt: "2026-01-01T00:00:00.000Z" }
+    { userId: "early", experience: 549, joinedAt: "2026-01-01T00:00:00.000Z" }
   ]);
   assert.equal(successor?.userId, "early");
 });

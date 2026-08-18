@@ -14,6 +14,7 @@ import { ActivityConditionsEditor, newActivityCondition } from "./ActivityCondit
 import { LevelBadge } from "../LevelBadge";
 import { USER_ROLE_LABELS } from "../../shared/roles";
 import { ACCOUNT_PASSWORD_MAX_LENGTH, ACCOUNT_PASSWORD_MIN_LENGTH } from "../../shared/accountRules";
+import { MAX_EXPERIENCE } from "../../shared/levelSystem";
 
 type AdminUser = PublicUser & {
   username: string;
@@ -544,10 +545,10 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               <form className="rounded-xl border border-line bg-slate-50 p-3" onSubmit={(event) => { event.preventDefault(); void adjustExperience(); }}>
                 <label className="text-sm font-bold text-ink">{experienceOperation === "add" ? "增加经验值" : "扣除经验值"}</label>
                 <div className="mt-2 flex gap-2">
-                  <input className="field min-w-0 flex-1" type="number" min="1" max="10000000" step="1" autoFocus value={experienceAmount} onChange={(event) => setExperienceAmount(event.target.value)} />
+                  <input className="field min-w-0 flex-1" type="number" min="1" max={MAX_EXPERIENCE} step="1" autoFocus value={experienceAmount} onChange={(event) => setExperienceAmount(event.target.value)} />
                   <button className="btn btn-primary shrink-0" disabled={experienceAdjusting}>{experienceAdjusting ? "处理中…" : "确认"}</button>
                 </div>
-                <p className="mt-2 text-xs text-muted">经验最低为 0，最高为 100,000,000；调整后等级自动重新计算。</p>
+                <p className="mt-2 text-xs text-muted">经验最低为 0，最高为 {MAX_EXPERIENCE.toLocaleString()}；调整后等级自动重新计算。</p>
               </form>
             )}
             {experienceError && <p className="text-sm font-bold text-red-600">{experienceError}</p>}

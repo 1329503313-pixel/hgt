@@ -103,6 +103,7 @@ import onlineSoupRouter, {
   ONLINE_SOUP_PARTICIPANT_CAPACITY,
   ONLINE_SOUP_PLAYER_CAPACITY,
   resumeEligibleOnlineSoupAiFinishVotes,
+  resumePendingMysteryTurns,
   resumePendingOnlineSoupAiQuestions,
   setOnlineSoupEventEmitter,
   setOnlineSoupLobbyEventEmitter,
@@ -112,6 +113,18 @@ import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.j
 import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
 import { registerVipRoutes, syncExpiredVipRoles } from "./vip.js";
+import {
+  consumeDailyEntitlement,
+  dailyEntitlementStatus,
+  ensureDailyEntitlementGrantForUser,
+  initializeEntitlementsDatabase,
+  isEntitlementLimitError,
+  registerEntitlementRoutes,
+  runDailyEntitlementGrantSweep,
+  startDailyEntitlementGrantScheduler
+} from "./entitlements.js";
+import { handleMysteryRouteError, registerMysteryRoutes } from "./mystery/routes.js";
+import { startMysteryCompileJobWorker } from "./mystery/compileJobs.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const insecureJwtSecrets = new Set([
@@ -942,7 +955,6 @@ function beijingDateString() {
   }).format(new Date());
 }
 
-const SOUP_DAILY_PUBLISH_LIMIT = 10;
 const SOUP_DAILY_AUTO_REJECT_LIMIT = 10;
 
 async function getSoupPublishUsage(userId: string) {
@@ -2172,6 +2184,7 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     connection.release();
   }
   await recordLoginDay(id);
+  await ensureDailyEntitlementGrantForUser(id);
   queueActivityBadgeSync([id]);
 
   const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null };
@@ -2501,18 +2514,15 @@ app.patch("/api/me/avatar", async (req, res) => {
 app.get("/api/me/soup-publish-quota", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  if (hasUnlimitedSoupPublishingRole(user.role)) {
-    return res.json({ allowed: true, publishedCount: 0, autoRejectCount: 0, remaining: null });
-  }
   const usage = await getSoupPublishUsage(user.id);
-  const blockedByReview = usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT;
-  const blockedByLimit = usage.publishedCount >= SOUP_DAILY_PUBLISH_LIMIT;
+  const quota = await dailyEntitlementStatus(user.id, user.role, "soup_publish");
+  const blockedByReview = !hasUnlimitedSoupPublishingRole(user.role) && usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT;
   res.json({
-    allowed: !blockedByReview && !blockedByLimit,
-    publishedCount: usage.publishedCount,
+    allowed: !blockedByReview && quota.allowed,
+    publishedCount: quota.used,
     autoRejectCount: usage.autoRejectCount,
-    remaining: Math.max(0, SOUP_DAILY_PUBLISH_LIMIT - usage.publishedCount),
-    reason: blockedByReview ? `今日自动审核未通过次数已达${SOUP_DAILY_AUTO_REJECT_LIMIT}次，请明天再试` : blockedByLimit ? `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧` : null,
+    remaining: quota.remaining,
+    reason: blockedByReview ? `今日自动审核未通过次数已达${SOUP_DAILY_AUTO_REJECT_LIMIT}次，请明天再试` : quota.allowed ? null : "今日发布海龟汤操作已达上限",
   });
 });
 
@@ -2708,6 +2718,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
        u.avatar IS NOT NULL AS has_avatar, u.profile_background IS NOT NULL AS has_profile_background,
        u.profile_background_updated_at, u.profile_background_crop_x, u.profile_background_crop_y, u.profile_background_zoom,
        c.id AS background_card_id, c.name AS background_card_name, c.rarity AS background_card_rarity,
+       c.updated_at AS background_card_updated_at,
        c.motion_mp4_path AS background_motion_mp4_path, c.motion_webm_path AS background_motion_webm_path,
        c.motion_poster_path AS background_motion_poster_path, c.motion_version AS background_motion_version,
        uc.star_level AS background_card_star_level
@@ -2777,6 +2788,12 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const backgroundMotionBase = target.background_card_id
     ? `/api/media/assets/cards/${encodeURIComponent(String(target.background_card_id))}/motion`
     : "";
+  const backgroundCardVersion = target.background_card_updated_at
+    ? new Date(target.background_card_updated_at as string | number | Date).getTime()
+    : 0;
+  const backgroundCardImageUrl = target.has_profile_background && target.background_card_id
+    ? `/api/media/assets/cards/${encodeURIComponent(String(target.background_card_id))}/image?v=${backgroundCardVersion}`
+    : null;
   res.json({
     profile: {
       ...withoutPrivateUsername(toUser(target)),
@@ -2788,8 +2805,10 @@ app.get("/api/users/:id/profile", async (req, res) => {
       isFollowing: bool(follow.is_following),
       isSelf: viewer.id === req.params.id,
       profileBackgroundUrl: profileBackgroundUrl(target.id, target.has_profile_background, target.profile_background_updated_at),
+      profileBackgroundSourceUrl: backgroundCardImageUrl,
       profileBackgroundMotionMp4Url: backgroundMotionEnabled ? `${backgroundMotionBase}/mp4?v=${backgroundMotionVersion}` : null,
       profileBackgroundMotionWebmUrl: backgroundMotionEnabled && target.background_motion_webm_path ? `${backgroundMotionBase}/webm?v=${backgroundMotionVersion}` : null,
+      profileBackgroundMotionPosterUrl: backgroundMotionEnabled && target.background_motion_poster_path ? `${backgroundMotionBase}/poster?v=${backgroundMotionVersion}` : null,
       profileBackgroundCrop: {
         x: Number(target.profile_background_crop_x ?? 50),
         y: Number(target.profile_background_crop_y ?? 50),
@@ -4848,9 +4867,8 @@ app.post("/api/soups", async (req, res) => {
   if (usage && usage.autoRejectCount >= SOUP_DAILY_AUTO_REJECT_LIMIT) {
     return sendError(res, 429, `今日自动审核未通过次数已达${SOUP_DAILY_AUTO_REJECT_LIMIT}次，请明天再试`);
   }
-  if (usage && usage.publishedCount >= SOUP_DAILY_PUBLISH_LIMIT) {
-    return sendError(res, 429, `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧`);
-  }
+  const publishQuota = await dailyEntitlementStatus(user.id, user.role, "soup_publish");
+  if (!publishQuota.allowed) return sendError(res, 429, "今日发布海龟汤操作已达上限");
 
   let review: SoupReviewResult;
   if (isSuperAdminRole(user.role)) {
@@ -4874,18 +4892,12 @@ app.post("/api/soups", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    if (!hasUnlimitedPublishing) {
-      await connection.query(
-        "INSERT IGNORE INTO soup_publish_daily_usage (user_id, usage_date) VALUES (?, ?)",
-        [user.id, usage!.date],
-      );
-      const [quotaResult] = await connection.query<mysql.ResultSetHeader>(
-        `UPDATE soup_publish_daily_usage SET published_count = published_count + 1
-         WHERE user_id = ? AND usage_date = ? AND published_count < ? AND auto_reject_count < ?`,
-        [user.id, usage!.date, SOUP_DAILY_PUBLISH_LIMIT, SOUP_DAILY_AUTO_REJECT_LIMIT],
-      );
-      if (quotaResult.affectedRows !== 1) throw new Error("SOUP_DAILY_QUOTA");
-    }
+    await consumeDailyEntitlement(connection, {
+      userId: user.id,
+      role: user.role,
+      metric: "soup_publish",
+      eventKey: id
+    });
     await connection.query(
       `INSERT INTO soups
         (id, title, author, type, difficulty, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
@@ -4905,9 +4917,7 @@ app.post("/api/soups", async (req, res) => {
     await connection.commit();
   } catch (error) {
     await connection.rollback();
-    if (error instanceof Error && error.message === "SOUP_DAILY_QUOTA") {
-      return sendError(res, 429, `您今日已发布${SOUP_DAILY_PUBLISH_LIMIT}篇海龟汤，明天再继续分享吧`);
-    }
+    if (isEntitlementLimitError(error)) return sendError(res, 429, error.message);
     if (idempotencyKey && (error as { code?: string }).code === "ER_DUP_ENTRY") {
       const [[existingSoup]] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT id, creator_id, review_status FROM soups WHERE id = ? LIMIT 1",
@@ -5052,6 +5062,12 @@ app.post("/api/soups/:id/like", async (req, res) => {
     if (rows.length > 0) {
       await connection.query("DELETE FROM soup_likes WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
     } else {
+      await consumeDailyEntitlement(connection, {
+        userId: user.id,
+        role: user.role,
+        metric: "like",
+        eventKey: req.params.id
+      });
       isLiked = true;
       await connection.query("INSERT INTO soup_likes (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
       if (Boolean(soup.is_original)) {
@@ -5166,6 +5182,12 @@ app.post("/api/soups/:id/favorite", async (req, res) => {
     if (rows.length > 0) {
       await connection.query("DELETE FROM soup_favorites WHERE soup_id = ? AND user_id = ?", [req.params.id, user.id]);
     } else {
+      await consumeDailyEntitlement(connection, {
+        userId: user.id,
+        role: user.role,
+        metric: "favorite",
+        eventKey: req.params.id
+      });
       isFavorited = true;
       await connection.query("INSERT INTO soup_favorites (id, soup_id, user_id) VALUES (?, ?, ?)", [nanoid(), req.params.id, user.id]);
       if (Boolean(soup.is_original)) {
@@ -5466,6 +5488,14 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
       ]
     );
     created = insertResult.affectedRows === 1;
+    if (created) {
+      await consumeDailyEntitlement(connection, {
+        userId: user.id,
+        role: user.role,
+        metric: "evaluation",
+        eventKey: req.params.id
+      });
+    }
     if (!created) {
       await connection.query(
         `UPDATE evaluations
@@ -7322,7 +7352,16 @@ registerGiftRoutes(app, {
     queueSystemBadgeSync(userIds);
   }
 });
-registerVipRoutes(app, { pool, requireAuth, requireAdmin, sendError });
+registerEntitlementRoutes(app, { requireAuth, requireAdmin, sendError });
+registerVipRoutes(app, {
+  pool,
+  requireAuth,
+  requireAdmin,
+  sendError,
+  onEntitlementChanged: ensureDailyEntitlementGrantForUser
+});
+
+registerMysteryRoutes(app, { requireAuth, requireBackofficeAdmin, sendError });
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if ((err as { type?: string }).type === "entity.parse.failed") {
@@ -7330,6 +7369,13 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   }
   if ((err as { type?: string }).type === "entity.too.large") {
     return res.status(413).json({ error: "上传图片过大，请压缩后重试" });
+  }
+  if (isEntitlementLimitError(err)) {
+    return res.status(429).json({ error: err.message, code: err.code });
+  }
+  const mysteryError = handleMysteryRouteError(err);
+  if (mysteryError) {
+    return res.status(mysteryError.status).json({ error: mysteryError.message, code: mysteryError.code });
   }
   console.error(err);
   res.status(500).json({ error: "服务暂时不可用" });
@@ -7341,9 +7387,14 @@ if (config.releaseCandidate) {
   // migration, cleanup, settlement, recovery or scheduled write path.
   await pool.query("SELECT 1");
 } else {
-if (config.runDatabaseMigrations) await initDatabase();
+if (config.runDatabaseMigrations) {
+  await initDatabase();
+  await initializeEntitlementsDatabase();
+}
 else await pool.query("SELECT 1");
 await syncExpiredVipRoles(pool).catch((error) => console.error("VIP expiry synchronization failed:", error));
+await runDailyEntitlementGrantSweep().catch((error) => console.error("Initial daily entitlement grants failed:", error));
+startDailyEntitlementGrantScheduler();
 const vipExpirySyncTimer = setInterval(() => {
   syncExpiredVipRoles(pool).catch((error) => console.error("VIP expiry synchronization failed:", error));
 }, 60_000);
@@ -7356,10 +7407,15 @@ await cleanupOnlineSoupStaleSeats();
 await cleanupOnlineSoupInactiveHostRooms();
 await cleanupOnlineSoupIdleSingleUserRooms();
 await resumePendingOnlineSoupAiQuestions();
+await resumePendingMysteryTurns();
+startMysteryCompileJobWorker();
 await resumeEligibleOnlineSoupAiFinishVotes();
 const onlineSoupAiRecoveryTimer = setInterval(() => {
   void resumePendingOnlineSoupAiQuestions().catch((error) => {
     console.error("Online soup AI pending question recovery failed:", error);
+  });
+  void resumePendingMysteryTurns().catch((error) => {
+    console.error("Mystery pending turn recovery failed:", error);
   });
 }, 30_000);
 onlineSoupAiRecoveryTimer.unref();

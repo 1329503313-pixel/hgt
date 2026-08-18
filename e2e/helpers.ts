@@ -5,8 +5,9 @@ let sequence = 0;
 export function uniqueAccount(prefix: string) {
   sequence += 1;
   const suffix = `${Date.now().toString(36)}${sequence.toString(36)}`;
+  const accountPrefix = prefix.replace(/[^A-Za-z0-9_-]/g, "") || "e2euser";
   return {
-    username: `${prefix}_${suffix}`.slice(0, 40),
+    username: `${accountPrefix}_${suffix}`.slice(0, 40),
     password: "E2e-pass-2026!",
     nickname: `${prefix}${sequence}`.slice(0, 8)
   };
@@ -43,6 +44,7 @@ export async function dismissBadgeUnlocks(page: Page) {
 }
 
 export async function createSoupViaApi(page: Page, title: string) {
+  const uniqueStoryMarker = `${title}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const response = await page.context().request.post("/api/soups", {
     headers: { "Idempotency-Key": `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}` },
     data: {
@@ -54,9 +56,9 @@ export async function createSoupViaApi(page: Page, title: string) {
       coverImage: "",
       isOriginal: true,
       isSensitive: false,
-      surface: "测试汤面：房间里发生了一件奇怪的事。",
+      surface: `测试汤面：${uniqueStoryMarker}所在的房间里发生了一件奇怪的事。`,
       supplementalSurfaces: [],
-      bottom: "测试汤底：这是一条用于自动化回归的答案。",
+      bottom: `测试汤底：${uniqueStoryMarker}对应的是一条独立的自动化回归答案。`,
       supplementalBottoms: [],
       manual: "按测试流程主持。",
       isSurfacePublic: true,

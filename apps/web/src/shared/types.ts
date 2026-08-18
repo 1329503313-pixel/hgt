@@ -165,8 +165,10 @@ export type SocialProfile = PublicUser & {
   isFollowing: boolean;
   isSelf: boolean;
   profileBackgroundUrl: string | null;
+  profileBackgroundSourceUrl: string | null;
   profileBackgroundMotionMp4Url: string | null;
   profileBackgroundMotionWebmUrl: string | null;
+  profileBackgroundMotionPosterUrl: string | null;
   profileBackgroundCrop: { x: number; y: number; zoom: number };
 };
 
@@ -446,8 +448,10 @@ export type OnlineSoupLobbyRoom = {
   type: "public" | "password";
   status: OnlineSoupRoomStatus;
   hostMode: OnlineSoupHostMode;
+  contentType: "soup" | "mystery";
   host: { id: string; nickname: string };
   soupTitle: string | null;
+  mysteryTitle: string | null;
   playerCount: number;
   playerCapacity: number;
   participantCount: number;
@@ -472,6 +476,7 @@ export type OnlineSoupMessage = {
   id: string;
   sequence: string;
   roundId: string | null;
+  mysteryRunId: string | null;
   soupId: string | null;
   roundEnded: boolean;
   allBottomsPublished: boolean;
@@ -480,7 +485,7 @@ export type OnlineSoupMessage = {
   senderAvatar: string | null;
   senderLevel: number;
   senderEquippedBadge: EquippedBadge | null;
-  type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system" | "ai_advice" | "ai_honor";
+  type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system" | "ai_advice" | "ai_honor" | "mystery_narrative";
   content: string;
   aiHonors: OnlineSoupAiHonors | null;
   gift?: GiftMessage | null;
@@ -521,6 +526,7 @@ export type OnlineSoupSnapshot = {
     type: "public" | "password";
     status: OnlineSoupRoomStatus;
     hostMode: OnlineSoupHostMode;
+    contentType: "soup" | "mystery";
     aiProgress: number | null;
     finishVote: {
       id: string;
@@ -552,6 +558,14 @@ export type OnlineSoupSnapshot = {
       manual?: string | null;
       publishedSurfaceIndices?: number[];
       publishedBottomIndices?: number[];
+    } | null;
+    mystery: {
+      id: string;
+      title: string;
+      background: string;
+      runId: string | null;
+      runStatus: "active" | "completed" | "superseded" | "abandoned" | null;
+      gameEnded: boolean;
     } | null;
     createdAt: string;
   };

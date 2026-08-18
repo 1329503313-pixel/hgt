@@ -10,6 +10,7 @@ import { storeMediaBuffer } from "./ossStorage.js";
 import type { PublicUser } from "./types.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
 import { recordChatMessageForRateLimit } from "./chatMessageRateLimit.js";
+import { capDailyEntitlement, consumeDailyEntitlement } from "./entitlements.js";
 
 type AuthenticatedUser = PublicUser & { tokenVersion: number };
 type RequireUser = (
@@ -289,7 +290,7 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
       } else {
         const userIds = canonicalConversationUserIds(user.id, recipientId);
         const [userRows] = await connection.query<mysql.RowDataPacket[]>(
-          `SELECT id, nickname, shell_balance, pearl_balance, charm_value, generosity_value
+          `SELECT id, nickname, role, shell_balance, pearl_balance, charm_value, generosity_value
            FROM users WHERE id IN (?, ?) ORDER BY id FOR UPDATE`,
           userIds
         );
@@ -330,20 +331,45 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
           inventoryQuantityAfter,
           totalCost
         } = calculateGiftConsumption(inventoryQuantity, quantity, Number(gift.cost_amount));
-        const rewardShell = Number(gift.reward_shell) * quantity;
+        const giftShellValue = Number(gift.cost_amount) * quantity;
+        let rewardShell = Number(gift.reward_shell) * quantity;
         const rewardPearl = Number(gift.reward_pearl) * quantity;
-        const rewardCharm = Number(gift.reward_charm) * quantity;
+        let rewardCharm = Number(gift.reward_charm) * quantity;
         if (
-          ![totalCost, rewardShell, rewardPearl, rewardCharm].every(Number.isSafeInteger)
+          ![giftShellValue, totalCost, rewardShell, rewardPearl, rewardCharm].every(Number.isSafeInteger)
+          || giftShellValue > 2_147_483_647
           || totalCost > 2_147_483_647
           || rewardShell > 2_147_483_647
-          || Number(recipient.shell_balance) + rewardShell > 4_294_967_295
           || Number(recipient.pearl_balance) + rewardPearl > 4_294_967_295
         ) {
           throw Object.assign(new Error("礼物数量超出可处理范围"), { status: 400 });
         }
         if (Number(sender.shell_balance) < totalCost) {
           throw Object.assign(new Error("贝壳余额不足"), { status: 409 });
+        }
+        await consumeDailyEntitlement(connection, {
+          userId: user.id,
+          role: sender.role,
+          metric: "gift_send_shell_value",
+          amount: giftShellValue,
+          eventKey: requestId
+        });
+        rewardShell = (await capDailyEntitlement(connection, {
+          userId: recipientId,
+          role: recipient.role,
+          metric: "gift_receive_shell",
+          amount: rewardShell,
+          eventKey: `${user.id}:${requestId}`
+        })).grantedAmount;
+        rewardCharm = (await capDailyEntitlement(connection, {
+          userId: recipientId,
+          role: recipient.role,
+          metric: "charm_receive",
+          amount: rewardCharm,
+          eventKey: `${user.id}:${requestId}`
+        })).grantedAmount;
+        if (Number(recipient.shell_balance) + rewardShell > 4_294_967_295) {
+          throw Object.assign(new Error("礼物数量超出可处理范围"), { status: 400 });
         }
 
         if (effectiveSource.type === "private") {

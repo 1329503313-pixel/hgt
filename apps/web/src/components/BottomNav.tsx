@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { api } from "../api";
 import { useMessageUnreadCounts } from "../shared/useMessageUnread";
+import { isHomeCategoryRoute } from "../shared/homeRoutes";
 
 export function BottomNav() {
   const navigate = useNavigate();
@@ -11,7 +12,8 @@ export function BottomNav() {
   const unreadCounts = useMessageUnreadCounts(user?.id, Boolean(user));
 
   const path = location.pathname;
-  const isHomeActive = path === "/" || path.startsWith("/soup/");
+  const isHomeRoute = isHomeCategoryRoute(path);
+  const isHomeActive = isHomeRoute || path.startsWith("/soup/");
   const isMineActive = path.startsWith("/mine");
   const isOnlineSoupActive = path.startsWith("/online-soup");
   const isCirclesActive = path.startsWith("/circles");
@@ -20,7 +22,7 @@ export function BottomNav() {
   const showCircleMention = Boolean(user && !isCirclesList && unreadCounts.circleMentions > 0);
 
   function handleHome() {
-    if (path === "/") {
+    if (isHomeRoute) {
       triggerRefresh();
     } else {
       navigate("/");

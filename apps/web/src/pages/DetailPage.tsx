@@ -43,7 +43,7 @@ export default function DetailPage() {
   const navigate = useNavigate();
   const userMenuRef = useDismissibleDetails();
   const location = useLocation();
-  const navigationOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; soupShareReturnTo?: string; soupReturnTo?: string } | null;
+  const navigationOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; soupShareReturnTo?: string; soupReturnTo?: string; soupReturnHistory?: boolean } | null;
   const onlineSoupOrigin = navigationOrigin;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   const { user, openAuth, openEvalEditor, openSoupEditor, setUser, showToast, refreshKey, triggerRefresh, exportReady, setExportReady, checkBadgeUnlocks } = useApp();
@@ -60,6 +60,15 @@ export default function DetailPage() {
 
   const radarRef = useRef<HTMLDivElement | null>(null);
   const backTarget = navigationOrigin?.soupShareReturnTo || navigationOrigin?.soupReturnTo || (onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname));
+  const returnThroughHistory = Boolean(navigationOrigin?.soupReturnHistory && navigationOrigin.soupReturnTo);
+
+  function returnToPreviousPage() {
+    if (returnThroughHistory) {
+      navigate(-1);
+      return;
+    }
+    navigate(backTarget, { replace: true });
+  }
 
   async function createRoomForSoup() {
     if (!soup || creatingRoom) return;
@@ -278,7 +287,7 @@ export default function DetailPage() {
       {/* Header */}
       <header className="top-nav-shell">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-          <UnifiedBackButton compactOnMobile to={backTarget} />
+          <UnifiedBackButton compactOnMobile onClick={returnToPreviousPage} />
           <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
             {user ? (
               <>
@@ -318,7 +327,7 @@ export default function DetailPage() {
       <div className="detail-page-content mx-auto max-w-6xl space-y-3 px-4 lg:space-y-4">
 
       <div className="hidden lg:flex">
-        <UnifiedBackButton to={backTarget} />
+        <UnifiedBackButton onClick={returnToPreviousPage} />
       </div>
 
       {!isReviewApproved && (

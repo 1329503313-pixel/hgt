@@ -17,6 +17,8 @@ import { BannerManagement } from "../components/admin/BannerManagement";
 import { FeedbackManagement } from "../components/admin/FeedbackManagement";
 import { GiftManagement } from "../components/admin/GiftManagement";
 import { VipManagement } from "../components/admin/VipManagement";
+import { EntitlementManagement } from "../components/admin/EntitlementManagement";
+import { MysteryManagement } from "../components/admin/MysteryManagement";
 import { canAccessAdmin, isSuperAdminRole } from "../shared/roles";
 import { api } from "../api";
 import { subscribeServerEvent } from "../shared/serverEvents";
@@ -94,7 +96,9 @@ export default function AdminPage() {
           {activeTab === "banners" && isSuperAdmin && <BannerManagement />}
           {activeTab === "users" && <UserManagement isSuperAdmin={isSuperAdmin} />}
           {activeTab === "vip" && isSuperAdmin && <VipManagement />}
+          {activeTab === "entitlements" && isSuperAdmin && <EntitlementManagement />}
           {activeTab === "soups" && <SoupManagement canDelete={isSuperAdmin} />}
+          {activeTab === "mysteries" && <MysteryManagement />}
           {activeTab === "evaluations" && <EvaluationManagement />}
           {activeTab === "gifts" && isSuperAdmin && <GiftManagement />}
           {activeTab === "badges" && isSuperAdmin && <BadgeManagement />}

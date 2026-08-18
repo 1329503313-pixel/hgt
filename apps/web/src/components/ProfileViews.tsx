@@ -1,10 +1,33 @@
-import { Flame } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Flame } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { SocialProfile, SoupSummary } from "../shared/types";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
 import { LevelBadge } from "./LevelBadge";
 import { defaultCoverUrl } from "../shared/staticAssets";
 import { AssetMotionMedia } from "./AssetCardVisual";
+
+type ProfileBackgroundState = "expanded" | "collapsing" | "collapsed" | "expanding";
+
+function mediaQueryMatches(query: string) {
+  return typeof window !== "undefined" && window.matchMedia(query).matches;
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => mediaQueryMatches(query));
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, [query]);
+  return matches;
+}
 
 export function ProfileHero({
   profile,
@@ -15,6 +38,7 @@ export function ProfileHero({
   meta,
   onAvatar,
   showBadge = true,
+  collapsibleBackground = false,
   className = ""
 }: {
   profile: SocialProfile;
@@ -25,28 +49,177 @@ export function ProfileHero({
   meta?: React.ReactNode;
   onAvatar?: () => void;
   showBadge?: boolean;
+  collapsibleBackground?: boolean;
   className?: string;
 }) {
+  const heroRef = useRef<HTMLDivElement>(null);
   const hasBackground = Boolean(profile.profileBackgroundUrl);
   const backgroundCrop = profile.profileBackgroundCrop ?? { x: 50, y: 50, zoom: 1 };
+  const isMobileProfile = useMediaQuery("(max-width: 1023px)");
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [fullSourceFailed, setFullSourceFailed] = useState(false);
+  const [finalBackgroundFailed, setFinalBackgroundFailed] = useState(false);
+  const [finalBackgroundReady, setFinalBackgroundReady] = useState(false);
+  const canExpandBackground = collapsibleBackground
+    && isMobileProfile
+    && hasBackground
+    && Boolean(profile.profileBackgroundSourceUrl)
+    && !fullSourceFailed;
+  const initiallyExpanded = canExpandBackground;
+  const [backgroundState, setBackgroundState] = useState<ProfileBackgroundState>(() => initiallyExpanded ? "expanded" : "collapsed");
+  const [mediaReady, setMediaReady] = useState(false);
+  const [autoCollapseDone, setAutoCollapseDone] = useState(false);
+  const [expandControlReady, setExpandControlReady] = useState(false);
+  const [expandedHeight, setExpandedHeight] = useState(152);
+  const [transitionReady, setTransitionReady] = useState(false);
+  const previousExpandable = useRef(canExpandBackground);
+  const hasMotionBackground = Boolean(profile.profileBackgroundMotionMp4Url && profile.profileBackgroundUrl);
+  const backgroundSourceUrl = canExpandBackground && profile.profileBackgroundSourceUrl
+    ? profile.profileBackgroundSourceUrl
+    : profile.profileBackgroundUrl;
+  const backgroundRegionId = `profile-background-${profile.id}`;
+
+  useLayoutEffect(() => {
+    if (!collapsibleBackground || !heroRef.current) return;
+    const hero = heroRef.current;
+    const updateHeight = () => {
+      const height = Math.round(hero.getBoundingClientRect().width * 7 / 5);
+      setExpandedHeight((current) => current === height ? current : height);
+    };
+    updateHeight();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateHeight);
+    observer?.observe(hero);
+    window.addEventListener("resize", updateHeight);
+    const frame = window.requestAnimationFrame(() => setTransitionReady(true));
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, [collapsibleBackground]);
+
+  useLayoutEffect(() => {
+    if (previousExpandable.current === canExpandBackground) return;
+    previousExpandable.current = canExpandBackground;
+    setBackgroundState(canExpandBackground ? "expanded" : "collapsed");
+    setMediaReady(false);
+    setAutoCollapseDone(false);
+    setExpandControlReady(false);
+  }, [canExpandBackground]);
+
+  useEffect(() => {
+    if (!canExpandBackground || !mediaReady || autoCollapseDone || backgroundState !== "expanded") return;
+    const timeout = window.setTimeout(() => {
+      setAutoCollapseDone(true);
+      setBackgroundState(reduceMotion || !transitionReady ? "collapsed" : "collapsing");
+    }, 3000);
+    return () => window.clearTimeout(timeout);
+  }, [autoCollapseDone, backgroundState, canExpandBackground, mediaReady, reduceMotion, transitionReady]);
+
+  useEffect(() => {
+    if (backgroundState !== "collapsing" && backgroundState !== "expanding") return;
+    const timeout = window.setTimeout(() => {
+      setBackgroundState((current) => current === "collapsing" ? "collapsed" : current === "expanding" ? "expanded" : current);
+    }, 900);
+    return () => window.clearTimeout(timeout);
+  }, [backgroundState]);
+
+  useEffect(() => {
+    if (!canExpandBackground || backgroundState !== "collapsed") {
+      setExpandControlReady(false);
+      return;
+    }
+    const timeout = window.setTimeout(() => setExpandControlReady(true), 500);
+    return () => window.clearTimeout(timeout);
+  }, [backgroundState, canExpandBackground]);
+
+  function finishBackgroundTransition(event: React.TransitionEvent<HTMLDivElement>) {
+    if (event.currentTarget !== event.target || event.propertyName !== "height") return;
+    setBackgroundState((current) => current === "collapsing" ? "collapsed" : current === "expanding" ? "expanded" : current);
+  }
+
+  function collapseBackground() {
+    if (backgroundState !== "expanded") return;
+    setAutoCollapseDone(true);
+    setBackgroundState(reduceMotion || !transitionReady ? "collapsed" : "collapsing");
+  }
+
+  function expandBackground() {
+    if (backgroundState !== "collapsed") return;
+    setAutoCollapseDone(true);
+    setExpandControlReady(false);
+    setBackgroundState(reduceMotion || !transitionReady ? "expanded" : "expanding");
+  }
+
+  function handleFullSourceFailure() {
+    setFullSourceFailed(true);
+    setAutoCollapseDone(true);
+    setMediaReady(false);
+    setBackgroundState("collapsed");
+  }
+
+  const toggleIsCollapsed = backgroundState === "collapsed";
+  const toggleVisible = canExpandBackground
+    && (backgroundState === "expanded" || (toggleIsCollapsed && expandControlReady));
+  const controlsVisible = !canExpandBackground || toggleVisible;
+  const heroStateClass = canExpandBackground ? `profile-hero-background-${backgroundState}` : "";
+  const heroStyle = {
+    "--profile-background-x": `${backgroundCrop.x}%`,
+    "--profile-background-y": `${backgroundCrop.y}%`,
+    "--profile-background-zoom": backgroundCrop.zoom,
+    "--profile-background-expanded-height": `${expandedHeight}px`
+  } as React.CSSProperties;
+
   return (
-    <div className={`profile-hero relative isolate overflow-hidden rounded-2xl bg-white shadow-soft ${className}`}>
-      {profile.profileBackgroundMotionMp4Url && profile.profileBackgroundUrl
-        ? <AssetMotionMedia
-            card={{
-              name: `${profile.nickname}的主页背景`,
-              imageUrl: profile.profileBackgroundUrl,
-              thumbnailUrl: profile.profileBackgroundUrl,
-              motionMp4Url: profile.profileBackgroundMotionMp4Url,
-              motionWebmUrl: profile.profileBackgroundMotionWebmUrl,
-              motionPosterUrl: profile.profileBackgroundUrl
-            }}
-            className="profile-hero-background absolute inset-x-0 top-0 z-0 h-[118px] w-full object-cover"
-            eager
-            style={{ objectPosition: `${backgroundCrop.x}% ${backgroundCrop.y}%`, transform: `scale(${backgroundCrop.zoom})`, transformOrigin: `${backgroundCrop.x}% ${backgroundCrop.y}%` }}
-          />
-        : profile.profileBackgroundUrl && <img className="profile-hero-background absolute inset-x-0 top-0 z-0 h-[118px] w-full object-cover" src={profile.profileBackgroundUrl} alt="" />}
-      <div className={`profile-hero-main relative z-[1] h-[118px] px-4 pt-4 text-white ${hasBackground ? "bg-slate-950/30" : "profile-gradient"}`}>
+    <div
+      ref={heroRef}
+      className={`profile-hero relative isolate overflow-hidden rounded-2xl bg-white shadow-soft ${canExpandBackground ? "profile-hero-collapsible" : ""} ${canExpandBackground && transitionReady ? "profile-hero-collapsible-ready" : ""} ${heroStateClass} ${className}`}
+      style={heroStyle}
+    >
+      {hasBackground && (
+        <div id={backgroundRegionId} className="profile-hero-background absolute inset-x-0 top-0 z-0 h-[118px] overflow-hidden">
+          {hasMotionBackground && backgroundSourceUrl
+            ? <AssetMotionMedia
+                card={{
+                  name: `${profile.nickname}的主页背景`,
+                  imageUrl: backgroundSourceUrl,
+                  thumbnailUrl: backgroundSourceUrl,
+                  motionMp4Url: profile.profileBackgroundMotionMp4Url,
+                  motionWebmUrl: profile.profileBackgroundMotionWebmUrl,
+                  motionPosterUrl: canExpandBackground
+                    ? (profile.profileBackgroundMotionPosterUrl ?? profile.profileBackgroundSourceUrl)
+                    : profile.profileBackgroundUrl
+                }}
+                className="profile-hero-background-media profile-hero-background-motion absolute inset-0 h-full w-full object-cover"
+                eager
+                onReady={() => setMediaReady(true)}
+                onFailure={canExpandBackground ? handleFullSourceFailure : undefined}
+              />
+            : backgroundSourceUrl && <img
+                className="profile-hero-background-media absolute inset-0 h-full w-full object-cover"
+                src={backgroundSourceUrl}
+                alt=""
+                loading="eager"
+                decoding="async"
+                draggable={false}
+                onLoad={() => setMediaReady(true)}
+                onError={canExpandBackground ? handleFullSourceFailure : undefined}
+              />}
+          {canExpandBackground && !hasMotionBackground && !finalBackgroundFailed && profile.profileBackgroundUrl && (
+            <img
+              className={`profile-hero-background-final absolute inset-0 h-full w-full object-cover ${finalBackgroundReady ? "is-ready" : ""}`}
+              src={profile.profileBackgroundUrl}
+              alt=""
+              loading="eager"
+              decoding="async"
+              draggable={false}
+              onLoad={() => setFinalBackgroundReady(true)}
+              onError={() => setFinalBackgroundFailed(true)}
+            />
+          )}
+        </div>
+      )}
+      <div className={`profile-hero-main relative z-[1] h-[118px] px-4 pt-4 text-white ${hasBackground ? "bg-slate-950/30" : "profile-gradient"}`} onTransitionEnd={finishBackgroundTransition}>
         <div className="profile-hero-identity flex items-center gap-3">
           <button className="profile-hero-avatar h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-white/90 bg-white/20 text-2xl font-black shadow-md" onClick={onAvatar} disabled={!onAvatar}>
             {profile.avatar ? <img className="h-full w-full object-cover" src={profile.avatar} alt="" /> : profile.nickname.slice(0, 1)}
@@ -55,12 +228,26 @@ export function ProfileHero({
             <div className="profile-hero-name-row flex min-w-0 items-center gap-2">
               <h1 className="min-w-0 truncate text-xl font-black">{profile.nickname}</h1>
               <LevelBadge level={profile.level} />
-              {showBadge && profile.equippedBadge && <EquippedBadgeIcon badge={profile.equippedBadge} className="h-8 w-8 rounded-lg" title={profile.equippedBadge.name} animated={false} showName={false} />}
+              {showBadge && profile.equippedBadge && <EquippedBadgeIcon badge={profile.equippedBadge} className="h-8 w-8 rounded-lg" title={profile.equippedBadge.name} animated={false} />}
             </div>
             {meta && <div className="mt-1">{meta}</div>}
           </div>
-          {actions && <div className="profile-hero-actions shrink-0">{actions}</div>}
+          {actions && <div className={`profile-hero-actions shrink-0 ${controlsVisible ? "is-visible" : ""}`}>{actions}</div>}
         </div>
+        {canExpandBackground && (
+          <button
+            type="button"
+            className={`profile-hero-background-toggle ${toggleIsCollapsed ? "is-collapsed" : "is-expanded"} ${toggleVisible ? "is-visible" : ""}`}
+            onClick={toggleIsCollapsed ? expandBackground : collapseBackground}
+            disabled={!toggleVisible}
+            aria-label={toggleIsCollapsed ? "展开完整主页卡面背景" : "收起主页卡面背景"}
+            aria-controls={backgroundRegionId}
+            aria-expanded={!toggleIsCollapsed}
+            title={toggleIsCollapsed ? "展开完整卡面" : "收起卡面"}
+          >
+            {toggleIsCollapsed ? <ChevronDown size={19} /> : <ChevronUp size={19} />}
+          </button>
+        )}
       </div>
       <div className={`profile-hero-stats relative z-[1] grid grid-cols-5 divide-x divide-line px-1 py-3 ${hasBackground ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>
         <button className="text-center disabled:cursor-default" onClick={onCharm} disabled={!onCharm}><p className="text-lg font-black text-rose-600">{profile.charmValue ?? 0}</p><p className="text-xs text-muted">魅力</p></button>

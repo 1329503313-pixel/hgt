@@ -50,6 +50,11 @@ export const config = {
     accessKeySecret: readSecret("ALIYUN_OSS_ACCESS_KEY_SECRET", "ALIYUN_OSS_ACCESS_KEY_SECRET_FILE")
   },
   deepseekApiKey: readSecret("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_FILE"),
+  deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
+  mysteryCompileModel: process.env.MYSTERY_COMPILE_MODEL ?? "deepseek-v4-pro",
+  mysteryAdjudicatorModel: process.env.MYSTERY_ADJUDICATOR_MODEL ?? "deepseek-v4-pro",
+  mysteryFastAdjudicatorModel: process.env.MYSTERY_FAST_ADJUDICATOR_MODEL ?? "deepseek-v4-flash",
+  mysteryNarratorModel: process.env.MYSTERY_NARRATOR_MODEL ?? "deepseek-v4-flash",
   emailVerificationSecret:
     readSecret("EMAIL_VERIFICATION_SECRET", "EMAIL_VERIFICATION_SECRET_FILE")
     || process.env.JWT_SECRET

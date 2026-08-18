@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Crown, DoorOpen, LockKeyhole, MessageCircleQuestion, Plus, RefreshCw, Search, Users } from "lucide-react";
+import { BookOpen, Bot, Crown, DoorOpen, LockKeyhole, MessageCircleQuestion, Plus, RefreshCw, Search, Users } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
@@ -19,6 +19,7 @@ type InvitePreview = {
   hasPassword: boolean;
 };
 type PendingInvite = { roomId: string; inviteToken: string; room: InvitePreview };
+type MysteryEntry = { id: string; title: string; coverUrl: string | null; tags: string[] };
 
 export default function OnlineSoupLobbyPage() {
   const { user, openAuth, showToast } = useApp();
@@ -34,6 +35,8 @@ export default function OnlineSoupLobbyPage() {
   const [password, setPassword] = useState("");
   const [joinRole, setJoinRole] = useState<"player" | "spectator">("player");
   const [creating, setCreating] = useState(false);
+  const [entryMystery, setEntryMystery] = useState<MysteryEntry | null>(null);
+  const [mysteryChoice, setMysteryChoice] = useState<"continue" | "restart">("restart");
   const [pendingInvite, setPendingInvite] = useState<PendingInvite | null>(null);
   const [pendingInvitePassword, setPendingInvitePassword] = useState("");
   const [joiningInvite, setJoiningInvite] = useState(false);
@@ -52,6 +55,31 @@ export default function OnlineSoupLobbyPage() {
   useEffect(() => {
     void loadRooms();
   }, [loadRooms]);
+
+  useEffect(() => {
+    const mysteryId = searchParams.get("mystery")?.trim();
+    if (!mysteryId) return;
+    if (!user) {
+      openAuth();
+      return;
+    }
+    let cancelled = false;
+    const choice = searchParams.get("choice") === "continue" ? "continue" : "restart";
+    void api<{ mystery: MysteryEntry }>(`/api/mysteries/${encodeURIComponent(mysteryId)}`, { bypassCache: true })
+      .then((data) => {
+        if (cancelled) return;
+        setEntryMystery(data.mystery);
+        setMysteryChoice(choice);
+        setForm({ name: getRandomOnlineSoupRoomName(), type: "public", password: "", hostMode: "human" });
+        setCreateOpen(true);
+        const next = new URLSearchParams(searchParams);
+        next.delete("mystery");
+        next.delete("choice");
+        setSearchParams(next, { replace: true });
+      })
+      .catch((error) => showToast(error instanceof Error ? error.message : "谜局信息加载失败"));
+    return () => { cancelled = true; };
+  }, [openAuth, searchParams, setSearchParams, showToast, user]);
 
   useEffect(() => connectOnlineSoupLobbySocket(
     () => void loadRooms(),
@@ -151,8 +179,15 @@ export default function OnlineSoupLobbyPage() {
 
   function openCreate() {
     if (!user) { openAuth(); return; }
+    setEntryMystery(null);
+    setMysteryChoice("restart");
     setForm({ name: getRandomOnlineSoupRoomName(), type: "public", password: "", hostMode: "human" });
     setCreateOpen(true);
+  }
+
+  function closeCreate() {
+    setCreateOpen(false);
+    setEntryMystery(null);
   }
 
   async function createRoom() {
@@ -160,7 +195,10 @@ export default function OnlineSoupLobbyPage() {
     if (form.type === "password" && form.password.length !== 4) return showToast("房间密码必须为 4 位");
     setCreating(true);
     try {
-      const data = await api<{ roomId: string }>("/api/online-soup/rooms", { method: "POST", body: form });
+      const data = await api<{ roomId: string }>("/api/online-soup/rooms", {
+        method: "POST",
+        body: entryMystery ? { ...form, hostMode: "human", mysteryId: entryMystery.id, mysteryChoice } : form,
+      });
       navigate(`/online-soup/rooms/${data.roomId}`);
     } catch (error) { showToast(error instanceof Error ? error.message : "创建房间失败"); }
     finally { setCreating(false); }
@@ -256,24 +294,25 @@ export default function OnlineSoupLobbyPage() {
                 <div className="min-w-0"><h3 className="truncate text-base font-black text-ink">{room.name}</h3><p className="mt-1 text-xs font-semibold text-muted">房间号 {room.code} · 房主 {room.host.nickname}</p></div>
                 <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{statusText[room.status]}</span></div>
               </div>
-              <div className="online-soup-room-current"><span className="flex items-center gap-1">{room.hostMode === "ai" ? <Bot size={13} /> : <Crown size={13} />}{room.hostMode === "ai" ? "AI 主持" : "真人主持"}</span><strong title={room.soupTitle ?? "尚未选择海龟汤"}>{room.soupTitle ?? "尚未选择海龟汤"}</strong></div>
+              <div className="online-soup-room-current"><span className="flex items-center gap-1">{room.contentType === "mystery" ? <MessageCircleQuestion size={13} /> : room.hostMode === "ai" ? <Bot size={13} /> : <Crown size={13} />}{room.contentType === "mystery" ? "谜局" : room.hostMode === "ai" ? "AI 主持" : "真人主持"}</span><strong title={room.mysteryTitle ?? room.soupTitle ?? "尚未选择内容"}>{room.mysteryTitle ?? room.soupTitle ?? "尚未选择内容"}</strong></div>
               <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.participantCount}/{room.participantCapacity} 人</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>{room.viewerRole ? "返回房间" : "加入房间"}</button></div>
             </article>
           ))}
         </div>
       )}
 
-      {createOpen && <Modal onClose={() => setCreateOpen(false)}>
+      {createOpen && <Modal onClose={closeCreate}>
         <div className="space-y-4">
-          <div><h2 className="text-xl font-black text-ink">创建玩汤房间</h2><p className="mt-1 text-sm text-muted">你将成为房主，进入房间后仍可更改主持方式</p></div>
+          <div><h2 className="text-xl font-black text-ink">{entryMystery ? "创建谜局房间" : "创建玩汤房间"}</h2><p className="mt-1 text-sm text-muted">{entryMystery ? "你将成为房主；进程、正式行动和存档都绑定当前账号" : "你将成为房主，进入房间后仍可更改主持方式"}</p></div>
+          {entryMystery && <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50/70 p-3"><span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-white text-primary">{entryMystery.coverUrl ? <img src={entryMystery.coverUrl} alt="" className="h-full w-full object-cover" /> : <BookOpen size={20} />}</span><div className="min-w-0"><p className="text-xs font-bold text-primary">已选择谜局</p><p className="truncate text-sm font-black text-ink">{entryMystery.title}</p></div></div>}
           <label className="block text-sm font-bold text-ink">房间名称<input className="field mt-1 w-full" maxLength={50} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：周五夜猫局" /></label>
-          <fieldset><legend className="mb-2 text-sm font-bold text-ink">主持方式</legend><div className="grid grid-cols-2 gap-2"><button type="button" className={`btn ${form.hostMode === "human" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "human" })}><Crown size={16} />真人主持</button><button type="button" className={`btn ${form.hostMode === "ai" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "ai" })}><Bot size={16} />AI 主持</button></div><p className="mt-2 text-xs leading-5 text-muted">AI 主持房只能选择已开放 AI 玩汤的作品。</p></fieldset>
+          {!entryMystery && <fieldset><legend className="mb-2 text-sm font-bold text-ink">主持方式</legend><div className="grid grid-cols-2 gap-2"><button type="button" className={`btn ${form.hostMode === "human" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "human" })}><Crown size={16} />真人主持</button><button type="button" className={`btn ${form.hostMode === "ai" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "ai" })}><Bot size={16} />AI 主持</button></div><p className="mt-2 text-xs leading-5 text-muted">AI 主持房只能选择已开放 AI 玩汤的作品。</p></fieldset>}
           <div className="grid grid-cols-2 gap-2">
             <button className={`btn ${form.type === "public" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "public", password: "" })}>公开房</button>
             <button className={`btn ${form.type === "password" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "password" })}><LockKeyhole size={16} /> 密码房</button>
           </div>
           {form.type === "password" && <input className="field w-full" type="password" maxLength={4} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="设置 4 位房间密码" />}
-          <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setCreateOpen(false)}>取消</button><button className="btn btn-primary" disabled={creating} onClick={createRoom}>{creating ? "创建中…" : "创建并进入"}</button></div>
+          <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={closeCreate}>取消</button><button className="btn btn-primary" disabled={creating} onClick={createRoom}>{creating ? "创建中…" : "创建并进入"}</button></div>
         </div>
       </Modal>}
 

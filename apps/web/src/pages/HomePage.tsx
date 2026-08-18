@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Award, Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LogOut, MessageCircleQuestion, Plus, RotateCcw, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
+import { Award, Bell, BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LoaderCircle, LogOut, MessageCircleQuestion, Plus, RotateCcw, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
 import type { PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
 import { useApp, soupDifficulties, soupTypes } from "../context/AppContext";
@@ -19,21 +19,130 @@ import { canAccessAdmin } from "../shared/roles";
 import { DesktopAppDownload } from "../components/DesktopAppDownload";
 import { DesktopGlobalSearch } from "../components/DesktopGlobalSearch";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
+import { homeCategoryRoutes, type HomeCategory } from "../shared/homeRoutes";
+import { Modal } from "../components/Modal";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "total" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge">;
 type UserSearchResponse = { users: SearchUser[]; total: number };
+type HomeFilters = {
+  keyword: string;
+  type: string;
+  difficulty: string;
+  minRating: string;
+  bottomPublic: string;
+  aiGame: string;
+};
+type HomeRouteState = { homeFilters?: HomeFilters; homeSearchKeyword?: string };
+type HomeViewSnapshot = HomeCacheData & {
+  isDesktop: boolean;
+  currentPage: number;
+  offset: number;
+  randomSeed: string;
+  filters: HomeFilters;
+  searchKeyword: string;
+  matchedUsers: SearchUser[];
+  usersExpanded: boolean;
+  filtersOpen: boolean;
+  scrollY: number;
+};
 const mobilePageSize = 10;
 const desktopFirstPageSize = 6;
 const desktopPageSize = 8;
-type HomeCategory = "recommended" | "latest" | "following" | "ai" | "played";
 const homeCategoryTabs: Array<{ key: HomeCategory; label: string; requiresAuth?: boolean }> = [
   { key: "recommended", label: "推荐" },
   { key: "latest", label: "最新" },
   { key: "following", label: "关注", requiresAuth: true },
   { key: "ai", label: "AI" },
-  { key: "played", label: "玩过", requiresAuth: true }
+  { key: "played", label: "玩过", requiresAuth: true },
+  { key: "mystery", label: "谜局", requiresAuth: true }
 ];
+
+type MysterySummary = {
+  id: string;
+  title: string;
+  coverUrl: string | null;
+  tags: string[];
+  saveStatus: string | null;
+  canContinue: boolean;
+};
+
+function MysteryCatalog({ keyword, onOpen }: { keyword: string; onOpen: (mystery: MysterySummary, choice: "continue" | "restart") => void }) {
+  const { showToast } = useApp();
+  const [items, setItems] = useState<MysterySummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [selected, setSelected] = useState<MysterySummary | null>(null);
+
+  const load = useCallback(async (append = false) => {
+    append ? setLoadingMore(true) : setLoading(true);
+    try {
+      const offset = append ? nextOffset ?? items.length : 0;
+      const params = new URLSearchParams({ limit: "24", offset: String(offset) });
+      if (keyword.trim()) params.set("q", keyword.trim());
+      const data = await api<{ mysteries: MysterySummary[]; hasMore: boolean; nextOffset: number | null }>(`/api/mysteries?${params.toString()}`, { bypassCache: true });
+      setItems((current) => append ? [...current, ...data.mysteries] : data.mysteries);
+      setHasMore(data.hasMore);
+      setNextOffset(data.nextOffset);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "谜局列表加载失败");
+      if (!append) setItems([]);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [items.length, keyword, nextOffset, showToast]);
+
+  useEffect(() => { void load(false); }, [keyword]);
+
+  return (
+    <section className="space-y-4" aria-label="谜局列表">
+      <div className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-white p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-white"><BookOpen size={22} /></span>
+          <div><h2 className="text-base font-black text-ink">进入一段会记住选择的故事</h2><p className="mt-1 text-sm leading-6 text-muted">谜局通过在线玩汤房间进行。房主提交正式行动，其他成员参与讨论，世界会在你没有关注时继续运转。</p></div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" aria-label="谜局加载中">
+          {Array.from({ length: 8 }, (_, index) => <div key={index} className="aspect-[4/5] animate-pulse rounded-2xl bg-slate-200/70" />)}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="card py-12 text-center"><BookOpen className="mx-auto text-slate-300" size={38} /><p className="mt-3 text-sm font-bold text-muted">{keyword ? "没有找到匹配的谜局" : "暂无已上架的谜局"}</p></div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {items.map((mystery) => (
+            <button key={mystery.id} type="button" className="group overflow-hidden rounded-2xl border border-line bg-white text-left shadow-soft transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => setSelected(mystery)}>
+              <span className="relative block aspect-[4/3] overflow-hidden bg-slate-100">
+                {mystery.coverUrl ? <img src={mystery.coverUrl} alt="" className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" /> : <span className="grid h-full place-items-center text-slate-300"><BookOpen size={34} /></span>}
+                {mystery.canContinue && <span className="absolute right-2 top-2 rounded-full bg-slate-950/75 px-2 py-1 text-[11px] font-black text-white">有存档</span>}
+              </span>
+              <span className="block p-3 sm:p-4">
+                <strong className="line-clamp-2 text-sm font-black leading-5 text-ink sm:text-base">{mystery.title}</strong>
+                <span className="mt-2 flex min-h-6 flex-wrap gap-1.5">{mystery.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-bold text-primary">{tag}</span>)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {hasMore && <button type="button" className="btn btn-secondary mx-auto min-h-11" disabled={loadingMore} onClick={() => void load(true)}>{loadingMore ? <LoaderCircle size={16} className="animate-spin" /> : null}{loadingMore ? "加载中…" : "加载更多"}</button>}
+
+      {selected && <Modal onClose={() => setSelected(null)}>
+        <div className="space-y-4">
+          <div><p className="text-xs font-black tracking-[.12em] text-primary">进入谜局</p><h2 className="mt-1 text-xl font-black text-ink">{selected.title}</h2><p className="mt-2 text-sm leading-6 text-muted">将创建一个在线玩汤房间。进程绑定你这位房主，正式行动也只能由你提交。</p></div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button type="button" className="btn btn-primary min-h-12" disabled={!selected.canContinue} onClick={() => onOpen(selected, "continue")}>继续游戏</button>
+            <button type="button" className="btn btn-secondary min-h-12" onClick={() => onOpen(selected, "restart")}>{selected.canContinue ? "重新开始" : "开始新游戏"}</button>
+          </div>
+          {!selected.canContinue && <p className="text-xs text-muted">当前没有可继续的存档，将从故事开头开始。</p>}
+        </div>
+      </Modal>}
+    </section>
+  );
+}
 
 function paginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -46,47 +155,64 @@ function createHomeRandomSeed() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export default function HomePage() {
-  const { user, refreshKey, setExportReady, openAuth, openSoupEditor, setUser, showToast, triggerRefresh } = useApp();
+function homeViewCacheKey(userId: string | undefined, url: string) {
+  return `hgt:home:view:v1:${userId ?? "guest"}:${url}`;
+}
+
+export default function HomePage({ category: homeCategory = "recommended" }: { category?: HomeCategory }) {
+  const { user, loadingUser, refreshKey, setExportReady, openAuth, openSoupEditor, setUser, showToast, triggerRefresh } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
+  const navigationType = useNavigationType();
   const [searchParams, setSearchParams] = useSearchParams();
   const routedSearchKeyword = searchParams.get("search")?.trim() ?? "";
+  const initialIsDesktop = typeof window !== "undefined" && window.innerWidth >= 1024;
+  const currentHomeUrl = `${location.pathname}${location.search}`;
+  const viewCacheKey = homeViewCacheKey(user?.id, currentHomeUrl);
+  const routeState = location.state as HomeRouteState | null;
+  const [restoredSnapshot] = useState<HomeViewSnapshot | null>(() => {
+    if (navigationType !== "POP") return null;
+    const snapshot = readSessionCache<HomeViewSnapshot>(viewCacheKey, 30 * 60_000);
+    return snapshot?.isDesktop === initialIsDesktop ? snapshot : null;
+  });
+  const initialFilters: HomeFilters = {
+    keyword: routedSearchKeyword,
+    type: restoredSnapshot?.filters.type ?? routeState?.homeFilters?.type ?? "",
+    difficulty: restoredSnapshot?.filters.difficulty ?? routeState?.homeFilters?.difficulty ?? "",
+    minRating: restoredSnapshot?.filters.minRating ?? routeState?.homeFilters?.minRating ?? "all",
+    bottomPublic: restoredSnapshot?.filters.bottomPublic ?? routeState?.homeFilters?.bottomPublic ?? "all",
+    aiGame: restoredSnapshot?.filters.aiGame ?? routeState?.homeFilters?.aiGame ?? "all"
+  };
   const unread = useMessageUnread(user?.id, Boolean(user));
   const heroParallax = useDesktopHeroParallax<HTMLDivElement>();
   const shellBalance = useShellBalance(user?.id);
   const userMenuRef = useDismissibleDetails();
 
-  const [soups, setSoups] = useState<SoupSummary[]>([]);
-  const [total, setTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
+  const [soups, setSoups] = useState<SoupSummary[]>(() => restoredSnapshot?.soups ?? []);
+  const [total, setTotal] = useState(() => restoredSnapshot?.total ?? 0);
+  const [hasMore, setHasMore] = useState(() => restoredSnapshot?.hasMore ?? true);
   const [loading, setLoading] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1024);
+  const [currentPage, setCurrentPage] = useState(() => restoredSnapshot?.currentPage ?? 1);
+  const [isDesktop, setIsDesktop] = useState(initialIsDesktop);
   const loadingRef = useRef(false);
-  const offsetRef = useRef(0);
+  const offsetRef = useRef(restoredSnapshot?.offset ?? restoredSnapshot?.soups.length ?? 0);
   const previousRefreshKeyRef = useRef(refreshKey);
   const previousFiltersRef = useRef("");
+  const skipInitialLoadRef = useRef(Boolean(restoredSnapshot));
   const listTopRef = useRef<HTMLDivElement | null>(null);
-  const randomSeedRef = useRef(createHomeRandomSeed());
+  const randomSeedRef = useRef(restoredSnapshot?.randomSeed ?? createHomeRandomSeed());
   const loadRequestRef = useRef(0);
-  const [matchedUsers, setMatchedUsers] = useState<SearchUser[]>([]);
+  const [matchedUsers, setMatchedUsers] = useState<SearchUser[]>(() => restoredSnapshot?.matchedUsers ?? []);
   const [usersLoading, setUsersLoading] = useState(false);
-  const [usersExpanded, setUsersExpanded] = useState(false);
+  const [usersExpanded, setUsersExpanded] = useState(() => restoredSnapshot?.usersExpanded ?? false);
   const userSearchRequestRef = useRef(0);
+  const skipInitialUserSearchRef = useRef(Boolean(restoredSnapshot && initialFilters.keyword));
   const [showExportConfirm, setShowExportConfirm] = useState(false);
-  const [homeCategory, setHomeCategory] = useState<HomeCategory>("recommended");
   const [categoryRefreshKey, setCategoryRefreshKey] = useState(0);
 
-  const [filters, setFilters] = useState({
-    keyword: routedSearchKeyword,
-    type: "",
-    difficulty: "",
-    minRating: "all",
-    bottomPublic: "all",
-    aiGame: "all"
-  });
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [searchKeyword, setSearchKeyword] = useState(routedSearchKeyword);
+  const [filters, setFilters] = useState<HomeFilters>(initialFilters);
+  const [filtersOpen, setFiltersOpen] = useState(() => restoredSnapshot?.filtersOpen ?? false);
+  const [searchKeyword, setSearchKeyword] = useState(() => restoredSnapshot?.searchKeyword ?? routeState?.homeSearchKeyword ?? routedSearchKeyword);
   const activeFilterCount = [
     filters.type,
     filters.difficulty,
@@ -118,6 +244,11 @@ export default function HomePage() {
 
   const loadSoups = useCallback(
     async (append = false, bypassCache = false, page = currentPage) => {
+      if (homeCategory === "mystery") {
+        loadingRef.current = false;
+        setLoading(false);
+        return;
+      }
       if (append && loadingRef.current) return;
       if (append && !hasMore) return;
       const requestId = ++loadRequestRef.current;
@@ -177,23 +308,60 @@ export default function HomePage() {
     [currentPage, filters, firstDesktopPageSize, hasMore, homeCategory, isDesktop, user?.id]
   );
 
+  function saveHomeViewSnapshot() {
+    writeSessionCache(viewCacheKey, {
+      soups,
+      total,
+      hasMore,
+      isDesktop,
+      currentPage,
+      offset: offsetRef.current,
+      randomSeed: randomSeedRef.current,
+      filters,
+      searchKeyword,
+      matchedUsers,
+      usersExpanded,
+      filtersOpen,
+      scrollY: window.scrollY
+    } satisfies HomeViewSnapshot);
+  }
+
   const selectHomeCategory = (nextCategory: HomeCategory, requiresAuth = false) => {
     if (requiresAuth && !user) {
       openAuth();
       return;
     }
-    if (nextCategory === homeCategory && nextCategory !== "ai" && nextCategory !== "played") return;
-    if (nextCategory === "ai" || nextCategory === "played") {
+    if (nextCategory === homeCategory) {
+      if (nextCategory !== "ai" && nextCategory !== "played") return;
       randomSeedRef.current = createHomeRandomSeed();
+      setCurrentPage(1);
+      setSoups([]);
+      setTotal(0);
+      setHasMore(true);
+      offsetRef.current = 0;
       setCategoryRefreshKey((key) => key + 1);
+      return;
     }
-    setCurrentPage(1);
-    setSoups([]);
-    setTotal(0);
-    setHasMore(true);
-    offsetRef.current = 0;
-    setHomeCategory(nextCategory);
+    saveHomeViewSnapshot();
+    navigate(`${homeCategoryRoutes[nextCategory]}${location.search}`, {
+      state: { homeFilters: filters, homeSearchKeyword: searchKeyword } satisfies HomeRouteState
+    });
   };
+
+  useLayoutEffect(() => {
+    if (!restoredSnapshot) return;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: restoredSnapshot.scrollY, left: 0, behavior: "auto" });
+      secondFrame = window.requestAnimationFrame(() => {
+        window.scrollTo({ top: restoredSnapshot.scrollY, left: 0, behavior: "auto" });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [restoredSnapshot]);
 
   useEffect(() => {
     setSearchKeyword(routedSearchKeyword);
@@ -210,6 +378,12 @@ export default function HomePage() {
 
   useEffect(() => {
     const filterKey = JSON.stringify(filters);
+    if (skipInitialLoadRef.current) {
+      skipInitialLoadRef.current = false;
+      previousFiltersRef.current = filterKey;
+      previousRefreshKeyRef.current = refreshKey;
+      return;
+    }
     const filtersChanged = previousFiltersRef.current !== "" && previousFiltersRef.current !== filterKey;
     previousFiltersRef.current = filterKey;
     if (filtersChanged && currentPage !== 1) {
@@ -223,14 +397,25 @@ export default function HomePage() {
   }, [filters, refreshKey, currentPage, isDesktop, homeCategory, categoryRefreshKey]);
 
   useEffect(() => {
-    if (!user && (homeCategory === "following" || homeCategory === "played")) {
-      setHomeCategory("recommended");
-      setCurrentPage(1);
+    if (!loadingUser && !user && (homeCategory === "following" || homeCategory === "played" || homeCategory === "mystery")) {
+      navigate(`/${location.search}`, {
+        replace: true,
+        state: { homeFilters: filters, homeSearchKeyword: searchKeyword } satisfies HomeRouteState
+      });
     }
-  }, [homeCategory, user]);
+  }, [filters, homeCategory, loadingUser, location.search, navigate, searchKeyword, user]);
 
   useEffect(() => {
+    if (homeCategory === "mystery") {
+      setMatchedUsers([]);
+      setUsersLoading(false);
+      return;
+    }
     const keyword = filters.keyword.trim();
+    if (skipInitialUserSearchRef.current) {
+      skipInitialUserSearchRef.current = false;
+      return;
+    }
     const requestId = ++userSearchRequestRef.current;
     setUsersExpanded(false);
     if (!keyword) {
@@ -253,7 +438,7 @@ export default function HomePage() {
       .finally(() => {
         if (requestId === userSearchRequestRef.current) setUsersLoading(false);
       });
-  }, [filters.keyword]);
+  }, [filters.keyword, homeCategory]);
 
   const handleLoadMore = () => loadSoups(true);
   const totalPages = isDesktop
@@ -447,7 +632,7 @@ export default function HomePage() {
           <strong>从一个问题开始，走向故事真正的结局</strong>
         </div>
         <div className="home-desktop-search-tools">
-          {filtersOpen && (
+          {homeCategory !== "mystery" && filtersOpen && (
             <div className="home-desktop-filter-popover">
               <label>
                 <span>类型</span>
@@ -493,8 +678,8 @@ export default function HomePage() {
               </button>
             </div>
           )}
-          <DesktopGlobalSearch value={searchKeyword} onChange={setSearchKeyword} onSubmit={submitSearch} />
-          <button
+          <DesktopGlobalSearch value={searchKeyword} onChange={setSearchKeyword} onSubmit={submitSearch} placeholder={homeCategory === "mystery" ? "搜索谜局标题或标签..." : undefined} />
+          {homeCategory !== "mystery" && <button
             type="button"
             className={`home-desktop-filter-trigger ${filtersOpen ? "is-open" : ""}`}
             onClick={() => setFiltersOpen((open) => !open)}
@@ -502,7 +687,7 @@ export default function HomePage() {
           >
             <SlidersHorizontal size={17} />筛选
             {activeFilterCount > 0 && <span>{activeFilterCount}</span>}
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -510,7 +695,7 @@ export default function HomePage() {
         <div className="relative min-w-0 flex-1">
           <input
             className="field h-12 rounded-full bg-white pl-4 pr-11 text-[15px] shadow-soft"
-            placeholder="搜索海龟汤或用户昵称..."
+            placeholder={homeCategory === "mystery" ? "搜索谜局标题或标签..." : "搜索海龟汤或用户昵称..."}
             value={searchKeyword}
             onChange={(e) => setSearchKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submitSearch(); }}
@@ -519,7 +704,7 @@ export default function HomePage() {
             <Search size={20} />
           </button>
         </div>
-        <button
+        {homeCategory !== "mystery" && <button
           className="relative inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line bg-white px-4 text-sm font-bold text-primary shadow-soft"
           onClick={() => setFiltersOpen((o) => !o)}
         >
@@ -528,10 +713,10 @@ export default function HomePage() {
           {activeFilterCount > 0 && (
             <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-primary px-1 text-[11px] text-white">{activeFilterCount}</span>
           )}
-        </button>
+        </button>}
       </div>
 
-      <div className={`home-filter-panel ${filtersOpen ? "is-open" : ""}`}>
+      {homeCategory !== "mystery" && <div className={`home-filter-panel ${filtersOpen ? "is-open" : ""}`}>
           <label className="filter-field">
             <span>类型</span>
             <select className="field" value={filters.type} onChange={(e) => setFilters((old) => ({ ...old, type: e.target.value }))}>
@@ -574,9 +759,9 @@ export default function HomePage() {
           <button className="home-filter-reset" type="button" disabled={activeFilterCount === 0} onClick={resetFilters}>
             <RotateCcw size={15} />重置筛选
           </button>
-      </div>
+      </div>}
 
-      <nav className="home-category-tabs" aria-label="海龟汤首页分类" role="tablist">
+      <nav className="home-category-tabs" aria-label="首页内容分类" role="tablist">
         {homeCategoryTabs.map((tab) => (
           <button
             key={tab.key}
@@ -591,11 +776,15 @@ export default function HomePage() {
         ))}
       </nav>
 
-      {!isResultMode && (
+      {homeCategory === "mystery" && <MysteryCatalog keyword={filters.keyword} onOpen={(mystery, choice) => {
+        navigate(`/online-soup?mystery=${encodeURIComponent(mystery.id)}&choice=${choice}`);
+      }} />}
+
+      {homeCategory !== "mystery" && !isResultMode && (
         <div className="home-mobile-banner"><HomeBannerCarousel /></div>
       )}
 
-      {filters.keyword && (usersLoading || matchedUsers.length > 0) && (
+      {homeCategory !== "mystery" && filters.keyword && (usersLoading || matchedUsers.length > 0) && (
         <section className="home-user-search-results overflow-hidden rounded-2xl bg-white shadow-soft">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-base font-black text-ink">用户</h2>
@@ -641,7 +830,7 @@ export default function HomePage() {
         </section>
       )}
 
-      {filters.keyword && (
+      {homeCategory !== "mystery" && filters.keyword && (
         <div className="home-content-heading is-search-result">
           <h2>海龟汤</h2>
         </div>
@@ -649,9 +838,14 @@ export default function HomePage() {
 
       <div ref={listTopRef} className="home-list-anchor" aria-hidden="true" />
 
-      <MasonryList
+      {homeCategory !== "mystery" && <MasonryList
         soups={isDesktop && loading ? [] : soups}
-        onOpen={(id) => navigate(`/soup/${id}`)}
+        onOpen={(id) => {
+          saveHomeViewSnapshot();
+          navigate(`/soup/${id}`, {
+            state: { soupReturnTo: currentHomeUrl, soupReturnHistory: true }
+          });
+        }}
         hasMore={!isDesktop && hasMore}
         loading={loading}
         onLoadMore={handleLoadMore}
@@ -660,9 +854,9 @@ export default function HomePage() {
           { length: currentPage === 1 ? firstDesktopPageSize : desktopPageSize },
           (_, index) => <SoupCardSkeleton key={`loading-${index}`} />
         ) : undefined}
-      />
+      />}
 
-      {isDesktop && totalPages > 1 && (
+      {homeCategory !== "mystery" && isDesktop && totalPages > 1 && (
         <nav className="home-desktop-pagination" aria-label="海龟汤分页">
           <button type="button" className="btn btn-secondary h-9 px-3 text-xs" disabled={currentPage <= 1 || loading} onClick={() => changePage(currentPage - 1)}><ChevronLeft size={15} />上一页</button>
           {paginationItems(currentPage, totalPages).map((item, index) => item === "ellipsis" ? (
@@ -674,10 +868,10 @@ export default function HomePage() {
         </nav>
       )}
 
-      {soups.length === 0 && !loading && (
+      {homeCategory !== "mystery" && soups.length === 0 && !loading && (
         <div className="card p-8 text-center text-sm text-muted">{user ? "暂无符合条件的海龟汤" : "暂无公开海龟汤"}</div>
       )}
-      {loading && <div className="home-mobile-loading-skeleton"><CoverGridSkeleton count={soups.length ? 2 : 6} /></div>}
+      {homeCategory !== "mystery" && loading && <div className="home-mobile-loading-skeleton"><CoverGridSkeleton count={soups.length ? 2 : 6} /></div>}
 
       {/* 导出汤名悬浮按钮 */}
       <button

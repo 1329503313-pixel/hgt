@@ -11,6 +11,7 @@ import { parseGeneratedKeyFactsResponse } from "./keyFactGeneration.js";
 import { inspectAiHostResponse } from "./aiHostResponse.js";
 import { type AiSoupRoundSnapshot } from "./aiSoupRoundSnapshot.js";
 import { selectAllowedSupplementSurfaceIndices } from "./onlineSoupAiState.js";
+import { consumeDailyEntitlement, isEntitlementLimitError, type EntitlementMetric } from "./entitlements.js";
 import {
   calculateAtomicProgress,
   compactRoomAiHistory,
@@ -111,7 +112,6 @@ type GameSoupData = {
 };
 
 const AI_MINUTE_LIMIT = 30;
-const AI_DAILY_LIMIT = 300;
 
 async function consumeAiQuota(userId: string): Promise<{ allowed: boolean; dailyExceeded: boolean }> {
   await pool.query(
@@ -130,11 +130,24 @@ async function consumeAiQuota(userId: string): Promise<{ allowed: boolean; daily
     [userId],
   );
   const minuteCount = Number(rows[0]?.minute_request_count ?? 0);
-  const dailyCount = Number(rows[0]?.daily_request_count ?? 0);
   return {
-    allowed: minuteCount <= AI_MINUTE_LIMIT && dailyCount <= AI_DAILY_LIMIT,
-    dailyExceeded: dailyCount > AI_DAILY_LIMIT,
+    allowed: minuteCount <= AI_MINUTE_LIMIT,
+    dailyExceeded: false,
   };
+}
+
+async function consumeLegacyGameEntitlement(user: GameUser, metric: EntitlementMetric, eventKey: string) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await consumeDailyEntitlement(connection, { userId: user.id, role: user.role, metric, eventKey });
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 async function aiRateLimiter(req: any, res: any, next: any) {
@@ -1271,6 +1284,12 @@ gameRouter.post("/:soupId/ask", aiRateLimiter, async (req, res) => {
   const session = sessions[0];
   if (!sessionMatchesSoup(session, soupData)) return res.status(409).json({ error: "海龟汤内容已更新，请重新开始本局" });
   if (session.status === "completed" || (session.progress ?? 0) >= 100) return res.status(409).json({ error: "本局已经通关，如需再玩请重新开始" });
+  try {
+    await consumeLegacyGameEntitlement(user, "ai_question", `${session.id}:ask:${Number(session.version ?? 0)}`);
+  } catch (error) {
+    if (isEntitlementLimitError(error)) return res.status(429).json({ error: error.message, code: error.code });
+    throw error;
+  }
   const messages: { role: string; content: string }[] = parseJson(session.messages) ?? [];
   const savedSupp = parseJson<{ surfaces: number[]; bottoms: number[] }>(session.revealed_supplements) ?? { surfaces: [], bottoms: [] };
   const savedAtomicFactIds = resolveSavedAtomicFactIds(session, soupData);
@@ -1372,6 +1391,12 @@ gameRouter.post("/:soupId/hint", aiRateLimiter, async (req, res) => {
   // 推理进度 < 20% 不允许使用提示
   if (existingProgress < 20) {
     return res.status(400).json({ error: "推理进度不足 20%，请先自己探索一下再来获取提示吧！" });
+  }
+  try {
+    await consumeLegacyGameEntitlement(user, "ai_hint", `${session.id}:hint:${Number(session.version ?? 0)}`);
+  } catch (error) {
+    if (isEntitlementLimitError(error)) return res.status(429).json({ error: error.message, code: error.code });
+    throw error;
   }
 
   const systemPrompt = buildSystemPrompt(soupData.surface, soupData.bottom, soupData.manual, soupData.supplementalSurfaces, soupData.supplementalBottoms, savedSupp.surfaces, savedSupp.bottoms, soupData.keyFacts, soupData.atomicFacts, savedAtomicFactIdsHint);

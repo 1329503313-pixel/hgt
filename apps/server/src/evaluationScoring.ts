@@ -1,6 +1,6 @@
 import { LEVEL_THRESHOLDS, levelForExperience } from "./levelSystem.js";
 
-export const MIN_SCORING_LEVEL = 3;
+export const MIN_SCORING_LEVEL = 5;
 export const MIN_SCORING_EXPERIENCE = LEVEL_THRESHOLDS[MIN_SCORING_LEVEL];
 
 function sqlAlias(value: string) {

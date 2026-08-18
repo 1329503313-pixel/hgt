@@ -3,6 +3,7 @@ import { BottomNav } from "../components/BottomNav";
 import { DesktopModuleHeader, type DesktopModuleKey } from "../components/DesktopModuleHeader";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { parentRoute } from "../shared/routeHierarchy";
+import { isHomeCategoryRoute } from "../shared/homeRoutes";
 
 const desktopPrimaryPaths = new Set(["/online-soup", "/circles", "/mine/rankings", "/mine/store", "/mine/tasks", "/mine/cards", "/mine/achievements", "/mine", "/messages"]);
 
@@ -59,7 +60,7 @@ function desktopModuleForPath(path: string) {
 export default function MainLayout() {
   const location = useLocation();
   const path = location.pathname;
-  const isHome = path === "/";
+  const isHome = isHomeCategoryRoute(path);
   const desktopModule = desktopModuleForPath(path);
   const desktopSecondary = Boolean(desktopModule && !desktopPrimaryPaths.has(path));
 
