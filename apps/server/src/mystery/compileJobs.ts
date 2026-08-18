@@ -1,8 +1,10 @@
 import type mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import { pool } from "../db.js";
 import { mysteryStorySourceSchema, type MysteryStorySource } from "./contracts.js";
 import { compileMysteryStory, MysteryModelError } from "./models.js";
+import { formatMysteryValidationError } from "./validationErrors.js";
 
 export type MysteryCompileJobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -243,6 +245,9 @@ export function mysteryCompileRetryDelaySeconds(attemptCount: number) {
 export function mysteryCompileFailure(error: unknown) {
   if (error instanceof MysteryModelError) {
     return { code: error.code.slice(0, 80), message: error.message.slice(0, 1000), retryable: error.retryable };
+  }
+  if (error instanceof z.ZodError) {
+    return { code: "COMPILE_DATA_INVALID", message: formatMysteryValidationError(error, "故事编译数据"), retryable: false };
   }
   return { code: "COMPILE_INTERNAL_ERROR", message: "故事编译服务发生内部错误", retryable: false };
 }

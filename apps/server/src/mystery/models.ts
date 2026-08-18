@@ -12,6 +12,7 @@ import {
 import { MYSTERY_COMPILER_SCHEMA_GUIDE } from "./compilerSchemaGuide.js";
 import { MYSTERY_COMPILER_PROMPT, MYSTERY_NARRATOR_PROMPT, MYSTERY_WORLD_CONSTITUTION } from "./prompts.js";
 import { validateMysteryStoryPackageIntegrity } from "./packageValidation.js";
+import { formatMysteryValidationIssues } from "./validationErrors.js";
 
 export class MysteryModelError extends Error {
   constructor(public readonly code: string, message: string, public readonly retryable = true) {
@@ -294,7 +295,7 @@ export async function compileMysteryStory(input: { storyId: string; versionNumbe
     }
     const packageResult = mysteryStoryPackageSchema.safeParse(parsed.package);
     if (!packageResult.success) {
-      const issues = packageResult.error.issues.slice(0, 20).map((issue) => `${issue.path.join(".") || "package"}: ${issue.message}`);
+      const issues = formatMysteryValidationIssues(packageResult.error, 20, "故事结构包");
       return { code: "MODEL_PACKAGE_SCHEMA_INVALID", message: "编译结果未通过 Story Package 结构校验", issues };
     }
     const storyPackage = packageResult.data;
@@ -559,7 +560,7 @@ export async function adjudicateMysteryTurn(input: {
       return {
         code: "MODEL_RESOLUTION_SCHEMA_INVALID",
         message: "世界裁决器返回的提案结构不完整",
-        issues: parsed.error.issues.slice(0, 30).map((issue) => `${issue.path.join(".") || "resolution"}: ${issue.message}`),
+        issues: formatMysteryValidationIssues(parsed.error, 30, "裁决提案"),
         candidate: call.function.arguments,
       } as const;
     }

@@ -16,7 +16,9 @@ export const mysteryStorySourceSchema = z.object({
   coreSettings: longText,
   display: z.object({
     hook: z.string().trim().max(300).default(""),
-    genres: z.array(z.string().trim().min(1).max(40)).max(12).default([]),
+    genres: z.array(
+      z.string().trim().min(1, "谜局类型不能为空").max(120, "每个谜局类型最多 120 个字符"),
+    ).max(12, "谜局类型最多填写 12 项").default([]),
     era: z.string().trim().max(120).default(""),
     region: z.string().trim().max(120).default(""),
     perspective: z.string().trim().max(120).default(""),

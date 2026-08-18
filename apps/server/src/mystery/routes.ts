@@ -20,6 +20,7 @@ import {
 import { MysteryInvariantError } from "./engine.js";
 import { MysteryModelError } from "./models.js";
 import { validateMysteryStoryPackageIntegrity } from "./packageValidation.js";
+import { formatMysteryValidationError } from "./validationErrors.js";
 
 type AuthenticatedUser = PublicUser & { tokenVersion: number };
 type RouteDependencies = {
@@ -191,7 +192,7 @@ export function registerMysteryRoutes(app: express.Application, dependencies: Ro
     const admin = await requireBackofficeAdmin(req, res);
     if (!admin) return;
     const parsed = storyInputSchema.safeParse(req.body);
-    if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "谜局配置不完整");
+    if (!parsed.success) return sendError(res, 400, formatMysteryValidationError(parsed.error, "谜局配置"));
     const id = `mystery_${nanoid()}`;
     let storedCover: string | null = parsed.data.source.coverUrl;
     if (parsed.data.coverData) {
@@ -274,7 +275,7 @@ export function registerMysteryRoutes(app: express.Application, dependencies: Ro
     const admin = await requireBackofficeAdmin(req, res);
     if (!admin) return;
     const parsed = storyInputSchema.safeParse(req.body);
-    if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "谜局配置不完整");
+    if (!parsed.success) return sendError(res, 400, formatMysteryValidationError(parsed.error, "谜局配置"));
     const [[existing]] = await pool.query<mysql.RowDataPacket[]>("SELECT cover_url, story_source_hash FROM mystery_stories WHERE id = ? LIMIT 1", [req.params.id]);
     if (!existing) return sendError(res, 404, "谜局不存在");
     let storedCover: string | null = parsed.data.removeCover ? null : (existing.cover_url ? String(existing.cover_url) : null);
@@ -322,7 +323,7 @@ export function registerMysteryRoutes(app: express.Application, dependencies: Ro
   app.put("/api/admin/mysteries/:storyId/versions/:versionId/package", async (req, res) => {
     if (!(await requireBackofficeAdmin(req, res))) return;
     const parsed = z.object({ storyPackage: mysteryStoryPackageSchema }).safeParse(req.body);
-    if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "Story Package 结构不合法");
+    if (!parsed.success) return sendError(res, 400, formatMysteryValidationError(parsed.error, "故事结构包"));
     if (parsed.data.storyPackage.storyId !== req.params.storyId) return sendError(res, 400, "Story Package 的 storyId 不匹配");
     const [result] = await pool.query<mysql.ResultSetHeader>(
       `UPDATE mystery_story_versions SET compiled_package = ?, compiled_customized = 1,
@@ -410,6 +411,7 @@ export function registerMysteryRoutes(app: express.Application, dependencies: Ro
 }
 
 export function handleMysteryRouteError(error: unknown) {
+  if (error instanceof z.ZodError) return { status: 400, code: "MYSTERY_DATA_INVALID", message: formatMysteryValidationError(error) };
   if (error instanceof MysteryInvariantError) return { status: 409, code: error.code, message: error.message };
   if (error instanceof MysteryModelError) return { status: error.code === "MODEL_NOT_CONFIGURED" ? 503 : 502, code: error.code, message: error.message };
   return null;

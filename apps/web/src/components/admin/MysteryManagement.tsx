@@ -452,7 +452,7 @@ export function MysteryManagement() {
         <Section title="故事基础与内容边界" description="帮助编译器建立稳定的叙事风格、目标时长和安全边界。">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="一句话钩子"><input className="field min-h-11 w-full" value={source.display.hook} onChange={(event) => patchDisplay("hook", event.target.value)} /></Field>
-            <Field label="类型"><input className="field min-h-11 w-full" value={source.display.genres.join("，")} onChange={(event) => patchDisplay("genres", parseList(event.target.value))} /></Field>
+            <Field label="类型" hint="用逗号分隔，最多 12 项，每项最多 120 个字符"><input className="field min-h-11 w-full" value={source.display.genres.join("，")} onChange={(event) => patchDisplay("genres", parseList(event.target.value).slice(0, 12))} /></Field>
             <Field label="时代"><input className="field min-h-11 w-full" value={source.display.era} onChange={(event) => patchDisplay("era", event.target.value)} /></Field>
             <Field label="地域"><input className="field min-h-11 w-full" value={source.display.region} onChange={(event) => patchDisplay("region", event.target.value)} /></Field>
             <Field label="叙事视角"><input className="field min-h-11 w-full" value={source.display.perspective} onChange={(event) => patchDisplay("perspective", event.target.value)} /></Field>
