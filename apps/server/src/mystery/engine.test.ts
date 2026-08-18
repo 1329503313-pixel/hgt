@@ -180,6 +180,9 @@ test("发布前完整性校验拒绝悬空引用并要求兜底结局", () => {
   });
   assert.ok(validateMysteryStoryPackageIntegrity(valid).some((issue) => issue.includes("MISSING_EFFECT")));
   valid.timelineGraph.scheduledEvents = [];
+  valid.entityResourceGraph.items[0].useEffectIds = ["MISSING_ITEM_EFFECT"];
+  assert.ok(validateMysteryStoryPackageIntegrity(valid).some((issue) => issue.includes("MISSING_ITEM_EFFECT")));
+  valid.entityResourceGraph.items[0].useEffectIds = [];
   valid.endingStateGraph.endings[0].requiredCondition = { op: "eq", path: "actors.NPC_MISSING.status", value: "dead" };
   assert.ok(validateMysteryStoryPackageIntegrity(valid).some((issue) => issue.includes("NPC_MISSING")));
   valid.endingStateGraph.endings[0].requiredCondition = { op: "gt", path: "resources.PLAYER_AMMO.amount", value: 0 };

@@ -275,6 +275,8 @@ export function normalizeCompilerPackageSyntax(parsed: { package?: unknown; diag
         if (item.initialLocationId != null) item.initialLocationId = normalizeLocationId(item.initialLocationId);
         if (item.initialOwnerId != null) item.initialOwnerId = normalizeActorId(item.initialOwnerId);
         item.recognizedByActorIds = normalizeList(item.recognizedByActorIds, normalizeActorId);
+        item.useEffectIds = normalizeList(item.useEffectIds, normalizeEffectId);
+        item.destructionConsequenceIds = normalizeList(item.destructionConsequenceIds, normalizeEffectId);
       }
     }
     if (Array.isArray(entityResourceGraph.resources)) {
@@ -404,10 +406,17 @@ export function normalizeCompilerPackageSyntax(parsed: { package?: unknown; diag
   return parsed;
 }
 
-export const MYSTERY_COMPILATION_REPAIR_ATTEMPTS = 3;
+export const MYSTERY_COMPILATION_REPAIR_ATTEMPTS = 5;
 
 export function mysteryCompilationRepairPrompt(issues: string[]) {
-  return `上一个候选未通过服务端校验。请根据以下错误修复并重新输出完整 JSON，不要解释，也不要省略任何图谱。特别注意：coreFactGraph.facts 的每一项必须是完整事实对象，严禁使用纯文本字符串或编号简写；即使原内容是一句话，也必须补齐 schema 样例列出的全部事实字段。地点的 locationId、connections[].toLocationId、initialActorIds、initialItemInstanceIds，以及人物和物品引用的 initialLocationId 必须使用已定义的实体 ID，不能填写中文人物名、物品名或地点名。所有条件必须且只能使用 {"op":"all","conditions":[...]}、{"op":"any","conditions":[...]}、{"op":"not","condition":...} 或 {"op":"eq|neq|gt|gte|lt|lte|includes|exists","path":"actors.ID.locationId","value":...}，不得使用 and/or/operator/field、方括号路径或空 conditions。人物能力和弱点分别使用 actors.ID.abilities、actors.ID.weaknesses，并通过 includes 与人物定义中的完整文本匹配。知识判断必须写成 {"op":"includes","path":"knowledgeByActor.角色ID","value":"知识ID"}，知识 ID 绝不能拼进 path。物品若配置 initialOwnerId，则 initialLocationId 必须为 null，且任何地点的 initialItemInstanceIds 都不得再包含该物品：\n${issues.join("\n")}`;
+  const missingEffectReferences = issues.flatMap((issue) => {
+    const match = issue.match(/^(行动转换|世界事件|物品)\s+(\S+)\s+引用了不存在的效果\s+(\S+)$/);
+    return match ? [{ ownerType: match[1], ownerId: match[2], effectId: match[3] }] : [];
+  });
+  const missingEffectInstruction = missingEffectReferences.length
+    ? `\n\n本轮必须定向补齐以下悬空效果引用：\n${missingEffectReferences.map((entry) => `- ${entry.ownerType} ${entry.ownerId} 需要在 actionTransitionGraph.effects 中新增或恢复 effectId=${entry.effectId} 的完整效果对象`).join("\n")}\n每个补齐的效果必须包含 description、resourceChanges、itemChanges、actorChanges、knowledgeChanges、flagChanges 全部字段，并根据对应行动或世界事件的实际语义写入可执行的状态变化。若事件表示人物移动、取得物品、人物状态变化或认知变化，必须落实到相应 change 中；不要重命名 ID，不要删除原 effectIds 引用，不要创建所有变化均为空的占位效果。补齐后重新检查 transitions、scheduledEvents 和物品中的所有效果引用，确保每个 ID 都存在于 effects。`
+    : "";
+  return `上一个候选未通过服务端校验。请根据以下错误修复并重新输出完整 JSON，不要解释，也不要省略任何图谱。特别注意：coreFactGraph.facts 的每一项必须是完整事实对象，严禁使用纯文本字符串或编号简写；即使原内容是一句话，也必须补齐 schema 样例列出的全部事实字段。地点的 locationId、connections[].toLocationId、initialActorIds、initialItemInstanceIds，以及人物和物品引用的 initialLocationId 必须使用已定义的实体 ID，不能填写中文人物名、物品名或地点名。所有条件必须且只能使用 {"op":"all","conditions":[...]}、{"op":"any","conditions":[...]}、{"op":"not","condition":...} 或 {"op":"eq|neq|gt|gte|lt|lte|includes|exists","path":"actors.ID.locationId","value":...}，不得使用 and/or/operator/field、方括号路径或空 conditions。人物能力和弱点分别使用 actors.ID.abilities、actors.ID.weaknesses，并通过 includes 与人物定义中的完整文本匹配。知识判断必须写成 {"op":"includes","path":"knowledgeByActor.角色ID","value":"知识ID"}，知识 ID 绝不能拼进 path。物品若配置 initialOwnerId，则 initialLocationId 必须为 null，且任何地点的 initialItemInstanceIds 都不得再包含该物品。所有效果引用必须在 actionTransitionGraph.effects 中存在完整定义：\n${issues.join("\n")}${missingEffectInstruction}`;
 }
 
 export async function compileMysteryStory(input: { storyId: string; versionNumber: number; source: MysteryStorySource }) {

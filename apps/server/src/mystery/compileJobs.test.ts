@@ -94,11 +94,21 @@ test("故事编译器把地点内唯一匹配的人物名和物品名转换为�
 });
 
 test("故事编译失败会进行有限多轮修复并携带具体错误", () => {
-  assert.equal(MYSTERY_COMPILATION_REPAIR_ATTEMPTS, 3);
+  assert.equal(MYSTERY_COMPILATION_REPAIR_ATTEMPTS, 5);
   const prompt = mysteryCompilationRepairPrompt(["地点第 1 项的初始人物编号第 2 项格式错误"]);
   assert.match(prompt, /完整 JSON/);
   assert.match(prompt, /initialActorIds/);
   assert.match(prompt, /地点第 1 项的初始人物编号第 2 项格式错误/);
+});
+
+test("故事编译修复提示要求按原编号补齐世界事件缺失效果", () => {
+  const prompt = mysteryCompilationRepairPrompt([
+    "世界事件 SCHEDULE_NIGHT 引用了不存在的效果 EFFECT_NIGHT_MOVE",
+  ]);
+  assert.match(prompt, /actionTransitionGraph\.effects/);
+  assert.match(prompt, /effectId=EFFECT_NIGHT_MOVE/);
+  assert.match(prompt, /不要删除原 effectIds 引用/);
+  assert.match(prompt, /不要创建所有变化均为空的占位效果/);
 });
 
 test("故事编译器统一修复效果、知识、世界事件和结局中的唯一名称引用", () => {
@@ -108,7 +118,7 @@ test("故事编译器统一修复效果、知识、世界事件和结局中的�
       entityResourceGraph: {
         locations: [{ locationId: "LOC_HALL", name: "大厅", connections: [] }],
         actors: [{ actorId: "NPC_GUARD", name: "守卫", initialLocationId: "大厅", scheduleIds: ["巡逻"] }],
-        items: [{ itemInstanceId: "ITEM_KEY", name: "钥匙", initialOwnerId: "守卫" }],
+        items: [{ itemInstanceId: "ITEM_KEY", name: "钥匙", initialOwnerId: "守卫", useEffectIds: ["获得钥匙"], destructionConsequenceIds: ["获得钥匙"] }],
         resources: [{ resourceId: "RESOURCE_ENERGY", name: "体力", ownerId: "守卫" }],
       },
       knowledgeGraph: { knowledge: [{
@@ -131,8 +141,10 @@ test("故事编译器统一修复效果、知识、世界事件和结局中的�
   normalizeCompilerPackageSyntax(candidate, "PLAYER_1");
   const graph = candidate.package;
   assert.equal(graph.entityResourceGraph.actors[0].initialLocationId, "LOC_HALL");
-  assert.deepEqual(graph.entityResourceGraph.actors[0].scheduleIds, ["SCHEDULE_PATROL"]);
-  assert.equal(graph.entityResourceGraph.items[0].initialOwnerId, "NPC_GUARD");
+    assert.deepEqual(graph.entityResourceGraph.actors[0].scheduleIds, ["SCHEDULE_PATROL"]);
+    assert.equal(graph.entityResourceGraph.items[0].initialOwnerId, "NPC_GUARD");
+    assert.deepEqual(graph.entityResourceGraph.items[0].useEffectIds, ["EFFECT_KEY"]);
+    assert.deepEqual(graph.entityResourceGraph.items[0].destructionConsequenceIds, ["EFFECT_KEY"]);
   assert.equal(graph.entityResourceGraph.resources[0].ownerId, "NPC_GUARD");
   assert.deepEqual(graph.knowledgeGraph.knowledge[0].holderActorIds, ["NPC_GUARD"]);
   assert.deepEqual(graph.knowledgeGraph.knowledge[0].evidenceItemIds, ["ITEM_KEY"]);

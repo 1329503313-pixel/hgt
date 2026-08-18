@@ -54,6 +54,7 @@ export const MYSTERY_COMPILER_PROMPT = String.raw`你是互动故事发布阶段
    地点的 locationId、connections[].toLocationId、initialActorIds、initialItemInstanceIds，以及人物和物品的 initialLocationId 必须引用已定义的实体 ID，不能用人物名、物品名或地点名代替 ID；
    管理员配置的 playerRole 必须映射为唯一 kind=player 的人物，并原样落实 actorId、初始目标、能力、不具备的能力、初始地点、初始身体状态、知识、物品和资源；不得改写、概括或用默认值覆盖已填写内容；
 4. 行动转换必须有前置条件、效果、耗时和感知范围，不能把所有裁决留给模型临场发挥；
+   actionTransitionGraph.effects 是所有状态变化效果的唯一目录。transitions 的 successEffectIds/failureEffectIds、timelineGraph.scheduledEvents 的 effectIds、物品的 useEffectIds/destructionConsequenceIds 中出现的每一个非空 ID，都必须在 effects 中存在一个 effectId 完全相同的完整效果对象；不能只写引用、不能用名称代替 ID，也不能为了通过校验删除会推动人物计划或世界变化的效果引用；
 5. 概率仅用于实际不确定的行动，并提供基于能力、准备、工具、环境、对手和风险的修正条件；
 6. 时间线描述玩家不行动时世界如何继续；
    每个世界事件还要明确 playerVisible、visibleToLocationIds 与 audibleToLocationIds；仅在玩家应当感知时提供不泄密的 playerVisibleSummary；同时有时间和条件表示两者都满足才触发；
@@ -64,5 +65,7 @@ export const MYSTERY_COMPILER_PROMPT = String.raw`你是互动故事发布阶段
    lockEventIds、unlockEventIds、invalidateEventIds 只能引用本包中已有的 transitionId、effectId、scheduledEventId 或服务端标准事件类型；
 8. 不得补写与管理员素材冲突的核心事实；缺失项写入 diagnostics，而不是偷偷补齐关键设定；
 9. 输出 JSON：{"package": StoryPackage, "diagnostics": [{"severity":"error|warning|info","code":"...","message":"..."}]}。
+
+输出前必须自行完成引用闭包检查：逐一收集人物、地点、事实、知识、行动转换、效果、世界事件和结局中的所有 ID 引用，并确认被引用对象确实存在。尤其确认所有效果引用均属于 actionTransitionGraph.effects 的 effectId 集合，所有世界事件 effectIds 都有真实、可执行且符合事件语义的效果对象。
 
 所有 ID 只能使用英文字母、数字、冒号、下划线和短横线。`;

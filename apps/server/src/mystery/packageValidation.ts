@@ -150,6 +150,9 @@ export function validateMysteryStoryPackageIntegrity(storyPackage: MysteryStoryP
     if (item.initialLocationId && !locationIds.has(item.initialLocationId)) issues.push(`物品 ${item.itemInstanceId} 的初始地点不存在`);
     if (item.initialOwnerId && item.initialLocationId) issues.push(`物品 ${item.itemInstanceId} 不能同时设置初始所有者和初始地点`);
     for (const actorId of item.recognizedByActorIds) if (!actorIds.has(actorId)) issues.push(`物品 ${item.itemInstanceId} 引用了不存在的识别人物 ${actorId}`);
+    for (const effectId of [...item.useEffectIds, ...item.destructionConsequenceIds]) {
+      if (!effectIds.has(effectId)) issues.push(`物品 ${item.itemInstanceId} 引用了不存在的效果 ${effectId}`);
+    }
   }
   for (const resource of resources) {
     if (!actorIds.has(resource.ownerId)) issues.push(`资源 ${resource.resourceId} 的所有者不存在`);
