@@ -44,14 +44,10 @@ export function beijingDateKey(now = new Date()) {
 
 export function isVipActiveRow(row: any, now = new Date()) {
   const role = String(row.role ?? "");
-  if (role === "vip") {
-    if (Boolean(row.vip_legacy_active)) return true;
-    return Boolean(row.vip_expires_at && new Date(row.vip_expires_at as string | Date).getTime() > now.getTime());
-  }
-  // A backend administrator can retain a VIP subscription under the
-  // administrator role.  Its identity remains administrator, but the VIP
-  // subscription is still the source of growth and VIP visuals.
-  if (role === "backoffice_admin") {
+  // Administrator identities are retained when VIP is granted. Their active
+  // subscription must therefore be derived from the underlying VIP fields,
+  // just like an ordinary VIP account.
+  if (role === "vip" || role === "backoffice_admin" || role === "super_admin") {
     if (Boolean(row.vip_legacy_active)) return true;
     return Boolean(row.vip_expires_at && new Date(row.vip_expires_at as string | Date).getTime() > now.getTime());
   }
@@ -88,7 +84,7 @@ export async function recordVipGrowthEvent(
   if (!result.affectedRows) return false;
   await connection.query(
     `UPDATE users
-     SET vip_growth_value = GREATEST(0, vip_growth_value + ?)
+     SET vip_growth_value = GREATEST(0, CAST(vip_growth_value AS SIGNED) + ?)
      WHERE id = ?`,
     [amount, input.userId]
   );

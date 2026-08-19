@@ -6,7 +6,7 @@ import { mysteryStoryPackageSchema, type MysteryEventProposal, type MysteryStory
 import { MYSTERY_COMPILER_SCHEMA_GUIDE } from "./compilerSchemaGuide.js";
 import { validateMysteryStoryPackageIntegrity } from "./packageValidation.js";
 import { buildMysteryNarrativeFallback, buildMysteryPlayerVisiblePacket, canonicalizeAgentProposals, classifyBlockedMysteryInput, detectMysteryInputRisk, isMysteryTurnCancellation, mysteryRunBindingAction, mysteryTurnConflictAction, mysteryTurnLeaseCanBeClaimed, validateMysteryResolutionForRuntime } from "./runtime.js";
-import { adjudicateMysteryTurn, MysteryModelError } from "./models.js";
+import { adjudicateMysteryTurn, MysteryModelError, preserveMysteryNpcExpressions, retryMysteryAiReplyOnce } from "./models.js";
 
 const storyPackage: MysteryStoryPackage = {
   schemaVersion: 1,
@@ -268,6 +268,40 @@ test("房主撤回会被识别为终止而不是可重试失败", () => {
   assert.equal(isMysteryTurnCancellation(new MysteryModelError("MODEL_REQUEST_CANCELLED", "已撤回", false)), true);
   assert.equal(isMysteryTurnCancellation(new Error("其他错误"), true), true);
   assert.equal(isMysteryTurnCancellation(new Error("其他错误"), false), false);
+});
+
+test("谜局AI可恢复失败时自动重试一次并返回第二次结果", async () => {
+  let attempts = 0;
+  const result = await retryMysteryAiReplyOnce(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new MysteryModelError("MODEL_NETWORK_ERROR", "暂时不可用", true);
+    return "第二次回复成功";
+  });
+  assert.equal(result, "第二次回复成功");
+  assert.equal(attempts, 2);
+});
+
+test("谜局AI不可恢复失败和撤回不会自动重试", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    retryMysteryAiReplyOnce(async () => {
+      attempts += 1;
+      throw new MysteryModelError("MODEL_NOT_CONFIGURED", "未配置", false);
+    }),
+    (error: unknown) => error instanceof MysteryModelError && error.code === "MODEL_NOT_CONFIGURED",
+  );
+  assert.equal(attempts, 1);
+
+  const controller = new AbortController();
+  controller.abort("recalled");
+  attempts = 0;
+  await assert.rejects(
+    retryMysteryAiReplyOnce(async () => {
+      attempts += 1;
+      throw new MysteryModelError("MODEL_NETWORK_ERROR", "暂时不可用", true);
+    }, controller.signal),
+  );
+  assert.equal(attempts, 1);
 });
 
 test("使用 Story Package 转换时只能采用服务端定义的效果", () => {
@@ -578,6 +612,25 @@ test("叙事审查连续失败时只使用已经批准的玩家可见摘要", ()
   assert.ok(fallback.startsWith("你打开了面前的门。"));
   assert.ok(fallback.includes("眼下仍可从"));
   assert.ok(fallback.includes("也可以自由尝试其他合理行动"));
+});
+
+test("叙事模型遗漏开头 NPC 台词时由运行时补齐且不要求重新编译", () => {
+  const packet = buildMysteryPlayerVisiblePacket({
+    title: "测试谜局",
+    storyPackage,
+    state: createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage }),
+    events: [proposal({
+      actorIds: ["NPC_1"],
+      rawUtterance: "别再往前走了。",
+      playerVisibleSummary: "守卫抬手拦住了去路。",
+      visibleToPlayer: true,
+    })],
+    resolution: { endingSignals: [] },
+  });
+  const repaired = preserveMysteryNpcExpressions("守卫抬手拦住了去路。", packet);
+  assert.ok(repaired.startsWith("守卫说：“别再往前走了。”"));
+  assert.ok(repaired.endsWith("守卫抬手拦住了去路。"));
+  assert.equal(preserveMysteryNpcExpressions("守卫说：\"别再往前走了\"\n\n守卫抬手拦住了去路。", packet), "守卫说：\"别再往前走了\"\n\n守卫抬手拦住了去路。");
 });
 
 test("配置当前计划的 NPC 必须关联推动计划的世界事件", () => {

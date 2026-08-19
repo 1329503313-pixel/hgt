@@ -169,5 +169,6 @@ export type EmailStatusResponse = {
   email: { masked: string; verifiedAt: string } | null;
 };
 export type NicknameResponse = { ok: boolean; nickname: string };
+export type BioResponse = { ok: boolean; bio: string };
 export type AvatarResponse = { ok: boolean; avatar: string | null };
 export type EvaluationsResponse = { evaluations: (Evaluation & { soupTitle: string })[]; total: number; hasMore: boolean };

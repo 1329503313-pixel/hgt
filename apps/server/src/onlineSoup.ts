@@ -2103,7 +2103,9 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT m.id, m.message_sequence, m.content, m.question_number, m.answer, m.ai_preliminary_answer, m.ai_status, m.ai_error,
        m.ai_progress_delta, m.ai_progress_after, m.ai_feedback, m.created_at,
-       m.sender_id, u.nickname AS sender_name, u.avatar IS NOT NULL AS sender_has_avatar
+       m.sender_id, u.nickname AS sender_name, u.avatar IS NOT NULL AS sender_has_avatar,
+       u.role AS sender_role, u.vip_growth_value AS sender_vip_growth_value,
+       u.vip_expires_at AS sender_vip_expires_at, u.vip_legacy_active AS sender_vip_legacy_active
      FROM online_soup_messages m
      LEFT JOIN users u ON u.id = m.sender_id
      WHERE m.round_id = ? AND m.message_type = 'question' AND m.recalled_at IS NULL ${afterClause}
@@ -2122,28 +2124,38 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
   res.json({
     roundId: String(context.room.current_round_id),
     aiProgress: String(context.room.host_mode ?? "human") === "ai" ? Number(context.room.ai_progress ?? 0) : null,
-    questions: page.items.map((row) => ({
-      id: String(row.id),
-      sequence: String(row.message_sequence),
-      number: Number(row.question_number ?? 0),
-      content: String(row.content),
-      answer: row.answer ? String(row.answer) : null,
-      aiPreliminaryAnswer: null,
-      aiStatus: String(row.ai_status ?? "none"),
-      aiError: row.ai_error ? String(row.ai_error) : null,
-      aiProgressDelta: row.ai_progress_delta == null ? null : Number(row.ai_progress_delta),
-      aiProgressAfter: row.ai_progress_after == null ? null : Number(row.ai_progress_after),
-      aiFeedback: row.ai_feedback ? String(row.ai_feedback) : null,
-      aiQueuePosition: aiQueuePositions.get(String(row.id)) ?? null,
-      sender: {
-        id: row.sender_id ? String(row.sender_id) : null,
-        nickname: row.sender_name ? String(row.sender_name) : "未知用户",
-        avatar: row.sender_id && row.sender_has_avatar
-          ? `/api/media/users/${encodeURIComponent(String(row.sender_id))}/avatar`
-          : null
-      },
-      createdAt: iso(row.created_at)
-    })),
+    questions: page.items.map((row) => {
+      const senderVip = vipGrowthSnapshot({
+        role: row.sender_role,
+        vip_growth_value: row.sender_vip_growth_value,
+        vip_expires_at: row.sender_vip_expires_at,
+        vip_legacy_active: row.sender_vip_legacy_active
+      });
+      return {
+        id: String(row.id),
+        sequence: String(row.message_sequence),
+        number: Number(row.question_number ?? 0),
+        content: String(row.content),
+        answer: row.answer ? String(row.answer) : null,
+        aiPreliminaryAnswer: null,
+        aiStatus: String(row.ai_status ?? "none"),
+        aiError: row.ai_error ? String(row.ai_error) : null,
+        aiProgressDelta: row.ai_progress_delta == null ? null : Number(row.ai_progress_delta),
+        aiProgressAfter: row.ai_progress_after == null ? null : Number(row.ai_progress_after),
+        aiFeedback: row.ai_feedback ? String(row.ai_feedback) : null,
+        aiQueuePosition: aiQueuePositions.get(String(row.id)) ?? null,
+        sender: {
+          id: row.sender_id ? String(row.sender_id) : null,
+          nickname: row.sender_name ? String(row.sender_name) : "未知用户",
+          avatar: row.sender_id && row.sender_has_avatar
+            ? `/api/media/users/${encodeURIComponent(String(row.sender_id))}/avatar`
+            : null,
+          vipLevel: senderVip.level,
+          vipActive: senderVip.active
+        },
+        createdAt: iso(row.created_at)
+      };
+    }),
     hasMore: page.hasMore,
     nextCursor: page.nextCursor
   });

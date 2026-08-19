@@ -4,6 +4,7 @@ export type PublicUser = {
   id: string;
   username: string;
   nickname: string;
+  bio: string;
   avatar: string | null;
   role: UserRole;
   vipGrowthValue: number;

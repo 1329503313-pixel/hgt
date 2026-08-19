@@ -12,6 +12,7 @@ export function VipIdentity({
   vipActive,
   equippedBadge,
   className = "",
+  inactiveNicknameClassName = "text-ink",
   iconClassName = "h-4 w-4",
   badgeClassName = "h-4 w-4",
   animated = false
@@ -24,6 +25,7 @@ export function VipIdentity({
   vipActive?: boolean;
   equippedBadge?: EquippedBadge | null;
   className?: string;
+  inactiveNicknameClassName?: string;
   iconClassName?: string;
   badgeClassName?: string;
   animated?: boolean;
@@ -32,9 +34,9 @@ export function VipIdentity({
   const resolvedActive = vipActive ?? active ?? resolvedLevel > 0;
   return (
     <span className={`flex min-w-0 items-center gap-1.5 ${className}`}>
-      <VipName nickname={nickname} level={resolvedLevel} active={resolvedActive} className="min-w-0 truncate" />
+      <VipName nickname={nickname} level={resolvedLevel} active={resolvedActive} inactiveClassName={inactiveNicknameClassName} className="min-w-0 truncate" />
       <VipIcon level={resolvedLevel} active={resolvedActive} className={iconClassName} animated={animated} />
-      <LevelBadge level={userLevel ?? 0} />
+      {userLevel != null && <LevelBadge level={userLevel} />}
       {equippedBadge && <EquippedBadgeIcon badge={equippedBadge} className={badgeClassName} animated={animated} />}
     </span>
   );

@@ -87,6 +87,7 @@ export default function AssetStorePage() {
 
   const groups = (["limited", "collaboration", "permanent"] as const).map((type) => ({ type, packs: (data?.packs ?? []).filter((pack) => pack.packType === type) })).filter((group) => group.packs.length);
   const availableFreeDraws = (data?.packs ?? []).reduce((total, pack) => total + pack.freeDrawsRemaining, 0);
+  const unlimitedFreeDraws = (data?.packs ?? []).some((pack) => pack.freeDrawsUnlimited);
   const onSalePackCount = (data?.packs ?? []).filter((pack) => pack.status === "on_sale").length;
 
   return (
@@ -99,7 +100,7 @@ export default function AssetStorePage() {
           <Sparkles size={48} className="asset-store-wallet-sparkles text-cyan-200/70" />
         </div>
         <div className="asset-store-wallet-insights grid grid-cols-2 gap-2">
-          <div className="asset-store-wallet-insight"><span>今日免费抽取</span><strong>{availableFreeDraws}<small> 次</small></strong></div>
+          <div className="asset-store-wallet-insight"><span>今日免费抽取</span><strong>{unlimitedFreeDraws ? "无限" : availableFreeDraws}<small>{unlimitedFreeDraws ? "" : " 次"}</small></strong></div>
           <div className="asset-store-wallet-insight"><span>当前在售卡包</span><strong>{onSalePackCount}<small> 个</small></strong></div>
         </div>
         <div className="asset-store-wallet-actions mt-5 grid grid-cols-3 gap-2">
@@ -126,7 +127,7 @@ export default function AssetStorePage() {
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-muted"><span className="inline-flex items-center gap-1"><Clock3 size={13} />{remainingText(pack.saleEndAt)}</span><span>传说保底 {pack.pity.legend}/{pack.pity.legendLimit}</span></div>
                   <div className="mt-3 flex min-w-0 flex-col gap-3 min-[480px]:flex-row min-[480px]:items-end min-[480px]:justify-between">
                     <div className="flex min-w-0 max-w-full -space-x-3 overflow-hidden sm:-space-x-4">{(pack.previewCards ?? []).slice(0, 3).map((card) => <img key={card.id} src={card.thumbnailUrl || card.imageUrl} alt="" className="aspect-[5/7] w-11 shrink-0 rounded-lg border-2 border-white object-cover first:ml-0 sm:w-12" loading="lazy" decoding="async" />)}</div>
-                    <div className="grid w-full shrink-0 grid-cols-1 gap-2 min-[360px]:grid-cols-2 min-[480px]:w-[100px] min-[480px]:grid-cols-1"><button type="button" className="inline-flex h-10 w-full items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-1.5 text-[12px] font-black leading-none text-white shadow-[0_6px_14px_rgba(37,99,235,.24)] transition hover:brightness-105 active:scale-[.97] min-[400px]:gap-1.5 min-[400px]:px-2 min-[400px]:text-[13px]" onClick={() => navigate(`/mine/store/cards/${pack.id}`)}><Shell className="shrink-0" size={15} strokeWidth={2.4} />{pack.freeDrawsRemaining > 0 ? `免费抽取（${pack.freeDrawsRemaining}）` : "抽取卡牌"}</button><button type="button" className="inline-flex h-10 w-full items-center justify-center gap-1 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-1.5 text-[12px] font-black leading-none text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] min-[400px]:gap-1.5 min-[400px]:px-2 min-[400px]:text-[13px]" onClick={() => setStoryPack(pack)}><BookOpen className="shrink-0" size={15} strokeWidth={2.4} />卡包故事</button></div>
+                    <div className="grid w-full shrink-0 grid-cols-1 gap-2 min-[360px]:grid-cols-2 min-[480px]:w-[100px] min-[480px]:grid-cols-1"><button type="button" className="inline-flex h-10 w-full items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-1.5 text-[12px] font-black leading-none text-white shadow-[0_6px_14px_rgba(37,99,235,.24)] transition hover:brightness-105 active:scale-[.97] min-[400px]:gap-1.5 min-[400px]:px-2 min-[400px]:text-[13px]" onClick={() => navigate(`/mine/store/cards/${pack.id}`)}><Shell className="shrink-0" size={15} strokeWidth={2.4} />{pack.freeDrawsUnlimited ? "免费抽取" : pack.freeDrawsRemaining > 0 ? `免费抽取（${pack.freeDrawsRemaining}）` : "抽取卡牌"}</button><button type="button" className="inline-flex h-10 w-full items-center justify-center gap-1 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-1.5 text-[12px] font-black leading-none text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] min-[400px]:gap-1.5 min-[400px]:px-2 min-[400px]:text-[13px]" onClick={() => setStoryPack(pack)}><BookOpen className="shrink-0" size={15} strokeWidth={2.4} />卡包故事</button></div>
                   </div>
                 </div>
               </div>

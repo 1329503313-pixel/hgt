@@ -28,7 +28,7 @@ import {
 import { calculateExperienceAdjustment, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
 import { getSticker, initializeStickerCatalog, registerStickerStoreRoutes, stickerSeriesForUser, userOwnsSticker } from "./stickers.js";
 import { isAdminRelatedNickname } from "./nickname.js";
-import { accountNicknameSchema, accountPasswordSchema, accountUsernameSchema } from "./accountRules.js";
+import { accountBioSchema, accountNicknameSchema, accountPasswordSchema, accountUsernameSchema } from "./accountRules.js";
 import { generateInviteCode, INVITE_CODE_PATTERN, normalizeInviteCode } from "./inviteCodes.js";
 import {
   runDailyInviteShellSettlement,
@@ -898,7 +898,7 @@ async function currentUser(req: express.Request): Promise<AuthenticatedUser | nu
   if (pending) return pending;
   const request = (async () => {
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, username, nickname,
+      `SELECT id, username, nickname, bio,
          CASE
            WHEN role = 'vip' AND vip_legacy_active = 0 AND vip_expires_at IS NOT NULL AND vip_expires_at <= UTC_TIMESTAMP() THEN 'user'
            ELSE role
@@ -998,6 +998,7 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
     id: row.id,
     username: row.username,
     nickname: row.nickname,
+    bio: String(row.bio ?? ""),
     avatar: avatarUrl(row.id, row.avatar, Boolean(row.has_avatar)),
     role: normalizeUserRole(row.role),
     vipGrowthValue: vip.growthValue,
@@ -2230,7 +2231,7 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   await ensureDailyEntitlementGrantForUser(id);
   queueActivityBadgeSync([id]);
 
-  const user: PublicUser = { id, username, nickname, avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null, vipGrowthValue: 0, vipLevel: 0, vipActive: false };
+  const user: PublicUser = { id, username, nickname, bio: "", avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null, vipGrowthValue: 0, vipLevel: 0, vipActive: false };
   const token = signToken({ id, tokenVersion: 0 });
   setAuthCookie(res, token);
   res.json({ user, token });
@@ -2241,7 +2242,7 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   if (!parsed.success) return sendError(res, 400, "请输入账号和密码");
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, password, nickname, role, token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
+    `SELECT id, username, password, nickname, bio, role, token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
        equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
      FROM users WHERE username = ? LIMIT 1`,
     [parsed.data.username]
@@ -2252,9 +2253,17 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   const ok = await bcrypt.compare(parsed.data.password, row.password);
   if (!ok) return sendError(res, 401, "账号或密码错误");
 
-  const user = toUser(row);
-  await recordLoginDay(user.id);
-  const token = signToken(toJwtPayload(row));
+  await recordLoginDay(String(row.id));
+  await ensureDailyEntitlementGrantForUser(String(row.id));
+  const [[refreshedRow]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, username, nickname, bio, role, token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
+       equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
+     FROM users WHERE id = ? LIMIT 1`,
+    [row.id]
+  );
+  const currentRow = refreshedRow ?? row;
+  const user = toUser(currentRow);
+  const token = signToken(toJwtPayload(currentRow));
   setAuthCookie(res, token);
   res.json({ user, token });
 });
@@ -2360,8 +2369,12 @@ app.get("/api/auth/me", async (req, res) => {
   res.setHeader("Pragma", "no-cache");
   res.vary("Cookie");
   res.vary("Authorization");
-  const user = await currentUser(req);
+  let user = await currentUser(req);
   if (user) queueLoginDayRecord(user.id);
+  if (!user) return res.json({ user: null });
+  await ensureDailyEntitlementGrantForUser(user.id);
+  currentUserCache.delete(`${user.id}:${user.tokenVersion}`);
+  user = await currentUser(req);
   if (!user) return res.json({ user: null });
   const { tokenVersion: _tokenVersion, ...publicUser } = user;
   res.json({ user: publicUser });
@@ -2515,6 +2528,17 @@ app.patch("/api/me/nickname", async (req, res) => {
   }
 
   res.json({ ok: true, nickname: parsed.data.nickname });
+});
+
+app.patch("/api/me/bio", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const parsed = z.object({ bio: accountBioSchema }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "简介信息不正确");
+
+  await pool.query("UPDATE users SET bio = ? WHERE id = ?", [parsed.data.bio, user.id]);
+  currentUserCache.delete(`${user.id}:${user.tokenVersion}`);
+  res.json({ ok: true, bio: parsed.data.bio });
 });
 
 app.patch("/api/me/avatar", async (req, res) => {
@@ -2731,7 +2755,7 @@ app.get("/api/users/search", async (req, res) => {
   const likeKeyword = `%${escapedKeyword}%`;
   const prefixKeyword = `${escapedKeyword}%`;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, nickname, avatar, role, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active, equipped_badge_key, equipped_badge_icon_url
+    `SELECT id, nickname, bio, avatar, role, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active, equipped_badge_key, equipped_badge_icon_url
      FROM users
      WHERE nickname LIKE ?
      ORDER BY CASE WHEN nickname = ? THEN 0 WHEN nickname LIKE ? THEN 1 ELSE 2 END, created_at DESC
@@ -2747,6 +2771,7 @@ app.get("/api/users/search", async (req, res) => {
     users: rows.map((row) => ({
       id: String(row.id),
       nickname: String(row.nickname),
+      bio: String(row.bio ?? ""),
       avatar: avatarUrl(row.id, row.avatar),
       role: String(row.role),
       createdAt: new Date(row.created_at).toISOString(),
@@ -2763,7 +2788,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
   const viewer = await requireAuth(req, res);
   if (!viewer) return;
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.username, u.nickname, u.role, u.created_at, u.experience, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.charm_value, u.generosity_value, u.equipped_badge_key, u.equipped_badge_icon_url,
+    `SELECT u.id, u.username, u.nickname, u.bio, u.role, u.created_at, u.experience, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.charm_value, u.generosity_value, u.equipped_badge_key, u.equipped_badge_icon_url,
        u.avatar IS NOT NULL AS has_avatar, u.profile_background IS NOT NULL AS has_profile_background,
        u.profile_background_updated_at, u.profile_background_crop_x, u.profile_background_crop_y, u.profile_background_zoom,
        c.id AS background_card_id, c.name AS background_card_name, c.rarity AS background_card_rarity,
@@ -3079,7 +3104,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
 
 async function circleMembers(circleId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.nickname, u.avatar, u.created_at, u.role, u.experience,
+    `SELECT u.id, u.nickname, u.bio, u.avatar, u.created_at, u.role, u.experience,
        u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active,
        u.equipped_badge_key, u.equipped_badge_icon_url, m.joined_at
      FROM circle_members m

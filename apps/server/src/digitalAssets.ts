@@ -22,6 +22,7 @@ import { awardBeginnerTask, beijingTaskDate, syncBeginnerTasks } from "./shellCu
 import { ossRefFromPublicUrl, publicOssUrl, readStoredMediaBuffer, storeMediaBuffer } from "./ossStorage.js";
 import {
   consumeDailyEntitlement,
+  dailyEntitlementStatus,
   isEntitlementLimitError,
   tryConsumeDailyEntitlement
 } from "./entitlements.js";
@@ -605,7 +606,8 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
         userId,
         role: userRow.role,
         metric: "extra_free_draw",
-        eventKey: requestId
+        eventKey: requestId,
+        usageScope: packId
       });
       if (usedFreeDraw) shellCost = 0;
     }
@@ -950,8 +952,10 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const pityByType = new Map(pityRows.map((row) => [String(row.pack_type), row]));
     const usageByPack = new Map(usageRows.map((row) => [String(row.pack_id), Number(row.used_count)]));
     const onSale = packs.filter((pack) => packStatus(pack) === "on_sale");
+    const entitlementNow = new Date();
     const previews = await Promise.all(onSale.map(async (pack) => {
       const configuration = await packConfiguration(String(pack.id));
+      const extraFreeStatus = await dailyEntitlementStatus(user.id, user.role, "extra_free_draw", entitlementNow, String(pack.id));
       const previewCards = configuration.enabled.slice(0, 3).map((card) => cardPayload(card, true));
       const coverCard = packCoverCard(configuration);
       const pityScope = pityScopeForPackType(pack.pack_type);
@@ -959,7 +963,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       return {
         ...packPayload(pack, "thumbnail"),
         coverCard: coverCard ? cardPayload(coverCard, true) : null,
-        freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - (usageByPack.get(String(pack.id)) ?? 0)),
+        freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - (usageByPack.get(String(pack.id)) ?? 0)) + (extraFreeStatus.remaining ?? 0),
+        freeDrawsUnlimited: extraFreeStatus.remaining == null,
         pity: {
           rare: Number(pity.rare_count ?? 0), epic: Number(pity.epic_count ?? 0), legend: Number(pity.legend_count ?? 0),
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend
@@ -980,11 +985,12 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
     const pityScope = pityScopeForPackType(pack.pack_type);
-    const [pityRows, usageRows, userRows, ownedRows] = await Promise.all([
+    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, pityScope]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
-      pool.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ?", [user.id]).then(([rows]) => rows)
+      pool.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ?", [user.id]).then(([rows]) => rows),
+      dailyEntitlementStatus(user.id, user.role, "extra_free_draw", new Date(), String(pack.id))
     ]);
     const pity = pityRows[0];
     const usage = usageRows[0];
@@ -1000,7 +1006,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           return card ? cardPayload(card, true) : null;
         })(),
         probabilityNotice: probabilityDisclosure(configuration),
-        freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - Number(usage?.used_count ?? 0)),
+        freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - Number(usage?.used_count ?? 0)) + (extraFreeStatus.remaining ?? 0),
+        freeDrawsUnlimited: extraFreeStatus.remaining == null,
         pity: {
           rare: Number(pity?.rare_count ?? 0), epic: Number(pity?.epic_count ?? 0), legend: Number(pity?.legend_count ?? 0),
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend

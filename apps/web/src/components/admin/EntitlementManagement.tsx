@@ -52,7 +52,7 @@ const FIELDS: Array<{
   { key: "dailyGiftSendShellValueLimit", label: "每日可送出礼物价值", unit: "贝壳", description: "按礼物单价 × 数量计数，库存礼物同样计入价值。" },
   { key: "dailyGiftReceiveShellLimit", label: "每日通过礼物获取贝壳上限", unit: "贝壳", description: "达到上限后礼物仍成功，超出部分不发放。" },
   { key: "dailyCharmReceiveLimit", label: "每日可获取魅力数量", unit: "魅力", description: "达到上限后礼物仍成功，超出部分魅力为 0。" },
-  { key: "dailyExtraFreeDraws", label: "VIP 每日额外免费抽卡次数", unit: "次", description: "卡包免费次数用完后生效；只抵扣单抽费用。", vipOnly: true }
+  { key: "dailyExtraFreeDraws", label: "VIP 每日额外免费抽卡次数", unit: "次/卡包", description: "每个卡包分别享有；卡包自身免费次数用完后生效，只抵扣单抽费用。", vipOnly: true }
 ];
 
 function formatDate(value: string | null) {

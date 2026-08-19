@@ -40,6 +40,7 @@ export function ProfileHero({
   onAvatar,
   showBadge = true,
   collapsibleBackground = false,
+  inactiveNicknameClassName = "text-ink",
   className = ""
 }: {
   profile: SocialProfile;
@@ -51,6 +52,7 @@ export function ProfileHero({
   onAvatar?: () => void;
   showBadge?: boolean;
   collapsibleBackground?: boolean;
+  inactiveNicknameClassName?: string;
   className?: string;
 }) {
   const heroRef = useRef<HTMLDivElement>(null);
@@ -227,8 +229,9 @@ export function ProfileHero({
           </button>
           <div className="profile-hero-copy min-w-0 flex-1">
             <div className="profile-hero-name-row flex min-w-0 items-center gap-2">
-              <VipIdentity nickname={profile.nickname} userLevel={profile.level} vipLevel={profile.vipLevel} vipActive={profile.vipActive} equippedBadge={showBadge ? profile.equippedBadge : null} className="min-w-0 text-xl font-black text-white" badgeClassName="h-8 w-8 rounded-lg" />
+              <VipIdentity nickname={profile.nickname} userLevel={profile.level} vipLevel={profile.vipLevel} vipActive={profile.vipActive} equippedBadge={showBadge ? profile.equippedBadge : null} inactiveNicknameClassName={inactiveNicknameClassName} className="min-w-0 text-xl font-black" badgeClassName="h-8 w-8 rounded-lg" />
             </div>
+            {profile.bio && <p className="mt-1 line-clamp-2 break-words text-[11px] font-medium leading-4 text-white/80 [text-shadow:0_1px_2px_rgb(15_23_42_/_85%)]" title={profile.bio}>{profile.bio}</p>}
             {meta && <div className="mt-1">{meta}</div>}
           </div>
           {actions && <div className={`profile-hero-actions shrink-0 ${controlsVisible ? "is-visible" : ""}`}>{actions}</div>}

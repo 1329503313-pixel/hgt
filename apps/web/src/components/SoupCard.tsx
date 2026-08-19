@@ -1,8 +1,6 @@
 import type { SoupSummary } from "../shared/types";
 import { Flame, Star, User, ThumbsUp, Sparkles } from "lucide-react";
 import { formatViews } from "../context/AppContext";
-import { EquippedBadgeIcon } from "./BadgeVisuals";
-import { LevelBadge } from "./LevelBadge";
 import { VipIdentity } from "./VipIdentity";
 import { defaultCoverUrl } from "../shared/staticAssets";
 
@@ -47,14 +45,17 @@ export function SoupCard({
             {soup.heatValue.toLocaleString()}
           </span>
         </h2>
-        <p className="avatar-name-gap mt-1 flex items-center truncate text-[13px] text-muted">
+        <p className="avatar-name-gap mt-1 flex min-w-0 items-center text-[13px] text-muted">
           {soup.isOriginal && soup.creatorAvatar ? (
             <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
           ) : (
             <User size={14} />
           )}
-          {soup.isOriginal ? (soup.author || soup.creatorName) : "佚名"}
-          {soup.isOriginal && <VipIdentity nickname={soup.author || soup.creatorName} userLevel={soup.creatorLevel} vipLevel={soup.creatorVipLevel} vipActive={soup.creatorVipActive} equippedBadge={soup.creatorEquippedBadge} className="min-w-0" iconClassName="h-[13px] w-[13px]" badgeClassName="h-[13px] w-[13px]" />}
+          {soup.isOriginal ? (
+            <VipIdentity nickname={soup.author || soup.creatorName} userLevel={soup.creatorLevel} vipLevel={soup.creatorVipLevel} vipActive={soup.creatorVipActive} equippedBadge={soup.creatorEquippedBadge} className="min-w-0" iconClassName="h-[13px] w-[13px]" badgeClassName="h-[13px] w-[13px]" />
+          ) : (
+            <span className="min-w-0 truncate">佚名</span>
+          )}
         </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {tags.map((tag) => (

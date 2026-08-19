@@ -227,6 +227,7 @@ export async function initDatabase() {
       username VARCHAR(50) NOT NULL UNIQUE,
       password VARCHAR(128) NOT NULL,
       nickname VARCHAR(50) NOT NULL,
+      bio VARCHAR(40) NOT NULL DEFAULT '',
       invite_code CHAR(5) NULL,
       role ENUM('super_admin','backoffice_admin','vip','user') NOT NULL DEFAULT 'user',
       token_version INT NOT NULL DEFAULT 0,
@@ -496,6 +497,7 @@ export async function initDatabase() {
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("evaluations", "is_content_hidden", "is_content_hidden BOOLEAN NOT NULL DEFAULT FALSE AFTER content");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
+  await ensureColumn("users", "bio", "bio VARCHAR(40) NOT NULL DEFAULT '' AFTER nickname");
   await ensureColumn("users", "invite_code", "invite_code CHAR(5) NULL AFTER nickname");
   await ensureColumn("users", "badges_initialized", "badges_initialized TINYINT(1) NOT NULL DEFAULT 0 AFTER avatar");
   await ensureColumn("users", "equipped_badge_key", "equipped_badge_key VARCHAR(128) NULL AFTER badges_initialized");

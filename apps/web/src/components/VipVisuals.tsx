@@ -14,9 +14,19 @@ export function vipLevelForGrowth(value: number): VipLevel {
 }
 
 function vipPalette(level: number) {
-  if (level >= 7) return "from-fuchsia-500 via-amber-300 to-cyan-400";
-  if (level >= 5) return "from-fuchsia-500 via-amber-300 to-cyan-400";
-  return "from-amber-300 via-yellow-500 to-amber-700";
+  const palettes = [
+    "",
+    "from-amber-200 via-yellow-400 to-amber-600",
+    "from-orange-300 via-amber-500 to-orange-700",
+    "from-rose-300 via-pink-500 to-rose-700",
+    "from-violet-300 via-purple-500 to-violet-700",
+    "from-sky-300 via-blue-500 to-blue-700",
+    "from-cyan-300 via-teal-500 to-cyan-700",
+    "from-emerald-400 via-cyan-400 to-blue-600",
+    "from-violet-500 via-fuchsia-400 to-rose-500",
+    "from-fuchsia-500 via-amber-300 to-cyan-400"
+  ] as const;
+  return palettes[Math.min(9, Math.max(1, Math.floor(level)))];
 }
 
 function shapeForLevel(level: number): ReactNode {
@@ -59,6 +69,7 @@ export function vipNicknameClass(level: number, active = true) {
   return "vip-name-gold";
 }
 
-export function VipName({ nickname, level, active = true, className = "", children }: { nickname?: string; level: number; active?: boolean; className?: string; children?: ReactNode }) {
-  return <span className={`${vipNicknameClass(level, active)} ${className}`}>{children ?? nickname}</span>;
+export function VipName({ nickname, level, active = true, inactiveClassName = "text-ink", className = "", children }: { nickname?: string; level: number; active?: boolean; inactiveClassName?: string; className?: string; children?: ReactNode }) {
+  const nicknameClassName = active && level >= 1 ? vipNicknameClass(level, active) : inactiveClassName;
+  return <span className={`${nicknameClassName} ${className}`}>{children ?? nickname}</span>;
 }

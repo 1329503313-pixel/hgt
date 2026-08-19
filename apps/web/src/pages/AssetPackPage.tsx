@@ -53,7 +53,7 @@ export default function AssetPackPage() {
         ...current,
         balance: result.balance,
         pack: result.order.usedFreeDraw
-          ? { ...current.pack, freeDrawsRemaining: Math.max(0, current.pack.freeDrawsRemaining - 1) }
+          ? { ...current.pack, freeDrawsRemaining: current.pack.freeDrawsUnlimited ? current.pack.freeDrawsRemaining : Math.max(0, current.pack.freeDrawsRemaining - 1) }
           : current.pack
       } : current);
       publishShellBalance(user?.id, result.balance);
@@ -68,7 +68,7 @@ export default function AssetPackPage() {
 
   if (loading || !data) return <section className="min-h-screen bg-page"><PageTopBar title="卡包详情" backTo="/mine/store/cards" /><div className="mx-auto max-w-6xl space-y-3 px-4"><ListSkeleton rows={6} /></div></section>;
   const { pack } = data;
-  const singleFree = pack.freeDrawsRemaining > 0;
+  const singleFree = Boolean(pack.freeDrawsUnlimited) || pack.freeDrawsRemaining > 0;
   const singleUnavailable = !singleFree && data.balance < pack.singlePrice;
   const tenUnavailable = data.balance < pack.tenPrice;
 
@@ -94,7 +94,7 @@ export default function AssetPackPage() {
       </div>
 
       <div className="site-footer-safe-bottom-0 fixed inset-x-0 z-30 border-t border-line bg-white/96 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-8px_24px_rgba(15,23,42,.08)] backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-center gap-2 sm:gap-3"><div className="hidden sm:block"><p className="text-xs text-muted">贝壳余额</p><p className="flex items-center gap-1 font-black text-ink"><Shell size={16} />{data.balance.toLocaleString()}</p></div><button className="btn btn-secondary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || singleUnavailable} onClick={() => void draw("single")}><Shell size={17} />{drawing ? "抽取中…" : singleUnavailable ? "贝壳不足" : singleFree ? `免费单抽 (${pack.freeDrawsRemaining})` : `单抽 ${pack.singlePrice}`}</button><button className="btn btn-primary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || tenUnavailable} onClick={() => void draw("ten")}><Shell size={17} />{drawing ? "抽取中…" : tenUnavailable ? "贝壳不足" : `十连 ${pack.tenPrice}`}</button><button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-2 text-xs font-black text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] sm:max-w-52 sm:text-sm" onClick={() => setStoryOpen(true)}><BookOpen size={17} />卡包故事</button></div>
+        <div className="mx-auto flex max-w-6xl items-center justify-center gap-2 sm:gap-3"><div className="hidden sm:block"><p className="text-xs text-muted">贝壳余额</p><p className="flex items-center gap-1 font-black text-ink"><Shell size={16} />{data.balance.toLocaleString()}</p></div><button className="btn btn-secondary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || singleUnavailable} onClick={() => void draw("single")}><Shell size={17} />{drawing ? "抽取中…" : singleUnavailable ? "贝壳不足" : singleFree ? pack.freeDrawsUnlimited ? "免费单抽" : `免费单抽 (${pack.freeDrawsRemaining})` : `单抽 ${pack.singlePrice}`}</button><button className="btn btn-primary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || tenUnavailable} onClick={() => void draw("ten")}><Shell size={17} />{drawing ? "抽取中…" : tenUnavailable ? "贝壳不足" : `十连 ${pack.tenPrice}`}</button><button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-2 text-xs font-black text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] sm:max-w-52 sm:text-sm" onClick={() => setStoryOpen(true)}><BookOpen size={17} />卡包故事</button></div>
       </div>
 
       {order && <AssetDrawOverlay key={order.id} order={order} balance={data.balance} onClose={() => setOrder(null)} onDrawAgain={(mode) => void draw(mode)} />}

@@ -22,6 +22,9 @@ test("VIP activity respects legacy and expiring identities", () => {
   const now = new Date("2026-08-18T00:00:00.000Z");
   assert.equal(isVipActiveRow({ role: "vip", vip_legacy_active: 1 }, now), true);
   assert.equal(isVipActiveRow({ role: "vip", vip_expires_at: "2026-08-19T00:00:00.000Z" }, now), true);
+  assert.equal(isVipActiveRow({ role: "backoffice_admin", vip_expires_at: "2026-08-19T00:00:00.000Z" }, now), true);
+  assert.equal(isVipActiveRow({ role: "super_admin", vip_expires_at: "2026-08-19T00:00:00.000Z" }, now), true);
+  assert.equal(isVipActiveRow({ role: "super_admin" }, now), false);
   assert.equal(isVipActiveRow({ role: "vip", vip_expires_at: "2026-08-17T00:00:00.000Z" }, now), false);
   assert.equal(isVipActiveRow({ role: "user", vip_expires_at: "2026-08-19T00:00:00.000Z" }, now), false);
 });

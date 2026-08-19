@@ -1,5 +1,6 @@
 import type express from "express";
 import type mysql from "mysql2/promise";
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { pool } from "./db.js";
@@ -268,6 +269,12 @@ async function existingEventAmount(connection: QueryConnection, userId: string, 
   return rows[0] ? Number(rows[0].granted_amount ?? 0) : null;
 }
 
+export function scopedEntitlementUsageMetric(metric: EntitlementMetric, usageScope?: string) {
+  if (!usageScope) return metric;
+  const scopeHash = createHash("sha256").update(usageScope).digest("hex").slice(0, 24);
+  return `${metric}:${scopeHash}`;
+}
+
 async function reserveDailyAmount(options: {
   connection: QueryConnection;
   userId: string;
@@ -275,10 +282,12 @@ async function reserveDailyAmount(options: {
   metric: EntitlementMetric;
   requestedAmount: number;
   eventKey: string;
+  usageScope?: string;
   capInsteadOfReject?: boolean;
   now?: Date;
 }) {
   const { connection, userId, role, metric, eventKey } = options;
+  const usageMetric = scopedEntitlementUsageMetric(metric, options.usageScope);
   const requestedAmount = Math.max(0, Math.floor(options.requestedAmount));
   if (!Number.isSafeInteger(requestedAmount)) throw new Error("ENTITLEMENT_AMOUNT_INVALID");
   const date = beijingEntitlementDate(options.now);
@@ -292,12 +301,12 @@ async function reserveDailyAmount(options: {
     await connection.query(
       `INSERT IGNORE INTO entitlement_daily_usage (user_id, usage_date, metric, used_amount)
        VALUES (?, ?, ?, 0)`,
-      [userId, date, metric]
+      [userId, date, usageMetric]
     );
     const [usageRows] = await connection.query<mysql.RowDataPacket[]>(
       `SELECT used_amount FROM entitlement_daily_usage
        WHERE user_id = ? AND usage_date = ? AND metric = ? FOR UPDATE`,
-      [userId, date, metric]
+      [userId, date, usageMetric]
     );
     const used = Number(usageRows[0]?.used_amount ?? 0);
     const remaining = Math.max(0, limit - used);
@@ -309,7 +318,7 @@ async function reserveDailyAmount(options: {
       await connection.query(
         `UPDATE entitlement_daily_usage SET used_amount = used_amount + ?
          WHERE user_id = ? AND usage_date = ? AND metric = ?`,
-        [grantedAmount, userId, date, metric]
+        [grantedAmount, userId, date, usageMetric]
       );
     }
   }
@@ -324,7 +333,7 @@ async function reserveDailyAmount(options: {
 
 export async function consumeDailyEntitlement(
   connection: QueryConnection,
-  options: { userId: string; role: EntitlementRoleInput; metric: EntitlementMetric; amount?: number; eventKey: string; now?: Date }
+  options: { userId: string; role: EntitlementRoleInput; metric: EntitlementMetric; amount?: number; eventKey: string; usageScope?: string; now?: Date }
 ) {
   return reserveDailyAmount({
     connection,
@@ -333,13 +342,14 @@ export async function consumeDailyEntitlement(
     metric: options.metric,
     requestedAmount: options.amount ?? 1,
     eventKey: options.eventKey,
+    usageScope: options.usageScope,
     now: options.now
   });
 }
 
 export async function tryConsumeDailyEntitlement(
   connection: QueryConnection,
-  options: { userId: string; role: EntitlementRoleInput; metric: EntitlementMetric; amount?: number; eventKey: string; now?: Date }
+  options: { userId: string; role: EntitlementRoleInput; metric: EntitlementMetric; amount?: number; eventKey: string; usageScope?: string; now?: Date }
 ) {
   try {
     const result = await consumeDailyEntitlement(connection, options);
@@ -366,7 +376,7 @@ export async function capDailyEntitlement(
   });
 }
 
-export async function dailyEntitlementStatus(userId: string, role: EntitlementRoleInput, metric: EntitlementMetric, now = new Date()) {
+export async function dailyEntitlementStatus(userId: string, role: EntitlementRoleInput, metric: EntitlementMetric, now = new Date(), usageScope?: string) {
   const date = beijingEntitlementDate(now);
   const { plan } = await effectiveEntitlementPlanForUser(userId, role, pool, now);
   const limit = plan ? plan[metricPlanKey[metric]] as number | null : null;
@@ -374,7 +384,7 @@ export async function dailyEntitlementStatus(userId: string, role: EntitlementRo
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT used_amount FROM entitlement_daily_usage
      WHERE user_id = ? AND usage_date = ? AND metric = ? LIMIT 1`,
-    [userId, date, metric]
+    [userId, date, scopedEntitlementUsageMetric(metric, usageScope)]
   );
   const used = Number(rows[0]?.used_amount ?? 0);
   return { allowed: used < limit, used, remaining: Math.max(0, limit - used), limit };
@@ -386,6 +396,27 @@ function effectiveRoleFromUserRow(row: mysql.RowDataPacket): UserRole {
   if (Boolean(row.vip_legacy_active)) return "vip";
   if (!row.vip_expires_at || new Date(row.vip_expires_at).getTime() <= Date.now()) return "user";
   return "vip";
+}
+
+export function dailyEntitlementGrantAmounts(input: {
+  plan: Pick<EntitlementPlan, "dailyAutoShellGrant" | "dailyAutoExperienceGrant">;
+  shellTargetProcessed: number;
+  experienceTargetProcessed: number;
+  shellBalance: number;
+  experience: number;
+}) {
+  const requestedShell = Math.max(0, input.plan.dailyAutoShellGrant - Math.max(0, input.shellTargetProcessed));
+  const requestedExperience = Math.max(0, input.plan.dailyAutoExperienceGrant - Math.max(0, input.experienceTargetProcessed));
+  const shellGranted = Math.min(requestedShell, Math.max(0, 4_294_967_295 - Math.max(0, input.shellBalance)));
+  const experienceGranted = Math.min(requestedExperience, Math.max(0, MAX_EXPERIENCE - Math.max(0, input.experience)));
+  return {
+    requestedShell,
+    requestedExperience,
+    shellGranted,
+    experienceGranted,
+    shellBalance: input.shellBalance + shellGranted,
+    experience: input.experience + experienceGranted
+  };
 }
 
 export async function ensureDailyEntitlementGrantForUser(userId: string, now = new Date()) {
@@ -429,12 +460,13 @@ export async function ensureDailyEntitlementGrantForUser(userId: string, now = n
     const grant = grantRows[0];
     const shellTargetProcessed = Number(grant?.shell_target_processed ?? 0);
     const experienceTargetProcessed = Number(grant?.experience_target_processed ?? 0);
-    const requestedShell = Math.max(0, plan.dailyAutoShellGrant - shellTargetProcessed);
-    const requestedExperience = Math.max(0, plan.dailyAutoExperienceGrant - experienceTargetProcessed);
-    const shellGranted = Math.min(requestedShell, Math.max(0, 4_294_967_295 - Number(user.shell_balance ?? 0)));
-    const experienceGranted = Math.min(requestedExperience, Math.max(0, MAX_EXPERIENCE - Number(user.experience ?? 0)));
-    const shellBalance = Number(user.shell_balance ?? 0) + shellGranted;
-    const experience = Number(user.experience ?? 0) + experienceGranted;
+    const { shellGranted, experienceGranted, shellBalance, experience } = dailyEntitlementGrantAmounts({
+      plan,
+      shellTargetProcessed,
+      experienceTargetProcessed,
+      shellBalance: Number(user.shell_balance ?? 0),
+      experience: Number(user.experience ?? 0)
+    });
     if (shellGranted > 0 || experienceGranted > 0) {
       await connection.query(
         "UPDATE users SET shell_balance = ?, experience = ? WHERE id = ?",

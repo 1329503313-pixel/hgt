@@ -559,14 +559,15 @@ const TRANSACTION_LABELS: Record<string, string> = {
   duplicate_card_refund: "满星重复卡片返还",
   admin_add: "后台人工增加",
   admin_deduct: "后台人工扣减",
-  ranking_reward: "排行榜奖励"
+  ranking_reward: "排行榜奖励",
+  daily_entitlement_grant: "每日权益自动赠送"
 };
 
 export async function shellTransactions(userId: string, limit: number, offset: number) {
   const [[totalRow], rows] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM shell_transactions WHERE user_id = ?", [userId]).then(([items]) => items),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, transaction_type, amount, balance_after, related_type, related_id, remark, operator_id, created_at
+      `SELECT id, transaction_type, amount, experience_amount, balance_after, related_type, related_id, remark, operator_id, created_at
        FROM shell_transactions
        WHERE user_id = ?
        ORDER BY created_at DESC, id DESC
@@ -583,6 +584,7 @@ export async function shellTransactions(userId: string, limit: number, offset: n
       type: String(row.transaction_type),
       typeLabel: TRANSACTION_LABELS[String(row.transaction_type)] ?? String(row.transaction_type),
       amount: Number(row.amount),
+      experienceAmount: Number(row.experience_amount ?? 0),
       balanceAfter: Number(row.balance_after),
       relatedType: row.related_type ? String(row.related_type) : null,
       relatedId: row.related_id ? String(row.related_id) : null,

@@ -31,6 +31,7 @@ export type EquippedBadge = {
 export type PublicUser = {
   id: string;
   nickname: string;
+  bio: string;
   avatar: string | null;
   role: UserRole;
   createdAt: string;
@@ -279,6 +280,7 @@ export type ShellTransaction = {
   type: string;
   typeLabel: string;
   amount: number;
+  experienceAmount: number;
   balanceAfter: number;
   relatedType: string | null;
   relatedId: string | null;

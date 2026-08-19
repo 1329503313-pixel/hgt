@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ChevronRight, KeyRound, TicketCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api, AvatarResponse, NicknameResponse } from "../api";
+import { api, AvatarResponse, BioResponse, NicknameResponse } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
 import { MineBackButton } from "../components/MineBackButton";
 import { useApp } from "../context/AppContext";
@@ -10,7 +10,7 @@ import { CardSkeleton } from "../components/Skeletons";
 import { ProfileBackgroundEditor } from "../components/ProfileBackgroundEditor";
 import { EmailBindingCard } from "../components/EmailBindingCard";
 import { FeedbackCard } from "../components/FeedbackCard";
-import { ACCOUNT_NICKNAME_MAX_LENGTH, accountNicknameError } from "../shared/accountRules";
+import { ACCOUNT_BIO_MAX_LENGTH, ACCOUNT_NICKNAME_MAX_LENGTH, accountBioError, accountNicknameError } from "../shared/accountRules";
 
 type InvitationSummary = {
   inviteCode: string;
@@ -22,12 +22,16 @@ export default function AccountSettingsPage() {
   const navigate = useNavigate();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [nickname, setNickname] = useState("");
+  const [bio, setBio] = useState("");
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [nicknameSaving, setNicknameSaving] = useState(false);
   const [nicknameError, setNicknameError] = useState("");
+  const [bioSaving, setBioSaving] = useState(false);
+  const [bioError, setBioError] = useState("");
   const [invitationSummary, setInvitationSummary] = useState<InvitationSummary | null>(null);
 
   useEffect(() => { setNickname(user?.nickname ?? ""); }, [user?.nickname]);
+  useEffect(() => { setBio(user?.bio ?? ""); }, [user?.bio]);
   useEffect(() => {
     if (!user) {
       setInvitationSummary(null);
@@ -86,6 +90,31 @@ export default function AccountSettingsPage() {
     }
   }
 
+  async function saveBio(event: FormEvent) {
+    event.preventDefault();
+    if (!user || bioSaving) return;
+    const value = bio.trim();
+    const validationError = accountBioError(value);
+    if (validationError) {
+      setBioError(validationError);
+      return;
+    }
+    setBioSaving(true);
+    setBioError("");
+    try {
+      const data = await api<BioResponse>("/api/me/bio", { method: "PATCH", body: { bio: value } });
+      setUser({ ...user, bio: data.bio });
+      removeSessionCache(`hgt:mine:profile:${user.id}`);
+      removeSessionCache(`hgt:user-profile:${user.id}:${user.id}`);
+      setBio(data.bio);
+      showToast(data.bio ? "简介已更新" : "简介已清空");
+    } catch (error) {
+      setBioError((error as Error).message);
+    } finally {
+      setBioSaving(false);
+    }
+  }
+
   if (loadingUser) return <section className="space-y-4"><PageTopBar title="账号设置" /><MineBackButton /><CardSkeleton rows={4} /><CardSkeleton rows={2} /></section>;
   if (!user) return <section className="space-y-4"><PageTopBar title="账号设置" /><MineBackButton /><div className="card p-6 text-center"><p className="text-sm text-muted">登录后管理账号设置</p><button className="btn btn-primary mt-4 w-full" onClick={openAuth}>登录</button></div></section>;
 
@@ -105,11 +134,25 @@ export default function AccountSettingsPage() {
           </div>
         </div>
 
-        <form className="card p-4" onSubmit={saveNickname}>
-          <label className="mb-2 block text-sm font-black text-ink" htmlFor="account-nickname">昵称</label>
-          <div className="flex gap-2"><input id="account-nickname" className="field h-11" maxLength={ACCOUNT_NICKNAME_MAX_LENGTH} value={nickname} aria-invalid={Boolean(nicknameError)} aria-describedby="account-nickname-help" onChange={(event) => { setNickname(event.target.value); setNicknameError(""); }} /><button className="btn btn-primary h-11 shrink-0 px-4" disabled={nicknameSaving}>{nicknameSaving ? "保存中" : "保存"}</button></div>
-          <p id="account-nickname-help" className={`mt-2 text-xs ${nicknameError ? "font-semibold text-danger" : "text-muted"}`} role={nicknameError ? "alert" : undefined}>{nicknameError || "1 至 8 个字符，不可与其他用户重复"}</p>
-        </form>
+        <div className="card p-4">
+          <form onSubmit={saveNickname}>
+            <label className="mb-2 block text-sm font-black text-ink" htmlFor="account-nickname">昵称</label>
+            <div className="flex gap-2"><input id="account-nickname" className="field h-11" maxLength={ACCOUNT_NICKNAME_MAX_LENGTH} value={nickname} aria-invalid={Boolean(nicknameError)} aria-describedby="account-nickname-help" onChange={(event) => { setNickname(event.target.value); setNicknameError(""); }} /><button className="btn btn-primary h-11 shrink-0 px-4" disabled={nicknameSaving}>{nicknameSaving ? "保存中" : "保存"}</button></div>
+            <p id="account-nickname-help" className={`mt-2 text-xs ${nicknameError ? "font-semibold text-danger" : "text-muted"}`} role={nicknameError ? "alert" : undefined}>{nicknameError || "1 至 8 个字符，不可与其他用户重复"}</p>
+          </form>
+
+          <form className="mt-4 border-t border-line pt-4" onSubmit={saveBio}>
+            <label className="mb-2 block text-sm font-black text-ink" htmlFor="account-bio">简介</label>
+            <div className="flex items-start gap-2">
+              <textarea id="account-bio" className="field min-h-[88px] resize-none py-2.5" maxLength={ACCOUNT_BIO_MAX_LENGTH} rows={3} value={bio} aria-invalid={Boolean(bioError)} aria-describedby="account-bio-help" onChange={(event) => { setBio(event.target.value); setBioError(""); }} />
+              <button className="btn btn-primary h-11 shrink-0 px-4" disabled={bioSaving}>{bioSaving ? "保存中" : "保存"}</button>
+            </div>
+            <p id="account-bio-help" className={`mt-2 flex justify-between gap-3 text-xs ${bioError ? "font-semibold text-danger" : "text-muted"}`} role={bioError ? "alert" : undefined}>
+              <span>{bioError || "最多 40 个字符，留空并保存可清空简介"}</span>
+              <span className="shrink-0 tabular-nums">{bio.length}/{ACCOUNT_BIO_MAX_LENGTH}</span>
+            </p>
+          </form>
+        </div>
 
         <ProfileBackgroundEditor userId={user.id} />
 

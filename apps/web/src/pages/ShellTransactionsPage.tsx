@@ -60,14 +60,19 @@ export default function ShellTransactionsPage() {
         {loading ? <ListSkeleton rows={8} /> : data?.transactions.length ? (
           <div className="divide-y divide-line">
             {data.transactions.map((item) => {
-              const added = item.amount > 0;
+              const experienceAmount = Number(item.experienceAmount ?? 0);
+              const added = item.amount > 0 || experienceAmount > 0;
               return (
                 <article key={item.id} className="flex items-center gap-3 p-4">
                   <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${added ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-500"}`}>
                     {added ? <Plus size={19} /> : <Minus size={19} />}
                   </span>
                   <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-black text-ink">{item.remark || item.typeLabel}</h3><p className="mt-1 text-xs text-muted">{new Date(item.createdAt).toLocaleString("zh-CN", { hour12: false })}</p></div>
-                  <div className="shrink-0 text-right"><p className={`font-black ${added ? "text-emerald-600" : "text-red-500"}`}>{added ? "+" : ""}{item.amount}</p><p className="mt-1 text-[11px] text-muted">余额 {item.balanceAfter}</p></div>
+                  <div className="shrink-0 text-right">
+                    {item.amount !== 0 && <p className={`font-black ${item.amount > 0 ? "text-emerald-600" : "text-red-500"}`}>{item.amount > 0 ? "+" : ""}{item.amount} 贝壳</p>}
+                    {experienceAmount !== 0 && <p className="mt-0.5 font-black text-violet-600">+{experienceAmount} EXP</p>}
+                    <p className="mt-1 text-[11px] text-muted">贝壳余额 {item.balanceAfter}</p>
+                  </div>
                 </article>
               );
             })}

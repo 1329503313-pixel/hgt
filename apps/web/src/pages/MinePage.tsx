@@ -212,7 +212,7 @@ export default function MinePage() {
       <PageTopBar title="我的" />
       <div className="mine-overview-layout">
       <div className="mine-overview-grid">
-        <ProfileHero className="mine-profile-hero" profile={profile} showBadge={false} onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} meta={
+        <ProfileHero className="mine-profile-hero" profile={profile} showBadge={false} inactiveNicknameClassName="text-white" onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} meta={
           <div className="flex items-center gap-2 text-sm font-bold text-white/90">
             <span className="inline-flex items-center gap-1"><Shell size={14} />贝壳：{(liveShellBalance ?? shellSummary?.balance)?.toLocaleString() ?? "—"}</span>
             <button className="rounded-full bg-white/15 px-2 py-0.5 text-xs text-white transition hover:bg-white/25" onClick={() => navigate("/mine/shells/transactions")}>明细</button>

@@ -1837,8 +1837,8 @@ textarea {
 .online-soup-mini-message.is-mine .online-soup-mini-message-body { align-items: flex-end; }
 .online-soup-mini-message-meta { display: flex; max-width: 100%; align-items: center; gap: 5px; padding: 0 3px 3px; }
 .online-soup-mini-message.is-mine .online-soup-mini-message-meta { flex-direction: row-reverse; }
-.online-soup-mini-message-meta strong { overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.online-soup-mini-message-meta span { flex: 0 0 auto; border-radius: 999px; background: #ede9fe; padding: 1px 5px; color: #7c3aed; font-size: 8px; font-weight: 900; }
+.online-soup-mini-message-identity { flex: 1 1 auto; gap: 3px; color: #334155; font-size: 10px; font-weight: 900; }
+.online-soup-mini-message-meta > span:not(.online-soup-mini-message-identity) { flex: 0 0 auto; border-radius: 999px; background: #ede9fe; padding: 1px 5px; color: #7c3aed; font-size: 8px; font-weight: 900; }
 .online-soup-mini-message-meta .is-host-label { background: #fef3c7; color: #b45309; }
 .online-soup-mini-bubble {
   max-width: 100%;
@@ -5459,8 +5459,21 @@ textarea {
 
 .vip-icon { box-shadow: 0 0 0 1px rgb(255 255 255 / .7), 0 2px 6px rgb(180 83 9 / .28); }
 .vip-icon-animated { background-size: 260% 260%; animation: vip-icon-rainbow 3.8s linear infinite; }
-.vip-name-gold { color: #c8870a; text-shadow: 0 1px 0 rgb(255 255 255 / .7); }
-.vip-name-spectrum, .vip-name-rainbow { background: linear-gradient(100deg,#e11d48,#f59e0b,#16a34a,#0891b2,#6366f1,#d946ef,#e11d48); background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; }
+.vip-name-gold {
+  color: #c8870a;
+  -webkit-text-fill-color: #c8870a;
+  text-shadow: none;
+}
+.vip-name-spectrum, .vip-name-rainbow {
+  background: linear-gradient(100deg,#e11d48,#f59e0b,#16a34a,#0891b2,#6366f1,#d946ef,#e11d48);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 0 transparent;
+  text-shadow: none;
+}
 .vip-name-rainbow { animation: vip-name-spectrum 4s linear infinite; }
 @keyframes vip-name-spectrum { 0% { background-position: 0 50%; } 100% { background-position: 300% 50%; } }
 @keyframes vip-icon-rainbow { 0% { background-position: 0 50%; } 100% { background-position: 260% 50%; } }

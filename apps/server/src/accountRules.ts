@@ -5,6 +5,7 @@ export const ACCOUNT_USERNAME_MAX_LENGTH = 50;
 export const ACCOUNT_PASSWORD_MIN_LENGTH = 6;
 export const ACCOUNT_PASSWORD_MAX_LENGTH = 72;
 export const ACCOUNT_NICKNAME_MAX_LENGTH = 8;
+export const ACCOUNT_BIO_MAX_LENGTH = 40;
 
 export const ACCOUNT_USERNAME_PATTERN = /^[\x21-\x7e]+$/;
 
@@ -24,3 +25,8 @@ export const accountNicknameSchema = z
   .trim()
   .min(1, "请输入昵称")
   .max(ACCOUNT_NICKNAME_MAX_LENGTH, "昵称不超过 8 个字符");
+
+export const accountBioSchema = z
+  .string()
+  .trim()
+  .max(ACCOUNT_BIO_MAX_LENGTH, "简介不超过 40 个字符");

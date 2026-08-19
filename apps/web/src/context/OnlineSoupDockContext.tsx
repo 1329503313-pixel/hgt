@@ -15,6 +15,7 @@ import { giftTimelineEntries } from "../shared/giftTimeline";
 import { onlineSoupAnswerPrefix } from "../shared/onlineSoupAnswerLabel";
 import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
 import { copyTextToClipboard } from "../shared/clipboard";
+import { VipIdentity } from "../components/VipIdentity";
 
 type DockSession = {
   snapshot: OnlineSoupSnapshot;
@@ -316,7 +317,7 @@ function MiniMessage({ message, currentUserId, onRecall, onCopy, onLocate }: { m
     </span>
     <div className="online-soup-mini-message-body">
       <div className="online-soup-mini-message-meta">
-        <strong>{message.senderName ?? "未知用户"}</strong>
+        <VipIdentity nickname={message.senderName ?? "未知用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} className="online-soup-mini-message-identity" iconClassName="h-3.5 w-3.5" />
         {host && <span className="is-host-label">主持人</span>}
         {question && <span>正式提问 #{message.questionNumber}</span>}
       </div>

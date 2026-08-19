@@ -21,6 +21,16 @@ export class MysteryModelError extends Error {
   }
 }
 
+export async function retryMysteryAiReplyOnce<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof MysteryModelError) || !error.retryable || signal?.aborted) throw error;
+    console.warn("Mystery AI reply failed; retrying once:", { code: error.code });
+    return operation();
+  }
+}
+
 type DeepSeekMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export type MysteryResolutionRuntimeIssue = {
@@ -716,7 +726,7 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
   };
 }
 
-export async function adjudicateMysteryTurn(input: {
+async function adjudicateMysteryTurnAttempt(input: {
   storyPackage: MysteryStoryPackage;
   state: MysteryRunState;
   relevantEvents: unknown[];
@@ -832,6 +842,10 @@ export async function adjudicateMysteryTurn(input: {
   return validated.resolution;
 }
 
+export async function adjudicateMysteryTurn(input: Parameters<typeof adjudicateMysteryTurnAttempt>[0]) {
+  return retryMysteryAiReplyOnce(() => adjudicateMysteryTurnAttempt(input), input.signal);
+}
+
 const forbiddenNarrativePatterns = [
   /reasoning_content/i, /system prompt/i, /系统提示词/, /event[_ ]?id/i, /state_version/i,
   /好感度\s*[:：]?\s*\d/, /恐惧值\s*[:：]?\s*\d/, /敌意值\s*[:：]?\s*\d/,
@@ -846,7 +860,32 @@ export function auditMysteryNarrative(text: string) {
   return normalized;
 }
 
-export async function renderMysteryNarrative(
+function comparableNarrativeText(value: string) {
+  return value.normalize("NFKC").replace(/[\s“”"'‘’「」『』，。！？、；：,.!?;:—…-]+/g, "");
+}
+
+/**
+ * NPC 台词已经通过世界裁决并进入玩家可见信息包，不能再依赖叙事模型决定是否展示。
+ * 运行时补齐可直接覆盖既有 Story Package，不要求管理员重新编译谜局。
+ */
+export function preserveMysteryNpcExpressions(text: string, packetInput: PlayerVisiblePacket) {
+  const packet = playerVisiblePacketSchema.parse(packetInput);
+  const narrative = text.trim();
+  const comparableNarrative = comparableNarrativeText(narrative);
+  const seen = new Set<string>();
+  const missing = packet.allowedNpcExpressions.filter((expression) => {
+    const key = `${expression.actorId}\u0000${expression.text}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    const comparableExpression = comparableNarrativeText(expression.text);
+    return Boolean(comparableExpression) && !comparableNarrative.includes(comparableExpression);
+  });
+  if (!missing.length) return narrative;
+  const dialogue = missing.map((expression) => `${expression.actorName}说：“${expression.text.trim()}”`).join("\n\n");
+  return narrative ? `${dialogue}\n\n${narrative}` : dialogue;
+}
+
+async function renderMysteryNarrativeAttempt(
   packetInput: PlayerVisiblePacket,
   correctionNotes: string[] = [],
   signal?: AbortSignal,
@@ -861,10 +900,21 @@ export async function renderMysteryNarrative(
     ],
     signal,
   });
-  return auditMysteryNarrative(result.content);
+  return auditMysteryNarrative(preserveMysteryNpcExpressions(result.content, packet));
 }
 
-export async function reviewMysteryNarrativeConsistency(
+export async function renderMysteryNarrative(
+  packetInput: PlayerVisiblePacket,
+  correctionNotes: string[] = [],
+  signal?: AbortSignal,
+) {
+  return retryMysteryAiReplyOnce(
+    () => renderMysteryNarrativeAttempt(packetInput, correctionNotes, signal),
+    signal,
+  );
+}
+
+async function reviewMysteryNarrativeConsistencyAttempt(
   packetInput: PlayerVisiblePacket,
   narrative: string,
   majorTurn: boolean,
@@ -888,4 +938,16 @@ export async function reviewMysteryNarrativeConsistency(
       ? review.violations.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 20)
       : ["叙事审查器未返回有效的违规说明"],
   };
+}
+
+export async function reviewMysteryNarrativeConsistency(
+  packetInput: PlayerVisiblePacket,
+  narrative: string,
+  majorTurn: boolean,
+  signal?: AbortSignal,
+) {
+  return retryMysteryAiReplyOnce(
+    () => reviewMysteryNarrativeConsistencyAttempt(packetInput, narrative, majorTurn, signal),
+    signal,
+  );
 }

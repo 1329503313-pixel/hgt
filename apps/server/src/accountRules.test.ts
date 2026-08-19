@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accountNicknameSchema, accountPasswordSchema, accountUsernameSchema } from "./accountRules.js";
+import { accountBioSchema, accountNicknameSchema, accountPasswordSchema, accountUsernameSchema } from "./accountRules.js";
 
 test("new account names require at least six printable ASCII characters", () => {
   assert.equal(accountUsernameSchema.safeParse("abc123").success, true);
@@ -18,4 +18,11 @@ test("new passwords require at least six characters", () => {
 test("nicknames are trimmed and limited to eight characters", () => {
   assert.equal(accountNicknameSchema.parse("  汤友  "), "汤友");
   assert.equal(accountNicknameSchema.safeParse("123456789").success, false);
+});
+
+test("bios can be cleared and are trimmed and limited to forty characters", () => {
+  assert.equal(accountBioSchema.parse("  喜欢推理，也喜欢写汤。  "), "喜欢推理，也喜欢写汤。");
+  assert.equal(accountBioSchema.safeParse("").success, true);
+  assert.equal(accountBioSchema.safeParse("简介".repeat(20)).success, true);
+  assert.equal(accountBioSchema.safeParse(`简介${"介".repeat(39)}`).success, false);
 });
