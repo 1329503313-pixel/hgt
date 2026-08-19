@@ -17,6 +17,7 @@ export function VipIdentity({
   iconClassName = "h-4 w-4",
   badgeClassName = "h-4 w-4",
   preserveNickname = false,
+  vipIconBeforeNickname = false,
   animated = false
 }: {
   nickname: string;
@@ -32,6 +33,7 @@ export function VipIdentity({
   iconClassName?: string;
   badgeClassName?: string;
   preserveNickname?: boolean;
+  vipIconBeforeNickname?: boolean;
   animated?: boolean;
 }) {
   const resolvedLevel = vipLevel ?? level ?? 0;
@@ -44,8 +46,9 @@ export function VipIdentity({
   if (preserveNickname) {
     return (
       <span className={`flex min-w-0 items-center ${className}`} title={nickname}>
+        {vipIconBeforeNickname && resolvedActive && <span className="shrink-0 pr-1.5">{vipNode}</span>}
         <span className="min-w-0 shrink-[1] truncate">{nicknameNode}</span>
-        {resolvedActive && <span className="min-w-0 shrink-[10] overflow-hidden pl-1.5">{vipNode}</span>}
+        {!vipIconBeforeNickname && resolvedActive && <span className="min-w-0 shrink-[10] overflow-hidden pl-1.5">{vipNode}</span>}
         {levelNode && <span className="min-w-0 shrink-[100] overflow-hidden pl-1.5">{levelNode}</span>}
         {badgeNode && <span className="min-w-0 shrink-[1000] overflow-hidden pl-1.5">{badgeNode}</span>}
       </span>
@@ -54,8 +57,9 @@ export function VipIdentity({
 
   return (
     <span className={`flex min-w-0 items-center gap-1.5 ${className}`}>
+      {vipIconBeforeNickname && vipNode}
       {nicknameNode}
-      {vipNode}
+      {!vipIconBeforeNickname && vipNode}
       {levelNode}
       {badgeNode}
     </span>

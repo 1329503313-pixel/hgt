@@ -1760,7 +1760,7 @@ function ProgressQuestionCard({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="shrink-0 text-xs font-black text-primary">#{question.number}</span>
-          <VipIdentity nickname={question.sender.nickname} vipLevel={question.sender.vipLevel} vipActive={question.sender.vipActive} showUserLevel={false} className="min-w-0 text-xs font-bold text-ink" iconClassName="h-3.5 w-3.5" />
+          <VipIdentity nickname={question.sender.nickname} vipLevel={question.sender.vipLevel} vipActive={question.sender.vipActive} showUserLevel={false} vipIconBeforeNickname className="min-w-0 text-xs font-bold text-ink" iconClassName="h-3.5 w-3.5" />
           {Boolean(question.aiProgressDelta) && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">进度+{question.aiProgressDelta}</span>}
           <time className="ml-auto shrink-0 text-[10px] text-muted">{new Date(question.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
         </div>
@@ -1856,7 +1856,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, isHost, 
       </MentionableAvatarButton>
       <div className={`flex min-w-0 max-w-[78%] flex-col ${question ? "w-full max-w-[84%]" : ""} ${mine ? "items-end" : "items-start"}`}>
         <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] font-bold text-muted ${mine ? "flex-row-reverse" : ""}`}>
-          <VipIdentity nickname={message.senderName ?? "未知用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} showUserLevel={false} className="max-w-full" />
+          <VipIdentity nickname={message.senderName ?? "未知用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} showUserLevel={false} vipIconBeforeNickname className="max-w-full" />
           {host && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700"><Crown size={11} />主持人</span>}
           {question && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-black text-violet-700"><MessageCircle size={11} />{mysteryMode ? "正式行动" : "正式提问"} #{message.questionNumber}</span>}
         </div>

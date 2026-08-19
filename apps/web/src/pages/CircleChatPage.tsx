@@ -545,7 +545,7 @@ export default function CircleChatPage() {
                 </MentionableAvatarButton>
                 <div className={`flex min-w-0 max-w-[78%] flex-col ${message.type === "soup_share" || message.type === "room_invite" || message.type === "gift" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
                   <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] text-muted ${mine ? "flex-row-reverse" : ""}`}>
-                    {message.sender ? <VipIdentity nickname={senderName} userLevel={message.sender.level} vipLevel={message.sender.vipLevel} vipActive={message.sender.vipActive} equippedBadge={message.sender.equippedBadge} className="max-w-full" /> : <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>}
+                    {message.sender ? <VipIdentity nickname={senderName} userLevel={message.sender.level} vipLevel={message.sender.vipLevel} vipActive={message.sender.vipActive} equippedBadge={message.sender.equippedBadge} vipIconBeforeNickname className="max-w-full" /> : <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>}
                   </div>
                   <MessageActionMenu
                     actions={messageActions}
