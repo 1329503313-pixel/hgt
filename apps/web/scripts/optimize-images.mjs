@@ -1,12 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import sharp from "sharp";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(webRoot, "public");
 const badgeRoot = path.join(publicRoot, "badges");
 const circleAvatarRoot = path.join(publicRoot, "circle-avatars");
+const vipIconRoot = path.join(publicRoot, "vip");
 const sourceAssetRoot = path.join(webRoot, "src", "assets");
 const checkOnly = process.argv.includes("--check");
 const rasterPattern = /\.(?:png|jpe?g|webp|gif)$/i;
@@ -81,6 +83,32 @@ async function optimizeOversizedStaticImages() {
 
 async function validateImages() {
   const errors = [];
+  const vipManifest = JSON.parse(await fs.readFile(path.join(vipIconRoot, "manifest.json"), "utf8"));
+  if (!Array.isArray(vipManifest.icons) || vipManifest.icons.length !== 9) {
+    errors.push("public/vip/manifest.json 必须精确包含 VIP1-VIP9 九条映射");
+  } else {
+    for (let level = 1; level <= 9; level += 1) {
+      const icon = vipManifest.icons.find((item) => item.level === level);
+      const expectedFile = `vip-${level}.webp`;
+      if (!icon || icon.visibleMark !== `V${level}` || icon.sourceAssetIndex !== level || icon.file !== expectedFile) {
+        errors.push(`VIP${level} 图面等级、源图序号或文件名映射不正确`);
+        continue;
+      }
+      const iconPath = path.join(vipIconRoot, expectedFile);
+      const body = await fs.readFile(iconPath).catch(() => null);
+      if (!body) {
+        errors.push(`public/vip/${expectedFile} 不存在`);
+        continue;
+      }
+      const metadata = await sharp(body).metadata();
+      const hash = createHash("sha256").update(body).digest("hex");
+      if (metadata.format !== "webp" || metadata.width !== 256 || metadata.height !== 256 || !metadata.hasAlpha) {
+        errors.push(`public/vip/${expectedFile} 必须为 256x256 透明 WebP`);
+      }
+      if (body.length > 100_000) errors.push(`public/vip/${expectedFile} 超过 100KB`);
+      if (icon.sha256 !== hash) errors.push(`public/vip/${expectedFile} 与已复核映射哈希不一致`);
+    }
+  }
   const badgeFiles = await filesBelow(badgeRoot);
   const badgePngs = badgeFiles.filter((file) => file.toLowerCase().endsWith(".png"));
   for (const pngPath of badgePngs) {
@@ -134,4 +162,4 @@ async function validateImages() {
 const result = await optimizeBadges();
 const staticChanged = await optimizeOversizedStaticImages();
 const errors = await validateImages();
-if (!errors) console.log(`Image assets valid: ${result.badgeCount} badges checked, ${result.changed + staticChanged} files optimized.`);
+if (!errors) console.log(`Image assets valid: ${result.badgeCount} badges and 9 VIP icons checked, ${result.changed + staticChanged} files optimized.`);

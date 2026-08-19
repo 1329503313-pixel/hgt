@@ -5549,8 +5549,8 @@ textarea {
   display: none;
 }
 
-.vip-icon { box-shadow: 0 0 0 1px rgb(255 255 255 / .7), 0 2px 6px rgb(180 83 9 / .28); }
-.vip-icon-animated { background-size: 260% 260%; animation: vip-icon-rainbow 3.8s linear infinite; }
+.vip-icon { filter: drop-shadow(0 1px 1px rgb(120 53 15 / .32)); }
+.vip-icon-animated { animation: vip-icon-glow 3.8s ease-in-out infinite; }
 .vip-name-gold {
   color: #c8870a;
   -webkit-text-fill-color: #c8870a;
@@ -5568,7 +5568,10 @@ textarea {
 }
 .vip-name-rainbow { animation: vip-name-spectrum 4s linear infinite; }
 @keyframes vip-name-spectrum { 0% { background-position: 0 50%; } 100% { background-position: 300% 50%; } }
-@keyframes vip-icon-rainbow { 0% { background-position: 0 50%; } 100% { background-position: 260% 50%; } }
+@keyframes vip-icon-glow {
+  0%,100% { filter: drop-shadow(0 1px 1px rgb(120 53 15 / .32)); }
+  50% { filter: drop-shadow(0 1px 3px rgb(217 70 239 / .58)); }
+}
 @media (prefers-reduced-motion: reduce) {
   .vip-icon-animated, .vip-name-rainbow { animation: none !important; }
   .vip-name-rainbow { background-position: 50% 50%; }

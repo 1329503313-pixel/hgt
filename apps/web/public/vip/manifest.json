@@ -1,0 +1,14 @@
+{
+  "mappingRule": "The visible VIP mark in each reviewed source image determines the level; attachment display order is ignored.",
+  "icons": [
+    { "level": 1, "visibleMark": "V1", "sourceAssetIndex": 1, "sourceSha256": "c4db31cbdd7b841982a5d019096b1354d5420faee2eb49271e7bcdc777bd6dc7", "file": "vip-1.webp", "sha256": "be63f0f3c0ec30ce48db2901288666b44466efa61280ca43fc2becdaaff11e89" },
+    { "level": 2, "visibleMark": "V2", "sourceAssetIndex": 2, "sourceSha256": "2b0e84b63a61bc967a6e0a847517ddfc9c7880584a4cfb4b51c7679496829745", "file": "vip-2.webp", "sha256": "d22f325eb4a4e57468bcf2790aab2c26eaf2c0e1ee22978558f95eba1808f21f" },
+    { "level": 3, "visibleMark": "V3", "sourceAssetIndex": 3, "sourceSha256": "c02d5242f12467133e13960a39451cc41d98acb63045c4d8ef7214dfcd3a09ac", "file": "vip-3.webp", "sha256": "32944ce9093201f1c130407488fef92e1c3df740a6ffc8822253ba8624630ab1" },
+    { "level": 4, "visibleMark": "V4", "sourceAssetIndex": 4, "sourceSha256": "8cbea3ef5eff76a49a65228902aca7813ed0062614c446658d32c3048e824713", "file": "vip-4.webp", "sha256": "b284ca49ec44481adee5f71b8814693a2e8453d3a84e4742fef23140c5d7499c" },
+    { "level": 5, "visibleMark": "V5", "sourceAssetIndex": 5, "sourceSha256": "a370af886876868a3fb303df77a4b7d26809cb4fba7e80c6952bf353fea4f32b", "file": "vip-5.webp", "sha256": "993ead0d0a9d5d25791af2a0c00e4507e64bb23cb78af841c841a1d45b684ee9" },
+    { "level": 6, "visibleMark": "V6", "sourceAssetIndex": 6, "sourceSha256": "773f92567c10cefb29daa95dd6cb17f76a2b21638d6bbb71c79890a1e8629f41", "file": "vip-6.webp", "sha256": "cd8215534e07e38ff2eb6147807cd0c51af1f628ee3c001380ecf30e992c660d" },
+    { "level": 7, "visibleMark": "V7", "sourceAssetIndex": 7, "sourceSha256": "269f0e10fc8b86979234b7592f606b72c1a239183074ca720b11f3f3c5f4e9a4", "file": "vip-7.webp", "sha256": "622e4ee907e2842d2c4433b132fa8f5268498ffff4b26ebac69b740d83add2c8" },
+    { "level": 8, "visibleMark": "V8", "sourceAssetIndex": 8, "sourceSha256": "09eca5f473a52a62af4c5e22d857acf27c4ef6ec04829e2b9aec9e1bef8e1650", "file": "vip-8.webp", "sha256": "e9683d447e6ff0caa7fad3d0516e988ec5a07fc05f2d5c5bcecad0710c4946e0" },
+    { "level": 9, "visibleMark": "V9", "sourceAssetIndex": 9, "sourceSha256": "37bc027ec8672e3616775ac82baa1f7574f355502a82b98dd65fd864905a4636", "file": "vip-9.webp", "sha256": "5756a04da058cedb1db27d8fe222f7e6b00a3e17c995d9ef143ca779ed4fc7d2" }
+  ]
+}
