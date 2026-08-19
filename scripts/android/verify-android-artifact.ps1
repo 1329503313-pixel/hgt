@@ -54,7 +54,17 @@ foreach ($forbiddenPermission in @('android.permission.CAMERA', 'android.permiss
     if ($permissions -match [regex]::Escape($forbiddenPermission)) { throw "Unexpected sensitive APK permission: $forbiddenPermission" }
 }
 
-$hash = (Get-FileHash -LiteralPath $ApkPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$apkStream = [System.IO.File]::OpenRead($ApkPath)
+try {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = ([System.BitConverter]::ToString($sha256.ComputeHash($apkStream))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+} finally {
+    $apkStream.Dispose()
+}
 Write-Output "Package: com.caqis.hgt"
 Write-Output "Version: $($version.versionName) ($($version.versionCode))"
 Write-Output "Certificate SHA256: $expectedCertificate"
