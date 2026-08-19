@@ -401,7 +401,12 @@ export const mysteryEventProposalSchema = z.object({
   expressedKnowledgeIds: z.array(mysteryIdSchema).max(100).optional(),
   perceivedBy: z.array(z.object({
     actorId: mysteryIdSchema,
-    perception: z.enum(["heard_complete", "heard_partial", "heard_incorrectly", "saw_complete", "saw_partial"]),
+    perception: z.enum([
+      "heard_complete", "heard_partial", "heard_incorrectly",
+      "saw_complete", "saw_partial",
+      "smelled_complete", "smelled_partial",
+      "touched_complete", "touched_partial",
+    ]),
   })).max(500).default([]),
   causedByEventIds: idList,
   requiredItemInstanceIds: idList,

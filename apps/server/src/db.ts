@@ -782,6 +782,20 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS mystery_clues (
+      id VARCHAR(64) PRIMARY KEY,
+      run_id VARCHAR(64) NOT NULL,
+      clue_number INT UNSIGNED NOT NULL,
+      content TEXT NOT NULL,
+      recorded_by VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_mystery_clue_number (run_id, clue_number),
+      INDEX idx_mystery_clue_run_created (run_id, created_at),
+      CONSTRAINT fk_mystery_clue_run FOREIGN KEY (run_id) REFERENCES mystery_runs(id) ON DELETE CASCADE,
+      CONSTRAINT fk_mystery_clue_recorder FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS mystery_turns (
       id VARCHAR(64) PRIMARY KEY,
       run_id VARCHAR(64) NOT NULL,

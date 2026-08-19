@@ -592,7 +592,11 @@ const resolutionTool = {
           rawUtterance: { type: ["string", "null"] }, normalizedMeaning: { type: ["string", "null"] },
           expressedKnowledgeIds: { type: "array", items: { type: "string" } },
           perceivedBy: { type: "array", items: { type: "object", properties: {
-            actorId: { type: "string" }, perception: { type: "string", enum: ["heard_complete", "heard_partial", "heard_incorrectly", "saw_complete", "saw_partial"] },
+            actorId: { type: "string" }, perception: { type: "string", enum: [
+              "heard_complete", "heard_partial", "heard_incorrectly",
+              "saw_complete", "saw_partial", "smelled_complete", "smelled_partial",
+              "touched_complete", "touched_partial",
+            ] },
           }, required: ["actorId", "perception"] } },
           causedByEventIds: { type: "array", items: { type: "string" } },
           requiredItemInstanceIds: { type: "array", items: { type: "string" } },
@@ -684,7 +688,20 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
         "世界 flagChanges、结局变化、排期事件触发",
         "凭空增加资源或任何通用规则无法验证的状态变化",
       ],
-      responseRule: "合理行动不得因为没有同名转换而退化为笼统的‘没有变化’。即使状态不变，也要在 playerVisibleSummary 中说明实际观察、受阻原因、环境反馈或人物反应。",
+      responseRule: "合理行动不得因为没有同名转换而退化为笼统的‘没有变化’。即使状态不变，也要在 playerVisibleSummary 中说明实际观察、受阻原因、环境反馈或人物反应。任何玩家原本未知的信息，必须先由本回合明确的看见、听见、闻到、触摸或 NPC 告知事件取得，并同步写入 perceivedBy 与 knowledgeChanges；不能直接写进 playerVisibleSummary。",
+    },
+    playerInformationBoundary: {
+      playerActorId: state.playerActorId,
+      knownKnowledgeIds: state.knowledgeByActor[state.playerActorId] ?? [],
+      believedKnowledgeIds: state.beliefsByActor[state.playerActorId] ?? [],
+      rule: "除上述已知或已相信内容外，其余事实、人物私有知识、隐藏背景、秘密、排期与结局信息都只是裁决器的隐藏世界依据，不是玩家记忆。新信息必须由本回合感知事件获得；禁止用‘你知道/你想起/你意识到/显然/原来’直接赋予玩家。",
+    },
+    timePressure: {
+      currentWorldSecond: state.worldTimeSeconds,
+      elapsedDay: Math.floor(state.worldTimeSeconds / 86_400) + 1,
+      secondsUntilNextDay: 86_400 - (state.worldTimeSeconds % 86_400),
+      nextScheduledWorldSecond: relevantScheduledEvents.find((event) => event.triggerAtWorldSecond != null)?.triggerAtWorldSecond ?? null,
+      rule: "每个实际发生的行动都必须计算现实耗时：短句交谈通常 15–60 秒，仔细观察 30–120 秒，搜索 2–10 分钟，普通互动 1–5 分钟，移动采用连接耗时，等待采用玩家声明时长或至少 5 分钟。不得把有意义行动压缩为 0–1 秒；世界时钟越过排期或日界线时必须继续结算世界事件。",
     },
     state: {
       ...state,
@@ -703,10 +720,10 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
       items: storyPackage.entityResourceGraph.items.filter((item) => relevantItemIds.has(item.itemInstanceId)),
       resources: storyPackage.entityResourceGraph.resources.filter((resource) => relevantActorIds.has(resource.ownerId)),
     },
-    relevantFacts: storyPackage.coreFactGraph.facts.filter((fact) =>
+    hiddenWorldFactsForAdjudicationOnly: storyPackage.coreFactGraph.facts.filter((fact) =>
       fact.playerVisibility === "visible" || relevantActorIds.has(fact.subjectId ?? "") || relevantLocationIds.has(fact.locationId ?? "")
     ).slice(0, 500),
-    relevantKnowledge: storyPackage.knowledgeGraph.knowledge.filter((knowledge) =>
+    privateActorKnowledgeForAdjudicationOnly: storyPackage.knowledgeGraph.knowledge.filter((knowledge) =>
       relevantKnowledgeIds.has(knowledge.knowledgeId)
       || knowledge.affectedActorIds.some((actorId) => relevantActorIds.has(actorId))
       || knowledge.evidenceLocationIds.some((locationId) => relevantLocationIds.has(locationId))
@@ -926,7 +943,7 @@ async function reviewMysteryNarrativeConsistencyAttempt(
     maxTokens: 2_000,
     responseFormat: "json_object",
     messages: [
-      { role: "system", content: "你是互动故事一致性审查器。只核对最终叙事是否严格来自玩家可见信息包。任何地点或门的开闭、光照、声音来源、人物出现与行为、物品位置与状态、伤势、时间、资源剩余量和具体数字，都必须由信息包明确支持并完全一致；不得用氛围描写偷偷新增世界事实。playerObjective 可以作为玩家已知目标重述；actionAffordances 可以作为尚未发生、非穷尽的行动方向提示，但不得写成已执行事实、承诺结果、编号菜单或强制选项。还要检查死亡、结局、唯一物品损坏或销毁、NPC 越权知情、替玩家行动、隐藏信息泄露和内部字段。不要续写故事。只输出 JSON：{\"approved\":boolean,\"violations\":[\"具体且可修复的问题\"]}。" },
+      { role: "system", content: "你是互动故事一致性审查器。只核对最终叙事是否严格来自玩家可见信息包。任何地点或门的开闭、光照、声音来源、人物出现与行为、物品位置与状态、伤势、时间、资源剩余量和具体数字，都必须由信息包明确支持并完全一致；不得用氛围描写偷偷新增世界事实。尤其检查玩家认知边界：只有 knownInformation、approvedEvents 中由玩家亲眼看见/亲耳听见/闻到/触摸取得的内容，以及 allowedNpcExpressions 中 NPC 本回合明确说出的内容，才可写成玩家已经知道的信息；不得把线索用‘你知道、你想起、你意识到、显然、原来、早已明白’等措辞无来源地塞给玩家，也不得把行动方向暗写成玩家已有记忆。playerObjective 可以作为玩家已知目标重述；actionAffordances 可以作为尚未发生、非穷尽的行动方向提示，但不得写成已执行事实、承诺结果、编号菜单或强制选项。还要检查死亡、结局、唯一物品损坏或销毁、NPC 越权知情、替玩家行动、隐藏信息泄露和内部字段。不要续写故事。只输出 JSON：{\"approved\":boolean,\"violations\":[\"具体且可修复的问题\"]}。" },
       { role: "user", content: `玩家可见信息包：\n${JSON.stringify(packet)}\n\n待审查叙事：\n${narrative}` },
     ],
     signal,

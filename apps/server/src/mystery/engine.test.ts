@@ -425,12 +425,48 @@ test("有现场证据支撑的认知变化不要求额外行动转换", () => {
     storyPackage: configured, state: initial, sessionSeed: "seed_1",
     proposals: [proposal({
       eventType: "OBSERVATION_COMPLETED",
+      perceivedBy: [{ actorId: "PLAYER_1", perception: "saw_complete" }],
       knowledgeChanges: [{ actorId: "PLAYER_1", knowledgeId: "KNOWLEDGE_KEY_MARK", operation: "learn", reason: "查看手中钥匙" }],
       playerVisibleSummary: "你看见钥匙背面刻着守卫编号。",
     })],
   });
   assert.deepEqual(canonical.knowledgeChanges, [{ actorId: "PLAYER_1", knowledgeId: "KNOWLEDGE_KEY_MARK", operation: "learn", reason: "查看手中钥匙" }]);
   assert.equal(canonical.playerVisibleSummary, "你看见钥匙背面刻着守卫编号。");
+});
+
+test("玩家不能因为与线索同处一地就直接获得未知信息", () => {
+  const configured = structuredClone(storyPackage);
+  configured.knowledgeGraph.knowledge.push({
+    knowledgeId: "KNOWLEDGE_HIDDEN_MARK", kind: "clue", objectiveStatement: "钥匙背面刻着莉莉丝的编号",
+    holderActorIds: [], mistakenHolderActorIds: [], hiddenByActorIds: [], evidenceItemIds: ["ITEM_KEY"],
+    evidenceLocationIds: ["LOC_1"], acquireConditionIds: [], canBeDestroyed: false, affectedActorIds: ["PLAYER_1"],
+    irreversibleOnceRevealed: false, relatedEndingIds: [], propagationRules: [],
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({
+      knowledgeChanges: [{ actorId: "PLAYER_1", knowledgeId: "KNOWLEDGE_HIDDEN_MARK", operation: "learn", reason: "同处一地" }],
+      playerVisibleSummary: "你知道钥匙背面刻着莉莉丝的编号。",
+    })],
+  }), (error: unknown) => error instanceof MysteryInvariantError
+    && error.code === "KNOWLEDGE_BASIS_REQUIRED");
+});
+
+test("玩家可见摘要不能绕过感知过程直接说出未知线索", () => {
+  const configured = structuredClone(storyPackage);
+  configured.knowledgeGraph.knowledge.push({
+    knowledgeId: "KNOWLEDGE_SECRET_ROUTE", kind: "secret", objectiveStatement: "钟后的暗门通向莉莉丝的房间",
+    holderActorIds: ["NPC_1"], mistakenHolderActorIds: [], hiddenByActorIds: [], evidenceItemIds: [],
+    evidenceLocationIds: [], acquireConditionIds: [], canBeDestroyed: false, affectedActorIds: ["PLAYER_1"],
+    irreversibleOnceRevealed: true, relatedEndingIds: [], propagationRules: [],
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({ playerVisibleSummary: "你早已知道，钟后的暗门通向莉莉丝的房间。" })],
+  }), (error: unknown) => error instanceof MysteryInvariantError
+    && error.code === "PLAYER_VISIBLE_KNOWLEDGE_LEAK");
 });
 
 test("裁决 Agent 会根据运行时转换错误自行修复提案", async () => {
@@ -499,6 +535,10 @@ test("裁决 Agent 会根据运行时转换错误自行修复提案", async () =
     assert.equal(callCount, 2);
     assert.equal(adjudicated.proposedEvents[0].transitionId, "TRANSITION_FIRE");
     assert.match(requests[1].messages?.at(-1)?.content ?? "", /TRANSITION_REQUIRED/);
+    const initialPrompt = requests[0].messages?.map((message) => message.content ?? "").join("\n") ?? "";
+    assert.match(initialPrompt, /playerInformationBoundary/);
+    assert.match(initialPrompt, /timePressure/);
+    assert.match(initialPrompt, /短句交谈通常 15–60 秒/);
     assert.deepEqual(requests.map((request) => request.thinking?.type), ["disabled", "disabled"]);
     assert.ok(requests.every((request) => !("reasoning_effort" in request)));
     assert.ok(requests.every((request) => request.tool_choice != null));
@@ -517,6 +557,50 @@ test("没有 Story Package 转换支撑的事件摘要不能宣称新事实", ()
   assert.equal(canonical.eventType, "ACTION_ATTEMPTED");
   assert.equal(canonical.playerVisibleSummary, "你完成了这项行动，但没有产生新的已确认变化。");
   assert.ok(!canonical.playerVisibleSummary.includes("密道"));
+});
+
+test("NPC 可以通过完整可感知的发言把其持有信息告知玩家", () => {
+  const configured = structuredClone(storyPackage);
+  configured.knowledgeGraph.knowledge.push({
+    knowledgeId: "KNOWLEDGE_NPC_WARNING", kind: "clue", objectiveStatement: "午夜后门厅会封闭",
+    holderActorIds: ["NPC_1"], mistakenHolderActorIds: [], hiddenByActorIds: [], evidenceItemIds: [],
+    evidenceLocationIds: [], acquireConditionIds: [], canBeDestroyed: false, affectedActorIds: ["PLAYER_1"],
+    irreversibleOnceRevealed: false, relatedEndingIds: [], propagationRules: [],
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  const [canonical] = canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({
+      eventType: "UTTERANCE_OCCURRED", actorIds: ["NPC_1"], targetIds: ["PLAYER_1"],
+      rawUtterance: "午夜后门厅会封闭。", expressedKnowledgeIds: ["KNOWLEDGE_NPC_WARNING"],
+      perceivedBy: [{ actorId: "PLAYER_1", perception: "heard_complete" }],
+      knowledgeChanges: [{ actorId: "PLAYER_1", knowledgeId: "KNOWLEDGE_NPC_WARNING", operation: "learn", reason: "听见守卫明确告知" }],
+      visibleToPlayer: true, playerVisibleSummary: "你听见守卫警告：午夜后门厅会封闭。",
+    })],
+  });
+  assert.equal(canonical.rawUtterance, "午夜后门厅会封闭。");
+  assert.deepEqual(canonical.knowledgeChanges.map((change) => change.knowledgeId), ["KNOWLEDGE_NPC_WARNING"]);
+});
+
+test("NPC 告知未知信息后必须同步记录玩家认知", () => {
+  const configured = structuredClone(storyPackage);
+  configured.knowledgeGraph.knowledge.push({
+    knowledgeId: "KNOWLEDGE_NPC_WARNING", kind: "clue", objectiveStatement: "午夜后门厅会封闭",
+    holderActorIds: ["NPC_1"], mistakenHolderActorIds: [], hiddenByActorIds: [], evidenceItemIds: [],
+    evidenceLocationIds: [], acquireConditionIds: [], canBeDestroyed: false, affectedActorIds: ["PLAYER_1"],
+    irreversibleOnceRevealed: false, relatedEndingIds: [], propagationRules: [],
+  });
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured, state: initial, sessionSeed: "seed_1",
+    proposals: [proposal({
+      eventType: "UTTERANCE_OCCURRED", actorIds: ["NPC_1"], targetIds: ["PLAYER_1"],
+      rawUtterance: "午夜后门厅会封闭。", expressedKnowledgeIds: ["KNOWLEDGE_NPC_WARNING"],
+      perceivedBy: [{ actorId: "PLAYER_1", perception: "heard_complete" }],
+      visibleToPlayer: true, playerVisibleSummary: "守卫向你发出警告。",
+    })],
+  }), (error: unknown) => error instanceof MysteryInvariantError
+    && error.code === "PLAYER_KNOWLEDGE_RECORD_REQUIRED");
 });
 
 test("NPC 不能表达自己知识库之外的信息", () => {
@@ -596,7 +680,8 @@ test("叙事可见包包含玩家已知事实和当前环境，但不携带其�
   assert.deepEqual(packet.playerState.resources, [{ name: "弹药", amount: 1, unit: "发" }]);
   assert.deepEqual(packet.playerState.carriedItems, [{ name: "钥匙", status: "intact" }]);
   assert.equal(packet.playerObjective, "查明门厅异常的原因");
-  assert.ok(packet.actionAffordances.includes("仔细观察门厅的钟"));
+  assert.ok(packet.actionAffordances.includes("观察当前环境并留意异常"));
+  assert.ok(!packet.actionAffordances.includes("仔细观察门厅的钟"));
   assert.deepEqual(packet.allowedNpcExpressions, [{ actorId: "NPC_1", actorName: "守卫", text: "这座钟昨夜还走得很准。" }]);
 });
 
@@ -631,6 +716,27 @@ test("叙事模型遗漏开头 NPC 台词时由运行时补齐且不要求重新
   assert.ok(repaired.startsWith("守卫说：“别再往前走了。”"));
   assert.ok(repaired.endsWith("守卫抬手拦住了去路。"));
   assert.equal(preserveMysteryNpcExpressions("守卫说：\"别再往前走了\"\n\n守卫抬手拦住了去路。", packet), "守卫说：\"别再往前走了\"\n\n守卫抬手拦住了去路。");
+});
+
+test("确定性降级叙事也会保留开头 NPC 原话", () => {
+  const configured = structuredClone(storyPackage);
+  configured.entityResourceGraph.actors[1].name = "莉莉丝";
+  const packet = buildMysteryPlayerVisiblePacket({
+    title: "测试谜局",
+    storyPackage: configured,
+    state: createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured }),
+    events: [proposal({
+      actorIds: ["NPC_1"],
+      rawUtterance: "我一直都知道，只是不敢告诉你。",
+      playerVisibleSummary: "莉莉丝说完最后一个字，像是把一件藏了很久的东西小心翼翼地捧出来，又立刻缩回壳里。她缩了缩脖子，视线从你脸上挪开，落在自己交握的手指上。",
+      visibleToPlayer: true,
+    })],
+    resolution: { endingSignals: [] },
+  });
+  const fallback = buildMysteryNarrativeFallback(packet);
+  assert.ok(fallback.startsWith("莉莉丝说：“我一直都知道，只是不敢告诉你。”"));
+  assert.ok(fallback.includes("莉莉丝说完最后一个字"));
+  assert.equal(fallback.match(/我一直都知道，只是不敢告诉你。/g)?.length, 1);
 });
 
 test("配置当前计划的 NPC 必须关联推动计划的世界事件", () => {

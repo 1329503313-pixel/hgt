@@ -24,7 +24,14 @@ import {
   projectMysteryProposal,
   resolveProbability,
 } from "./engine.js";
-import { adjudicateMysteryTurn, MysteryModelError, renderMysteryNarrative, reviewMysteryNarrativeConsistency, type MysteryResolutionRuntimeIssue } from "./models.js";
+import {
+  adjudicateMysteryTurn,
+  MysteryModelError,
+  preserveMysteryNpcExpressions,
+  renderMysteryNarrative,
+  reviewMysteryNarrativeConsistency,
+  type MysteryResolutionRuntimeIssue,
+} from "./models.js";
 import { validateMysteryStoryPackageIntegrity } from "./packageValidation.js";
 
 function jsonValue<T>(value: unknown): T {
@@ -494,18 +501,24 @@ function canonicalizeOpenWorldProposal(input: {
     if (definition.acquireConditionIds.length) {
       requireStoryTransition(`知识 ${change.knowledgeId} 存在预设获取条件，必须使用 Story Package 行动转换`);
     }
-    const evidenceAtLocation = Boolean(actor.locationId && definition.evidenceLocationIds.includes(actor.locationId));
+    const actorPerceptions = proposal.perceivedBy
+      .filter((entry) => entry.actorId === change.actorId)
+      .map((entry) => entry.perception);
+    const directlyPerceived = actorPerceptions.some((perception) =>
+      perception.startsWith("saw_") || perception.startsWith("smelled_") || perception.startsWith("touched_"));
+    const evidenceAtLocation = directlyPerceived
+      && Boolean(actor.locationId && definition.evidenceLocationIds.includes(actor.locationId));
     const evidenceInReach = definition.evidenceItemIds.some((itemId) => {
       const item = state.items[itemId];
-      return Boolean(item && (item.ownerId === change.actorId || (item.locationId && item.locationId === actor.locationId)));
+      return directlyPerceived
+        && Boolean(item && (item.ownerId === change.actorId || (item.locationId && item.locationId === actor.locationId)));
     });
     const heardFromHolder = Boolean(
       communicationSpeakerId
       && communicationSpeakerId !== change.actorId
       && speakerReferences.has(change.knowledgeId)
       && state.actors[communicationSpeakerId]?.locationId === actor.locationId
-      && (proposal.perceivedBy.some((entry) => entry.actorId === change.actorId && entry.perception.startsWith("heard_"))
-        || involvedActorIds.has(change.actorId)),
+      && actorPerceptions.some((perception) => perception.startsWith("heard_")),
     );
     const alreadyKnown = (state.knowledgeByActor[change.actorId] ?? []).includes(change.knowledgeId);
     const alreadyBelieved = (state.beliefsByActor[change.actorId] ?? []).includes(change.knowledgeId);
@@ -695,10 +708,94 @@ export function canonicalizeAgentProposals(input: {
       sessionSeed: input.sessionSeed,
       proposal,
     });
+    enforcePlayerInformationBoundary(input.storyPackage, projectedState, canonical);
     output.push(canonical);
     projectedState = projectMysteryProposal(projectedState, canonical);
   }
   return output;
+}
+
+const PLAYER_SENSORY_PERCEPTIONS = new Set([
+  "heard_complete", "heard_partial", "heard_incorrectly",
+  "saw_complete", "saw_partial",
+  "smelled_complete", "smelled_partial",
+  "touched_complete", "touched_partial",
+]);
+
+function comparableInformationClaim(value: string) {
+  return value.normalize("NFKC").replace(/[\s“”"'‘’「」『』，。！？、；：,.!?;:—…-]+/g, "");
+}
+
+function enforcePlayerInformationBoundary(
+  storyPackage: MysteryStoryPackage,
+  state: MysteryRunState,
+  proposal: MysteryEventProposal,
+) {
+  const playerActorId = state.playerActorId;
+  const playerKnown = new Set([
+    ...(state.knowledgeByActor[playerActorId] ?? []),
+    ...(state.beliefsByActor[playerActorId] ?? []),
+  ]);
+  const acquired = new Set(proposal.knowledgeChanges
+    .filter((change) => change.actorId === playerActorId)
+    .map((change) => change.knowledgeId));
+  const playerPerceptions = proposal.perceivedBy
+    .filter((entry) => entry.actorId === playerActorId)
+    .map((entry) => entry.perception);
+
+  if ([...acquired].some((knowledgeId) => !playerKnown.has(knowledgeId))
+    && !playerPerceptions.some((perception) => PLAYER_SENSORY_PERCEPTIONS.has(perception))) {
+    throw new MysteryInvariantError(
+      "PLAYER_KNOWLEDGE_PERCEPTION_REQUIRED",
+      "玩家获得新信息时必须记录本回合亲眼看见、亲耳听见、闻到或触摸到的感知来源",
+    );
+  }
+
+  const speakerId = proposal.actorIds[0];
+  const speaker = storyPackage.entityResourceGraph.actors.find((actor) => actor.actorId === speakerId);
+  if (proposal.visibleToPlayer === true && proposal.rawUtterance && speaker?.kind === "npc") {
+    const heardCompletely = playerPerceptions.includes("heard_complete");
+    const heardAtAll = heardCompletely
+      || playerPerceptions.includes("heard_partial")
+      || playerPerceptions.includes("heard_incorrectly");
+    if (!heardAtAll) {
+      throw new MysteryInvariantError(
+        "NPC_UTTERANCE_PERCEPTION_REQUIRED",
+        "向玩家展示 NPC 发言时必须明确记录玩家听见该发言",
+      );
+    }
+    const unrecordedKnowledge = heardCompletely
+      ? (proposal.expressedKnowledgeIds ?? []).find((knowledgeId) =>
+        !playerKnown.has(knowledgeId) && !acquired.has(knowledgeId))
+      : null;
+    if (unrecordedKnowledge) {
+      throw new MysteryInvariantError(
+        "PLAYER_KNOWLEDGE_RECORD_REQUIRED",
+        `玩家完整听见 NPC 表达 ${unrecordedKnowledge} 后，必须同步记录对应认知变化`,
+      );
+    }
+  }
+
+  const comparableSummary = comparableInformationClaim(proposal.playerVisibleSummary);
+  if (!comparableSummary) return;
+  const hiddenStatements = [
+    ...storyPackage.coreFactGraph.facts
+      .filter((fact) => !playerKnown.has(fact.factId) && !acquired.has(fact.factId))
+      .map((fact) => ({ id: fact.factId, statement: fact.statement })),
+    ...storyPackage.knowledgeGraph.knowledge
+      .filter((knowledge) => !playerKnown.has(knowledge.knowledgeId) && !acquired.has(knowledge.knowledgeId))
+      .map((knowledge) => ({ id: knowledge.knowledgeId, statement: knowledge.objectiveStatement })),
+  ];
+  const leaked = hiddenStatements.find(({ statement }) => {
+    const comparableStatement = comparableInformationClaim(statement);
+    return comparableStatement.length >= 8 && comparableSummary.includes(comparableStatement);
+  });
+  if (leaked) {
+    throw new MysteryInvariantError(
+      "PLAYER_VISIBLE_KNOWLEDGE_LEAK",
+      `玩家可见摘要直接包含尚未通过感知获得的信息 ${leaked.id}`,
+    );
+  }
 }
 
 export function validateMysteryResolutionForRuntime(input: {
@@ -869,11 +966,6 @@ function playerActionAffordances(storyPackage: MysteryStoryPackage, state: Myste
   const playerActorId = state.playerActorId;
   const playerState = state.actors[playerActorId];
   if (!playerState || playerState.status !== "active") return [];
-  const storyActions = storyPackage.actionTransitionGraph.transitions
-    .filter((transition) => evaluateStateCondition(state, transition.precondition))
-    .filter((transition) => JSON.stringify(transition.precondition).includes(playerActorId))
-    .map((transition) => transition.description.trim())
-    .filter(Boolean);
   const currentLocation = storyPackage.entityResourceGraph.locations.find(
     (location) => location.locationId === playerState.locationId,
   );
@@ -889,11 +981,9 @@ function playerActionAffordances(storyPackage: MysteryStoryPackage, state: Myste
     "梳理已经掌握的信息并继续追查",
     "等待片刻并观察世界如何变化",
   ].filter((value): value is string => Boolean(value));
-  return [...new Set([
-    ...contextualActions.slice(0, 4),
-    ...storyActions.slice(0, 2),
-    ...contextualActions.slice(4),
-  ])].slice(0, 6);
+  // Story Package 转换包含裁决器需要知道的隐藏主线骨架，不能直接当成玩家提示。
+  // 玩家可见的下一步只依据当前可感知状态给出通用方向，具体主线入口应由发现事件自然暴露。
+  return [...new Set(contextualActions)].slice(0, 6);
 }
 
 export function buildMysteryPlayerVisiblePacket(input: {
@@ -968,7 +1058,7 @@ export function buildMysteryNarrativeFallback(packet: PlayerVisiblePacket) {
   if (packet.gameEnded && packet.endingName && !paragraphs.some((paragraph) => paragraph.includes(packet.endingName!))) {
     paragraphs.push(`故事抵达了结局「${packet.endingName}」。`);
   }
-  return [...new Set(paragraphs)].join("\n\n");
+  return preserveMysteryNpcExpressions([...new Set(paragraphs)].join("\n\n"), packet);
 }
 
 export async function processMysteryTurn(input: {
@@ -1173,6 +1263,9 @@ export async function processMysteryTurn(input: {
         narrative = buildMysteryNarrativeFallback(packet);
       }
     }
+    // 最终发布边界再次执行确定性补齐。无论正文来自首稿、修复稿还是降级摘要，
+    // 已批准且玩家可见的 NPC 原话都不能在消息落库前丢失。
+    narrative = preserveMysteryNpcExpressions(narrative, packet);
     await refreshCancellation();
     throwIfCancelled();
     const connection = await pool.getConnection();

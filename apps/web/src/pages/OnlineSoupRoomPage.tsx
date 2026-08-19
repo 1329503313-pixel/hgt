@@ -42,9 +42,9 @@ type ProgressQuestion = {
   sender: { id: string | null; nickname: string; avatar: string | null; vipLevel: OnlineSoupMessage["senderVipLevel"]; vipActive: boolean };
   createdAt: string;
 };
-type RoundClue = Pick<OnlineSoupMessage, "id" | "sequence" | "content" | "createdAt">;
+type RoundClue = Pick<OnlineSoupMessage, "id" | "sequence" | "content" | "createdAt"> & { number?: number };
 type ProgressPage = { roundId: string | null; aiProgress: number | null; questions: ProgressQuestion[]; hasMore: boolean; nextCursor: string | null };
-type CluePage = { roundId: string | null; clues: RoundClue[]; hasMore: boolean; nextCursor: string | null };
+type CluePage = { contextId?: string | null; roundId: string | null; clues: RoundClue[]; hasMore: boolean; nextCursor: string | null };
 type MentionRequest = { userId: string; nickname: string; key: number };
 type MaterialPublishTarget = {
   kind: "surface" | "bottom";
@@ -162,6 +162,7 @@ export default function OnlineSoupRoomPage() {
   const [hostPanelGroup, setHostPanelGroup] = useState<"materials" | "round">("materials");
   const [hostRoundTab, setHostRoundTab] = useState<"clues" | "progress">("clues");
   const [viewerPanelTab, setViewerPanelTab] = useState<"surface" | "clues" | "progress">("surface");
+  const [mysteryPanelTab, setMysteryPanelTab] = useState<"mystery" | "clues">("mystery");
   const [membersOpen, setMembersOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [clueOpen, setClueOpen] = useState(false);
@@ -171,6 +172,7 @@ export default function OnlineSoupRoomPage() {
   const [progressLoading, setProgressLoading] = useState(false);
   const [surfacePublishOpen, setSurfacePublishOpen] = useState(false);
   const [clue, setClue] = useState("");
+  const [clueSaving, setClueSaving] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [materialPublishTarget, setMaterialPublishTarget] = useState<MaterialPublishTarget | null>(null);
   const [materialPublishing, setMaterialPublishing] = useState(false);
@@ -466,46 +468,55 @@ export default function OnlineSoupRoomPage() {
 
   const loadClues = useCallback(async (force = false) => {
     if (leavingRoomRef.current) return;
-    const initialRoundId = snapshotRef.current?.room.currentRoundId;
-    if (!initialRoundId) return;
+    const currentSnapshot = snapshotRef.current;
+    const initialContextId = currentSnapshot?.room.contentType === "mystery"
+      ? currentSnapshot.room.mystery?.runId
+      : currentSnapshot?.room.currentRoundId;
+    if (!initialContextId) return;
     if (cluesPending.current) {
       cluesQueued.current = true;
       return;
     }
-    if (!force && cluesLoadedRoundId.current === initialRoundId) return;
+    if (!force && cluesLoadedRoundId.current === initialContextId) return;
     cluesPending.current = true;
     const showInitialLoading = roundCluesRef.current.length === 0;
     if (showInitialLoading) setCluesLoading(true);
     try {
       do {
         cluesQueued.current = false;
-        const requestedRoundId = snapshotRef.current?.room.currentRoundId;
-        if (!requestedRoundId) break;
+        const requestedSnapshot = snapshotRef.current;
+        const requestedContextId = requestedSnapshot?.room.contentType === "mystery"
+          ? requestedSnapshot.room.mystery?.runId
+          : requestedSnapshot?.room.currentRoundId;
+        if (!requestedContextId) break;
         let after = "";
         let hasMore = true;
-        let responseRoundId: string | null = requestedRoundId;
+        let responseContextId: string | null = requestedContextId;
         const clues: RoundClue[] = [];
         while (hasMore) {
           const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
           const page = await api<CluePage>(`/api/online-soup/rooms/${roomId}/clues${query}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
           if (leavingRoomRef.current) return;
-          responseRoundId = page.roundId;
+          responseContextId = page.contextId ?? page.roundId;
           clues.push(...page.clues);
           hasMore = page.hasMore;
           if (!page.nextCursor) break;
           after = page.nextCursor;
         }
-        const currentRoundId = snapshotRef.current?.room.currentRoundId;
-        if (responseRoundId !== requestedRoundId) {
+        const latestSnapshot = snapshotRef.current;
+        const latestContextId = latestSnapshot?.room.contentType === "mystery"
+          ? latestSnapshot.room.mystery?.runId
+          : latestSnapshot?.room.currentRoundId;
+        if (responseContextId !== requestedContextId) {
           void loadState();
           break;
         }
-        if (cluesQueued.current || currentRoundId !== requestedRoundId) {
+        if (cluesQueued.current || latestContextId !== requestedContextId) {
           cluesQueued.current = true;
           continue;
         }
         setRoundClues(clues);
-        cluesLoadedRoundId.current = requestedRoundId;
+        cluesLoadedRoundId.current = requestedContextId;
       } while (cluesQueued.current && !leavingRoomRef.current);
     } catch (error) {
       if (leavingRoomRef.current || isAbortError(error)) return;
@@ -639,18 +650,20 @@ export default function OnlineSoupRoomPage() {
     if (soupExpanded && (hostViewingProgress || viewerViewingProgress)) void loadProgress();
   }, [hostPanelGroup, hostRoundTab, latestMessageId, loadProgress, snapshot?.me.isHost, snapshot?.room.currentRoundId, soupExpanded, viewerPanelTab]);
   useEffect(() => {
-    const roundId = snapshot?.room.currentRoundId ?? null;
+    const clueContextId = snapshot?.room.contentType === "mystery"
+      ? snapshot.room.mystery?.runId ?? null
+      : snapshot?.room.currentRoundId ?? null;
     setRoundClues([]);
     setProgressQuestions([]);
     cluesLoadedRoundId.current = null;
     progressLoadedRoundId.current = null;
     if (cluesPending.current) cluesQueued.current = true;
     if (progressPending.current) progressQueued.current = true;
-    if (roundId) {
+    if (clueContextId) {
       void loadClues();
-      void loadProgress();
+      if (snapshot?.room.contentType !== "mystery") void loadProgress();
     }
-  }, [loadClues, loadProgress, snapshot?.room.currentRoundId]);
+  }, [loadClues, loadProgress, snapshot?.room.contentType, snapshot?.room.currentRoundId, snapshot?.room.mystery?.runId]);
   useEffect(() => {
     const input = messageInputRef.current;
     if (!input) return;
@@ -686,6 +699,7 @@ export default function OnlineSoupRoomPage() {
     setHostPanelGroup("materials");
     setSoupTab("surface");
     setHostRoundTab("clues");
+    setMysteryPanelTab("mystery");
   }, [snapshot?.room.currentRoundId, snapshot?.room.mystery?.id, snapshot?.room.soup?.id]);
 
   useEffect(() => {
@@ -920,8 +934,21 @@ export default function OnlineSoupRoomPage() {
   }
 
   async function publishClue() {
-    if (!clue.trim()) return;
-    try { await hostAction("clues", { content: clue }); setClue(""); setClueOpen(false); } catch { /* toast above */ }
+    if (!clue.trim() || clueSaving) return;
+    setClueSaving(true);
+    try {
+      await hostAction("clues", { content: clue });
+      setClue("");
+      setClueOpen(false);
+      if (mysteryMode) setMysteryPanelTab("clues");
+    } catch { /* toast above */ }
+    finally { setClueSaving(false); }
+  }
+
+  function closeClueModal() {
+    if (clueSaving) return;
+    setClueOpen(false);
+    setClue("");
   }
 
   async function publishSurface(surfaceIndex: number) {
@@ -1233,12 +1260,18 @@ export default function OnlineSoupRoomPage() {
     : visibleProgressQuestions
   ).filter((question) => !question.answer).length;
   const assistantPanelTab = isHost
-    ? hostPanelGroup === "round" ? hostRoundTab : null
-    : viewerPanelTab === "surface" ? null : viewerPanelTab;
+    ? mysteryMode
+      ? mysteryPanelTab === "clues" ? "clues" : null
+      : hostPanelGroup === "round" ? hostRoundTab : null
+    : mysteryMode
+      ? mysteryPanelTab === "clues" ? "clues" : null
+      : viewerPanelTab === "surface" ? null : viewerPanelTab;
   const assistantListIdentity = assistantPanelTab === "clues"
     ? newestFirstClueMessages[0]?.id ?? null
     : assistantPanelTab === "progress" ? newestFirstProgressQuestions[0]?.id ?? null : null;
-  const assistantRoundId = snapshot?.room.currentRoundId ?? null;
+  const assistantRoundId = mysteryMode
+    ? snapshot?.room.mystery?.runId ?? null
+    : snapshot?.room.currentRoundId ?? null;
   useLayoutEffect(() => {
     const container = assistantScrollRef.current;
     const previous = assistantScrollBeforeUpdate.current;
@@ -1297,7 +1330,7 @@ export default function OnlineSoupRoomPage() {
     {snapshot.room.status === "preparing" && (snapshot.room.soup || snapshot.room.mystery) && <FloatingAction label={mysteryMode ? "更换谜局" : "更换海龟汤"} onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
     {snapshot.room.status === "playing" && <>
       {canHumanHost && <>
-        <FloatingAction tone="amber" label="发布线索" onClick={() => { if (mobile) setHostActionsOpen(false); setClueOpen(true); }} />
+        <FloatingAction tone="amber" label="发布线索" onClick={() => { if (mobile) setHostActionsOpen(false); setClue(""); setClueOpen(true); }} />
         {unpublishedSurfaces.length > 0 && <FloatingAction tone="primary" label="发布补充汤面" onClick={() => { if (mobile) setHostActionsOpen(false); setSurfacePublishOpen(true); }} />}
         <FloatingAction tone="primary" label="发布汤底" onClick={() => { if (mobile) setHostActionsOpen(false); setPublishOpen(true); }} />
       </>}
@@ -1306,6 +1339,7 @@ export default function OnlineSoupRoomPage() {
     {!mysteryMode && snapshot.room.status !== "playing" && aiHosted && <FloatingAction label="真人主持" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("human"); }} />}
     {!mysteryMode && snapshot.room.status !== "playing" && !aiHosted && snapshot.room.soup?.enableAiGame && <FloatingAction label="AI主持" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("ai"); }} />}
     {snapshot.room.status === "ended" && <FloatingAction tone="primary" label={mysteryMode ? "更换谜局" : "更换海龟汤"} onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
+    {mysteryMode && snapshot.room.status === "playing" && <FloatingAction tone="amber" label="记录线索" onClick={() => { if (mobile) setHostActionsOpen(false); setClue(""); setClueOpen(true); }} />}
     <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />
   </>;
 
@@ -1337,13 +1371,21 @@ export default function OnlineSoupRoomPage() {
           {mysteryMode && snapshot.room.mystery && <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded ? "flex-1" : "shrink-0"}`}>
             <div className="flex shrink-0 items-center gap-2 px-3 py-2.5">
               {isHost && snapshot.room.status === "preparing" ? <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left" onClick={openSoupSelector} aria-label="更换谜局"><BookOpen size={17} className="shrink-0 text-primary" /><span className="truncate text-sm font-black text-ink">{snapshot.room.mystery.title}</span></button> : <div className="flex min-w-0 flex-1 items-center gap-2"><BookOpen size={17} className="shrink-0 text-primary" /><span className="truncate text-sm font-black text-ink">{snapshot.room.mystery.title}</span></div>}
-              <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-black text-primary">谜局</span>
+              <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5" role="tablist" aria-label="谜局资料">
+                <button type="button" role="tab" aria-selected={mysteryPanelTab === "mystery"} className={`inline-flex min-h-11 items-center gap-1 rounded-md px-2.5 text-[11px] font-black transition ${mysteryPanelTab === "mystery" ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setMysteryPanelTab("mystery"); setSoupExpanded(true); }}><BookOpen size={13} />谜局</button>
+                <button type="button" role="tab" aria-selected={mysteryPanelTab === "clues"} className={`inline-flex min-h-11 items-center gap-1 rounded-md px-2.5 text-[11px] font-black transition ${mysteryPanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setMysteryPanelTab("clues"); setSoupExpanded(true); void loadClues(); }}><Lightbulb size={13} />线索{roundClues.length > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[10px] leading-4 text-amber-800">{roundClues.length > 99 ? "99+" : roundClues.length}</span>}</button>
+              </div>
               <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink" onClick={() => setSoupExpanded((expanded) => !expanded)} aria-label={soupExpanded ? "收起背景介绍" : "展开背景介绍"}>{soupExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>
             </div>
-            {soupExpanded && <div className="min-h-0 flex-1 overflow-y-auto border-t border-line p-4">
-              <h2 className="text-xs font-black tracking-wide text-muted">背景介绍</h2>
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-ink">{snapshot.room.mystery.background}</p>
-              <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-bold leading-5 text-blue-800">房间不会展示故事内容、人物秘密、预设结局或内部规则。只有房主可提交正式行动，其他成员可在聊天区讨论。</div>
+            {soupExpanded && <div ref={assistantPanelTab ? assistantScrollRef : undefined} className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-line p-4" onScroll={assistantPanelTab ? updateAssistantScrollPosition : undefined}>
+              {mysteryPanelTab === "mystery" ? <>
+                <h2 className="text-xs font-black tracking-wide text-muted">背景介绍</h2>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-ink">{snapshot.room.mystery.background}</p>
+                <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-bold leading-5 text-blue-800">房间不会展示故事内容、人物秘密、预设结局或内部规则。只有房主可提交正式行动，其他成员可在聊天区讨论。</div>
+              </> : <>
+                {showAssistantScrollToLatest && <div className="pointer-events-none sticky top-0 z-20 flex h-0 justify-end"><button type="button" className="pointer-events-auto grid h-9 w-9 place-items-center rounded-full border border-amber-200 bg-white text-amber-700 shadow-[0_6px_18px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95" onClick={scrollAssistantToLatest} aria-label="回到最新线索" title="回到最新"><ArrowUp size={19} strokeWidth={2.5} /></button></div>}
+                {cluesLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstClueMessages.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstClueMessages.map((record, index) => <article key={record.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {record.number ?? roundClues.length - index}</span><time className="shrink-0 text-[11px] text-muted">{new Date(record.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-ink">{record.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">还没有记录线索</p>}
+              </>}
             </div>}
           </section>}
           {!mysteryMode && <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded && snapshot.room.soup ? "flex-1" : "shrink-0"}`}>
@@ -1572,7 +1614,11 @@ export default function OnlineSoupRoomPage() {
       </div></Modal>}
       {exitChoiceOpen && <Modal onClose={() => setExitChoiceOpen(false)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">离开完整房间</h2><p className="mt-2 text-sm leading-6 text-muted">收起后会继续保持在线，并在桌面右下角接收聊天、线索和进度。</p></div><button className="btn btn-primary !hidden w-full lg:!flex" onClick={minimizeCurrentRoom}><Minimize2 size={17} />收起到右下角</button><button className="btn w-full bg-red-50 text-red-600 hover:bg-red-100" onClick={() => { setExitChoiceOpen(false); setConfirmAction("leave"); }}><LogOut size={17} />{isHost ? "退出房间" : "退出并释放席位"}</button><button className="btn btn-secondary w-full" onClick={() => setExitChoiceOpen(false)}>取消</button></div></Modal>}
       {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "end-round" ? "确认关闭本轮？" : confirmAction === "close" ? "确认解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "end-round" ? "关闭后将结束本轮推理，但不会解散房间，也不会自动发布尚未公布的汤底。" : confirmAction === "close" ? "解散后所有成员都会退出，此操作无法撤销。" : isHost ? snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的本轮会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "end-round") void endRound(); else if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{confirmAction === "end-round" ? "关闭本轮" : confirmAction === "close" ? "确认解散" : "确认退出"}</button></div></div></Modal>}
-      {clueOpen && <Modal onClose={() => setClueOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">发布主持人线索</h2><textarea className="field min-h-32 w-full" maxLength={2000} value={clue} onChange={(e) => setClue(e.target.value)} placeholder="输入给所有玩家看的线索…" /><button className="btn btn-primary w-full" onClick={publishClue}><Lightbulb size={16} /> 发布线索</button></div></Modal>}
+      {clueOpen && <Modal onClose={closeClueModal} hideClose={clueSaving}><div className="space-y-4">
+        <div><h2 className="text-xl font-black text-ink">{mysteryMode ? "记录线索" : "发布主持人线索"}</h2><p className="mt-1 text-sm leading-6 text-muted">{mysteryMode ? "线索会保存到当前谜局存档，继续游戏时仍可查看。" : "线索发布后，房间内所有成员都能看到。"}</p></div>
+        <label className="block"><span className="mb-2 block text-sm font-black text-ink">线索内容</span><textarea autoFocus className="field min-h-36 w-full resize-y text-base leading-6" maxLength={2000} value={clue} disabled={clueSaving} onChange={(event) => setClue(event.target.value)} placeholder={mysteryMode ? "输入需要记录的线索…" : "输入给所有玩家看的线索…"} /></label>
+        <div className="flex items-center justify-between gap-3"><span className="text-xs tabular-nums text-muted">{clue.length}/2000</span><div className="grid min-w-[220px] grid-cols-2 gap-2"><button type="button" className="btn btn-secondary min-h-11" disabled={clueSaving} onClick={closeClueModal}>取消</button><button type="button" className="btn btn-primary min-h-11" disabled={clueSaving || !clue.trim()} onClick={() => void publishClue()}>{clueSaving ? <LoaderCircle size={16} className="animate-spin" /> : <Lightbulb size={16} />}{clueSaving ? "保存中…" : mysteryMode ? "保存" : "发布"}</button></div></div>
+      </div></Modal>}
       {surfacePublishOpen && <Modal onClose={() => setSurfacePublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">发布补充汤面</h2><p className="mt-1 text-sm text-muted">选择一条尚未发布的补充汤面。</p></div><div className="space-y-2">{unpublishedSurfaces.map(({ content: surface, index }) => <button key={index} className="w-full rounded-xl border border-blue-200 bg-blue-50 p-3 text-left transition hover:border-blue-400" onClick={() => setMaterialPublishTarget({ kind: "surface", index, title: `补充汤面 ${index + 1}`, content: surface, endsRound: false })}><span className="text-sm font-black text-blue-800">补充汤面 {index + 1}</span><span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{surface.replace(/<[^>]*>/g, "")}</span></button>)}</div><button className="btn btn-secondary w-full" onClick={() => setSurfacePublishOpen(false)}>取消</button></div></Modal>}
       {honorSelection && !materialPublishTarget && <Modal onClose={() => { if (!honorSelection.submitting) setHonorSelection(null); }} hideClose={honorSelection.submitting}>
         <div className="space-y-4">

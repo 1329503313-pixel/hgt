@@ -27,6 +27,7 @@ import { publicOssUrl } from "./ossStorage.js";
 import { mysteryTurnConflictAction, processMysteryTurn, startOrContinueMysteryRun } from "./mystery/runtime.js";
 import { MysteryInvariantError } from "./mystery/engine.js";
 import { MysteryModelError } from "./mystery/models.js";
+import { mysteryClueContentSchema, nextMysteryClueNumber } from "./mystery/clues.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
@@ -2419,14 +2420,48 @@ router.post("/rooms/:roomId/finish-vote", async (req, res) => {
 router.get("/rooms/:roomId/clues", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
-  if (!context.room.current_round_id) {
-    return res.json({ roundId: null, clues: [], hasMore: false, nextCursor: null });
-  }
   const parsed = z.object({
     after: z.string().regex(/^\d+$/).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(100)
   }).safeParse(req.query);
   if (!parsed.success) return fail(res, 400, "线索游标不正确");
+
+  const mysteryMode = String(context.room.content_type ?? "soup") === "mystery";
+  if (mysteryMode) {
+    const runId = context.room.current_mystery_run_id ? String(context.room.current_mystery_run_id) : null;
+    if (!runId) {
+      return res.json({ contextId: null, roundId: null, clues: [], hasMore: false, nextCursor: null });
+    }
+    const params: Array<string | number> = [runId];
+    const afterClause = parsed.data.after ? "AND clue_number > ?" : "";
+    if (parsed.data.after) params.push(parsed.data.after);
+    params.push(parsed.data.limit + 1);
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, clue_number, content, created_at
+       FROM mystery_clues
+       WHERE run_id = ? ${afterClause}
+       ORDER BY clue_number ASC LIMIT ?`,
+      params,
+    );
+    const page = finalizeOnlineSoupRoundPanelPage(rows, parsed.data.limit, (row) => row.clue_number);
+    return res.json({
+      contextId: runId,
+      roundId: null,
+      clues: page.items.map((row) => ({
+        id: String(row.id),
+        sequence: String(row.clue_number),
+        number: Number(row.clue_number),
+        content: String(row.content),
+        createdAt: iso(row.created_at),
+      })),
+      hasMore: page.hasMore,
+      nextCursor: page.nextCursor,
+    });
+  }
+
+  if (!context.room.current_round_id) {
+    return res.json({ contextId: null, roundId: null, clues: [], hasMore: false, nextCursor: null });
+  }
   const params: Array<string | number> = [String(context.room.current_round_id)];
   const afterClause = parsed.data.after ? "AND message_sequence > ?" : "";
   if (parsed.data.after) params.push(parsed.data.after);
@@ -2440,6 +2475,7 @@ router.get("/rooms/:roomId/clues", async (req, res) => {
   );
   const page = finalizeOnlineSoupRoundPanelPage(rows, parsed.data.limit, (row) => row.message_sequence);
   res.json({
+    contextId: String(context.room.current_round_id),
     roundId: String(context.room.current_round_id),
     clues: page.items.map((row) => ({
       id: String(row.id),
@@ -3241,8 +3277,50 @@ router.post("/rooms/:roomId/clues", async (req, res) => {
   const context = await requireHumanHost(req, res);
   if (!context) return;
   if (context.room.status !== "playing") return fail(res, 409, "仅推理中可以发布线索");
-  const parsed = z.object({ content: z.string().trim().min(1).max(2000) }).safeParse(req.body);
+  const parsed = z.object({ content: mysteryClueContentSchema }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "线索内容不正确");
+
+  if (String(context.room.content_type ?? "soup") === "mystery") {
+    const runId = context.room.current_mystery_run_id ? String(context.room.current_mystery_run_id) : null;
+    if (!runId) return fail(res, 409, "当前谜局存档不存在");
+    const clueId = nanoid();
+    const connection = await pool.getConnection();
+    let clueNumber = 0;
+    try {
+      await connection.beginTransaction();
+      const [[run]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT id FROM mystery_runs
+         WHERE id = ? AND owner_user_id = ? AND status = 'active'
+         LIMIT 1 FOR UPDATE`,
+        [runId, context.user.id],
+      );
+      if (!run) {
+        await connection.rollback();
+        return fail(res, 409, "当前谜局存档已结束或不属于房主");
+      }
+      const [[latest]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT COALESCE(MAX(clue_number), 0) AS latest_number FROM mystery_clues WHERE run_id = ?",
+        [runId],
+      );
+      clueNumber = nextMysteryClueNumber(latest?.latest_number);
+      await connection.query(
+        `INSERT INTO mystery_clues (id, run_id, clue_number, content, recorded_by)
+         VALUES (?, ?, ?, ?, ?)`,
+        [clueId, runId, clueNumber, parsed.data.content, context.user.id],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      throw error;
+    } finally {
+      connection.release();
+    }
+    const activitySequence = await recordRoomActivity(context.room.id, "clue", context.user.id, clueId);
+    res.status(201).json({ ok: true, clue: { id: clueId, number: clueNumber } });
+    void notifyRoom(context.room.id, "clue", { activitySequence, activityType: "clue", mysteryRunId: runId, clueNumber });
+    return;
+  }
+
   const clueId = nanoid();
   await pool.query("INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, ?, 'clue', ?)", [clueId, context.room.id, context.room.current_round_id, context.user.id, parsed.data.content]);
   await systemMessage(context.room.id, context.room.current_round_id, "主持人发布了一条线索");
