@@ -16,6 +16,7 @@ type SeoRouteDependencies = {
 type SeoPage = {
   title: string;
   description: string;
+  heading?: string;
   canonical: string;
   robots: "index,follow" | "noindex,nofollow";
   type?: "website" | "article";
@@ -47,6 +48,11 @@ function descriptionFrom(...values: unknown[]) {
   return text.length > 150 ? `${text.slice(0, 147)}…` : text;
 }
 
+function headingFrom(value: unknown) {
+  const text = plainText(value) || SITE_NAME;
+  return text.slice(0, 150);
+}
+
 function normalizedSiteUrl(siteUrl: string) {
   return siteUrl.trim().replace(/\/+$/, "");
 }
@@ -58,6 +64,7 @@ function safeJson(value: unknown) {
 export function renderSeoHtml(template: string, page: SeoPage) {
   const title = escapeHtml(page.title);
   const description = escapeHtml(page.description);
+  const heading = escapeHtml(headingFrom(page.heading ?? page.title));
   const canonical = escapeHtml(page.canonical);
   const type = page.type ?? "website";
   const additions = [
@@ -70,13 +77,15 @@ export function renderSeoHtml(template: string, page: SeoPage) {
     `<meta name="twitter:card" content="summary" />`,
     page.jsonLd ? `<script type="application/ld+json">${safeJson(page.jsonLd)}</script>` : ""
   ].filter(Boolean).join("\n    ");
+  const fallback = `<div id="root"><main class="seo-fallback" data-seo-fallback><h1>${heading}</h1><p>${description}</p></main></div>`;
 
   return template
     .replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`)
     .replace(/<meta\s+name=["']description["'][^>]*>/i, `<meta name="description" content="${description}" />`)
     .replace(/<meta\s+name=["']keywords["'][^>]*>/i, `<meta name="keywords" content="${escapeHtml(KEYWORDS)}" />`)
     .replace(/<meta\s+name=["']robots["'][^>]*>/i, `<meta name="robots" content="${page.robots}" />`)
-    .replace("</head>", `    ${additions}\n  </head>`);
+    .replace("</head>", `    ${additions}\n  </head>`)
+    .replace(/<div\s+id=["']root["'][^>]*>[\s\S]*?<\/div>/i, fallback);
 }
 
 export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDependencies) {
@@ -169,6 +178,7 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
       res.type("html").setHeader("Cache-Control", "no-cache");
       return res.send(renderSeoHtml(template, {
         title: `海龟汤详情｜${SITE_NAME}`,
+        heading: "海龟汤详情",
         description: HOME_DESCRIPTION,
         canonical,
         robots: "noindex,nofollow"
@@ -200,6 +210,7 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
     res.type("html").setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
     return res.send(renderSeoHtml(template, {
       title: `${plainText(soup.title)}｜海龟汤推理解谜`,
+      heading: plainText(soup.title),
       description,
       canonical,
       robots: "index,follow",
@@ -233,4 +244,3 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
     }
   };
 }
-

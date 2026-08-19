@@ -150,6 +150,16 @@ export function entitlementTierForRole(role: EntitlementRoleInput): EntitlementT
   return normalized === "vip" || normalized === "backoffice_admin" ? "vip" : "user";
 }
 
+export function entitlementTierForUserState(
+  role: EntitlementRoleInput,
+  vipActive: boolean,
+  subscriptionOnly = false
+): EntitlementTier | null {
+  if (subscriptionOnly) return vipActive ? "vip" : "user";
+  const tier = entitlementTierForRole(role);
+  return tier === "vip" && !vipActive ? "user" : tier;
+}
+
 export function beijingEntitlementDate(now = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
@@ -231,24 +241,19 @@ export async function entitlementLimitForRole(role: EntitlementRoleInput, metric
   return plan[metricPlanKey[metric]] as number | null;
 }
 
-async function effectiveEntitlementPlanForUser(
-  userId: string,
-  role: EntitlementRoleInput,
-  connection: QueryConnection,
-  now = new Date()
+export function entitlementPlanForUserState(
+  plans: Record<EntitlementTier, EntitlementPlan>,
+  currentUser: { role?: unknown; vip_expires_at?: unknown; vip_legacy_active?: unknown; vip_growth_value?: unknown },
+  fallbackRole: EntitlementRoleInput,
+  now = new Date(),
+  subscriptionOnly = false
 ) {
-  const tier = entitlementTierForRole(role);
+  const actualRole = currentUser.role == null ? fallbackRole : normalizeUserRole(currentUser.role);
+  const snapshot = vipGrowthSnapshot({ ...currentUser, role: actualRole }, now);
+  const tier = entitlementTierForUserState(actualRole, snapshot.active, subscriptionOnly);
   if (!tier) return { tier: null, plan: null } as const;
-  const current = await effectiveEntitlementPlans(now);
-  const base = current.plans[tier];
+  const base = plans[tier];
   if (tier !== "vip") return { tier, plan: base } as const;
-  const [rows] = await connection.query<mysql.RowDataPacket[]>(
-    `SELECT role, vip_expires_at, vip_legacy_active, vip_growth_value
-     FROM users WHERE id = ? LIMIT 1`,
-    [userId]
-  );
-  const snapshot = vipGrowthSnapshot(rows[0] ?? { role, vip_growth_value: 0 });
-  if (!snapshot.active) return { tier, plan: base } as const;
   return {
     tier,
     plan: {
@@ -258,6 +263,29 @@ async function effectiveEntitlementPlanForUser(
       dailyExtraFreeDraws: vipBenefitValue(base.dailyExtraFreeDraws, snapshot.level)
     }
   } as const;
+}
+
+async function effectiveEntitlementPlanForUser(
+  userId: string,
+  role: EntitlementRoleInput,
+  connection: QueryConnection,
+  now = new Date(),
+  subscriptionOnly = false
+) {
+  const current = await effectiveEntitlementPlans(now);
+  const [rows] = await connection.query<mysql.RowDataPacket[]>(
+    `SELECT role, vip_expires_at, vip_legacy_active, vip_growth_value
+     FROM users WHERE id = ? LIMIT 1`,
+    [userId]
+  );
+  const row = rows[0];
+  const currentUser = row ? {
+    role: row.role,
+    vip_expires_at: row.vip_expires_at,
+    vip_legacy_active: row.vip_legacy_active,
+    vip_growth_value: row.vip_growth_value
+  } : { role, vip_growth_value: 0 };
+  return entitlementPlanForUserState(current.plans, currentUser, role, now, subscriptionOnly);
 }
 
 async function existingEventAmount(connection: QueryConnection, userId: string, date: string, metric: EntitlementMetric, eventKey: string) {
@@ -294,7 +322,13 @@ async function reserveDailyAmount(options: {
   const duplicateAmount = await existingEventAmount(connection, userId, date, metric, eventKey);
   if (duplicateAmount != null) return { grantedAmount: duplicateAmount, duplicate: true };
 
-  const { plan } = await effectiveEntitlementPlanForUser(userId, role, connection, options.now);
+  const { plan } = await effectiveEntitlementPlanForUser(
+    userId,
+    role,
+    connection,
+    options.now,
+    metric === "extra_free_draw"
+  );
   const limit = plan ? plan[metricPlanKey[metric]] as number | null : null;
   let grantedAmount = requestedAmount;
   if (limit != null) {
@@ -378,7 +412,7 @@ export async function capDailyEntitlement(
 
 export async function dailyEntitlementStatus(userId: string, role: EntitlementRoleInput, metric: EntitlementMetric, now = new Date(), usageScope?: string) {
   const date = beijingEntitlementDate(now);
-  const { plan } = await effectiveEntitlementPlanForUser(userId, role, pool, now);
+  const { plan } = await effectiveEntitlementPlanForUser(userId, role, pool, now, metric === "extra_free_draw");
   const limit = plan ? plan[metricPlanKey[metric]] as number | null : null;
   if (limit == null) return { allowed: true, used: 0, remaining: null, limit: null };
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -436,13 +470,8 @@ export async function ensureDailyEntitlementGrantForUser(userId: string, now = n
     }
     await settleVipGrowthThroughDate(connection, user, date);
     const role = effectiveRoleFromUserRow(user);
-    const tier = entitlementTierForRole(role);
-    if (!tier) {
-      await connection.commit();
-      return;
-    }
-    const { plan } = await effectiveEntitlementPlanForUser(userId, role, connection, now);
-    if (!plan) {
+    const { tier, plan } = await effectiveEntitlementPlanForUser(userId, role, connection, now, true);
+    if (!tier || !plan) {
       await connection.commit();
       return;
     }

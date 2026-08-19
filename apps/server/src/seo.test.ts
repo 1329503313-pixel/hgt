@@ -13,9 +13,10 @@ const template = `<!doctype html>
   <body><div id="root"></div></body>
 </html>`;
 
-test("renderSeoHtml replaces default metadata without changing the app root", () => {
+test("renderSeoHtml replaces metadata and adds crawlable page content", () => {
   const html = renderSeoHtml(template, {
     title: "测试汤题｜海龟汤推理解谜",
+    heading: "测试汤题",
     description: "测试描述",
     canonical: "https://example.com/soup/abc",
     robots: "index,follow",
@@ -27,7 +28,10 @@ test("renderSeoHtml replaces default metadata without changing the app root", ()
   assert.match(html, /name="keywords" content="海龟汤,解谜,推理,烧脑"/);
   assert.match(html, /rel="canonical" href="https:\/\/example\.com\/soup\/abc"/);
   assert.match(html, /property="og:type" content="article"/);
-  assert.match(html, /<div id="root"><\/div>/);
+  assert.match(html, /<main class="seo-fallback" data-seo-fallback>/);
+  assert.match(html, /<h1>测试汤题<\/h1>/);
+  assert.match(html, /<p>测试描述<\/p>/);
+  assert.equal(html.match(/<h1>/g)?.length, 1);
   assert.doesNotMatch(html, /<title>old<\/title>/);
 });
 
@@ -41,9 +45,23 @@ test("renderSeoHtml escapes page metadata and JSON-LD script terminators", () =>
   });
 
   assert.doesNotMatch(html, /<title><script>/);
+  assert.doesNotMatch(html, /<h1><script>/);
+  assert.match(html, /<h1>alert\(1\)<\/h1>/);
   assert.match(html, /name="robots" content="noindex,nofollow"/);
   assert.match(html, /href="https:\/\/example\.com\/\?a=1&amp;b=2"/);
   assert.doesNotMatch(html, /<\/script><script>alert/);
   assert.match(html, /\\u003c\/script>/);
 });
 
+test("renderSeoHtml limits the visible h1 to 150 characters", () => {
+  const heading = "海".repeat(180);
+  const html = renderSeoHtml(template, {
+    title: "长标题",
+    heading,
+    description: "测试描述",
+    canonical: "https://example.com/long",
+    robots: "index,follow"
+  });
+  const renderedHeading = html.match(/<h1>(.*?)<\/h1>/)?.[1] ?? "";
+  assert.equal(renderedHeading.length, 150);
+});

@@ -68,6 +68,29 @@ body {
     "PingFang SC", "HarmonyOS Sans", MiSans, "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif;
 }
 
+.seo-fallback {
+  width: min(100% - 2rem, 72rem);
+  min-height: 100vh;
+  margin-inline: auto;
+  padding: clamp(4rem, 10vw, 8rem) 0;
+}
+
+.seo-fallback h1 {
+  max-width: 56rem;
+  margin: 0;
+  color: #172033;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  line-height: 1.2;
+}
+
+.seo-fallback p {
+  max-width: 48rem;
+  margin: 1.25rem 0 0;
+  color: #64748b;
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
 .app-shell {
   position: relative;
   isolation: isolate;

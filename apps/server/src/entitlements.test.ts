@@ -5,7 +5,9 @@ import {
   beijingEntitlementDate,
   DEFAULT_ENTITLEMENT_PLANS,
   entitlementPlanSchema,
+  entitlementPlanForUserState,
   entitlementTierForRole,
+  entitlementTierForUserState,
   nextBeijingEntitlementDate,
   scopedEntitlementUsageMetric
 } from "./entitlements.js";
@@ -16,6 +18,53 @@ test("后台管理员复用 VIP 权益，超级管理员不受计划限制", () 
   assert.equal(entitlementTierForRole("vip"), "vip");
   assert.equal(entitlementTierForRole("backoffice_admin"), "vip");
   assert.equal(entitlementTierForRole("super_admin"), null);
+});
+
+test("VIP权益跟随数据库实时有效状态，管理员不会获得无限经济权益", () => {
+  assert.equal(entitlementTierForUserState("vip", false), "user");
+  assert.equal(entitlementTierForUserState("backoffice_admin", false), "user");
+  assert.equal(entitlementTierForUserState("backoffice_admin", true), "vip");
+  assert.equal(entitlementTierForUserState("super_admin", false), null);
+  assert.equal(entitlementTierForUserState("super_admin", false, true), "user");
+  assert.equal(entitlementTierForUserState("super_admin", true, true), "vip");
+});
+
+test("VIP失效后立即回收未使用经济权益且不依赖会话旧角色", () => {
+  const now = new Date("2026-08-19T00:00:00.000Z");
+  const plans = {
+    user: { ...DEFAULT_ENTITLEMENT_PLANS.user },
+    vip: {
+      ...DEFAULT_ENTITLEMENT_PLANS.vip,
+      dailyAutoShellGrant: 10,
+      dailyAutoExperienceGrant: 20,
+      dailyExtraFreeDraws: 3
+    }
+  };
+  const activeAdmin = entitlementPlanForUserState(plans, {
+    role: "super_admin",
+    vip_expires_at: "2026-08-20T00:00:00.000Z",
+    vip_growth_value: 5
+  }, "super_admin", now, true);
+  assert.equal(activeAdmin.tier, "vip");
+  assert.equal(activeAdmin.plan?.dailyExtraFreeDraws, 3);
+  assert.equal(activeAdmin.plan?.dailyAutoShellGrant, 10);
+
+  const expiredAdmin = entitlementPlanForUserState(plans, {
+    role: "super_admin",
+    vip_expires_at: "2026-08-18T00:00:00.000Z",
+    vip_growth_value: 5
+  }, "super_admin", now, true);
+  assert.equal(expiredAdmin.tier, "user");
+  assert.equal(expiredAdmin.plan?.dailyExtraFreeDraws, 0);
+  assert.equal(expiredAdmin.plan?.dailyAutoShellGrant, 0);
+
+  const cancelledUserWithStaleSession = entitlementPlanForUserState(plans, {
+    role: "user",
+    vip_expires_at: "2026-08-19T00:00:00.000Z",
+    vip_growth_value: 5
+  }, "vip", now, true);
+  assert.equal(cancelledUserWithStaleSession.tier, "user");
+  assert.equal(cancelledUserWithStaleSession.plan?.dailyExtraFreeDraws, 0);
 });
 
 test("默认配置兼容既有发布规则且不会自动发放资产", () => {
