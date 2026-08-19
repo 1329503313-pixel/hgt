@@ -1,6 +1,7 @@
 param([string]$ApkPath)
 
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot '..\..')
 $appRoot = Join-Path $repoRoot 'apps\app-android'
