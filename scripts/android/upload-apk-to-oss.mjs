@@ -33,6 +33,18 @@ const explicitPathIndex = process.argv.indexOf("--apk");
 const version = readJson(resolve(repoRoot, "apps/app-android/release/version.json"));
 const manifestPath = resolve(artifactRoot, version.versionName, "release-manifest.json");
 const manifest = readJson(manifestPath);
+const worktree = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+  cwd: repoRoot,
+  encoding: "utf8"
+});
+if (worktree.status !== 0) fail("Unable to inspect the Git worktree before APK upload.");
+if (worktree.stdout.trim()) fail("APK upload requires a completely clean Git worktree.");
+const headResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" });
+if (headResult.status !== 0) fail("Unable to resolve the current Git commit before APK upload.");
+const currentCommit = headResult.stdout.trim();
+if (!/^[0-9a-f]{40}$/.test(currentCommit) || manifest.gitCommit !== currentCommit) {
+  fail("The verified APK was not built from the current Git commit. Re-run release:android:prepare after committing all release changes.");
+}
 let apkPath;
 if (explicitPathIndex >= 0) {
   apkPath = resolve(repoRoot, process.argv[explicitPathIndex + 1] ?? "");
@@ -47,6 +59,11 @@ if (relativeApkPath.startsWith("..") || relativeApkPath.split(sep).includes(".."
 }
 if (!apkPath.toLowerCase().endsWith("-release.apk")) fail("Only a signed *-release.apk artifact may be uploaded.");
 if (!statSync(apkPath).isFile()) fail(`APK not found: ${apkPath}`);
+const localBody = readFileSync(apkPath);
+const localHash = createHash("sha256").update(localBody).digest("hex");
+if (localBody.byteLength !== manifest.fileSize || localHash !== manifest.sha256) {
+  fail("The local APK size or SHA-256 does not match release-manifest.json.");
+}
 
 const verification = spawnSync(
   "powershell",

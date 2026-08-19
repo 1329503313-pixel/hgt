@@ -1,9 +1,9 @@
 param([string]$ApkPath)
 
 $ErrorActionPreference = 'Stop'
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot '..\..')
+. (Join-Path $repoRoot 'scripts\release\file-hash.ps1')
 $appRoot = Join-Path $repoRoot 'apps\app-android'
 $version = Get-Content -LiteralPath (Join-Path $appRoot 'release\version.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $expectedCertificate = (Get-Content -LiteralPath (Join-Path $appRoot 'release\signing-certificate.sha256') -Raw).Trim().Replace(':', '').ToLowerInvariant()
@@ -54,17 +54,7 @@ foreach ($forbiddenPermission in @('android.permission.CAMERA', 'android.permiss
     if ($permissions -match [regex]::Escape($forbiddenPermission)) { throw "Unexpected sensitive APK permission: $forbiddenPermission" }
 }
 
-$apkStream = [System.IO.File]::OpenRead($ApkPath)
-try {
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $hash = ([System.BitConverter]::ToString($sha256.ComputeHash($apkStream))).Replace('-', '').ToLowerInvariant()
-    } finally {
-        $sha256.Dispose()
-    }
-} finally {
-    $apkStream.Dispose()
-}
+$hash = Get-HgtFileSha256 -LiteralPath $ApkPath
 Write-Output "Package: com.caqis.hgt"
 Write-Output "Version: $($version.versionName) ($($version.versionCode))"
 Write-Output "Certificate SHA256: $expectedCertificate"

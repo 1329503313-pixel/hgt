@@ -18,7 +18,7 @@
 | 阶段 | 实测/目标 | 说明 |
 |---|---:|---|
 | 类型检查 | 约 35 秒 | Server + Web + 图片/PWA 契约 |
-| 157 项服务端测试 | 约 8 秒 | 可与部分只读审计并行 |
+| 服务端测试（数量以当前测试输出为准） | 约 8–15 秒 | 必须全部通过，不在 Runbook 固定用例数 |
 | Web/Server 全量本地构建 | 约 26 秒 | 验证生产编译 |
 | Android Release 冷构建 | 约 98–120 秒 | 包含 Android Web、契约、原生单测、签名 |
 | 已有同提交 APK 复核 | 数秒 | prepare 脚本自动复用 |
@@ -63,6 +63,8 @@ git commit -m "release: prepare <version>"
 
 APK 和生产镜像都绑定这个提交。授权状态的“已完成并失效”可在全部线上验证后单独提交，不需要重新构建 APK。
 
+一旦生成 Release APK，禁止再提交任何源码、构建脚本或发布脚本后继续上传旧 APK。若 APK 生成后发现流程脚本问题，必须先修复并提交，再重新运行 `release:android:prepare`；上传器会强制校验 `release-manifest.json.gitCommit` 与当前 `HEAD` 完全一致。
+
 ## 4. 本地质量门禁
 
 ```powershell
@@ -73,9 +75,32 @@ npm run build:all
 
 全部成功才继续。出现 TypeScript、测试、签名、权限或 Android 契约错误必须停止。
 
-## 5. Android APK：只构建一次
+根级 `npm run check` 已包含 `release:check:tooling`，会固定检查总发布入口、必要阶段、APK 与提交绑定、生产认证预检、远程脚本 LF 行尾，以及关键 Android 发布脚本不得重新依赖 `Get-FileHash`。
 
-### 5.1 构建与验签
+## 5. 唯一标准全量发布入口
+
+正常的 Web + Server + Android 全量发布只使用这一条命令：
+
+```powershell
+npm run release:full -- -ReleaseNotes artifacts/android/<version>/release-notes.txt -ConfirmFullDeployment
+```
+
+执行前必须已经完成版本号、更新说明、代码和发布脚本的最终提交，且工作区完全干净。该入口按固定顺序执行：
+
+1. 校验工作区、当前提交、更新说明和线上最高 `versionCode`；
+2. 类型/契约检查、服务端测试、Web/Server 全量构建、认证源码契约；
+3. Android Release 构建或同提交复用、原生测试、验签；
+4. APK 上传，并从公网重新下载校验大小与 SHA-256；
+5. 生成 Android 更新描述文件；
+6. 运行版本化生产认证预检，再部署 Web/Server；
+7. 发布非强制 Android 更新记录，并验证旧版可更新、当前版不更新、版本/URL/更新说明完全一致；
+8. 输出统一的提交、Android 版本和强制更新状态摘要。
+
+下文的分步命令用于理解、诊断和失败后的幂等恢复，不作为正常发布时的人工操作清单。不得跳过总入口中的门禁，也不得手工拼接 SSH Bash 片段替代版本化脚本。
+
+## 6. Android APK：只构建一次
+
+### 6.1 构建与验签
 
 ```powershell
 npm run release:android:prepare
@@ -83,13 +108,15 @@ npm run release:android:prepare
 
 该命令要求工作区已提交，默认读取受忽略的 `.local/android-signing/signing.properties`。若 manifest 与当前提交、版本和 APK 完全一致则直接复用并验签，否则只执行一次完整 Release 构建。它验证包名、版本、证书 SHA-256、权限和 APK SHA-256。
 
+所有发布路径统一使用 `scripts/release/file-hash.ps1` 中基于 .NET 的 SHA-256 实现，不依赖 `Get-FileHash` 的模块自动加载状态。Android SDK 的 `.bat` 工具执行前后都必须得到相同结果。
+
 只有确实需要重新产生相同提交的二进制时才用：
 
 ```powershell
 ./scripts/release/prepare-android-release.ps1 -ForceRebuild
 ```
 
-### 5.2 上传 OSS
+### 6.2 上传 OSS
 
 ```powershell
 npm run app:android:upload -- --confirm-upload
@@ -104,13 +131,15 @@ npm run app:android:upload -- --confirm-upload
 
 上传脚本会再次验签、禁止覆盖同名对象，并把 `apkUrl` 写回 `release-manifest.json`。错误输出经过脱敏，不打印 ali-oss 完整错误对象。
 
-### 5.3 公网 APK 验证
+上传前还会强制检查：工作区完全干净、manifest 提交等于当前 `HEAD`、本地 APK 大小和 SHA-256 与 manifest 一致。正常发布不要单独手敲上传命令，由 `release:full` 自动带上 `--confirm-upload`，避免遗漏确认参数。
+
+### 6.3 公网 APK 验证
 
 从 `apkUrl` 下载临时副本并比较 manifest 的 SHA-256，同时检查 HTTP 200 和文件大小；临时副本验证后删除。不要只做 HEAD 请求。
 
-## 6. Web/Server 生产部署
+## 7. Web/Server 生产部署
 
-### 6.1 生产白名单包
+### 7.1 生产白名单包
 
 ```powershell
 npm run release:production:bundle
@@ -120,7 +149,7 @@ npm run release:production:bundle
 
 2026-08-13 的未筛选 tar 约 80MB，主要被 Android 启动画面、历史客户端与设计图片放大；白名单 `tar.gz` 实测约 20.7MB，缩小约 74%。生产镜像不需要这些文件。
 
-### 6.2 一键旁路构建与切换
+### 7.2 一键旁路构建与切换
 
 仅在当次已有“全量部署”授权时执行：
 
@@ -130,24 +159,27 @@ npm run release:production:deploy -- -ConfirmFullDeployment
 
 流程：
 
-1. 要求受版本控制工作区干净并创建白名单 `tar.gz`；
-2. 上传到 `/opt/hgt-releases/incoming/`，服务端校验 SHA-256；
-3. 锁定当前容器 ID，防止审计后线上状态被其他操作改变；
-4. 旁路构建 `hgt:<shortCommit>` 并审计镜像无 `.env`；
-5. 从当前容器继承完整环境与全部命名卷/绑定挂载，JWT 原文仅保留在远端进程内，用 `-e JWT_SECRET` 注入；候选与正式容器的规范化挂载清单必须和旧容器完全一致；
-6. 在 `127.0.0.1:4001` 以 `RELEASE_CANDIDATE=true` 启动只读候选，不运行迁移、清理、奖励结算、AI 恢复或定时任务，然后验证健康和环境整体哈希；
-7. 旧容器改名为 `hgt-app-rollback-<shortCommit>`，新容器接管 4000；
-8. 再次验证环境/JWT 哈希与 Cookie；任何一步失败自动恢复旧容器。
+1. 要求包含未跟踪文件在内的完整工作区干净，并运行认证源码契约；
+2. 上传版本化 `production-preflight.sh`，只读核验当前容器运行状态、持久化 JWT 与容器 JWT 哈希相同、Cookie 环境正确；预检失败时不上传应用包；
+3. 创建并上传白名单 `tar.gz` 到 `/opt/hgt-releases/incoming/`，服务端校验 SHA-256；
+4. 锁定当前容器 ID，防止审计后线上状态被其他操作改变；
+5. 旁路构建 `hgt:<shortCommit>` 并审计镜像无 `.env`；
+6. 从当前容器继承完整环境与全部命名卷/绑定挂载，JWT 原文仅保留在远端进程内，用 `-e JWT_SECRET` 注入；候选与正式容器的规范化挂载清单必须和旧容器完全一致；
+7. 在 `127.0.0.1:4001` 以 `RELEASE_CANDIDATE=true` 启动只读候选，不运行迁移、清理、奖励结算、AI 恢复或定时任务，然后验证健康和环境整体哈希；
+8. 旧容器改名为 `hgt-app-rollback-<shortCommit>`，新容器接管 4000；
+9. 再次验证环境/JWT 哈希与 Cookie；任何一步失败自动恢复旧容器。
 
-生产脚本是仓库中的 LF 文件，不要在 PowerShell 字符串里拼大段 Bash。PowerShell → SSH 的 `$`、引号、`{{ }}` 和 CRLF 是本次失败重试的主要来源。
+生产脚本是仓库中的 LF 文件，不要在 PowerShell 字符串里拼大段 Bash。尤其禁止用双引号 PowerShell 参数传递含 `$()`、`$变量`、`{{ }}` 的远程审计命令；生产预检和部署必须分别使用版本化的 `production-preflight.sh` 与 `production-deploy.sh`。
 
-### 6.3 最终只读检查
+候选与正式容器启动轮询会静默处理预期内的连接重置；只有达到重试上限才输出容器日志并失败，避免把正常冷启动噪声误判为部署故障。
+
+### 7.3 最终只读检查
 
 必须验证正式首页和健康接口 200、Android CORS 正确、当前镜像/提交正确、日志无致命错误、JWT/环境哈希不变、Cookie 源码契约不变。保留停止状态的上一个容器作为短期回滚点，稳定观察后再单独授权清理。
 
-## 7. 发布 Android 更新记录
+## 8. 发布 Android 更新记录
 
-### 7.1 更新说明与描述文件
+### 8.1 更新说明与描述文件
 
 准备受忽略的纯文本文件，每行一条说明：
 
@@ -157,7 +189,7 @@ npm run release:android:descriptor -- --notes artifacts/android/<version>/releas
 
 生成 `android-release.json`，默认最低支持版本 `0`、启用、非强制，APK URL/SHA 来自已上传且验签的 manifest。
 
-### 7.2 幂等发布
+### 8.2 幂等发布
 
 仅在当次已有“全量部署”授权时执行：
 
@@ -167,9 +199,11 @@ npm run release:android:publish -- -Descriptor artifacts/android/<version>/andro
 
 包装脚本把发布器与描述文件临时复制进正式容器，使用容器现有管理员配置登录自身 API；JWT/密码不离开容器，临时文件始终清理。发布器只走现有管理 API；同版本同内容视为幂等成功，同版本不同内容失败；新增前后比较其他全部记录；发布后自动验证旧版本可更新且非强制、当前版本不更新。
 
+更新检查接口的发布信息是顶层字段：`latestVersionCode`、`latestVersionName`、`apkUrl`、`releaseNotes`、`updateAvailable`、`forceUpdate`，不存在 `release.versionCode` 这类嵌套结构。标准发布器会直接校验这些字段并输出摘要，不再另写临时人工解析命令。
+
 不要依赖浏览器会话或本机 `.env` 的管理员初始密码：浏览器可能被本机策略阻止，初始密码也可能早已被修改。
 
-## 8. 本次踩坑与预防
+## 9. 踩坑复盘与已固化预防
 
 | 踩坑 | 根因 | 固化措施 |
 |---|---|---|
@@ -184,8 +218,25 @@ npm run release:android:publish -- -Descriptor artifacts/android/<version>/andro
 | README 指示生成新 JWT | 旧文档与永久规则冲突 | README 引用本 Runbook，禁止生产轮换 JWT |
 | Cookie 名称与永久规则不一致 | 迁移代码把 `hgt_session` 设为了新主名 | 新写入回归 `hgt_token`，保留 `hgt_session` 读取兼容，构建门禁固定检查 |
 | 旁路候选会写库 | 服务启动即执行迁移、清理和结算任务 | `RELEASE_CANDIDATE=true` 只做 DB 连通与 HTTP/静态资源验证 |
+| APK 验签后哈希命令消失 | Android SDK 批处理工具执行后 PowerShell 模块自动加载不可靠，单纯 `Import-Module` 仍可能失效 | 发布构建、复用和验签统一调用基于 .NET 的 `Get-HgtFileSha256` |
+| 上传首次漏传确认参数 | 分步人工执行时遗漏 `--confirm-upload` | 正常发布只运行 `release:full`，由总入口固定传参 |
+| APK 与最终部署提交不一致 | APK 构建后又修复并提交发布脚本，但上传器未绑定当前 HEAD | 上传前强制验证干净工作区和 `manifest.gitCommit === HEAD`；任何后续提交都必须重新 prepare |
+| 生产认证预检命令本地展开 | PowerShell 双引号提前执行了远端 Bash 的 `$()` | 使用版本化 LF `production-preflight.sh`，禁止临时拼接远端 Shell |
+| 正常冷启动显示大量连接重置 | 健康轮询把预期失败写到 stderr | 轮询静默重试，达到上限才输出日志并回滚 |
+| 人工读取更新接口得到空版本 | 错把顶层响应当作 `release` 嵌套对象 | 发布器固定校验顶层字段并输出版本、URL、说明匹配结果 |
 
-## 9. 进一步优化
+### 9.1 失败恢复边界
+
+| 失败阶段 | 线上影响 | 恢复方式 |
+|---|---|---|
+| 本地检查 / Android prepare | 无 | 修复并提交后从 `release:full` 重新开始 |
+| APK 上传前校验 | 无 | 不得绕过；确保 manifest 与 HEAD 一致后重新 prepare |
+| APK 已上传、Web/Server 未部署 | 仅新增不可变 APK 对象，无客户端可见记录 | 修复后复用同提交产物，重跑总入口 |
+| Web/Server 候选或切换失败 | 自动回滚旧容器，不发布 Android 记录 | 查看脚本最后错误与容器日志，修复后重跑 |
+| Web/Server 成功、Android 记录发布失败 | 新 Web/Server 已在线，APK 已上传，但客户端无新提示 | 不回滚健康服务；修复发布问题后幂等重跑发布步骤或总入口 |
+| Android 记录已发布、最终验证失败 | 更新可能已对客户端可见 | 立即停止，不猜测修改记录；先只读核对公开接口，再根据明确授权处理 |
+
+## 10. 进一步优化
 
 1. 使用受信任私有镜像仓库，在 CI 构建后让服务器只 `docker pull`，预计再省 1–2 分钟。
 2. 生成 SBOM/镜像签名，把提交、镜像 digest、APK SHA 和证书指纹关联为发布证明。

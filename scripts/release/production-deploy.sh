@@ -109,7 +109,7 @@ docker run -d --name "$candidate" \
   "$image" >/dev/null
 
 i=0
-until curl -fsS http://127.0.0.1:4001/api/health >/dev/null; do
+until curl -fsS http://127.0.0.1:4001/api/health >/dev/null 2>&1; do
   i=$((i + 1))
   if [ "$i" -ge 30 ]; then
     docker logs --tail 80 "$candidate" >&2
@@ -142,7 +142,7 @@ docker run -d --name "$current" \
   "$image" >/dev/null
 
 i=0
-until curl -fsS http://127.0.0.1:4000/api/health >/dev/null; do
+until curl -fsS http://127.0.0.1:4000/api/health >/dev/null 2>&1; do
   i=$((i + 1))
   if [ "$i" -ge 30 ]; then
     docker logs --tail 80 "$current" >&2

@@ -5,9 +5,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot '..\..')
+. (Join-Path $repoRoot 'scripts\release\file-hash.ps1')
 $appRoot = Join-Path $repoRoot 'apps\app-android'
 $androidRoot = Join-Path $appRoot 'android'
 $versionFile = Join-Path $appRoot 'release\version.json'
@@ -116,7 +116,7 @@ try {
     $artifactPath = Join-Path $artifactDir $artifactName
     Copy-Item -LiteralPath $sourceApk -Destination $artifactPath -Force
 
-    $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = Get-HgtFileSha256 -LiteralPath $artifactPath
     $manifest = [ordered]@{
         applicationId = if ($Configuration -eq 'debug') { 'com.caqis.hgt.dev' } else { 'com.caqis.hgt' }
         versionName = [string]$version.versionName

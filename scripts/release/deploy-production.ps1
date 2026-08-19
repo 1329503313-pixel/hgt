@@ -13,14 +13,17 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot '..\..')
 $bundleScript = Join-Path $scriptRoot 'create-production-bundle.ps1'
 $remoteScript = Join-Path $scriptRoot 'production-deploy.sh'
+$preflightScript = Join-Path $scriptRoot 'production-preflight.sh'
 $remoteCleanupReady = $false
 
 Push-Location $repoRoot
 try {
-    & git diff --quiet
-    if ($LASTEXITCODE -ne 0) { throw 'Tracked working tree changes must be committed before deployment.' }
-    & git diff --cached --quiet
-    if ($LASTEXITCODE -ne 0) { throw 'Staged changes must be committed before deployment.' }
+    $worktreeStatus = @(& git status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the Git worktree before deployment.' }
+    if ($worktreeStatus.Count -gt 0) { throw 'Production deployment requires a completely clean Git worktree.' }
+
+    & npm run release:check:auth
+    if ($LASTEXITCODE -ne 0) { throw 'Production authentication source contract failed.' }
 
     $resolvedCommit = (& git rev-parse --verify "$Commit^{commit}").Trim()
     if ($LASTEXITCODE -ne 0 -or $resolvedCommit -notmatch '^[0-9a-f]{40}$') { throw 'Invalid deployment commit.' }
@@ -34,10 +37,15 @@ try {
     $remoteRoot = '/opt/hgt-releases'
     $remoteBundle = "$remoteRoot/incoming/$($manifest.fileName)"
     $remoteDeployScript = "$remoteRoot/production-deploy.sh"
+    $remotePreflightScript = "$remoteRoot/production-preflight.sh"
     $remoteCleanupReady = $true
 
     & ssh -o BatchMode=yes $ProductionHost "mkdir -p $remoteRoot/incoming"
     if ($LASTEXITCODE -ne 0) { throw 'Unable to prepare the remote release directory.' }
+    & scp -o BatchMode=yes $preflightScript "${ProductionHost}:$remotePreflightScript"
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to upload the production preflight script.' }
+    & ssh -o BatchMode=yes $ProductionHost "sh $remotePreflightScript"
+    if ($LASTEXITCODE -ne 0) { throw 'Production authentication preflight failed; no application bundle was uploaded.' }
     & scp -o BatchMode=yes $bundlePath "${ProductionHost}:$remoteBundle"
     if ($LASTEXITCODE -ne 0) { throw 'Unable to upload the production bundle.' }
     & scp -o BatchMode=yes $remoteScript "${ProductionHost}:$remoteDeployScript"
@@ -58,7 +66,7 @@ try {
     Write-Output 'PUBLIC_HEALTH=ok'
 } finally {
     if ($remoteCleanupReady) {
-        & ssh -o BatchMode=yes $ProductionHost "rm -f $remoteBundle $remoteDeployScript" 2>$null | Out-Null
+        & ssh -o BatchMode=yes $ProductionHost "rm -f $remoteBundle $remoteDeployScript $remotePreflightScript" 2>$null | Out-Null
     }
     Pop-Location
 }

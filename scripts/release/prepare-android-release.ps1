@@ -4,9 +4,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot '..\..')
+. (Join-Path $scriptRoot 'file-hash.ps1')
 
 Push-Location $repoRoot
 try {
@@ -38,7 +38,7 @@ try {
             $manifest.versionCode -eq $version.versionCode -and
             (Test-Path -LiteralPath $candidate)
         if ($reuse) {
-            $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+            $candidateHash = Get-HgtFileSha256 -LiteralPath $candidate
             $reuse = $candidateHash -eq $manifest.sha256
             if ($reuse) { $apkPath = $candidate }
         }

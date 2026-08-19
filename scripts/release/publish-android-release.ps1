@@ -37,15 +37,25 @@ try {
     $oldVersion = [Math]::Max(1, [int]$descriptorData.versionCode - 1)
     $oldManifest = Invoke-RestMethod -Uri "https://hgt.caqis.com/api/app/android-update?versionCode=$oldVersion" -TimeoutSec 20
     $newManifest = Invoke-RestMethod -Uri "https://hgt.caqis.com/api/app/android-update?versionCode=$($descriptorData.versionCode)" -TimeoutSec 20
+    $expectedNotes = @($descriptorData.releaseNotes) | ConvertTo-Json -Compress
+    $publishedNotes = @($oldManifest.releaseNotes) | ConvertTo-Json -Compress
     if (-not $oldManifest.updateAvailable -or $oldManifest.forceUpdate -or
         $oldManifest.latestVersionCode -ne $descriptorData.versionCode -or
-        $oldManifest.apkUrl -ne $descriptorData.apkUrl) {
+        $oldManifest.latestVersionName -ne $descriptorData.versionName -or
+        $oldManifest.minSupportedVersionCode -ne $descriptorData.minSupportedVersionCode -or
+        $oldManifest.apkUrl -ne $descriptorData.apkUrl -or
+        $publishedNotes -ne $expectedNotes) {
         throw 'Old-version Android update verification failed.'
     }
     if ($newManifest.updateAvailable -or $newManifest.latestVersionCode -ne $descriptorData.versionCode) {
         throw 'Latest-version Android update verification failed.'
     }
     Write-Output 'ANDROID_UPDATE_VERIFIED=true'
+    Write-Output "ANDROID_LATEST_VERSION=$($oldManifest.latestVersionName)"
+    Write-Output "ANDROID_LATEST_VERSION_CODE=$($oldManifest.latestVersionCode)"
+    Write-Output 'ANDROID_FORCE_UPDATE=false'
+    Write-Output 'ANDROID_APK_URL_MATCHED=true'
+    Write-Output 'ANDROID_RELEASE_NOTES_MATCHED=true'
 } finally {
     if ($remoteCleanupReady) {
         & ssh -o BatchMode=yes $ProductionHost "rm -f $remotePublisher $remoteDescriptor $remoteRunner" 2>$null | Out-Null

@@ -9,3 +9,5 @@
 - 破坏性同步只能作用于脚本明确创建或明确校验过的生成目录。
 
 生产发布脚本集中在 `scripts/release/`。它们默认拒绝未确认的线上写操作，完整用法、安全不变量、回滚和性能预算见 `docs/生产部署与Android发布Runbook.md`。
+
+Web + Server + Android 的正常全量发布统一从 `npm run release:full -- -ReleaseNotes <path> -ConfirmFullDeployment` 进入。分步脚本仅用于诊断和幂等恢复；不得通过手工拼接 SSH 命令跳过认证预检、提交绑定、APK 公网校验或更新记录验证。
