@@ -47,12 +47,12 @@ export function SoupCard({
         </h2>
         <p className="avatar-name-gap mt-1 flex min-w-0 items-center text-[13px] text-muted">
           {soup.isOriginal && soup.creatorAvatar ? (
-            <img className="h-4 w-4 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
+            <img className="h-4 w-4 shrink-0 rounded-full object-cover" src={soup.creatorAvatar} alt="" />
           ) : (
-            <User size={14} />
+            <User className="shrink-0" size={14} />
           )}
           {soup.isOriginal ? (
-            <VipIdentity nickname={soup.author || soup.creatorName} userLevel={soup.creatorLevel} vipLevel={soup.creatorVipLevel} vipActive={soup.creatorVipActive} equippedBadge={soup.creatorEquippedBadge} className="min-w-0" iconClassName="h-[13px] w-[13px]" badgeClassName="h-[13px] w-[13px]" />
+            <VipIdentity nickname={soup.author || soup.creatorName} userLevel={soup.creatorLevel} vipLevel={soup.creatorVipLevel} vipActive={soup.creatorVipActive} equippedBadge={soup.creatorEquippedBadge} preserveNickname className="min-w-0 flex-1" iconClassName="h-[13px] w-[13px]" badgeClassName="h-[13px] w-[13px]" />
           ) : (
             <span className="min-w-0 truncate">佚名</span>
           )}

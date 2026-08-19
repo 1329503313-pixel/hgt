@@ -12,7 +12,7 @@ import { levelForExperience } from "./levelSystem.js";
 import { canViewAllSoupContentRole, isSuperAdminRole, type UserRole } from "./roles.js";
 import { parseGiftMessage } from "./gifts.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
-import { buildAnswerChangeNotice, onlineSoupAnswerValues, type OnlineSoupAnswerValue } from "./onlineSoupAnswerChange.js";
+import { buildAnswerChangeNotice, buildBestQuestionChangeNotice, onlineSoupAnswerValues, type OnlineSoupAnswerValue } from "./onlineSoupAnswerChange.js";
 import { canViewOnlineSoupHostMaterials, finalizeOnlineSoupRoundPanelPage, ONLINE_SOUP_AI_FINISH_VOTE_PROGRESS, onlineSoupAiFinishDecision, onlineSoupAiProgressChange, onlineSoupAiProgressEvents, requiredOnlineSoupFinishVotes } from "./onlineSoupRoundPanel.js";
 import { selectOnlineSoupHostSuccessor, type OnlineSoupHostCandidate } from "./onlineSoupHostSuccession.js";
 import { AiServiceError, canRequestRoomAiHint, loadAiSoupRoundSnapshot, runRoomAiHint, runRoomAiTurn, splitKeyFactsForSoup, type RoomAiGameState } from "./game.js";
@@ -205,6 +205,7 @@ async function roomById(id: string, db: mysql.Pool | mysql.PoolConnection = pool
        s.host_manual AS soup_manual, s.enable_ai_game AS soup_enable_ai_game,
        soup_creator.role AS soup_creator_role,
        cr.published_surface_indices, cr.published_bottom_indices, cr.ai_progress, cr.ai_hint_count,
+       cr.best_question_message_id,
        cr.ai_soup_snapshot,
        COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title,
        COALESCE(mystery_run.story_background_snapshot, mystery.story_background) AS mystery_background,
@@ -1328,7 +1329,6 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderId: row.sender_id ? String(row.sender_id) : null,
     senderName: row.sender_name ? String(row.sender_name) : null,
     senderAvatar: row.sender_id && row.sender_has_avatar ? `/api/media/users/${encodeURIComponent(String(row.sender_id))}/avatar` : null,
-    senderLevel: levelForExperience(row.sender_experience),
     senderVipGrowthValue: Number(row.sender_vip_growth_value ?? 0),
     senderVipLevel: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).level,
     senderVipActive: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).active,
@@ -1346,6 +1346,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     contentIndex: row.content_index == null ? null : Number(row.content_index),
     questionNumber: row.question_number == null ? null : Number(row.question_number),
     answer: row.answer ? String(row.answer) : null,
+    isBestQuestion: Boolean(room.best_question_message_id && String(room.best_question_message_id) === String(row.id)),
     aiPreliminaryAnswer: null,
     aiStatus: String(row.ai_status ?? "none"),
     aiError: row.ai_error ? String(row.ai_error) : null,
@@ -1503,6 +1504,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
       playerCapacity: PLAYER_CAPACITY,
       participantCapacity: String(room.host_mode ?? "human") === "ai" ? PLAYER_CAPACITY : ONLINE_SOUP_PARTICIPANT_CAPACITY,
       currentRoundId: room.current_round_id ? String(room.current_round_id) : null,
+      bestQuestionMessageId: room.best_question_message_id ? String(room.best_question_message_id) : null,
       soup: room.current_soup_id ? {
         id: String(room.current_soup_id),
         title: roundSoupSnapshot?.title ?? String(room.soup_title),
@@ -2138,6 +2140,7 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
         number: Number(row.question_number ?? 0),
         content: String(row.content),
         answer: row.answer ? String(row.answer) : null,
+        isBestQuestion: Boolean(context.room.best_question_message_id && String(context.room.best_question_message_id) === String(row.id)),
         aiPreliminaryAnswer: null,
         aiStatus: String(row.ai_status ?? "none"),
         aiError: row.ai_error ? String(row.ai_error) : null,
@@ -3124,10 +3127,11 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
   const connection = await pool.getConnection();
   let recalledAt = "";
   let recalledMysteryRunId: string | null = null;
+  let clearedBestQuestion = false;
   try {
     await connection.beginTransaction();
     const [[message]] = await connection.query<mysql.RowDataPacket[]>(
-      `SELECT id, sender_id, message_type, mystery_run_id, answer, ai_status, recalled_at,
+      `SELECT id, sender_id, message_type, round_id, mystery_run_id, answer, ai_status, recalled_at,
          created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
        FROM online_soup_messages
        WHERE id = ? AND room_id = ? LIMIT 1 FOR UPDATE`,
@@ -3179,6 +3183,13 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
       await connection.rollback();
       return fail(res, 409, "消息状态已变化，无法撤回");
     }
+    if (message.message_type === "question" && message.round_id) {
+      const [roundResult] = await connection.query<mysql.ResultSetHeader>(
+        "UPDATE online_soup_rounds SET best_question_message_id = NULL WHERE id = ? AND best_question_message_id = ?",
+        [message.round_id, req.params.messageId]
+      );
+      clearedBestQuestion = roundResult.affectedRows > 0;
+    }
     const [[stored]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT recalled_at FROM online_soup_messages WHERE id = ? LIMIT 1",
       [req.params.messageId]
@@ -3213,6 +3224,9 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
     senderId: context.user.id,
     recalledAt
   });
+  if (clearedBestQuestion) {
+    void notifyRoom(context.room.id, "best_question_changed", { bestQuestionMessageId: null });
+  }
   if (String(context.room.host_mode ?? "human") === "ai") {
     void processRoomAiQuestions(context.room.id);
   }
@@ -3267,6 +3281,72 @@ router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
   void notifyRoom(context.room.id, "answer_changed", {
     messageId: req.params.messageId,
     answer: parsed.data.answer,
+    notificationCreated,
+    activitySequence,
+    activityType: "progress"
+  });
+});
+
+router.patch("/rooms/:roomId/questions/:messageId/best-question", async (req, res) => {
+  const context = await requireHumanHost(req, res);
+  if (!context) return;
+  if (String(context.room.content_type ?? "soup") === "mystery") return fail(res, 409, "谜局行动不能设置最佳提问");
+  if (context.room.status !== "playing" || !context.room.current_round_id) return fail(res, 409, "仅推理中可以设置最佳提问");
+  const parsed = z.object({ selected: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "最佳提问状态不正确");
+
+  const connection = await pool.getConnection();
+  let notificationCreated = false;
+  let activitySequence = "0";
+  let nextMessageId: string | null = null;
+  try {
+    await connection.beginTransaction();
+    const [[round]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT best_question_message_id FROM online_soup_rounds WHERE id = ? AND status = 'playing' LIMIT 1 FOR UPDATE",
+      [context.room.current_round_id]
+    );
+    if (!round) {
+      await connection.rollback();
+      return fail(res, 409, "当前回合状态已变化");
+    }
+    const [[question]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, question_number FROM online_soup_messages
+       WHERE id = ? AND room_id = ? AND round_id = ? AND message_type = 'question' AND recalled_at IS NULL
+       LIMIT 1`,
+      [req.params.messageId, context.room.id, context.room.current_round_id]
+    );
+    if (!question) {
+      await connection.rollback();
+      return fail(res, 404, "提问不存在");
+    }
+    const previousMessageId = round.best_question_message_id ? String(round.best_question_message_id) : null;
+    nextMessageId = parsed.data.selected ? String(question.id) : null;
+    if (!parsed.data.selected && previousMessageId !== String(question.id)) nextMessageId = previousMessageId;
+    await connection.query(
+      "UPDATE online_soup_rounds SET best_question_message_id = ? WHERE id = ?",
+      [nextMessageId, context.room.current_round_id]
+    );
+    const noticeContent = buildBestQuestionChangeNotice(previousMessageId, nextMessageId, Number(question.question_number));
+    if (noticeContent) {
+      await connection.query(
+        `INSERT INTO online_soup_messages
+          (id, room_id, round_id, sender_id, message_type, content, target_message_id)
+         VALUES (?, ?, ?, NULL, 'system', ?, ?)`,
+        [nanoid(), context.room.id, context.room.current_round_id, noticeContent, nextMessageId]
+      );
+      notificationCreated = true;
+    }
+    activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, nextMessageId ?? req.params.messageId, connection);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  res.json({ ok: true, bestQuestionMessageId: nextMessageId, notificationCreated });
+  void notifyRoom(context.room.id, "best_question_changed", {
+    bestQuestionMessageId: nextMessageId,
     notificationCreated,
     activitySequence,
     activityType: "progress"
@@ -3441,8 +3521,8 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
       }
     }
     await connection.query(
-      "UPDATE online_soup_rounds SET published_bottom_indices = ?, status = ?, ended_at = ? WHERE id = ?",
-      [JSON.stringify(nextPublished), ended ? "ended" : "playing", ended ? new Date() : null, context.room.current_round_id]
+      "UPDATE online_soup_rounds SET published_bottom_indices = ?, best_question_message_id = IF(?, ?, best_question_message_id), status = ?, ended_at = ? WHERE id = ?",
+      [JSON.stringify(nextPublished), ended, ended ? parsed.data.bestQuestionMessageId : null, ended ? "ended" : "playing", ended ? new Date() : null, context.room.current_round_id]
     );
     await connection.query(
       `INSERT INTO online_soup_messages

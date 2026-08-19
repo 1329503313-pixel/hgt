@@ -23,6 +23,11 @@ test("抽卡、慷慨和魅力成就使用产品配置的四阶成就点", () =>
   );
 });
 
+test("闪耀皇冠赠送双方的史诗成就均为 150 成就点", () => {
+  assert.equal(SYSTEM_BADGE_ACHIEVEMENT_POINTS["shiningCrownReceived:epic"], 150);
+  assert.equal(SYSTEM_BADGE_ACHIEVEMENT_POINTS["shiningCrownSent:epic"], 150);
+});
+
 test("后续获得徽章不再按成就点发放等量贝壳", () => {
   assert.equal(calculateBadgeShellReward(150, true, true), 0);
   assert.equal(calculateBadgeShellReward(150, true, false), 0);

@@ -155,6 +155,8 @@ const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints" | "ownershipRate" | 
   { series: "shellWealth", tier: "legend", tierIndex: 4, label: "亿万富豪", description: "贝壳只是一串数字", icon: legendarySystemBadgeIcon("/badges/shell-wealth-legend.png", "亿万富豪"), requirement: "累计获得1000000贝壳", progressCurrent: 0, progressTarget: 1000000, earned: false },
   { series: "shellBalance", tier: "epic", tierIndex: 1, label: "贝壳为王", description: "留在手里的贝壳才是真贝壳", icon: <img src="/badges/shell-balance-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "当前拥有10000贝壳", progressCurrent: 0, progressTarget: 10000, earned: false },
   { series: "excellentAuthor", tier: "epic", tierIndex: 1, label: "优秀作者", description: "平台认证的优秀海龟汤创作者", icon: <img src="/badges/excellent-author.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "优秀作者认证经平台后台审核通过", progressCurrent: 0, progressTarget: 1, earned: false },
+  { series: "shiningCrownReceived", tier: "epic", tierIndex: 1, label: "闪耀皇冠", description: "头顶闪耀的皇冠是我们友谊的证明！", icon: <img src="/api/media/achievement-badges/shining-crown/icon" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "收到一次闪耀皇冠", progressCurrent: 0, progressTarget: 1, earned: false },
+  { series: "shiningCrownSent", tier: "epic", tierIndex: 1, label: "为你加冕", description: "我让亲自为我们的友谊加冕！", icon: <img src="/api/media/achievement-badges/shining-crown/icon" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "送出一次闪耀皇冠", progressCurrent: 0, progressTarget: 1, earned: false },
 ];
 
 export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
@@ -180,7 +182,9 @@ export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "packAllThreeStar:legend": 800,
   "shellWealth:normal": 15, "shellWealth:rare": 40, "shellWealth:epic": 150, "shellWealth:legend": 1000,
   "shellBalance:epic": 150,
-  "excellentAuthor:epic": 150
+  "excellentAuthor:epic": 150,
+  "shiningCrownReceived:epic": 150,
+  "shiningCrownSent:epic": 150
 };
 
 // 徽章文件名未包含内容哈希，版本号用于在图片更新时主动刷新浏览器长期缓存。
@@ -224,6 +228,8 @@ export function buildBadgesFromStats(
     packAllThreeStar: stats.completeThreeStarPackCount,
     shellWealth: stats.totalShellEarned,
     shellBalance: stats.shellBalance,
+    shiningCrownReceived: stats.shiningCrownReceivedCount,
+    shiningCrownSent: stats.shiningCrownSentCount,
   };
   return BADGES.map((badge) => {
     const badgeKey = getBadgeKey(badge);

@@ -21,7 +21,9 @@ export const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "packAllThreeStar:legend": 800,
   "shellWealth:normal": 15, "shellWealth:rare": 40, "shellWealth:epic": 150, "shellWealth:legend": 1000,
   "shellBalance:epic": 150,
-  "excellentAuthor:epic": 150
+  "excellentAuthor:epic": 150,
+  "shiningCrownReceived:epic": 150,
+  "shiningCrownSent:epic": 150
 };
 
 // 抽卡订单只保留最近 10 条，徽章累计进度必须读取不会随历史清理丢失的持有卡牌总数。

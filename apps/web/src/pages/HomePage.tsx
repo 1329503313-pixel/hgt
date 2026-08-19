@@ -103,7 +103,7 @@ function MysteryCatalog({ keyword, onOpen }: { keyword: string; onOpen: (mystery
       <div className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-white p-4 sm:p-5">
         <div className="flex items-start gap-3">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-white"><BookOpen size={22} /></span>
-          <div><h2 className="text-base font-black text-ink">进入一段会记住选择的故事</h2><p className="mt-1 text-sm leading-6 text-muted">谜局通过在线玩汤房间进行。房主提交正式行动，其他成员参与讨论，世界会在你没有关注时继续运转。</p></div>
+          <div><h2 className="text-base font-black text-ink">谜局——AI故事推理挑战</h2><p className="mt-1 text-sm leading-6 text-muted">进入一段架空的故事，自由的做出你的选择，你所做的一切选择和言行都会影响最终的结局。</p></div>
         </div>
       </div>
 

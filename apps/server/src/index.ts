@@ -208,7 +208,11 @@ function isUserOnline(userId: unknown) {
 }
 
 async function broadcastPresenceChanged(userId: string, online: boolean) {
-  const payload: Record<string, unknown> = { userId, online, at: new Date().toISOString() };
+  const payload: Record<string, unknown> = {
+    userId,
+    online,
+    at: new Date().toISOString()
+  };
   if (online) {
     const [[row]] = await pool.query<mysql.RowDataPacket[]>(
       "SELECT nickname, role, vip_growth_value, vip_expires_at, vip_legacy_active FROM users WHERE id = ? LIMIT 1",
@@ -221,6 +225,7 @@ async function broadcastPresenceChanged(userId: string, online: boolean) {
       payload.vipActive = vip.active;
     }
   }
+  payload.platformOnlineCount = visiblyOnlineUsers.size;
   const data = `event: presence_changed\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const clients of userEventClients.values()) {
     for (const client of clients) client.write(data);
@@ -1086,6 +1091,9 @@ async function ownedBadgeIconUrl(userId: string, badgeKey: string) {
     return badge?.icon_url ? String(badge.icon_url) : null;
   }
   const [series, tier] = badgeKey.split(":");
+  if ((series === "shiningCrownReceived" || series === "shiningCrownSent") && tier === "epic") {
+    return "/api/media/achievement-badges/shining-crown/icon";
+  }
   const base = SYSTEM_BADGE_ICON_BASE[series];
   return base && ["normal", "rare", "epic", "legend"].includes(tier) ? `/badges/${base}-${tier}.webp` : null;
 }
@@ -1547,6 +1555,8 @@ type AchievementStats = {
   completeThreeStarPackCount: number;
   totalShellEarned: number;
   shellBalance: number;
+  shiningCrownReceivedCount: number;
+  shiningCrownSentCount: number;
 };
 
 const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; target: number }> = [
@@ -1618,7 +1628,9 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "shellWealth:rare", stat: "totalShellEarned", target: 5_000 },
   { key: "shellWealth:epic", stat: "totalShellEarned", target: 50_000 },
   { key: "shellWealth:legend", stat: "totalShellEarned", target: 1_000_000 },
-  { key: "shellBalance:epic", stat: "shellBalance", target: 10_000 }
+  { key: "shellBalance:epic", stat: "shellBalance", target: 10_000 },
+  { key: "shiningCrownReceived:epic", stat: "shiningCrownReceivedCount", target: 1 },
+  { key: "shiningCrownSent:epic", stat: "shiningCrownSentCount", target: 1 }
 ];
 
 const SYSTEM_BADGE_ACHIEVEMENT_POINTS_SQL = Object.entries(SYSTEM_BADGE_ACHIEVEMENT_POINTS)
@@ -1655,7 +1667,9 @@ const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
   packAllThreeStar: ["土豪真爱粉", "土豪真爱粉", "土豪真爱粉", "土豪真爱粉"],
   shellWealth: ["小土豪", "大富翁", "百万富翁", "亿万富豪"],
   shellBalance: ["贝壳为王", "贝壳为王", "贝壳为王"],
-  excellentAuthor: ["优秀作者", "优秀作者", "优秀作者"]
+  excellentAuthor: ["优秀作者", "优秀作者", "优秀作者"],
+  shiningCrownReceived: ["闪耀皇冠", "闪耀皇冠", "闪耀皇冠"],
+  shiningCrownSent: ["为你加冕", "为你加冕", "为你加冕"]
 };
 
 function badgeNotificationLabel(key: string) {
@@ -1707,7 +1721,9 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     [legendaryCardDrawRows],
     [threeStarRows],
     [completePackRows],
-    [shellRows]
+    [shellRows],
+    [shiningCrownReceivedRows],
+    [shiningCrownSentRows]
   ] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [userId]),
@@ -1766,6 +1782,30 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
           WHERE shell_tx.user_id = u.id AND shell_tx.amount > 0), 0) AS total_shell_earned
        FROM users u WHERE u.id = ? LIMIT 1`,
       [userId]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS count
+       FROM gift_sends sends
+       WHERE sends.recipient_id = ? AND (
+         sends.gift_name_snapshot = '闪耀皇冠'
+         OR sends.gift_id = (
+           SELECT bindings.gift_id FROM system_reward_gift_bindings bindings
+           WHERE bindings.reward_key = 'achievement:shining_crown' LIMIT 1
+         )
+       )`,
+      [userId]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS count
+       FROM gift_sends sends
+       WHERE sends.sender_id = ? AND (
+         sends.gift_name_snapshot = '闪耀皇冠'
+         OR sends.gift_id = (
+           SELECT bindings.gift_id FROM system_reward_gift_bindings bindings
+           WHERE bindings.reward_key = 'achievement:shining_crown' LIMIT 1
+         )
+       )`,
+      [userId]
     )
   ]);
 
@@ -1793,7 +1833,9 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     completePackCount: Number(completePackRows[0]?.complete_pack_count ?? 0),
     completeThreeStarPackCount: Number(completePackRows[0]?.complete_three_star_pack_count ?? 0),
     totalShellEarned: Number(shellRows[0]?.total_shell_earned ?? 0),
-    shellBalance: Number(shellRows[0]?.shell_balance ?? 0)
+    shellBalance: Number(shellRows[0]?.shell_balance ?? 0),
+    shiningCrownReceivedCount: Number(shiningCrownReceivedRows[0]?.count ?? 0),
+    shiningCrownSentCount: Number(shiningCrownSentRows[0]?.count ?? 0)
   };
   achievementStatsCache.set(userId, { expiresAt: Date.now() + 60_000, stats });
   if (achievementStatsCache.size > 1000) {
@@ -3171,6 +3213,7 @@ app.get("/api/circles", async (req, res) => {
     }
   }
   res.json({
+    platformOnlineCount: visiblyOnlineUsers.size,
     circles: rows.map((row) => ({
       id: String(row.id),
       name: String(row.name),

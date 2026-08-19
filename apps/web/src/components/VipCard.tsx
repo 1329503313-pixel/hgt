@@ -26,6 +26,7 @@ function benefitValue(overview: VipOverview, item: (typeof BENEFITS)[number]) {
 
 function currentLevelLabel(overview: VipOverview) {
   if (overview.active) return `VIP${overview.level}`;
+  if (overview.level >= 1 && overview.vipExpired) return `VIP${overview.level}（已失效）`;
   return overview.vipExpired ? "未开通（已失效）" : "未开通";
 }
 

@@ -41,13 +41,15 @@ export default function CirclesPage() {
   const { user, loadingUser, showToast } = useApp();
   const navigate = useNavigate();
   const [circles, setCircles] = useState<CircleSummary[]>([]);
+  const [platformOnlineCount, setPlatformOnlineCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState<CircleSummary | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    const data = await api<{ circles: CircleSummary[] }>("/api/circles", { bypassCache: true, dedupe: false });
+    const data = await api<{ circles: CircleSummary[]; platformOnlineCount: number }>("/api/circles", { bypassCache: true, dedupe: false });
     setCircles(data.circles);
+    setPlatformOnlineCount(Math.max(0, Number(data.platformOnlineCount) || 0));
   }, []);
 
   useEffect(() => {
@@ -80,9 +82,19 @@ export default function CirclesPage() {
         refreshSoon();
       }
     });
+    const unsubscribePlatformPresence = subscribeServerEvent("presence_changed", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { platformOnlineCount?: number };
+        if (!Number.isFinite(payload.platformOnlineCount)) return;
+        setPlatformOnlineCount(Math.max(0, Number(payload.platformOnlineCount)));
+      } catch {
+        refreshSoon();
+      }
+    });
     const unsubscribeUnread = subscribeServerEvent("circle_unread_changed", refreshSoon);
     return () => {
       unsubscribePresence();
+      unsubscribePlatformPresence();
       unsubscribeUnread();
       if (timer != null) window.clearTimeout(timer);
     };
@@ -109,7 +121,6 @@ export default function CirclesPage() {
 
   const joinedCircles = useMemo(() => circles.filter((circle) => circle.isJoined), [circles]);
   const discoveryCircles = useMemo(() => circles.filter((circle) => !circle.isJoined), [circles]);
-  const onlineTotal = circles.reduce((total, circle) => total + circle.onlineCount, 0);
   const unreadTotal = joinedCircles.reduce((total, circle) => total + circle.unreadCount, 0);
 
   return (
@@ -138,7 +149,7 @@ export default function CirclesPage() {
           <div className="hidden space-y-7 lg:block">
             <div className="grid grid-cols-3 gap-5">
               <div className="card flex items-center gap-4 p-5"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-50 text-primary"><Users size={23} /></span><div><p className="text-2xl font-black text-ink">{joinedCircles.length}</p><p className="mt-0.5 text-xs font-bold text-muted">已加入圈子</p></div></div>
-              <div className="card flex items-center gap-4 p-5"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-600"><Radio size={23} /></span><div><p className="text-2xl font-black text-ink">{onlineTotal}</p><p className="mt-0.5 text-xs font-bold text-muted">当前在线成员</p></div></div>
+              <div className="card flex items-center gap-4 p-5"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-600"><Radio size={23} /></span><div><p className="text-2xl font-black text-ink">{platformOnlineCount}</p><p className="mt-0.5 text-xs font-bold text-muted">当前平台在线人数</p></div></div>
               <div className="card flex items-center gap-4 p-5"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-50 text-rose-500"><MessageCircle size={23} /></span><div><p className="text-2xl font-black text-ink">{unreadTotal > 99 ? "99+" : unreadTotal}</p><p className="mt-0.5 text-xs font-bold text-muted">未读圈子消息</p></div></div>
             </div>
 

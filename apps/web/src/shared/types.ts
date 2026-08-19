@@ -510,7 +510,6 @@ export type OnlineSoupMessage = {
   senderId: string | null;
   senderName: string | null;
   senderAvatar: string | null;
-  senderLevel: number;
   senderVipGrowthValue: number;
   senderVipLevel: VipLevel;
   senderVipActive: boolean;
@@ -524,6 +523,7 @@ export type OnlineSoupMessage = {
   contentIndex: number | null;
   questionNumber: number | null;
   answer: OnlineSoupAnswer | null;
+  isBestQuestion: boolean;
   aiPreliminaryAnswer: OnlineSoupAnswer | null;
   aiStatus: "none" | "pending" | "answering" | "scoring" | "completed" | "failed" | "cancelled";
   aiError: string | null;
@@ -575,6 +575,7 @@ export type OnlineSoupSnapshot = {
     playerCapacity: number;
     participantCapacity: number;
     currentRoundId: string | null;
+    bestQuestionMessageId: string | null;
     soup: {
       id: string;
       title: string;

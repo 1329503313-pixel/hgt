@@ -212,12 +212,7 @@ export default function MinePage() {
       <PageTopBar title="我的" />
       <div className="mine-overview-layout">
       <div className="mine-overview-grid">
-        <ProfileHero className="mine-profile-hero" profile={profile} showBadge={false} inactiveNicknameClassName="text-white" onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} meta={
-          <div className="flex items-center gap-2 text-sm font-bold text-white/90">
-            <span className="inline-flex items-center gap-1"><Shell size={14} />贝壳：{(liveShellBalance ?? shellSummary?.balance)?.toLocaleString() ?? "—"}</span>
-            <button className="rounded-full bg-white/15 px-2 py-0.5 text-xs text-white transition hover:bg-white/25" onClick={() => navigate("/mine/shells/transactions")}>明细</button>
-          </div>
-        } actions={
+        <ProfileHero className="mine-profile-hero" profile={profile} showBadge={false} collapsibleBackground inactiveNicknameClassName="text-white" onFollowing={() => navigate(`/users/${user.id}/following`)} onFollowers={() => navigate(`/users/${user.id}/followers`)} onAvatar={() => navigate("/mine/settings")} actions={
           <button className="grid h-12 w-12 place-items-center overflow-hidden rounded-xl border border-white/60 bg-white/20 transition hover:bg-white/30" onClick={openBadges} title="装配徽章">
             {profile.equippedBadge ? <EquippedBadgeIcon badge={profile.equippedBadge} className="h-full w-full rounded-xl" title={profile.equippedBadge.name} animated showName={false} /> : <Plus size={22} />}
           </button>

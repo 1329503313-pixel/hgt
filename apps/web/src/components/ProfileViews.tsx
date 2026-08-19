@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Flame } from "lucide-react";
+import { Flame } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { SocialProfile, SoupSummary } from "../shared/types";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
@@ -75,6 +75,9 @@ export function ProfileHero({
   const [expandControlReady, setExpandControlReady] = useState(false);
   const [expandedHeight, setExpandedHeight] = useState(152);
   const [transitionReady, setTransitionReady] = useState(false);
+  const [backgroundDragging, setBackgroundDragging] = useState(false);
+  const backgroundDragRef = useRef<{ pointerId: number; startY: number; currentY: number } | null>(null);
+  const suppressToggleClickRef = useRef(false);
   const previousExpandable = useRef(canExpandBackground);
   const hasMotionBackground = Boolean(profile.profileBackgroundMotionMp4Url && profile.profileBackgroundUrl);
   const backgroundSourceUrl = canExpandBackground && profile.profileBackgroundSourceUrl
@@ -111,13 +114,13 @@ export function ProfileHero({
   }, [canExpandBackground]);
 
   useEffect(() => {
-    if (!canExpandBackground || !mediaReady || autoCollapseDone || backgroundState !== "expanded") return;
+    if (!canExpandBackground || !mediaReady || autoCollapseDone || backgroundState !== "expanded" || backgroundDragging) return;
     const timeout = window.setTimeout(() => {
       setAutoCollapseDone(true);
       setBackgroundState(reduceMotion || !transitionReady ? "collapsed" : "collapsing");
     }, 3000);
     return () => window.clearTimeout(timeout);
-  }, [autoCollapseDone, backgroundState, canExpandBackground, mediaReady, reduceMotion, transitionReady]);
+  }, [autoCollapseDone, backgroundDragging, backgroundState, canExpandBackground, mediaReady, reduceMotion, transitionReady]);
 
   useEffect(() => {
     if (backgroundState !== "collapsing" && backgroundState !== "expanding") return;
@@ -159,6 +162,42 @@ export function ProfileHero({
     setAutoCollapseDone(true);
     setMediaReady(false);
     setBackgroundState("collapsed");
+  }
+
+  function beginBackgroundDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!toggleVisible) return;
+    backgroundDragRef.current = { pointerId: event.pointerId, startY: event.clientY, currentY: event.clientY };
+    suppressToggleClickRef.current = false;
+    setBackgroundDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveBackgroundDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    const drag = backgroundDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.currentY = event.clientY;
+    if (Math.abs(drag.currentY - drag.startY) > 8) suppressToggleClickRef.current = true;
+  }
+
+  function finishBackgroundDrag(event: React.PointerEvent<HTMLButtonElement>, cancelled = false) {
+    const drag = backgroundDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const distance = event.clientY - drag.startY;
+    backgroundDragRef.current = null;
+    setBackgroundDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (cancelled) return;
+    if (distance >= 28 && toggleIsCollapsed) expandBackground();
+    if (distance <= -28 && !toggleIsCollapsed) collapseBackground();
+  }
+
+  function toggleBackground() {
+    if (suppressToggleClickRef.current) {
+      suppressToggleClickRef.current = false;
+      return;
+    }
+    if (toggleIsCollapsed) expandBackground();
+    else collapseBackground();
   }
 
   const toggleIsCollapsed = backgroundState === "collapsed";
@@ -239,16 +278,18 @@ export function ProfileHero({
         {canExpandBackground && (
           <button
             type="button"
-            className={`profile-hero-background-toggle ${toggleIsCollapsed ? "is-collapsed" : "is-expanded"} ${toggleVisible ? "is-visible" : ""}`}
-            onClick={toggleIsCollapsed ? expandBackground : collapseBackground}
+            className={`profile-hero-background-toggle ${toggleIsCollapsed ? "is-collapsed" : "is-expanded"} ${toggleVisible ? "is-visible" : ""} ${backgroundDragging ? "is-dragging" : ""}`}
+            onClick={toggleBackground}
+            onPointerDown={beginBackgroundDrag}
+            onPointerMove={moveBackgroundDrag}
+            onPointerUp={(event) => finishBackgroundDrag(event)}
+            onPointerCancel={(event) => finishBackgroundDrag(event, true)}
             disabled={!toggleVisible}
-            aria-label={toggleIsCollapsed ? "展开完整主页卡面背景" : "收起主页卡面背景"}
+            aria-label={toggleIsCollapsed ? "下拉或点击展开完整主页卡面背景" : "上划或点击收起主页卡面背景"}
             aria-controls={backgroundRegionId}
             aria-expanded={!toggleIsCollapsed}
-            title={toggleIsCollapsed ? "展开完整卡面" : "收起卡面"}
-          >
-            {toggleIsCollapsed ? <ChevronDown size={19} /> : <ChevronUp size={19} />}
-          </button>
+            title={toggleIsCollapsed ? "下拉展开完整卡面" : "上划收起卡面"}
+          />
         )}
       </div>
       <div className={`profile-hero-stats relative z-[1] grid grid-cols-5 divide-x divide-line px-1 py-3 ${hasBackground ? "bg-white/85 backdrop-blur-sm" : "bg-white"}`}>

@@ -18,3 +18,12 @@ export function buildAnswerChangeNotice(
   if (!previousAnswer || !nextAnswer || previousAnswer === nextAnswer) return null;
   return `主持人变更了#${questionNumber}的回答为：${answerLabels[nextAnswer]}`;
 }
+
+export function buildBestQuestionChangeNotice(
+  previousMessageId: string | null,
+  nextMessageId: string | null,
+  nextQuestionNumber: number | null
+) {
+  if (!previousMessageId || !nextMessageId || previousMessageId === nextMessageId || nextQuestionNumber == null) return null;
+  return `主持人变更了最佳提问为：#${nextQuestionNumber}`;
+}

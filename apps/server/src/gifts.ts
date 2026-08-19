@@ -206,6 +206,20 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     return sendStoredImage(req, res, rows[0].icon_image, 192, "public, max-age=31536000, immutable");
   });
 
+  app.get("/api/media/achievement-badges/shining-crown/icon", async (req, res) => {
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT gifts.icon_image
+       FROM gifts
+       LEFT JOIN system_reward_gift_bindings bindings
+         ON bindings.gift_id = gifts.id AND bindings.reward_key = 'achievement:shining_crown'
+       WHERE bindings.reward_key IS NOT NULL OR gifts.name = '闪耀皇冠'
+       ORDER BY (bindings.reward_key IS NOT NULL) DESC, (gifts.status = 'active') DESC, gifts.created_at ASC
+       LIMIT 1`
+    );
+    if (!rows[0]) return sendError(res, 404, "闪耀皇冠礼物不存在");
+    return sendStoredImage(req, res, rows[0].icon_image, 192, "public, max-age=3600");
+  });
+
   app.get("/api/gifts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;

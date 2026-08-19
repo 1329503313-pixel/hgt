@@ -143,6 +143,8 @@ export type StatsResponse = {
   completeThreeStarPackCount: number;
   totalShellEarned: number;
   shellBalance: number;
+  shiningCrownReceivedCount: number;
+  shiningCrownSentCount: number;
 };
 export type SpecialBadgeUnlock = {
   id: string;

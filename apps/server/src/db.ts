@@ -941,6 +941,7 @@ export async function initDatabase() {
       ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle',
       ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0,
       ai_soup_snapshot JSON NULL,
+      best_question_message_id VARCHAR(64) NULL,
       published_surface_indices JSON NULL,
       published_bottom_indices JSON NULL,
       started_at DATETIME NULL,
@@ -1158,6 +1159,7 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rounds", "ai_status", "ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle' AFTER ai_version");
   await ensureColumn("online_soup_rounds", "ai_hint_count", "ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_status");
   await ensureColumn("online_soup_rounds", "ai_soup_snapshot", "ai_soup_snapshot JSON NULL AFTER ai_hint_count");
+  await ensureColumn("online_soup_rounds", "best_question_message_id", "best_question_message_id VARCHAR(64) NULL AFTER ai_soup_snapshot");
   await ensureColumn("online_soup_messages", "ai_status", "ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none' AFTER answer");
   await ensureColumn("online_soup_messages", "ai_preliminary_answer", "ai_preliminary_answer ENUM('yes','no','both','unknown','irrelevant') NULL AFTER answer");
   await ensureColumn("online_soup_messages", "ai_error", "ai_error VARCHAR(255) NULL AFTER ai_status");
@@ -1721,6 +1723,11 @@ export async function initDatabase() {
     INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
     SELECT 'ranking:deep_sea_pearl', id, '深海明珠' FROM gifts
     WHERE name = '深海明珠' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'achievement:shining_crown', id, '闪耀皇冠' FROM gifts
+    WHERE name = '闪耀皇冠' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
   `);
 
   await pool.query(`

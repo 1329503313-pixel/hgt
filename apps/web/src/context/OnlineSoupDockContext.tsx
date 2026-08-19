@@ -317,7 +317,7 @@ function MiniMessage({ message, currentUserId, onRecall, onCopy, onLocate }: { m
     </span>
     <div className="online-soup-mini-message-body">
       <div className="online-soup-mini-message-meta">
-        <VipIdentity nickname={message.senderName ?? "未知用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} className="online-soup-mini-message-identity" iconClassName="h-3.5 w-3.5" />
+        <VipIdentity nickname={message.senderName ?? "未知用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} showUserLevel={false} className="online-soup-mini-message-identity" iconClassName="h-3.5 w-3.5" />
         {host && <span className="is-host-label">主持人</span>}
         {question && <span>正式提问 #{message.questionNumber}</span>}
       </div>
@@ -328,6 +328,7 @@ function MiniMessage({ message, currentUserId, onRecall, onCopy, onLocate }: { m
         <div className="online-soup-mini-bubble"><p>{message.type === "sticker" ? "[表情包]" : message.content}</p></div>
       </MessageActionMenu>
       {question && <small role={message.aiStatus === "failed" ? "alert" : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "status" : undefined}>{message.answer ? `${onlineSoupAnswerPrefix(message.aiStatus)}${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}` : message.aiStatus === "failed" ? "AI 回复失败，请到完整房间重新请求" : message.aiStatus === "pending" && message.aiQueuePosition && message.aiQueuePosition > 1 ? `AI 队列第 ${message.aiQueuePosition} 位` : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "AI 正在结合汤底与上下文判断" : message.aiStatus === "cancelled" ? "本轮已结束，提问已取消" : "等待主持人回复"}</small>}
+      {question && message.isBestQuestion && <small className="font-black text-amber-600">最佳提问</small>}
       {question && Boolean(message.aiProgressDelta) && message.aiProgressAfter != null && <small>— 进度+{message.aiProgressDelta}，该题完成后进度：{message.aiProgressAfter}% —</small>}
       {question && message.aiStatus === "completed" && message.aiFeedback && <small>{message.aiFeedback}</small>}
       <time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
