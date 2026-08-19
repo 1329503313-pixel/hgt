@@ -58,7 +58,14 @@ try {
     }
 
     $item = Get-Item -LiteralPath $bundlePath
-    $hash = (Get-FileHash -LiteralPath $bundlePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($bundlePath)
+    try {
+        $hash = ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha256.Dispose()
+    }
     $manifest = [ordered]@{
         commit = $resolvedCommit
         shortCommit = $shortCommit
