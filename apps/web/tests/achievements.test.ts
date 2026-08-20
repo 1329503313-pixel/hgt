@@ -29,3 +29,17 @@ test("未通过审批时不能由作品统计推导出优秀作者徽章", () =>
   assert.equal(excellentAuthor.earned, false);
   assert.equal(excellentAuthor.progressCurrent, 0);
 });
+
+test("VIP7 会解锁荣耀成就前三阶并保留 VIP9 进度", () => {
+  const vipHonor = [1, 5, 7, 9].map((progressTarget, index) => resolveBadgeOwnership({
+    badgeKey: `vipHonor:${["normal", "rare", "epic", "legend"][index]}`,
+    approvalBased: false,
+    currentProgress: 7,
+    progressTarget,
+    permanentlyOwnedBadgeKeys: new Set(),
+    unlockDates: {}
+  }));
+
+  assert.deepEqual(vipHonor.map((badge) => badge.earned), [true, true, true, false]);
+  assert.equal(vipHonor[3]?.progressCurrent, 7);
+});

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { vipBenefitValue, vipGrowthMultiplier, vipLevelForGrowth, isVipActiveRow } from "./vipGrowth.js";
+import { vipBenefitValue, vipGrowthDateKey, vipGrowthMultiplier, vipLevelForGrowth, isVipActiveRow } from "./vipGrowth.js";
 
 test("VIP growth thresholds map to the nine configured levels", () => {
   assert.equal(vipLevelForGrowth(0), 0);
@@ -27,4 +27,11 @@ test("VIP activity respects legacy and expiring identities", () => {
   assert.equal(isVipActiveRow({ role: "super_admin" }, now), false);
   assert.equal(isVipActiveRow({ role: "vip", vip_expires_at: "2026-08-17T00:00:00.000Z" }, now), false);
   assert.equal(isVipActiveRow({ role: "user", vip_expires_at: "2026-08-19T00:00:00.000Z" }, now), false);
+});
+
+test("VIP settlement dates normalize MySQL DATE values returned as Date objects", () => {
+  assert.equal(vipGrowthDateKey(new Date("2026-08-19T00:00:00.000Z")), "2026-08-19");
+  assert.equal(vipGrowthDateKey("2026-08-19"), "2026-08-19");
+  assert.equal(vipGrowthDateKey("2026-08-19T00:00:00.000Z"), "2026-08-19");
+  assert.equal(vipGrowthDateKey("Wed Aug 19 2026"), null);
 });

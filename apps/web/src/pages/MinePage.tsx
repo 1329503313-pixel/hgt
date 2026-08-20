@@ -115,6 +115,11 @@ export default function MinePage() {
     api<VipOverview>("/api/vip/overview", { bypassCache: true }).then(setVipOverview).catch(() => setVipOverview(null));
   }, [user?.id]);
 
+  const refreshVipOverview = () => {
+    if (!user) return;
+    void api<VipOverview>("/api/vip/overview", { bypassCache: true }).then(setVipOverview).catch(() => undefined);
+  };
+
   useEffect(() => {
     if (!user) {
       setShellSummary(null);
@@ -248,7 +253,7 @@ export default function MinePage() {
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all" style={{ width: `${shellProgress}%` }} /></div>
           <div className="mt-auto grid grid-cols-2 gap-3 pt-5"><button className="mine-shell-action mine-card-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />赚取贝壳</button><button className="mine-shell-action mine-card-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />收支明细</button></div>
         </aside>
-        <div className="hidden min-w-0 lg:flex"><VipCard overview={vipOverview} onOpen={openVip} /></div>
+        <div className="hidden min-w-0 lg:flex"><VipCard overview={vipOverview} onOpen={openVip} onOpenDetails={refreshVipOverview} /></div>
       </div>
       <div className="mine-feature-panel mine-feature-panel-desktop hidden rounded-2xl bg-white px-2 py-4 shadow-soft lg:flex lg:p-5">
         <div className="mb-4 items-end justify-between lg:flex"><div><p className="text-xs font-black tracking-[0.16em] text-primary">PERSONAL HUB</p><h2 className="mt-1 text-xl font-black text-ink">功能导航</h2></div><p className="text-sm text-muted">管理成长记录、数字资产与创作权益</p></div>
@@ -294,7 +299,7 @@ export default function MinePage() {
           <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${shellProgress}%` }} /></div>
         </div>
       </div>
-      <div className="lg:hidden"><VipCard overview={vipOverview} onOpen={openVip} /></div>
+      <div className="lg:hidden"><VipCard overview={vipOverview} onOpen={openVip} onOpenDetails={refreshVipOverview} /></div>
 
       <div className="mine-feature-panel mine-feature-panel-mobile rounded-2xl bg-white px-2 py-4 shadow-soft lg:hidden lg:p-5">
         <div className="mb-4 hidden items-end justify-between lg:flex">

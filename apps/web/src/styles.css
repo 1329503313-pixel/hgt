@@ -2839,7 +2839,10 @@ textarea {
   }
 
   .mine-vip-card {
+    width: 100%;
     min-height: 100%;
+    border-radius: 24px;
+    padding: 24px;
   }
 
   .mine-growth-action {
@@ -4875,10 +4878,11 @@ textarea {
   will-change: background-position;
 }
 
-/* 昵称旁的全局装配徽章保持静态，避免长列表产生大量常驻合成图层。 */
-.equipped-badge-static::before,
-.equipped-badge-static::after {
-  display: none;
+/* 昵称旁的小尺寸装配徽章只展示素材本身，避免外框与外投影被身份行裁成矩形遮罩。 */
+.equipped-badge-icon--plain {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 /* 徽章翻转背面：统一银色金属底与压印龟甲纹。 */
@@ -5582,8 +5586,8 @@ textarea {
 @keyframes level-badge-drift-blotch { 0%{opacity:0;transform:translate(-.35rem,.2rem) scale(.52) rotate(-16deg)} 18%{opacity:.38} 42%{opacity:.9;transform:translate(1.85rem,-.12rem) scale(1.12) rotate(9deg)} 68%{opacity:.52;transform:translate(3.45rem,.16rem) scale(.88) rotate(-7deg)} 100%{opacity:0;transform:translate(5.15rem,-.18rem) scale(1.26) rotate(14deg)} }
 @keyframes level-badge-reverse-rain { 0%{opacity:0;transform:translateY(.2rem) scale(.58)} 14%{opacity:1} 78%{opacity:.92} 100%{opacity:0;transform:translateY(-1.75rem) scale(1.08)} }
 @keyframes level-badge-ring-flash { 0%{opacity:0;transform:translate(0,0) scale(.28)} 22%{opacity:.95} 46%{opacity:.66;transform:translate(0,0) scale(.94)} 72%{opacity:.88} 100%{opacity:0;transform:translate(var(--ring-x),var(--ring-y)) scale(1.48)} }
-@keyframes level-badge-rainbow-breathe { 0%{background-position:0 0;box-shadow:0 0 3px var(--level-glow)} 50%{box-shadow:0 0 9px var(--level-glow)} 100%{background-position:-260% 0;box-shadow:0 0 3px var(--level-glow)} }
-@keyframes level-badge-legend { 0%{background-position:0 0;box-shadow:0 0 4px rgb(250 204 21 / .7),0 0 7px rgb(217 70 239 / .28)} 50%{box-shadow:0 0 10px rgb(250 204 21 / .92),0 0 14px rgb(34 211 238 / .48)} 100%{background-position:-300% 0;box-shadow:0 0 4px rgb(250 204 21 / .7),0 0 7px rgb(217 70 239 / .28)} }
+@keyframes level-badge-rainbow-breathe { 0%{background-position:0 0;box-shadow:inset 0 0 0 1px rgb(255 255 255 / .24),inset 0 0 2px var(--level-glow)} 50%{box-shadow:inset 0 0 0 1px rgb(255 255 255 / .42),inset 0 0 7px var(--level-glow)} 100%{background-position:-260% 0;box-shadow:inset 0 0 0 1px rgb(255 255 255 / .24),inset 0 0 2px var(--level-glow)} }
+@keyframes level-badge-legend { 0%{background-position:0 0;box-shadow:inset 0 0 0 1px rgb(255 255 255 / .3),inset 0 0 4px rgb(250 204 21 / .72),inset 0 0 7px rgb(217 70 239 / .3)} 50%{box-shadow:inset 0 0 0 1px rgb(255 255 255 / .56),inset 0 0 9px rgb(250 204 21 / .94),inset 0 0 12px rgb(34 211 238 / .5)} 100%{background-position:-300% 0;box-shadow:inset 0 0 0 1px rgb(255 255 255 / .3),inset 0 0 4px rgb(250 204 21 / .72),inset 0 0 7px rgb(217 70 239 / .3)} }
 @keyframes level-badge-legend-shine { 0%,20%{opacity:0;transform:translateX(0) skewX(-18deg)} 50%{opacity:1} 78%,100%{opacity:0;transform:translateX(310%) skewX(-18deg)} }
 @keyframes level-badge-legend-star { 0%,100%{opacity:.22;transform:scale(.55) rotate(0)} 50%{opacity:1;transform:scale(1.35) rotate(90deg)} }
 @media (prefers-reduced-motion:reduce){.level-badge--animated,.level-badge--animated *{animation:none!important}.level-badge__shine,.level-badge__blotches,.level-badge__rain{display:none}.level-badge__stars i{opacity:.72!important;transform:none!important}.level-badge__rings i{opacity:.55!important;transform:none!important}}

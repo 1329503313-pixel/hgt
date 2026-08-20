@@ -154,9 +154,13 @@ const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints" | "ownershipRate" | 
   { series: "shellWealth", tier: "epic", tierIndex: 3, label: "百万富翁", description: "我的眼里从来就没有贝壳", icon: <img src="/badges/shell-wealth-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计获得50000贝壳", nextBadgeLabel: "亿万富豪", progressCurrent: 0, progressTarget: 50000, earned: false },
   { series: "shellWealth", tier: "legend", tierIndex: 4, label: "亿万富豪", description: "贝壳只是一串数字", icon: legendarySystemBadgeIcon("/badges/shell-wealth-legend.png", "亿万富豪"), requirement: "累计获得1000000贝壳", progressCurrent: 0, progressTarget: 1000000, earned: false },
   { series: "shellBalance", tier: "epic", tierIndex: 1, label: "贝壳为王", description: "留在手里的贝壳才是真贝壳", icon: <img src="/badges/shell-balance-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "当前拥有10000贝壳", progressCurrent: 0, progressTarget: 10000, earned: false },
+  { series: "vipHonor", tier: "normal", tierIndex: 1, label: "荣耀新贵", description: "初启荣耀之路", icon: <img src="/badges/vip-honor-normal.webp" alt="" className="h-full w-full object-contain" draggable={false} />, requirement: "达到VIP1等级", nextBadgeLabel: "尊荣达人", progressCurrent: 0, progressTarget: 1, earned: false },
+  { series: "vipHonor", tier: "rare", tierIndex: 2, label: "尊荣达人", description: "尽显非凡尊荣风采", icon: <img src="/badges/vip-honor-rare.webp" alt="" className="h-full w-full object-contain" draggable={false} />, requirement: "达到VIP5等级", nextBadgeLabel: "至尊王者", progressCurrent: 0, progressTarget: 5, earned: false },
+  { series: "vipHonor", tier: "epic", tierIndex: 3, label: "至尊王者", description: "成就至尊王者", icon: <img src="/badges/vip-honor-epic.webp" alt="" className="h-full w-full object-contain" draggable={false} />, requirement: "达到VIP7等级", nextBadgeLabel: "荣耀巅峰", progressCurrent: 0, progressTarget: 7, earned: false },
+  { series: "vipHonor", tier: "legend", tierIndex: 4, label: "荣耀巅峰", description: "见证我登临巅峰", icon: legendarySystemBadgeIcon("/badges/vip-honor-legend.webp", "荣耀巅峰"), requirement: "达到VIP9等级", progressCurrent: 0, progressTarget: 9, earned: false },
   { series: "excellentAuthor", tier: "epic", tierIndex: 1, label: "优秀作者", description: "平台认证的优秀海龟汤创作者", icon: <img src="/badges/excellent-author.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "优秀作者认证经平台后台审核通过", progressCurrent: 0, progressTarget: 1, earned: false },
-  { series: "shiningCrownReceived", tier: "epic", tierIndex: 1, label: "闪耀皇冠", description: "头顶闪耀的皇冠是我们友谊的证明！", icon: <img src="/api/media/achievement-badges/shining-crown/icon" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "收到一次闪耀皇冠", progressCurrent: 0, progressTarget: 1, earned: false },
-  { series: "shiningCrownSent", tier: "epic", tierIndex: 1, label: "为你加冕", description: "我让亲自为我们的友谊加冕！", icon: <img src="/api/media/achievement-badges/shining-crown/icon" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "送出一次闪耀皇冠", progressCurrent: 0, progressTarget: 1, earned: false },
+  { series: "shiningCrownReceived", tier: "epic", tierIndex: 1, label: "闪耀皇冠", description: "头顶闪耀的皇冠是我们友谊的证明！", icon: <img src="/badges/shining-crown-received-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "收到一次闪耀皇冠", progressCurrent: 0, progressTarget: 1, earned: false },
+  { series: "shiningCrownSent", tier: "epic", tierIndex: 1, label: "为你加冕", description: "我让亲自为我们的友谊加冕！", icon: <img src="/badges/shining-crown-sent-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "送出一次闪耀皇冠", progressCurrent: 0, progressTarget: 1, earned: false },
 ];
 
 export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
@@ -182,6 +186,7 @@ export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "packAllThreeStar:legend": 800,
   "shellWealth:normal": 15, "shellWealth:rare": 40, "shellWealth:epic": 150, "shellWealth:legend": 1000,
   "shellBalance:epic": 150,
+  "vipHonor:normal": 50, "vipHonor:rare": 150, "vipHonor:epic": 350, "vipHonor:legend": 1000,
   "excellentAuthor:epic": 150,
   "shiningCrownReceived:epic": 150,
   "shiningCrownSent:epic": 150
@@ -228,6 +233,7 @@ export function buildBadgesFromStats(
     packAllThreeStar: stats.completeThreeStarPackCount,
     shellWealth: stats.totalShellEarned,
     shellBalance: stats.shellBalance,
+    vipHonor: stats.vipLevel,
     shiningCrownReceived: stats.shiningCrownReceivedCount,
     shiningCrownSent: stats.shiningCrownSentCount,
   };

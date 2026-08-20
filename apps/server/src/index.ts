@@ -1074,6 +1074,7 @@ const SYSTEM_BADGE_ICON_BASE: Record<string, string> = {
   packAllThreeStar: "pack-all-three-star",
   shellWealth: "shell-wealth",
   shellBalance: "shell-balance",
+  vipHonor: "vip-honor",
   excellentAuthor: "excellent-author"
 };
 
@@ -1091,9 +1092,8 @@ async function ownedBadgeIconUrl(userId: string, badgeKey: string) {
     return badge?.icon_url ? String(badge.icon_url) : null;
   }
   const [series, tier] = badgeKey.split(":");
-  if ((series === "shiningCrownReceived" || series === "shiningCrownSent") && tier === "epic") {
-    return "/api/media/achievement-badges/shining-crown/icon";
-  }
+  if (series === "shiningCrownReceived" && tier === "epic") return "/badges/shining-crown-received-epic.webp";
+  if (series === "shiningCrownSent" && tier === "epic") return "/badges/shining-crown-sent-epic.webp";
   const base = SYSTEM_BADGE_ICON_BASE[series];
   return base && ["normal", "rare", "epic", "legend"].includes(tier) ? `/badges/${base}-${tier}.webp` : null;
 }
@@ -1555,6 +1555,7 @@ type AchievementStats = {
   completeThreeStarPackCount: number;
   totalShellEarned: number;
   shellBalance: number;
+  vipLevel: number;
   shiningCrownReceivedCount: number;
   shiningCrownSentCount: number;
 };
@@ -1629,6 +1630,10 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "shellWealth:epic", stat: "totalShellEarned", target: 50_000 },
   { key: "shellWealth:legend", stat: "totalShellEarned", target: 1_000_000 },
   { key: "shellBalance:epic", stat: "shellBalance", target: 10_000 },
+  { key: "vipHonor:normal", stat: "vipLevel", target: 1 },
+  { key: "vipHonor:rare", stat: "vipLevel", target: 5 },
+  { key: "vipHonor:epic", stat: "vipLevel", target: 7 },
+  { key: "vipHonor:legend", stat: "vipLevel", target: 9 },
   { key: "shiningCrownReceived:epic", stat: "shiningCrownReceivedCount", target: 1 },
   { key: "shiningCrownSent:epic", stat: "shiningCrownSentCount", target: 1 }
 ];
@@ -1667,6 +1672,7 @@ const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
   packAllThreeStar: ["土豪真爱粉", "土豪真爱粉", "土豪真爱粉", "土豪真爱粉"],
   shellWealth: ["小土豪", "大富翁", "百万富翁", "亿万富豪"],
   shellBalance: ["贝壳为王", "贝壳为王", "贝壳为王"],
+  vipHonor: ["荣耀新贵", "尊荣达人", "至尊王者", "荣耀巅峰"],
   excellentAuthor: ["优秀作者", "优秀作者", "优秀作者"],
   shiningCrownReceived: ["闪耀皇冠", "闪耀皇冠", "闪耀皇冠"],
   shiningCrownSent: ["为你加冕", "为你加冕", "为你加冕"]
@@ -1777,7 +1783,7 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
       [userId]
     ),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.shell_balance, u.generosity_value, u.charm_value,
+      `SELECT u.shell_balance, u.generosity_value, u.charm_value, u.vip_growth_value,
         COALESCE((SELECT SUM(shell_tx.amount) FROM shell_transactions shell_tx
           WHERE shell_tx.user_id = u.id AND shell_tx.amount > 0), 0) AS total_shell_earned
        FROM users u WHERE u.id = ? LIMIT 1`,
@@ -1834,6 +1840,7 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     completeThreeStarPackCount: Number(completePackRows[0]?.complete_three_star_pack_count ?? 0),
     totalShellEarned: Number(shellRows[0]?.total_shell_earned ?? 0),
     shellBalance: Number(shellRows[0]?.shell_balance ?? 0),
+    vipLevel: vipGrowthSnapshot(shellRows[0] ?? {}).level,
     shiningCrownReceivedCount: Number(shiningCrownReceivedRows[0]?.count ?? 0),
     shiningCrownSentCount: Number(shiningCrownSentRows[0]?.count ?? 0)
   };
@@ -7514,7 +7521,8 @@ registerVipRoutes(app, {
   requireAuth,
   requireAdmin,
   sendError,
-  onEntitlementChanged: ensureDailyEntitlementGrantForUser
+  onEntitlementChanged: ensureDailyEntitlementGrantForUser,
+  onVipGrowthChanged: (userId) => queueSystemBadgeSync([userId])
 });
 
 registerMysteryRoutes(app, { requireAuth, requireBackofficeAdmin, sendError });

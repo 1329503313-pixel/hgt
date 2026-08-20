@@ -41,7 +41,16 @@ function formatEventDate(event: VipOverview["events"][number]) {
   }).format(new Date(event.createdAt));
 }
 
-export function VipCard({ overview, onOpen }: { overview: VipOverview | null; onOpen: () => void }) {
+function formatVipExpiryDate(expiresAt: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(expiresAt));
+}
+
+export function VipCard({ overview, onOpen, onOpenDetails }: { overview: VipOverview | null; onOpen: () => void; onOpenDetails?: () => void }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [benefitsOpen, setBenefitsOpen] = useState(false);
   if (!overview) return <div className="mine-vip-card min-h-48 animate-pulse" aria-label="VIP加载中" />;
@@ -50,9 +59,22 @@ export function VipCard({ overview, onOpen }: { overview: VipOverview | null; on
 
   return (
     <aside className="mine-vip-card flex min-w-0 flex-col rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-fuchsia-50 p-4 shadow-soft sm:p-5">
-      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-amber-300 to-fuchsia-500 text-white"><Crown size={19} /></span><h2 className="text-xl font-black text-ink">VIP</h2></div><button type="button" className="inline-flex min-h-10 items-center gap-1 rounded-xl border border-amber-200 bg-white px-3 text-xs font-black text-amber-700 transition hover:bg-amber-50" onClick={() => setDetailOpen(true)}><History size={15} />明细</button></div>
-      <div className="mt-5 text-center"><p className="text-xs font-black tracking-[0.16em] text-amber-700">VIP等级</p><div className="mt-2 flex min-h-12 items-center justify-center gap-2">{overview.active && <VipIcon level={overview.level} active className="h-7 w-7" />}<p className={`text-2xl font-black ${overview.active ? "text-amber-700" : "text-muted"}`}>{currentLevelLabel(overview)}</p></div><div className="mt-4 flex items-center justify-between gap-3 text-xs font-bold text-muted"><span>成长值 {overview.growthValue.toLocaleString()}</span><span>{required}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 via-fuchsia-500 to-cyan-400 transition-[width] duration-300" style={{ width: `${progress}%` }} /></div><div className="mt-1 flex justify-between text-[11px] font-bold text-muted"><span>{overview.nextThreshold == null ? "MAX" : `下一等级 VIP${overview.level + 1}`}</span><span>{progress}%</span></div></div>
-      <div className="mt-auto grid grid-cols-2 gap-2 pt-5"><button type="button" className="btn btn-primary mine-card-action" onClick={onOpen}><Sparkles size={16} />开通VIP</button><button type="button" className="btn btn-secondary mine-card-action" onClick={() => setBenefitsOpen(true)}>VIP权益</button></div>
+      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-amber-300 to-fuchsia-500 text-white"><Crown size={19} /></span><h2 className="text-xl font-black text-ink">VIP</h2></div><button type="button" className="inline-flex min-h-10 items-center gap-1 rounded-xl border border-amber-200 bg-white px-3 text-xs font-black text-amber-700 transition hover:bg-amber-50" onClick={() => { setDetailOpen(true); onOpenDetails?.(); }}><History size={15} />明细</button></div>
+      <div className="mt-5 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm text-muted">VIP等级</p>
+          <p className={`mt-1 flex min-h-9 items-center gap-2 text-3xl font-black ${overview.active ? "text-amber-700" : "text-muted"}`}>
+            {overview.active && <VipIcon level={overview.level} active className="h-7 w-7 shrink-0" />}
+            <span>{currentLevelLabel(overview)}</span>
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3 text-xs font-bold text-muted"><span>成长值 {overview.growthValue.toLocaleString()}</span><span>{required}</span></div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 via-fuchsia-500 to-cyan-400 transition-[width] duration-300" style={{ width: `${progress}%` }} /></div>
+      <div className="mt-1 min-h-4 text-right text-[11px] font-bold text-muted">
+        {overview.active && (overview.vipExpiresAt ? `VIP到期时间 ${formatVipExpiryDate(overview.vipExpiresAt)}` : "VIP长期有效")}
+      </div>
+      <div className="mt-auto grid grid-cols-2 gap-3 pt-5"><button type="button" className="btn btn-primary mine-card-action" onClick={onOpen}><Sparkles size={16} />开通VIP</button><button type="button" className="btn btn-secondary mine-card-action" onClick={() => setBenefitsOpen(true)}>VIP权益</button></div>
       {detailOpen && <Modal hideCloseButton onClose={() => setDetailOpen(false)}><div className="space-y-3"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-black text-ink">VIP等级明细</h2><p className="mt-1 text-sm text-muted">当前成长值 {overview.growthValue.toLocaleString()} · {currentLevelLabel(overview)}</p></div><button type="button" className="btn btn-secondary min-h-10 px-3" onClick={() => setDetailOpen(false)}>关闭</button></div><div className="max-h-[55vh] divide-y divide-line overflow-y-auto">{overview.events.length === 0 ? <p className="py-8 text-center text-sm text-muted">暂无成长值明细</p> : overview.events.map((event) => <div key={event.id} className="flex items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-bold text-ink">{event.remark}</p><p className="mt-1 text-xs text-muted">{formatEventDate(event)}</p></div><strong className={`shrink-0 text-sm font-black ${event.amount >= 0 ? "text-emerald-600" : "text-red-600"}`}>{event.amount >= 0 ? "+" : ""}{event.amount}</strong></div>)}</div></div></Modal>}
       {benefitsOpen && <Modal hideCloseButton onClose={() => setBenefitsOpen(false)}><div className="space-y-4"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-black text-ink">VIP权益</h2><p className="mt-1 text-sm text-muted">按当前 VIP 等级计算</p></div><button type="button" className="btn btn-secondary min-h-10 px-3" onClick={() => setBenefitsOpen(false)}>关闭</button></div><div className="divide-y divide-line rounded-xl border border-line bg-slate-50">{BENEFITS.map((item) => <div key={item.label} className="flex items-start justify-between gap-4 px-3 py-3 text-sm"><span className="text-muted">{item.label}</span><strong className="max-w-[58%] text-right text-ink">{benefitValue(overview, item)}</strong></div>)}</div></div></Modal>}
     </aside>

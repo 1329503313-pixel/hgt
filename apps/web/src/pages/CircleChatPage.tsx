@@ -42,10 +42,10 @@ function circleMemberOrder(a: CircleMember, b: CircleMember) {
   return a.id.localeCompare(b.id);
 }
 
-function Avatar({ avatar, nickname, online, size = "h-10 w-10" }: { avatar: string | null; nickname: string; online: boolean; size?: string }) {
+function Avatar({ avatar, nickname, online, grayscaleWhenOffline = false, size = "h-10 w-10" }: { avatar: string | null; nickname: string; online: boolean; grayscaleWhenOffline?: boolean; size?: string }) {
   return (
     <span className={`relative grid shrink-0 place-items-center ${size}`}>
-      <span className={`grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary ${online ? "" : "grayscale"}`}>
+      <span className={`grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary ${grayscaleWhenOffline && !online ? "grayscale" : ""}`}>
         {avatar ? <img className="h-full w-full object-cover" src={avatar} alt="" draggable={false} /> : nickname.slice(0, 1)}
       </span>
       {online && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
@@ -625,7 +625,7 @@ export default function CircleChatPage() {
                     onOpen={() => openMemberProfile(member)}
                     ariaLabel={member.id !== user?.id ? `查看${member.nickname}的主页，长按@他` : "查看我的主页"}
                   >
-                    <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
+                    <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} grayscaleWhenOffline size="h-11 w-11" />
                   </MentionableAvatarButton>
                   <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openMemberProfile(member)}>
                     <VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} preserveNickname className="max-w-full" />
@@ -651,7 +651,7 @@ export default function CircleChatPage() {
                   state: member.id === user?.id ? undefined : { circleId }
                 })}
               >
-                <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
+                <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} grayscaleWhenOffline size="h-11 w-11" />
                 <span className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} preserveNickname className="max-w-full" /><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
               </button>
             ))}

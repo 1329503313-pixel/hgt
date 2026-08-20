@@ -62,6 +62,15 @@ export function vipGrowthSnapshot(row: any, now = new Date()) {
 
 type GrowthConnection = mysql.PoolConnection;
 
+export function vipGrowthDateKey(value: unknown) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  const text = String(value ?? "").trim();
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(text);
+  return match?.[1] ?? null;
+}
+
 export async function recordVipGrowthEvent(
   connection: GrowthConnection,
   input: {
@@ -134,7 +143,7 @@ export async function settleVipGrowthThroughDate(
     "SELECT MAX(growth_date) AS latest_date FROM vip_growth_daily_settlements WHERE user_id = ?",
     [user.id]
   );
-  const latestDate = latest?.latest_date ? String(latest.latest_date).slice(0, 10) : null;
+  const latestDate = vipGrowthDateKey(latest?.latest_date);
   const start = latestDate ? new Date(`${latestDate}T00:00:00Z`) : new Date(`${date}T00:00:00Z`);
   const end = new Date(`${date}T00:00:00Z`);
   if (start > end) return 0;

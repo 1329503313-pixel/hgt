@@ -114,9 +114,10 @@ export function EquippedBadgeIcon({
 }) {
   if (!badge) return null;
   const legendary = badge.tier === "legend";
+  const decorativeLegendary = legendary && animated && !showName;
   const icon = (
     <span
-      className={`${legendary ? `legendary-badge-icon bg-white shadow-sm ${animated ? "" : "equipped-badge-static"}` : ""} relative inline-flex shrink-0 overflow-hidden rounded-md align-middle ${className}`}
+      className={`${decorativeLegendary ? "legendary-badge-icon" : "equipped-badge-icon--plain"} equipped-badge-icon relative inline-flex shrink-0 overflow-hidden rounded-md align-middle ${className}`}
       title={title}
       aria-label={title}
     >

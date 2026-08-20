@@ -143,6 +143,7 @@ export type StatsResponse = {
   completeThreeStarPackCount: number;
   totalShellEarned: number;
   shellBalance: number;
+  vipLevel: number;
   shiningCrownReceivedCount: number;
   shiningCrownSentCount: number;
 };

@@ -21,6 +21,7 @@ export const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "packAllThreeStar:legend": 800,
   "shellWealth:normal": 15, "shellWealth:rare": 40, "shellWealth:epic": 150, "shellWealth:legend": 1000,
   "shellBalance:epic": 150,
+  "vipHonor:normal": 50, "vipHonor:rare": 150, "vipHonor:epic": 350, "vipHonor:legend": 1000,
   "excellentAuthor:epic": 150,
   "shiningCrownReceived:epic": 150,
   "shiningCrownSent:epic": 150

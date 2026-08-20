@@ -28,6 +28,13 @@ test("闪耀皇冠赠送双方的史诗成就均为 150 成就点", () => {
   assert.equal(SYSTEM_BADGE_ACHIEVEMENT_POINTS["shiningCrownSent:epic"], 150);
 });
 
+test("VIP 荣耀成就按四档产品配置结算成就点", () => {
+  assert.deepEqual(
+    ["normal", "rare", "epic", "legend"].map((tier) => SYSTEM_BADGE_ACHIEVEMENT_POINTS[`vipHonor:${tier}`]),
+    [50, 150, 350, 1000]
+  );
+});
+
 test("后续获得徽章不再按成就点发放等量贝壳", () => {
   assert.equal(calculateBadgeShellReward(150, true, true), 0);
   assert.equal(calculateBadgeShellReward(150, true, false), 0);

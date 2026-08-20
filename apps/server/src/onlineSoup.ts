@@ -118,6 +118,7 @@ const badgeNames: Record<string, string[]> = {
   packAllThreeStar: ["土豪真爱粉", "土豪真爱粉", "土豪真爱粉", "土豪真爱粉"],
   shellWealth: ["小土豪", "大富翁", "百万富翁", "亿万富豪"],
   shellBalance: ["贝壳为王", "贝壳为王", "贝壳为王"],
+  vipHonor: ["荣耀新贵", "尊荣达人", "至尊王者", "荣耀巅峰"],
   excellentAuthor: ["优秀作者", "优秀作者", "优秀作者"]
 };
 

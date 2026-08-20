@@ -19,6 +19,7 @@ type VipRouteDependencies = {
   requireAdmin: (req: Request, res: Response) => Promise<AdminActor | null>;
   sendError: (res: Response, status: number, message: string) => unknown;
   onEntitlementChanged?: (userId: string) => Promise<void> | void;
+  onVipGrowthChanged?: (userId: string) => Promise<void> | void;
 };
 
 const grantDurationSchema = z.discriminatedUnion("unit", [
@@ -178,7 +179,7 @@ function mapVipOrder(row: mysql.RowDataPacket) {
 }
 
 export function registerVipRoutes(app: Express, dependencies: VipRouteDependencies) {
-  const { pool, requireAuth, requireAdmin, sendError, onEntitlementChanged } = dependencies;
+  const { pool, requireAuth, requireAdmin, sendError, onEntitlementChanged, onVipGrowthChanged } = dependencies;
   const syncEntitlement = async (userId: string) => {
     try {
       await onEntitlementChanged?.(userId);
@@ -198,6 +199,10 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
   app.get("/api/vip/overview", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
+    // Reading the VIP card/detail is also a recovery point for the current
+    // user's daily settlement. This keeps growth correct when the process was
+    // not alive at midnight or the background sweep has not run yet.
+    await syncEntitlement(user.id);
     const [[row]] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT id, role, vip_expires_at, vip_legacy_active, vip_growth_value
        FROM users WHERE id = ? LIMIT 1`,
@@ -251,6 +256,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
   app.get("/api/vip/growth-events", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
+    await syncEntitlement(user.id);
     const limit = Math.min(100, Math.max(1, Math.floor(Number(req.query.limit ?? 50) || 50)));
     const [events] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT id, event_type, amount, event_date, remark, created_at
@@ -400,6 +406,7 @@ export function registerVipRoutes(app: Express, dependencies: VipRouteDependenci
       });
       await connection.commit();
       await syncEntitlement(String(target.id));
+      await onVipGrowthChanged?.(String(target.id));
       res.json({ ok: true, orderNumber, expiresAt: expiresAt.toISOString(), balanceAfterDays: vipBalanceDays(expiresAt, now) });
     } catch (error) {
       await connection.rollback();
