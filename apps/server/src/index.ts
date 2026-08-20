@@ -929,6 +929,8 @@ async function currentUser(req: express.Request): Promise<AuthenticatedUser | nu
   }
 }
 
+const SOUP_VIEW_DEDUP_INTERVAL_MS = 600_000;
+
 function viewIdentifier(req: express.Request, user: PublicUser | null) {
   if (user) return `user:${user.id}`;
   const raw = `${req.ip ?? "0"}|${req.headers["user-agent"] ?? ""}`;
@@ -5115,7 +5117,7 @@ app.get("/api/soups/:id", async (req, res) => {
     [req.params.id, identifier]
   );
   const lastView = recent[0]?.viewed_at ? new Date(recent[0].viewed_at).getTime() : 0;
-  if (Date.now() - lastView > 60_000) {
+  if (Date.now() - lastView > SOUP_VIEW_DEDUP_INTERVAL_MS) {
     await pool.query(
       "INSERT INTO soup_views (id, soup_id, user_identifier) VALUES (?, ?, ?)",
       [nanoid(), req.params.id, identifier]
