@@ -1,6 +1,6 @@
-const SITE_NAME = "烧脑海龟汤社区 海量经典海龟汤";
-const HOME_TITLE = "烧脑海龟汤社区｜海量经典海龟汤、推理解谜与烧脑游戏";
-const HOME_DESCRIPTION = "烧脑海龟汤社区收录海量经典海龟汤、原创情境推理题和烧脑解谜内容，支持在线玩汤、作品评价、收藏和玩家交流。";
+const SITE_NAME = "汤汤解谜乐园";
+const HOME_TITLE = "汤汤解谜乐园｜AI海龟汤、多人玩汤与原创谜题社区";
+const HOME_DESCRIPTION = "汤汤解谜乐园是海龟汤与情境推理社区，提供原创海龟汤题目、AI主持在线玩汤、多人推理房间、作品评价与玩家交流。";
 
 function upsertMeta(name: string, content: string) {
   let element = document.head.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
@@ -39,7 +39,7 @@ export function setDocumentSeo(options: {
 }) {
   document.title = options.title;
   upsertMeta("description", options.description ?? HOME_DESCRIPTION);
-  upsertMeta("keywords", "海龟汤,解谜,推理,烧脑");
+  upsertMeta("keywords", "汤汤解谜乐园,海龟汤,AI海龟汤,在线海龟汤,多人海龟汤,情境推理,推理解谜");
   upsertMeta("robots", options.index ? "index,follow" : "noindex,nofollow");
   upsertCanonical(new URL(options.path ?? window.location.pathname, window.location.origin).toString());
 }
@@ -49,4 +49,3 @@ export const seoSite = {
   homeTitle: HOME_TITLE,
   homeDescription: HOME_DESCRIPTION
 };
-

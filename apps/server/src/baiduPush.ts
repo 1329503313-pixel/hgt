@@ -47,44 +47,27 @@ export async function pushSoupUrl(soupId: string, siteUrl: string) {
   return pushUrlsToBaidu([canonical]);
 }
 
-/** 收集全站 SEO 可见 URL 列表 */
+export function buildBaiduIndexableUrls(siteUrl: string, soupIds: unknown[]) {
+  const base = siteUrl.replace(/\/+$/, "");
+  return [
+    `${base}/`,
+    ...soupIds.map((soupId) => `${base}/soup/${encodeURIComponent(String(soupId))}`)
+  ];
+}
+
+/** 收集全站真正允许索引的 URL；noindex 页面不得进入主动推送。 */
 async function collectSiteUrls(
   pool: import("mysql2/promise").Pool,
   siteUrl: string
 ): Promise<string[]> {
-  const base = siteUrl.replace(/\/+$/, "");
-  const urls: string[] = [];
-
-  // 首页
-  urls.push(`${base}/`);
-  // 排行榜
-  urls.push(`${base}/mine/rankings`);
-  // 优秀作者
-  urls.push(`${base}/mine/excellent-author`);
-
   // 所有公开+已审核的海龟汤
   const [soups] = await pool.query<import("mysql2/promise").RowDataPacket[]>(
     `SELECT id FROM soups
      WHERE is_surface_public = TRUE AND review_status = 'approved'
      ORDER BY created_at DESC
-     LIMIT 49997`
+     LIMIT 49999`
   );
-  for (const row of soups) {
-    urls.push(`${base}/soup/${encodeURIComponent(String(row.id))}`);
-  }
-
-  // 活跃用户主页（最近 1 个月有活动的，最多 1000 条）
-  const [users] = await pool.query<import("mysql2/promise").RowDataPacket[]>(
-    `SELECT id FROM users
-     WHERE created_at > DATE_SUB(NOW(), INTERVAL 1 MONTH)
-     ORDER BY created_at DESC
-     LIMIT 1000`
-  );
-  for (const row of users) {
-    urls.push(`${base}/users/${encodeURIComponent(String(row.id))}`);
-  }
-
-  return urls;
+  return buildBaiduIndexableUrls(siteUrl, soups.map((row) => row.id));
 }
 
 /** 全站推送（定时任务用）：收集所有公开页面 URL 批量提交百度 */

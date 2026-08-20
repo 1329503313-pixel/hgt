@@ -39,6 +39,24 @@ function jsonValue<T>(value: unknown): T {
   return value as T;
 }
 
+export function buildMysteryOpeningNarrative(eventPayloads: unknown[]) {
+  const paragraphs: string[] = [];
+  for (const payload of eventPayloads) {
+    let event: unknown = payload;
+    try {
+      event = jsonValue<unknown>(payload);
+    } catch {
+      continue;
+    }
+    if (!event || typeof event !== "object") continue;
+    const record = event as { visibleToPlayer?: unknown; playerVisibleSummary?: unknown };
+    if (record.visibleToPlayer !== true || typeof record.playerVisibleSummary !== "string") continue;
+    const summary = record.playerVisibleSummary.trim();
+    if (summary && !paragraphs.includes(summary)) paragraphs.push(summary);
+  }
+  return paragraphs.join("\n\n");
+}
+
 export const MYSTERY_TURN_LEASE_SECONDS = 120;
 const MYSTERY_TURN_HEARTBEAT_MS = 30_000;
 const MYSTERY_TURN_CANCELLATION_POLL_MS = 750;
@@ -206,7 +224,7 @@ export async function startOrContinueMysteryRun(input: {
         processingToken: initializationProcessingToken,
         rawInput: "__SYSTEM_INITIALIZATION__",
         resolutionJson: { kind: "system_initialization" },
-        narrative: "",
+        narrative: buildMysteryOpeningNarrative(initialization.events),
         state: initialization.state,
         events: initialization.events,
       });
@@ -334,6 +352,7 @@ function canonicalizeOpenWorldProposal(input: {
   storyPackage: MysteryStoryPackage;
   state: MysteryRunState;
   proposal: MysteryEventProposal;
+  speakerActorId: string | null;
   baseVisibility: boolean;
   playerActs: boolean;
   playerLocationId: string | null;
@@ -485,7 +504,7 @@ function canonicalizeOpenWorldProposal(input: {
     if (netDelta > 0) requireStoryTransition("通用行动不能凭空增加资源；资源增加必须有同类资源来源或使用 Story Package 行动转换");
   }
 
-  const communicationSpeakerId = proposal.rawUtterance ? primaryActorId : null;
+  const communicationSpeakerId = proposal.rawUtterance ? input.speakerActorId : null;
   const speakerReferences = communicationSpeakerId
     ? new Set([...(state.knowledgeByActor[communicationSpeakerId] ?? []), ...(state.beliefsByActor[communicationSpeakerId] ?? [])])
     : new Set<string>();
@@ -561,6 +580,7 @@ function canonicalizeOpenWorldProposal(input: {
 
   return {
     ...proposal,
+    speakerActorId: input.speakerActorId,
     appliedEffectIds: [],
     eventType: safeEventType,
     locationId: input.playerActs ? input.playerLocationId : proposal.locationId,
@@ -583,6 +603,34 @@ function canonicalizeOpenWorldProposal(input: {
   };
 }
 
+const NPC_DIALOGUE_SUMMARY_PATTERN = /(?:说完|说道|说着|说出|开口说|答道|回答道|问道|喊道|低声(?:说|道)|高声(?:说|道)|嘀咕|话音(?:刚落|落下)|吐出|念道)/;
+const NPC_SILENCE_SUMMARY_PATTERN = /(?:没(?:有)?说|没有回答|没有开口|一言不发|保持沉默)/;
+
+function proposalSpeakerActorId(storyPackage: MysteryStoryPackage, proposal: MysteryEventProposal) {
+  if (!proposal.rawUtterance) {
+    const involvedNpc = [...proposal.actorIds, ...proposal.targetIds].some((actorId) =>
+      storyPackage.entityResourceGraph.actors.some((actor) => actor.actorId === actorId && actor.kind === "npc"));
+    if (proposal.eventType === "UTTERANCE_OCCURRED"
+      || (involvedNpc && NPC_DIALOGUE_SUMMARY_PATTERN.test(proposal.playerVisibleSummary)
+        && !NPC_SILENCE_SUMMARY_PATTERN.test(proposal.playerVisibleSummary))) {
+      throw new MysteryInvariantError("NPC_UTTERANCE_TEXT_REQUIRED", "人物已经开口，但裁决提案没有保存逐字原话；请补充 speakerActorId 和 rawUtterance");
+    }
+    return null;
+  }
+  const explicitSpeakerId = proposal.speakerActorId ?? null;
+  if (explicitSpeakerId) {
+    if (!proposal.actorIds.includes(explicitSpeakerId)) {
+      throw new MysteryInvariantError("SPEAKER_NOT_IN_ACTORS", "speakerActorId 必须同时包含在 actorIds 中");
+    }
+    if (!storyPackage.entityResourceGraph.actors.some((actor) => actor.actorId === explicitSpeakerId)) {
+      throw new MysteryInvariantError("SPEAKER_NOT_FOUND", `发言人物 ${explicitSpeakerId} 不存在`);
+    }
+    return explicitSpeakerId;
+  }
+  if (proposal.actorIds.length === 1) return proposal.actorIds[0];
+  throw new MysteryInvariantError("SPEAKER_REQUIRED", "多人事件包含发言时必须使用 speakerActorId 明确发言者");
+}
+
 function canonicalizeAgentProposal(input: {
   storyPackage: MysteryStoryPackage;
   state: MysteryRunState;
@@ -590,7 +638,8 @@ function canonicalizeAgentProposal(input: {
   proposal: MysteryEventProposal;
 }): MysteryEventProposal {
   const { storyPackage, state, sessionSeed } = input;
-  const proposal = input.proposal;
+  const speakerActorId = proposalSpeakerActorId(storyPackage, input.proposal);
+  const proposal = { ...input.proposal, speakerActorId };
   const locationIds = new Set(storyPackage.entityResourceGraph.locations.map((location) => location.locationId));
   const knowledgeIds = new Set(storyPackage.knowledgeGraph.knowledge.map((knowledge) => knowledge.knowledgeId));
   const factualReferenceIds = new Set([...knowledgeIds, ...storyPackage.coreFactGraph.facts.map((fact) => fact.factId)]);
@@ -611,9 +660,9 @@ function canonicalizeAgentProposal(input: {
     for (const change of proposal.knowledgeChanges) {
       if (!knowledgeIds.has(change.knowledgeId)) throw new MysteryInvariantError("KNOWLEDGE_NOT_FOUND", `知识 ${change.knowledgeId} 不存在`);
     }
-    const speakerId = proposal.actorIds[0];
+    const speakerId = speakerActorId;
     const speaker = storyPackage.entityResourceGraph.actors.find((actor) => actor.actorId === speakerId);
-    if (proposal.rawUtterance && speaker?.kind === "npc") {
+    if (proposal.rawUtterance && speakerId && speaker?.kind === "npc") {
       const allowedKnowledge = new Set([...(state.knowledgeByActor[speakerId] ?? []), ...(state.beliefsByActor[speakerId] ?? [])]);
       for (const knowledgeId of proposal.expressedKnowledgeIds ?? []) {
         if (!factualReferenceIds.has(knowledgeId) || !allowedKnowledge.has(knowledgeId)) {
@@ -622,7 +671,7 @@ function canonicalizeAgentProposal(input: {
       }
     }
     if (!proposal.transitionId) {
-      return canonicalizeOpenWorldProposal({ storyPackage, state, proposal, baseVisibility, playerActs, playerLocationId });
+      return canonicalizeOpenWorldProposal({ storyPackage, state, proposal, speakerActorId, baseVisibility, playerActs, playerLocationId });
     }
     const transition = transitionById.get(proposal.transitionId);
     if (!transition) throw new MysteryInvariantError("TRANSITION_NOT_FOUND", `行动转换 ${proposal.transitionId} 不存在`);
@@ -676,6 +725,7 @@ function canonicalizeAgentProposal(input: {
         : `尝试${transition.description}，但没有成功。`;
     return {
       ...proposal,
+      speakerActorId,
       eventType: succeeded ? "ACTION_SUCCEEDED" : "ACTION_FAILED",
       appliedEffectIds: allowedEffectIds,
       timeCostSeconds: transition.timeCostSeconds,
@@ -698,6 +748,7 @@ export function canonicalizeAgentProposals(input: {
   state: MysteryRunState;
   sessionSeed: string;
   proposals: MysteryEventProposal[];
+  playerInput?: string;
 }) {
   const output: MysteryEventProposal[] = [];
   let projectedState = input.state;
@@ -708,7 +759,7 @@ export function canonicalizeAgentProposals(input: {
       sessionSeed: input.sessionSeed,
       proposal,
     });
-    enforcePlayerInformationBoundary(input.storyPackage, projectedState, canonical);
+    enforcePlayerInformationBoundary(input.storyPackage, projectedState, canonical, input.playerInput);
     output.push(canonical);
     projectedState = projectMysteryProposal(projectedState, canonical);
   }
@@ -726,10 +777,20 @@ function comparableInformationClaim(value: string) {
   return value.normalize("NFKC").replace(/[\s“”"'‘’「」『』，。！？、；：,.!?;:—…-]+/g, "");
 }
 
+function commonChineseInteger(value: number) {
+  if (!Number.isInteger(value) || value < 1 || value > 99) return null;
+  const digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+  if (value < 10) return digits[value];
+  const tens = Math.floor(value / 10);
+  const units = value % 10;
+  return `${tens === 1 ? "" : digits[tens]}十${units === 0 ? "" : digits[units]}`;
+}
+
 function enforcePlayerInformationBoundary(
   storyPackage: MysteryStoryPackage,
   state: MysteryRunState,
   proposal: MysteryEventProposal,
+  playerInput = "",
 ) {
   const playerActorId = state.playerActorId;
   const playerKnown = new Set([
@@ -751,7 +812,7 @@ function enforcePlayerInformationBoundary(
     );
   }
 
-  const speakerId = proposal.actorIds[0];
+  const speakerId = proposal.speakerActorId ?? (proposal.actorIds.length === 1 ? proposal.actorIds[0] : null);
   const speaker = storyPackage.entityResourceGraph.actors.find((actor) => actor.actorId === speakerId);
   if (proposal.visibleToPlayer === true && proposal.rawUtterance && speaker?.kind === "npc") {
     const heardCompletely = playerPerceptions.includes("heard_complete");
@@ -776,8 +837,62 @@ function enforcePlayerInformationBoundary(
     }
   }
 
-  const comparableSummary = comparableInformationClaim(proposal.playerVisibleSummary);
-  if (!comparableSummary) return;
+  const comparableVisibleOutput = comparableInformationClaim([
+    proposal.playerVisibleSummary,
+    proposal.rawUtterance ?? "",
+  ].join("\n"));
+  if (!comparableVisibleOutput) return;
+  const comparablePlayerInput = comparableInformationClaim(playerInput);
+  const authorizedStatements = [
+    ...storyPackage.coreFactGraph.facts
+      .filter((fact) => playerKnown.has(fact.factId) || acquired.has(fact.factId))
+      .map((fact) => fact.statement),
+    ...storyPackage.knowledgeGraph.knowledge
+      .filter((knowledge) => playerKnown.has(knowledge.knowledgeId) || acquired.has(knowledge.knowledgeId))
+      .map((knowledge) => knowledge.objectiveStatement),
+  ].map(comparableInformationClaim).filter(Boolean);
+  const isAlreadyAuthorized = (claim: string) => authorizedStatements.some((statement) =>
+    statement.includes(claim));
+
+  const futureEventLeak = storyPackage.timelineGraph.scheduledEvents
+    .filter((event) => !state.triggeredScheduledEventIds.includes(event.scheduledEventId))
+    .find((event) => {
+      const eventEffectIds = new Set(event.effectIds);
+      const hiddenEffectClaims = storyPackage.actionTransitionGraph.effects
+        .filter((effect) => eventEffectIds.has(effect.effectId))
+        .flatMap((effect) => [
+          effect.description,
+          ...effect.resourceChanges.map((change) => change.reason),
+          ...effect.itemChanges.map((change) => change.reason),
+          ...effect.actorChanges.flatMap((change) => [change.reason, change.physicalState ?? ""]),
+          ...effect.knowledgeChanges.map((change) => change.reason),
+        ]);
+      const hiddenClaims = [event.name, event.playerVisibleSummary ?? "", ...hiddenEffectClaims]
+        .map(comparableInformationClaim)
+        .filter((claim) => claim.length >= 2);
+      const hiddenClaimLeaked = hiddenClaims.some((claim) =>
+        comparableVisibleOutput.includes(claim) && !isAlreadyAuthorized(claim));
+      if (hiddenClaimLeaked) return true;
+
+      if (event.triggerAtWorldSecond == null || event.triggerAtWorldSecond <= state.worldTimeSeconds) return false;
+      const futureDay = Math.floor(event.triggerAtWorldSecond / 86_400) + 1;
+      const chineseDay = commonChineseInteger(futureDay);
+      const futureDayClaims = [
+        `第${futureDay}日`, `第${futureDay}天`,
+        ...(chineseDay ? [`第${chineseDay}日`, `第${chineseDay}天`] : []),
+      ].map(comparableInformationClaim);
+      return futureDayClaims.some((claim) =>
+        comparableVisibleOutput.includes(claim)
+        && !isAlreadyAuthorized(claim)
+        && !comparablePlayerInput.includes(claim));
+    });
+  if (futureEventLeak) {
+    throw new MysteryInvariantError(
+      "FUTURE_SCHEDULE_LEAK",
+      `玩家可见内容泄露了尚未触发的排期事件 ${futureEventLeak.scheduledEventId}`,
+    );
+  }
+
   const hiddenStatements = [
     ...storyPackage.coreFactGraph.facts
       .filter((fact) => !playerKnown.has(fact.factId) && !acquired.has(fact.factId))
@@ -788,7 +903,7 @@ function enforcePlayerInformationBoundary(
   ];
   const leaked = hiddenStatements.find(({ statement }) => {
     const comparableStatement = comparableInformationClaim(statement);
-    return comparableStatement.length >= 8 && comparableSummary.includes(comparableStatement);
+    return comparableStatement.length >= 8 && comparableVisibleOutput.includes(comparableStatement);
   });
   if (leaked) {
     throw new MysteryInvariantError(
@@ -803,6 +918,7 @@ export function validateMysteryResolutionForRuntime(input: {
   state: MysteryRunState;
   sessionSeed: string;
   resolution: MysteryTurnResolution;
+  playerInput?: string;
 }): MysteryResolutionRuntimeIssue[] {
   const proposedTime = input.resolution.proposedEvents.reduce((sum, event) => sum + event.timeCostSeconds, 0);
   if (proposedTime !== input.resolution.totalTimeCostSeconds) {
@@ -817,6 +933,7 @@ export function validateMysteryResolutionForRuntime(input: {
       state: input.state,
       sessionSeed: input.sessionSeed,
       proposals: input.resolution.proposedEvents,
+      playerInput: input.playerInput,
     });
     return [];
   } catch (error) {
@@ -1018,10 +1135,13 @@ export function buildMysteryPlayerVisiblePacket(input: {
     perceivableEnvironment,
     knownInformation: [...new Set([...knownFacts, ...knownKnowledge])],
     allowedNpcExpressions: visibleEvents
-      .filter((event) => event.rawUtterance && event.actorIds.length
-        && input.storyPackage.entityResourceGraph.actors.some((actor) => actor.actorId === event.actorIds[0] && actor.kind === "npc"))
+      .filter((event) => {
+        const speakerId = event.speakerActorId ?? (event.actorIds.length === 1 ? event.actorIds[0] : null);
+        return Boolean(event.rawUtterance && speakerId
+          && input.storyPackage.entityResourceGraph.actors.some((actor) => actor.actorId === speakerId && actor.kind === "npc"));
+      })
       .map((event) => {
-        const actorId = event.actorIds[0];
+        const actorId = event.speakerActorId ?? event.actorIds[0];
         const actor = input.storyPackage.entityResourceGraph.actors.find((entry) => entry.actorId === actorId);
         return { actorId, actorName: actor?.name ?? "故事人物", text: event.rawUtterance! };
       }),
@@ -1195,6 +1315,7 @@ export async function processMysteryTurn(input: {
           state: initialState,
           sessionSeed: String(run.session_seed),
           resolution: candidate,
+          playerInput: input.rawInput,
         }),
       });
     throwIfCancelled();
@@ -1208,6 +1329,7 @@ export async function processMysteryTurn(input: {
       state: initialState,
       sessionSeed: String(run.session_seed),
       proposals: resolution.proposedEvents,
+      playerInput: input.rawInput,
     });
     const firstPass = commitEventBatch({
       state: initialState,

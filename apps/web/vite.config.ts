@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
             .replace("/src/main.tsx", "/src/main.android.tsx")
             .replace(/\s*<!-- hgt-pwa-start -->[\s\S]*?<!-- hgt-pwa-end -->\s*/, "\n    ")
             .replace('<meta name="robots" content="index,follow" />', '<meta name="robots" content="noindex,nofollow" />')
-            .replace("烧脑海龟汤社区｜海量经典海龟汤、推理解谜与烧脑游戏", "烧脑海龟汤");
+            .replace("汤汤解谜乐园｜AI海龟汤、多人玩汤与原创谜题社区", "汤汤解谜乐园");
         }
       }
     });

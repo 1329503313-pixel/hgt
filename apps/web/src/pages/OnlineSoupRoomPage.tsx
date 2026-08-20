@@ -21,6 +21,7 @@ import { giftTimelineEntries } from "../shared/giftTimeline";
 import { onlineSoupAnswerPrefix } from "../shared/onlineSoupAnswerLabel";
 import { copyTextToClipboard } from "../shared/clipboard";
 import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
+import { useKeepMessageListPinned } from "../shared/useKeepMessageListPinned";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -216,6 +217,7 @@ export default function OnlineSoupRoomPage() {
   const historyExpanded = useRef(false);
   const newestMessageId = useRef<string | null>(null);
   const isNearMessagesBottom = useRef(true);
+  useKeepMessageListPinned(messagesRef, isNearMessagesBottom);
   const snapshotRef = useRef<OnlineSoupSnapshot | null>(null);
   const entryStarted = useRef(false);
   const progressLoadedRoundId = useRef<string | null>(null);
@@ -648,12 +650,12 @@ export default function OnlineSoupRoomPage() {
     };
   }, [load, loadClues, loadNewMessages, loadProgress, socketConnected]);
   const latestMessageId = snapshot?.messages[snapshot.messages.length - 1]?.id ?? null;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!latestMessageId || latestMessageId === newestMessageId.current) return;
     const isInitialLoad = newestMessageId.current == null;
     newestMessageId.current = latestMessageId;
     if (isInitialLoad || isNearMessagesBottom.current) {
-      scrollToLatestMessage(isInitialLoad ? "auto" : "smooth");
+      scrollToLatestMessage("auto");
     } else {
       setShowScrollToLatest(true);
     }

@@ -91,6 +91,52 @@ body {
   line-height: 1.75;
 }
 
+.seo-fallback section {
+  max-width: 60rem;
+  margin-top: 3rem;
+}
+
+.seo-fallback h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 1.5rem;
+  line-height: 1.35;
+}
+
+.seo-fallback ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.seo-fallback li {
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.seo-fallback a {
+  color: #1d4ed8;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.seo-fallback li span {
+  display: block;
+  margin-top: 0.5rem;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+.seo-fallback li p {
+  margin-top: 0.5rem;
+  font-size: 0.925rem;
+}
+
 .app-shell {
   position: relative;
   isolation: isolate;

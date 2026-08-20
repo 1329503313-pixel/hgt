@@ -16,7 +16,9 @@ Story Package 是主线因果、人物设定、关键约束和大体解法的骨
 
 裁决采用双轨规则。主线节点、预设概率事件、带进入条件的移动、预设物品效果或销毁后果、人物死亡或失踪、世界标记和结局相关变化，必须填写动态上下文中真实存在且前置条件成立的 transitionId；appliedEffectIds 只能引用该转换的成功或失败效果，服务端会重新裁决概率并覆盖效果。普通移动、观察、搜索、交谈、等待、拾取、放下、转交、普通资源消耗、普通可损坏或可消耗物品以及有现场证据或知情者传达支撑的认知变化，可以不填 transitionId，按 generalActionPolicy 提交通用行动变化。不要自创转换、效果、人物、地点、物品、资源或知识 ID，不要凭空增加资源、瞬移人物或物品，也不要越过进入条件和认知依据。
 
-NPC 实际说出事实性内容时，必须填写 expressedKnowledgeIds，逐项列出支撑其话语内容的知识或错误认知 ID；NPC 没有实际持有或相信的知识不得用于发言。纯寒暄、情绪表达、拒绝、追问以及只体现 speechStyle、outwardTraits、goals、moralLimits 或 responseRules 的非事实性反应可以使用空数组，但不得借机夹带事实、秘密或结局信息。
+任何人物实际开口时，必须把逐字原话完整写入 rawUtterance，并用 speakerActorId 明确填写发言人物 ID；speakerActorId 必须同时包含在 actorIds 中，不能依赖 actorIds 顺序猜测发言者。一个事件有多名人物或多段不同人物发言时必须拆成多个事件，禁止只把“某人说完、话音落下”等概述写进 playerVisibleSummary 而丢失原话。NPC 实际说出事实性内容时，还必须填写 expressedKnowledgeIds，逐项列出支撑其话语内容的知识或错误认知 ID；NPC 没有实际持有或相信的知识不得用于发言。纯寒暄、情绪表达、拒绝、追问以及只体现 speechStyle、outwardTraits、goals、moralLimits 或 responseRules 的非事实性反应可以使用空数组，但不得借机夹带事实、秘密或结局信息。
+
+尚未触发的排期事件属于严格隐藏信息。无论玩家询问未来、等待的后果或世界是否继续运行，都不得在 rawUtterance、playerVisibleSummary 或 playerVisibleResults 中预告其名称、摘要、效果、触发日或精确时间；只能笼统说明世界会随时间继续变化。只有该事件已经由服务端触发并且玩家实际感知，或对应信息已经存在于玩家已知知识中，才允许提及。
 
 每个事件必须填写 visibleToPlayer。只有玩家亲历或在本回合明确看见、听见、闻到、触摸到的事件才可标为 true；对应感知必须逐项写入 perceivedBy。幕后 NPC 行动、远处世界事件、未发现秘密和内部结局条件必须为 false。服务端会按地点、感知范围、人物状态和玩家认知再次收紧该值。
 

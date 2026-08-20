@@ -46,7 +46,7 @@ export function VipIdentity({
   if (preserveNickname) {
     return (
       <span className={`flex min-w-0 items-center ${className}`} title={nickname}>
-        {vipIconBeforeNickname && resolvedActive && <span className="shrink-0 pr-1.5">{vipNode}</span>}
+        {vipIconBeforeNickname && resolvedActive && <span className="min-w-0 shrink-[10] overflow-hidden pr-1.5">{vipNode}</span>}
         <span className="min-w-0 shrink-[1] truncate">{nicknameNode}</span>
         {!vipIconBeforeNickname && resolvedActive && <span className="min-w-0 shrink-[10] overflow-hidden pl-1.5">{vipNode}</span>}
         {levelNode && <span className="min-w-0 shrink-[100] overflow-hidden pl-1.5">{levelNode}</span>}

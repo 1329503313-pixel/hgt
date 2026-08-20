@@ -5,7 +5,7 @@ import { commitEventBatch, createInitialRunState, deterministicRoll, evaluateSta
 import { mysteryStoryPackageSchema, type MysteryEventProposal, type MysteryStoryPackage, type MysteryTurnResolution } from "./contracts.js";
 import { MYSTERY_COMPILER_SCHEMA_GUIDE } from "./compilerSchemaGuide.js";
 import { validateMysteryStoryPackageIntegrity } from "./packageValidation.js";
-import { buildMysteryNarrativeFallback, buildMysteryPlayerVisiblePacket, canonicalizeAgentProposals, classifyBlockedMysteryInput, detectMysteryInputRisk, isMysteryTurnCancellation, mysteryRunBindingAction, mysteryTurnConflictAction, mysteryTurnLeaseCanBeClaimed, validateMysteryResolutionForRuntime } from "./runtime.js";
+import { buildMysteryNarrativeFallback, buildMysteryOpeningNarrative, buildMysteryPlayerVisiblePacket, canonicalizeAgentProposals, classifyBlockedMysteryInput, detectMysteryInputRisk, isMysteryTurnCancellation, mysteryRunBindingAction, mysteryTurnConflictAction, mysteryTurnLeaseCanBeClaimed, validateMysteryResolutionForRuntime } from "./runtime.js";
 import { adjudicateMysteryTurn, MysteryModelError, preserveMysteryNpcExpressions, retryMysteryAiReplyOnce } from "./models.js";
 
 const storyPackage: MysteryStoryPackage = {
@@ -469,8 +469,72 @@ test("玩家可见摘要不能绕过感知过程直接说出未知线索", () =>
     && error.code === "PLAYER_VISIBLE_KNOWLEDGE_LEAK");
 });
 
+test("第二天的裁决不能泄露第九天和第十天的排期事件", () => {
+  const configured = structuredClone(storyPackage);
+  configured.timelineGraph.scheduledEvents.push(
+    {
+      scheduledEventId: "SCHEDULE_KIDNAP", name: "绑架", triggerAtWorldSecond: 8 * 86_400,
+      triggerCondition: null, effectIds: [], canBeMissed: false, keyNode: true,
+      playerVisible: true, playerVisibleSummary: "有人会在夜里遭到绑架",
+      visibleToLocationIds: ["LOC_1"], audibleToLocationIds: [],
+    },
+    {
+      scheduledEventId: "SCHEDULE_SEA_RITUAL", name: "海祭", triggerAtWorldSecond: 9 * 86_400,
+      triggerCondition: null, effectIds: [], canBeMissed: false, keyNode: true,
+      playerVisible: true, playerVisibleSummary: "港口将举行海祭",
+      visibleToLocationIds: ["LOC_1"], audibleToLocationIds: [],
+    },
+  );
+  const initial = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage: configured });
+  initial.worldTimeSeconds = 86_400 + 100;
+
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured,
+    state: initial,
+    sessionSeed: "seed_1",
+    playerInput: "我再考虑一下",
+    proposals: [proposal({
+      playerVisibleSummary: "世界不会等你拿定主意：第9日的绑架、第10日的海祭都不会因为你不行动而取消。",
+    })],
+  }), (error: unknown) => error instanceof MysteryInvariantError
+    && error.code === "FUTURE_SCHEDULE_LEAK");
+
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured,
+    state: initial,
+    sessionSeed: "seed_1",
+    playerInput: "未来会怎样",
+    proposals: [proposal({ playerVisibleSummary: "第九日会出现一次你尚不知道的重大变化。" })],
+  }), (error: unknown) => error instanceof MysteryInvariantError
+    && error.code === "FUTURE_SCHEDULE_LEAK");
+
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage: configured,
+    state: initial,
+    sessionSeed: "seed_1",
+    playerInput: "第9日是不是会发生绑架",
+    proposals: [proposal({ playerVisibleSummary: "是的，第9日会发生绑架。" })],
+  }), (error: unknown) => error instanceof MysteryInvariantError
+    && error.code === "FUTURE_SCHEDULE_LEAK");
+
+  const [genericWarning] = canonicalizeAgentProposals({
+    storyPackage: configured,
+    state: initial,
+    sessionSeed: "seed_1",
+    playerInput: "我再考虑一下",
+    proposals: [proposal({ playerVisibleSummary: "世界不会停下来，时间仍在继续流逝。" })],
+  });
+  assert.equal(genericWarning.playerVisibleSummary, "世界不会停下来，时间仍在继续流逝。");
+});
+
 test("裁决 Agent 会根据运行时转换错误自行修复提案", async () => {
   const configured = structuredClone(storyPackage);
+  configured.timelineGraph.scheduledEvents.push({
+    scheduledEventId: "SCHEDULE_SECRET_FUTURE", name: "第九日绑架", triggerAtWorldSecond: 8 * 86_400,
+    triggerCondition: null, effectIds: [], canBeMissed: false, keyNode: true,
+    playerVisible: true, playerVisibleSummary: "第九日将发生绑架",
+    visibleToLocationIds: ["LOC_1"], audibleToLocationIds: [],
+  });
   configured.actionTransitionGraph.effects.push({
     effectId: "EFFECT_FIRE", description: "消耗一发弹药",
     resourceChanges: [{ resourceId: "PLAYER_AMMO", delta: -1, reason: "开枪" }],
@@ -539,6 +603,7 @@ test("裁决 Agent 会根据运行时转换错误自行修复提案", async () =
     assert.match(initialPrompt, /playerInformationBoundary/);
     assert.match(initialPrompt, /timePressure/);
     assert.match(initialPrompt, /短句交谈通常 15–60 秒/);
+    assert.doesNotMatch(initialPrompt, /SCHEDULE_SECRET_FUTURE|第九日绑架|第九日将发生绑架|upcomingWorldEvents|nextScheduledWorldSecond/);
     assert.deepEqual(requests.map((request) => request.thinking?.type), ["disabled", "disabled"]);
     assert.ok(requests.every((request) => !("reasoning_effort" in request)));
     assert.ok(requests.every((request) => request.tool_choice != null));
@@ -716,6 +781,66 @@ test("叙事模型遗漏开头 NPC 台词时由运行时补齐且不要求重新
   assert.ok(repaired.startsWith("守卫说：“别再往前走了。”"));
   assert.ok(repaired.endsWith("守卫抬手拦住了去路。"));
   assert.equal(preserveMysteryNpcExpressions("守卫说：\"别再往前走了\"\n\n守卫抬手拦住了去路。", packet), "守卫说：\"别再往前走了\"\n\n守卫抬手拦住了去路。");
+});
+
+test("NPC 发言者由 speakerActorId 明确标识而不依赖 actorIds 顺序", () => {
+  const state = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage });
+  const [canonical] = canonicalizeAgentProposals({
+    storyPackage,
+    state,
+    sessionSeed: "seed_1",
+    proposals: [proposal({
+      actorIds: ["PLAYER_1", "NPC_1"],
+      speakerActorId: "NPC_1",
+      rawUtterance: "别再往前走了。",
+      perceivedBy: [{ actorId: "PLAYER_1", perception: "heard_complete" }],
+      visibleToPlayer: true,
+      playerVisibleSummary: "守卫抬手拦住了去路。",
+    })],
+  });
+  const packet = buildMysteryPlayerVisiblePacket({
+    title: "测试谜局", storyPackage, state, events: [canonical], resolution: { endingSignals: [] },
+  });
+  assert.equal(canonical.speakerActorId, "NPC_1");
+  assert.deepEqual(packet.allowedNpcExpressions, [{ actorId: "NPC_1", actorName: "守卫", text: "别再往前走了。" }]);
+});
+
+test("多人发言事件缺少 speakerActorId 时拒绝提交并要求模型修复", () => {
+  const state = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage });
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage,
+    state,
+    sessionSeed: "seed_1",
+    proposals: [proposal({
+      actorIds: ["PLAYER_1", "NPC_1"],
+      rawUtterance: "别再往前走了。",
+      visibleToPlayer: true,
+    })],
+  }), (error: unknown) => error instanceof MysteryInvariantError && error.code === "SPEAKER_REQUIRED");
+});
+
+test("NPC 已经开口但未保存原话时拒绝提交", () => {
+  const state = createInitialRunState({ runId: "run_1", storyVersionId: "version_1", storyPackage });
+  assert.throws(() => canonicalizeAgentProposals({
+    storyPackage,
+    state,
+    sessionSeed: "seed_1",
+    proposals: [proposal({
+      actorIds: ["NPC_1"],
+      rawUtterance: null,
+      visibleToPlayer: true,
+      playerVisibleSummary: "守卫说完最后一个字，抬手拦住了去路。",
+    })],
+  }), (error: unknown) => error instanceof MysteryInvariantError && error.code === "NPC_UTTERANCE_TEXT_REQUIRED");
+});
+
+test("既有存档的开局可见事件无需重新编译即可恢复为故事回应", () => {
+  assert.equal(buildMysteryOpeningNarrative([
+    JSON.stringify({ visibleToPlayer: true, playerVisibleSummary: "守卫说道：别再往前走。" }),
+    { visibleToPlayer: false, playerVisibleSummary: "远处发生了秘密事件。" },
+    { visibleToPlayer: true, playerVisibleSummary: "守卫说道：别再往前走。" },
+    { visibleToPlayer: true, playerVisibleSummary: "门厅的灯熄灭了。" },
+  ]), "守卫说道：别再往前走。\n\n门厅的灯熄灭了。");
 });
 
 test("确定性降级叙事也会保留开头 NPC 原话", () => {

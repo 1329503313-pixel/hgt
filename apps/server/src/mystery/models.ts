@@ -589,7 +589,8 @@ const resolutionTool = {
           transitionId: { type: ["string", "null"] }, appliedEffectIds: { type: "array", items: { type: "string" } },
           eventType: { type: "string" }, actorIds: { type: "array", items: { type: "string" } },
           targetIds: { type: "array", items: { type: "string" } }, locationId: { type: ["string", "null"] },
-          rawUtterance: { type: ["string", "null"] }, normalizedMeaning: { type: ["string", "null"] },
+          speakerActorId: { type: ["string", "null"] },
+          rawUtterance: { type: ["string", "null"], minLength: 1 }, normalizedMeaning: { type: ["string", "null"] },
           expressedKnowledgeIds: { type: "array", items: { type: "string" } },
           perceivedBy: { type: "array", items: { type: "object", properties: {
             actorId: { type: "string" }, perception: { type: "string", enum: [
@@ -621,7 +622,7 @@ const resolutionTool = {
           flagChanges: { type: "object" }, irreversible: { type: "boolean" }, keyNode: { type: "boolean" },
           keyNodeType: { type: ["string", "null"] }, playerVisibleSummary: { type: "string" },
           visibleToPlayer: { type: "boolean" },
-        }, required: ["eventType", "actorIds", "targetIds", "locationId", "rawUtterance", "normalizedMeaning", "expressedKnowledgeIds", "perceivedBy", "causedByEventIds", "requiredItemInstanceIds", "scheduledEventTriggers", "timeCostSeconds", "resourceChanges", "itemChanges", "actorChanges", "knowledgeChanges", "endingChanges", "flagChanges", "irreversible", "keyNode", "keyNodeType", "visibleToPlayer", "playerVisibleSummary"] } },
+        }, required: ["eventType", "actorIds", "targetIds", "locationId", "speakerActorId", "rawUtterance", "normalizedMeaning", "expressedKnowledgeIds", "perceivedBy", "causedByEventIds", "requiredItemInstanceIds", "scheduledEventTriggers", "timeCostSeconds", "resourceChanges", "itemChanges", "actorChanges", "knowledgeChanges", "endingChanges", "flagChanges", "irreversible", "keyNode", "keyNodeType", "visibleToPlayer", "playerVisibleSummary"] } },
         playerVisibleResults: { type: "array", minItems: 1, items: { type: "string" } },
         scheduledWorldEvents: { type: "array", items: { type: "object" } },
         endingSignals: { type: "array", items: { type: "object", properties: {
@@ -665,10 +666,6 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
   }).slice(0, 200);
   const selectedTransitions = transitions.length ? transitions : storyPackage.actionTransitionGraph.transitions.slice(0, 100);
   const relevantEffectIds = new Set(selectedTransitions.flatMap((transition) => [...transition.successEffectIds, ...transition.failureEffectIds]));
-  const relevantScheduledEvents = storyPackage.timelineGraph.scheduledEvents
-    .filter((event) => !state.triggeredScheduledEventIds.includes(event.scheduledEventId))
-    .sort((left, right) => (left.triggerAtWorldSecond ?? Number.MAX_SAFE_INTEGER) - (right.triggerAtWorldSecond ?? Number.MAX_SAFE_INTEGER))
-    .slice(0, 50);
   return {
     generalActionPolicy: {
       principle: "Story Package 是主线与关键约束骨架，不是行动白名单。可知、可见、可达、可操作范围内的普通行动即使没有 transitionId 也必须得到具体裁决和反馈。",
@@ -700,11 +697,14 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
       currentWorldSecond: state.worldTimeSeconds,
       elapsedDay: Math.floor(state.worldTimeSeconds / 86_400) + 1,
       secondsUntilNextDay: 86_400 - (state.worldTimeSeconds % 86_400),
-      nextScheduledWorldSecond: relevantScheduledEvents.find((event) => event.triggerAtWorldSecond != null)?.triggerAtWorldSecond ?? null,
-      rule: "每个实际发生的行动都必须计算现实耗时：短句交谈通常 15–60 秒，仔细观察 30–120 秒，搜索 2–10 分钟，普通互动 1–5 分钟，移动采用连接耗时，等待采用玩家声明时长或至少 5 分钟。不得把有意义行动压缩为 0–1 秒；世界时钟越过排期或日界线时必须继续结算世界事件。",
+      rule: "每个实际发生的行动都必须计算现实耗时：短句交谈通常 15–60 秒，仔细观察 30–120 秒，搜索 2–10 分钟，普通互动 1–5 分钟，移动采用连接耗时，等待采用玩家声明时长或至少 5 分钟。不得把有意义行动压缩为 0–1 秒。未来排期由服务端在时间推进后结算；裁决器不得猜测、预告或命名任何尚未触发的事件及其发生日。",
     },
     state: {
       ...state,
+      worldConstraints: {
+        ...state.worldConstraints,
+        scheduledEventIds: [],
+      },
       actors: Object.fromEntries(Object.entries(state.actors).filter(([actorId]) => relevantActorIds.has(actorId))),
       items: Object.fromEntries(Object.entries(state.items).filter(([itemId]) => relevantItemIds.has(itemId))),
       resources: Object.fromEntries(Object.entries(state.resources).filter(([resourceId]) => {
@@ -715,7 +715,9 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
       beliefsByActor: Object.fromEntries(Object.entries(state.beliefsByActor).filter(([actorId]) => relevantActorIds.has(actorId))),
     },
     entities: {
-      actors: storyPackage.entityResourceGraph.actors.filter((actor) => relevantActorIds.has(actor.actorId)),
+      actors: storyPackage.entityResourceGraph.actors
+        .filter((actor) => relevantActorIds.has(actor.actorId))
+        .map((actor) => ({ ...actor, scheduleIds: [] })),
       locations: storyPackage.entityResourceGraph.locations.filter((location) => relevantLocationIds.has(location.locationId)),
       items: storyPackage.entityResourceGraph.items.filter((item) => relevantItemIds.has(item.itemInstanceId)),
       resources: storyPackage.entityResourceGraph.resources.filter((resource) => relevantActorIds.has(resource.ownerId)),
@@ -733,7 +735,6 @@ function relevantRuntimeContext(storyPackage: MysteryStoryPackage, state: Myster
       transitions: selectedTransitions,
       effects: storyPackage.actionTransitionGraph.effects.filter((effect) => relevantEffectIds.has(effect.effectId)),
     },
-    upcomingWorldEvents: relevantScheduledEvents,
     endingFamilies: storyPackage.endingStateGraph.endings.map((ending) => ({
       endingId: ending.endingId,
       name: ending.name,

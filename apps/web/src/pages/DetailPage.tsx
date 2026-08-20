@@ -17,7 +17,7 @@ import { parentRoute } from "../shared/routeHierarchy";
 import { SoupShareModal } from "../components/SoupShareModal";
 import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { Modal } from "../components/Modal";
-import { seoDescription, setDocumentSeo } from "../shared/seo";
+import { seoDescription, seoSite, setDocumentSeo } from "../shared/seo";
 import { canAccessAdmin } from "../shared/roles";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { EvaluationCard } from "../components/EvaluationCard";
@@ -98,7 +98,7 @@ export default function DetailPage() {
     if (!soup) return;
     const isPublic = soup.reviewStatus === "approved" && soup.isSurfacePublic;
     setDocumentSeo({
-      title: `${soup.title}｜海龟汤推理解谜`,
+      title: `${soup.title}｜海龟汤题目｜${seoSite.name}`,
       description: seoDescription(soup.summary || soup.surface),
       index: isPublic,
       path: `/soup/${soup.id}`

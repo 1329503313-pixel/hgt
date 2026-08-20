@@ -24,7 +24,7 @@ import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors, selectOnlineSoupHuma
 import { ONLINE_SOUP_SINGLE_USER_IDLE_MINUTES, shouldAutoCloseIdleOnlineSoupRoom } from "./onlineSoupRoomIdle.js";
 import { consumeDailyEntitlement, isEntitlementLimitError } from "./entitlements.js";
 import { publicOssUrl } from "./ossStorage.js";
-import { mysteryTurnConflictAction, processMysteryTurn, startOrContinueMysteryRun } from "./mystery/runtime.js";
+import { buildMysteryOpeningNarrative, mysteryTurnConflictAction, processMysteryTurn, startOrContinueMysteryRun } from "./mystery/runtime.js";
 import { MysteryInvariantError } from "./mystery/engine.js";
 import { MysteryModelError } from "./mystery/models.js";
 import { mysteryClueContentSchema, nextMysteryClueNumber } from "./mystery/clues.js";
@@ -659,6 +659,7 @@ async function restoreMysteryRunMessages(
     `SELECT id, turn_sequence, raw_input, narrative, created_at, completed_at
      FROM mystery_turns
      WHERE run_id = ? AND status = 'completed' AND turn_sequence IS NOT NULL
+       AND raw_input <> '__SYSTEM_INITIALIZATION__'
      ORDER BY turn_sequence ASC, created_at ASC, id ASC`,
     [input.runId],
   );
@@ -2882,6 +2883,24 @@ router.post("/rooms/:roomId/start", async (req, res) => {
         "谜局开始：只有房主可以提交正式行动，其他成员可参与讨论。房主可以自由描述观察、交谈、移动、使用物品或等待，世界中的人物与事件会继续行动。",
         connection,
       );
+      const [openingRows] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT turns.id AS turn_id, events.event_payload
+         FROM mystery_turns turns
+         JOIN mystery_world_events events ON events.turn_id = turns.id
+         WHERE turns.run_id = ? AND turns.raw_input = '__SYSTEM_INITIALIZATION__'
+         ORDER BY events.event_index ASC`,
+        [room.current_mystery_run_id],
+      );
+      const openingNarrative = buildMysteryOpeningNarrative(openingRows.map((row) => row.event_payload));
+      if (openingNarrative && openingRows[0]?.turn_id) {
+        await connection.query(
+          `INSERT IGNORE INTO online_soup_messages
+            (id, room_id, round_id, mystery_run_id, sender_id, message_type, content)
+           VALUES (?, ?, NULL, ?, NULL, 'mystery_narrative', ?)`,
+          [mysteryHistoryMessageId("narrative", context.room.id, String(openingRows[0].turn_id)),
+            context.room.id, room.current_mystery_run_id, openingNarrative],
+        );
+      }
       await connection.commit();
     } catch (error) {
       await connection.rollback().catch(() => {});

@@ -7,7 +7,7 @@ import { api } from "../api";
 import { useNavigate } from "react-router-dom";
 
 export function EvalEditor() {
-  const { evalForm: value, setEvalForm: setValue, soupIdForEval, closeEvalEditor, showToast, checkBadgeUnlocks } = useApp();
+  const { evalForm: value, setEvalForm: setValue, soupIdForEval, closeEvalEditor, showToast, checkBadgeUnlocks, triggerRefresh } = useApp();
   const navigate = useNavigate();
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
@@ -29,6 +29,7 @@ export function EvalEditor() {
     setSubmitting(true);
     try {
       await api(`/api/soups/${soupIdForEval}/evaluations`, { method: "POST", body: value });
+      triggerRefresh();
       closeEvalEditor();
       showToast("评价已保存");
       if (value.content.trim()) await checkBadgeUnlocks();

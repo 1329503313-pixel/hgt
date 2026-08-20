@@ -2,10 +2,10 @@ import type express from "express";
 import type { Pool, RowDataPacket } from "mysql2/promise";
 import { readFileSync } from "node:fs";
 
-const SITE_NAME = "烧脑海龟汤社区 海量经典海龟汤";
-const HOME_TITLE = "烧脑海龟汤社区｜海量经典海龟汤、推理解谜与烧脑游戏";
-const HOME_DESCRIPTION = "烧脑海龟汤社区收录海量经典海龟汤、原创情境推理题和烧脑解谜内容，支持在线玩汤、作品评价、收藏和玩家交流。";
-const KEYWORDS = "海龟汤,解谜,推理,烧脑";
+const SITE_NAME = "汤汤解谜乐园";
+const HOME_TITLE = "汤汤解谜乐园｜AI海龟汤、多人玩汤与原创谜题社区";
+const HOME_DESCRIPTION = "汤汤解谜乐园是海龟汤与情境推理社区，提供原创海龟汤题目、AI主持在线玩汤、多人推理房间、作品评价与玩家交流。";
+const KEYWORDS = "汤汤解谜乐园,海龟汤,AI海龟汤,在线海龟汤,多人海龟汤,情境推理,推理解谜";
 
 type SeoRouteDependencies = {
   frontendIndexPath: string;
@@ -21,6 +21,20 @@ type SeoPage = {
   robots: "index,follow" | "noindex,nofollow";
   type?: "website" | "article";
   jsonLd?: unknown;
+  sections?: SeoSection[];
+};
+
+type SeoLink = {
+  href: string;
+  label: string;
+  description?: string;
+  metadata?: string;
+};
+
+type SeoSection = {
+  heading: string;
+  paragraphs?: string[];
+  links?: SeoLink[];
 };
 
 function escapeHtml(value: string) {
@@ -61,6 +75,46 @@ function safeJson(value: unknown) {
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
 
+function renderSeoSections(sections: SeoSection[] = []) {
+  return sections.map((section) => {
+    const paragraphs = (section.paragraphs ?? [])
+      .map((paragraph) => `<p>${escapeHtml(plainText(paragraph))}</p>`)
+      .join("");
+    const links = section.links?.length
+      ? `<ul>${section.links.map((link) => [
+        "<li>",
+        `<a href="${escapeHtml(link.href)}">${escapeHtml(headingFrom(link.label))}</a>`,
+        link.metadata ? `<span>${escapeHtml(plainText(link.metadata))}</span>` : "",
+        link.description ? `<p>${escapeHtml(descriptionFrom(link.description))}</p>` : "",
+        "</li>"
+      ].join("")).join("")}</ul>`
+      : "";
+    return `<section><h2>${escapeHtml(headingFrom(section.heading))}</h2>${paragraphs}${links}</section>`;
+  }).join("");
+}
+
+function soupSeoLinks(rows: RowDataPacket[], siteUrl: string): SeoLink[] {
+  return rows.map((row) => ({
+    href: `${siteUrl}/soup/${encodeURIComponent(String(row.id))}`,
+    label: plainText(row.title),
+    description: descriptionFrom(row.summary, row.surface),
+    metadata: [plainText(row.type), plainText(row.difficulty), `作者：${plainText(row.author || "社区用户")}`]
+      .filter(Boolean)
+      .join(" · ")
+  }));
+}
+
+export function buildSeoSitemapXml(siteUrl: string, soupRows: RowDataPacket[]) {
+  const urls = [
+    `  <url><loc>${escapeXml(`${siteUrl}/`)}</loc><priority>1.0</priority><changefreq>daily</changefreq></url>`,
+    ...soupRows.map((row) => {
+      const lastmod = row.updated_at ? `<lastmod>${new Date(row.updated_at).toISOString()}</lastmod>` : "";
+      return `  <url><loc>${escapeXml(`${siteUrl}/soup/${encodeURIComponent(String(row.id))}`)}</loc>${lastmod}<priority>0.8</priority><changefreq>weekly</changefreq></url>`;
+    })
+  ];
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
+}
+
 export function renderSeoHtml(template: string, page: SeoPage) {
   const title = escapeHtml(page.title);
   const description = escapeHtml(page.description);
@@ -77,7 +131,7 @@ export function renderSeoHtml(template: string, page: SeoPage) {
     `<meta name="twitter:card" content="summary" />`,
     page.jsonLd ? `<script type="application/ld+json">${safeJson(page.jsonLd)}</script>` : ""
   ].filter(Boolean).join("\n    ");
-  const fallback = `<div id="root"><main class="seo-fallback" data-seo-fallback><h1>${heading}</h1><p>${description}</p></main></div>`;
+  const fallback = `<div id="root"><main class="seo-fallback" data-seo-fallback><h1>${heading}</h1><p>${description}</p>${renderSeoSections(page.sections)}</main></div>`;
 
   return template
     .replace(/<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`)
@@ -110,52 +164,71 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
   });
 
   app.get("/sitemap.xml", async (_req, res) => {
-    const [soupRows, userRows] = await Promise.all([
+    const [soupRows] = await dependencies.pool.query<RowDataPacket[]>(
+      `SELECT id, updated_at
+       FROM soups
+       WHERE is_surface_public = TRUE AND review_status = 'approved'
+       ORDER BY updated_at DESC
+       LIMIT 49999`
+    );
+    res.type("application/xml").setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+    res.send(buildSeoSitemapXml(siteUrl, soupRows));
+  });
+
+  app.get("/", async (_req, res) => {
+    const canonical = `${siteUrl}/`;
+    const [latestResult, popularResult] = await Promise.all([
       dependencies.pool.query<RowDataPacket[]>(
-        `SELECT id, created_at
+        `SELECT id, title, author, type, difficulty, summary, surface
          FROM soups
          WHERE is_surface_public = TRUE AND review_status = 'approved'
          ORDER BY created_at DESC
-         LIMIT 49995`
+         LIMIT 12`
       ),
       dependencies.pool.query<RowDataPacket[]>(
-        `SELECT id, GREATEST(created_at, COALESCE(profile_background_updated_at, created_at)) AS updated_at
-         FROM users
-         WHERE created_at > DATE_SUB(NOW(), INTERVAL 1 MONTH)
-         ORDER BY created_at DESC
-         LIMIT 5000`
+        `SELECT id, title, author, type, difficulty, summary, surface
+         FROM soups
+         WHERE is_surface_public = TRUE AND review_status = 'approved'
+         ORDER BY view_count DESC, created_at DESC
+         LIMIT 24`
       )
     ]);
-    const urls = [
-      `  <url><loc>${escapeXml(`${siteUrl}/`)}</loc><priority>1.0</priority><changefreq>daily</changefreq></url>`,
-      `  <url><loc>${escapeXml(`${siteUrl}/mine/rankings`)}</loc><priority>0.8</priority><changefreq>daily</changefreq></url>`,
-      `  <url><loc>${escapeXml(`${siteUrl}/mine/excellent-author`)}</loc><priority>0.8</priority><changefreq>weekly</changefreq></url>`,
-      ...soupRows[0].map((row) => {
-        const lastmod = row.created_at ? `<lastmod>${new Date(row.created_at).toISOString()}</lastmod>` : "";
-        return `  <url><loc>${escapeXml(`${siteUrl}/soup/${encodeURIComponent(String(row.id))}`)}</loc>${lastmod}<priority>0.8</priority></url>`;
-      }),
-      ...userRows[0].map((row) => {
-        const lastmod = row.updated_at ? `<lastmod>${new Date(row.updated_at).toISOString()}</lastmod>` : "";
-        return `  <url><loc>${escapeXml(`${siteUrl}/users/${encodeURIComponent(String(row.id))}`)}</loc>${lastmod}<priority>0.5</priority></url>`;
-      })
-    ];
-    res.type("application/xml").setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`);
-  });
-
-  app.get("/", (_req, res) => {
-    const canonical = `${siteUrl}/`;
+    const latestRows = latestResult[0];
+    const latestIds = new Set(latestRows.map((row) => String(row.id)));
+    const popularRows = popularResult[0].filter((row) => !latestIds.has(String(row.id))).slice(0, 12);
+    const latestLinks = soupSeoLinks(latestRows, siteUrl);
+    const popularLinks = soupSeoLinks(popularRows, siteUrl);
+    const allLinks = [...latestLinks, ...popularLinks];
     res.type("html").setHeader("Cache-Control", "no-cache");
     res.send(renderSeoHtml(template, {
       title: HOME_TITLE,
+      heading: SITE_NAME,
       description: HOME_DESCRIPTION,
       canonical,
       robots: "index,follow",
+      sections: [
+        {
+          heading: "在线玩海龟汤与情境推理",
+          paragraphs: [
+            "阅读离奇的汤面，通过可以回答是、不是或无关的问题逐步还原汤底。你可以邀请朋友进入多人房间，也可以由 AI 主持人陪你独自推理。",
+            "社区收录原创与经典题型，覆盖本格、变格、清汤、红汤等不同风格；公开汤面均可直接浏览，并由玩家评价、收藏和交流。"
+          ]
+        },
+        ...(latestLinks.length ? [{ heading: "最新公开海龟汤", links: latestLinks }] : []),
+        ...(popularLinks.length ? [{ heading: "热门海龟汤", links: popularLinks }] : [])
+      ],
       jsonLd: {
         "@context": "https://schema.org",
         "@graph": [
-          { "@type": "WebSite", name: SITE_NAME, url: canonical, inLanguage: "zh-CN" },
-          { "@type": "Organization", name: SITE_NAME, url: canonical }
+          { "@type": "WebSite", name: SITE_NAME, alternateName: "汤汤解谜", url: canonical, inLanguage: "zh-CN" },
+          { "@type": "Organization", name: SITE_NAME, url: canonical },
+          ...(allLinks.length ? [{
+            "@type": "ItemList",
+            name: "汤汤解谜乐园公开海龟汤",
+            itemListElement: allLinks.map((link, index) => ({
+              "@type": "ListItem", position: index + 1, name: link.label, url: link.href
+            }))
+          }] : [])
         ]
       }
     }));
@@ -163,7 +236,8 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
 
   app.get("/soup/:id", async (req, res) => {
     const [rows] = await dependencies.pool.query<RowDataPacket[]>(
-      `SELECT s.id, s.title, s.author, s.summary, s.surface, s.created_at,
+      `SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.surface,
+         s.is_original, s.created_at, s.updated_at,
          COUNT(e.id) AS evaluation_count, AVG(e.total) AS average_total
        FROM soups s
        LEFT JOIN evaluations e ON e.soup_id = s.id
@@ -186,6 +260,15 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
     }
 
     const description = descriptionFrom(soup.summary, soup.surface);
+    const [relatedRows] = await dependencies.pool.query<RowDataPacket[]>(
+      `SELECT id, title, author, type, difficulty, summary, surface
+       FROM soups
+       WHERE id <> ? AND type = ? AND is_surface_public = TRUE AND review_status = 'approved'
+       ORDER BY created_at DESC
+       LIMIT 6`,
+      [soup.id, soup.type]
+    );
+    const relatedLinks = soupSeoLinks(relatedRows, siteUrl);
     const ratingCount = Number(soup.evaluation_count ?? 0);
     const averageRating = Number(soup.average_total ?? 0);
     const creativeWork: Record<string, unknown> = {
@@ -194,7 +277,9 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
       description,
       url: canonical,
       datePublished: new Date(soup.created_at).toISOString(),
+      dateModified: new Date(soup.updated_at ?? soup.created_at).toISOString(),
       inLanguage: "zh-CN",
+      genre: String(soup.type || "海龟汤"),
       author: { "@type": "Person", name: String(soup.author || "社区用户") }
     };
     if (ratingCount > 0 && averageRating > 0) {
@@ -209,12 +294,32 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
 
     res.type("html").setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
     return res.send(renderSeoHtml(template, {
-      title: `${plainText(soup.title)}｜海龟汤推理解谜`,
+      title: `${plainText(soup.title)}｜海龟汤题目｜${SITE_NAME}`,
       heading: plainText(soup.title),
       description,
       canonical,
       robots: "index,follow",
       type: "article",
+      sections: [
+        { heading: "汤面", paragraphs: [plainText(soup.surface)] },
+        {
+          heading: "题目信息",
+          paragraphs: [[
+            `类型：${plainText(soup.type || "海龟汤")}`,
+            `难度：${plainText(soup.difficulty || "普通")}`,
+            `作者：${plainText(soup.author || "社区用户")}`,
+            soup.is_original ? "原创作品" : "非原创作品"
+          ].join("；")]
+        },
+        {
+          heading: "继续挑战海龟汤",
+          paragraphs: ["围绕人物、时间、地点、物品和动机提出可判断的问题，逐步排除错误假设，再尝试还原完整汤底。"],
+          links: [
+            ...relatedLinks,
+            { href: `${siteUrl}/`, label: `返回${SITE_NAME}`, description: "浏览更多公开海龟汤与情境推理题。" }
+          ]
+        }
+      ],
       jsonLd: {
         "@context": "https://schema.org",
         "@graph": [
@@ -222,7 +327,7 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
           {
             "@type": "BreadcrumbList",
             itemListElement: [
-              { "@type": "ListItem", position: 1, name: "首页", item: `${siteUrl}/` },
+              { "@type": "ListItem", position: 1, name: SITE_NAME, item: `${siteUrl}/` },
               { "@type": "ListItem", position: 2, name: plainText(soup.title), item: canonical }
             ]
           }

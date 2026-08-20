@@ -396,7 +396,8 @@ export const mysteryEventProposalSchema = z.object({
   actorIds: idList,
   targetIds: idList,
   locationId: mysteryIdSchema.nullable().default(null),
-  rawUtterance: z.string().max(10_000).nullable().default(null),
+  speakerActorId: mysteryIdSchema.nullable().optional(),
+  rawUtterance: z.string().trim().min(1).max(10_000).nullable().default(null),
   normalizedMeaning: z.string().trim().max(5_000).nullable().default(null),
   expressedKnowledgeIds: z.array(mysteryIdSchema).max(100).optional(),
   perceivedBy: z.array(z.object({

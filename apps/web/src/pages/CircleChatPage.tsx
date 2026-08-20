@@ -19,6 +19,7 @@ import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
 import { giftTimelineEntries } from "../shared/giftTimeline";
+import { useKeepMessageListPinned } from "../shared/useKeepMessageListPinned";
 
 type CircleState = {
   circle: Omit<CircleSummary, "isJoined" | "latestMessage">;
@@ -34,17 +35,17 @@ function circleMemberOrder(a: CircleMember, b: CircleMember) {
   if (onlineRank) return onlineRank;
   const vipRank = Number(b.vipActive) - Number(a.vipActive);
   if (vipRank) return vipRank;
-  const levelRank = b.vipLevel - a.vipLevel;
+  const levelRank = b.level - a.level;
   if (levelRank) return levelRank;
-  const growthRank = b.vipGrowthValue - a.vipGrowthValue;
-  if (growthRank) return growthRank;
-  return a.joinedAt.localeCompare(b.joinedAt);
+  const joinedRank = a.joinedAt.localeCompare(b.joinedAt);
+  if (joinedRank) return joinedRank;
+  return a.id.localeCompare(b.id);
 }
 
 function Avatar({ avatar, nickname, online, size = "h-10 w-10" }: { avatar: string | null; nickname: string; online: boolean; size?: string }) {
   return (
     <span className={`relative grid shrink-0 place-items-center ${size}`}>
-      <span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary">
+      <span className={`grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 text-sm font-black text-primary ${online ? "" : "grayscale"}`}>
         {avatar ? <img className="h-full w-full object-cover" src={avatar} alt="" draggable={false} /> : nickname.slice(0, 1)}
       </span>
       {online && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />}
@@ -126,6 +127,7 @@ export default function CircleChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const firstScrollRef = useRef(false);
   const followBottomRef = useRef(true);
+  useKeepMessageListPinned(messagesRef, followBottomRef);
   const handledMentionNavigationRef = useRef("");
   const highlightTimerRef = useRef<number | null>(null);
   const requestedMentionId = (location.state as { circleMentionMessageId?: string } | null)?.circleMentionMessageId ?? "";
@@ -190,7 +192,6 @@ export default function CircleChatPage() {
       if (event === "circle_message_created") {
         const message = payload?.message as CircleMessage | undefined;
         if (!message) return;
-        followBottomRef.current = true;
         setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
         if (user && message.mentions.some((mention) => mention.userId === user.id)) {
           setUnreadMentions((current) => current.some((mention) => mention.id === message.id)
@@ -267,7 +268,7 @@ export default function CircleChatPage() {
       firstScrollRef.current = true;
       return;
     }
-    if (followBottomRef.current) container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    if (followBottomRef.current) container.scrollTop = container.scrollHeight;
   }, [messages.length, loading]);
 
   useEffect(() => {
@@ -545,7 +546,7 @@ export default function CircleChatPage() {
                 </MentionableAvatarButton>
                 <div className={`flex min-w-0 max-w-[78%] flex-col ${message.type === "soup_share" || message.type === "room_invite" || message.type === "gift" ? "w-[78%]" : ""} ${mine ? "items-end" : "items-start"}`}>
                   <div className={`mb-1 flex max-w-full items-center gap-1.5 px-1 text-[11px] text-muted ${mine ? "flex-row-reverse" : ""}`}>
-                    {message.sender ? <VipIdentity nickname={senderName} userLevel={message.sender.level} vipLevel={message.sender.vipLevel} vipActive={message.sender.vipActive} equippedBadge={message.sender.equippedBadge} vipIconBeforeNickname className="max-w-full" /> : <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>}
+                    {message.sender ? <VipIdentity nickname={senderName} userLevel={message.sender.level} vipLevel={message.sender.vipLevel} vipActive={message.sender.vipActive} equippedBadge={message.sender.equippedBadge} preserveNickname vipIconBeforeNickname className="max-w-full" /> : <span className="max-w-28 truncate font-bold text-ink">{senderName}</span>}
                   </div>
                   <MessageActionMenu
                     actions={messageActions}
@@ -627,7 +628,7 @@ export default function CircleChatPage() {
                     <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
                   </MentionableAvatarButton>
                   <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openMemberProfile(member)}>
-                    <VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full" />
+                    <VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} preserveNickname className="max-w-full" />
                     <span className={`mt-1 block text-xs ${member.isOnline ? "font-bold text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span>
                   </button>
                 </div>
@@ -651,7 +652,7 @@ export default function CircleChatPage() {
                 })}
               >
                 <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-11 w-11" />
-                <span className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full" /><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
+                <span className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} preserveNickname className="max-w-full" /><span className={`mt-0.5 block text-xs ${member.isOnline ? "text-emerald-600" : "text-muted"}`}>{member.isOnline ? "在线" : "离线"}</span></span>
               </button>
             ))}
           </div>
@@ -761,7 +762,7 @@ function Composer({ members, currentUserId, mentionRequest, replyTo, sending, st
               >
                 <Avatar avatar={member.avatar} nickname={member.nickname} online={member.isOnline} size="h-10 w-10" />
                 <span className="min-w-0 flex-1">
-                  <VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} className="max-w-full text-sm font-bold text-ink" />
+                  <VipIdentity nickname={member.nickname} userLevel={member.level} vipLevel={member.vipLevel} vipActive={member.vipActive} equippedBadge={member.equippedBadge} preserveNickname className="max-w-full text-sm font-bold text-ink" />
                 </span>
               </button>
             ))}
