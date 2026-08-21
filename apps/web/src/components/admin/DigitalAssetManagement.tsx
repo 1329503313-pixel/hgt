@@ -5,6 +5,7 @@ import { Modal } from "../Modal";
 import { AssetCardVisual } from "../AssetCardVisual";
 import type { AssetCard, AssetPackType, AssetRarity } from "../../shared/digitalAssets";
 import { ASSET_PACK_TYPE_LABELS, ASSET_RARITY_LABELS, assetRarityLabel, assetRarityMatchesQuery } from "../../shared/digitalAssets";
+import type { Collectible } from "../../shared/collectibles";
 import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
 
@@ -140,6 +141,9 @@ export function DigitalAssetManagement() {
   const [cardSort, setCardSort] = useState<CardSort>("number-asc");
   const [configCardIds, setConfigCardIds] = useState<string[]>([]);
   const [configCardKeyword, setConfigCardKeyword] = useState("");
+  const [collectibles, setCollectibles] = useState<Collectible[]>([]);
+  const [configCollectibleBindings, setConfigCollectibleBindings] = useState<Record<string, string>>({});
+  const [configCollectibleKeyword, setConfigCollectibleKeyword] = useState("");
   const normalizedCardListKeyword = cardListKeyword.trim().toLocaleLowerCase();
   const normalizedPackListKeyword = packListKeyword.trim().toLocaleLowerCase();
   const primaryPackType = (card: AdminCard) => packs.find((pack) => card.packIds.includes(pack.id))?.packType;
@@ -157,12 +161,13 @@ export function DigitalAssetManagement() {
   const { page: recordPage, pageSize: recordPageSize } = recordPagination;
 
   async function load() {
-    const [cardData, packData, statsData] = await Promise.all([
+    const [cardData, packData, statsData, collectibleData] = await Promise.all([
       api<{ cards: AdminCard[] }>("/api/admin/asset-cards", { bypassCache: true }),
       api<{ packs: AdminPack[] }>("/api/admin/asset-packs", { bypassCache: true }),
-      api<AssetStats>("/api/admin/asset-stats", { bypassCache: true })
+      api<AssetStats>("/api/admin/asset-stats", { bypassCache: true }),
+      api<{ collectibles: Collectible[] }>("/api/admin/collectibles", { bypassCache: true })
     ]);
-    setCards(cardData.cards); setPacks(packData.packs); setStats(statsData);
+    setCards(cardData.cards); setPacks(packData.packs); setStats(statsData); setCollectibles(collectibleData.collectibles);
   }
   useEffect(() => { void load().catch((error) => setMessage((error as Error).message)); }, []);
 
@@ -335,6 +340,8 @@ export function DigitalAssetManagement() {
     setConfigPack(pack);
     setConfigCardIds(pack.cards.map((card) => card.id));
     setConfigCardKeyword("");
+    setConfigCollectibleKeyword("");
+    setConfigCollectibleBindings(Object.fromEntries(collectibles.filter((item) => item.packBinding?.packId === pack.id).map((item) => [item.id, String(item.packBinding!.probability)])));
     setProbabilities(Object.fromEntries(rarityKeys.map((rarity) => [rarity, String(pack.rarityProbabilities[rarity] ?? 0)])) as Record<AssetRarity, string>);
   }
 
@@ -350,6 +357,19 @@ export function DigitalAssetManagement() {
       await api(`/api/admin/asset-packs/${configPack.id}/cards`, { method: "PUT", body: { cardIds: configCardIds } });
       setConfigPack({ ...configPack, cards: cards.filter((card) => configCardIds.includes(card.id)) });
       await load();
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setSaving(false); }
+  }
+
+  async function savePackCollectibles() {
+    if (!configPack) return;
+    const bindings = Object.entries(configCollectibleBindings).map(([collectibleId, probability]) => ({ collectibleId, probability: Number(probability) }));
+    if (bindings.some((binding) => !Number.isFinite(binding.probability) || binding.probability <= 0 || binding.probability > 100)) { setMessage("每件收藏品的独立概率必须大于 0 且不超过 100%"); return; }
+    setSaving(true); setMessage("");
+    try {
+      await api(`/api/admin/asset-packs/${configPack.id}/collectibles`, { method: "PUT", body: { bindings } });
+      await load();
+      setMessage("关联收藏品已保存");
     } catch (error) { setMessage((error as Error).message); }
     finally { setSaving(false); }
   }
@@ -401,6 +421,12 @@ export function DigitalAssetManagement() {
     if (configCardIds.includes(card.id)) return false;
     const keyword = configCardKeyword.trim().toLocaleLowerCase();
     return matchesCardKeyword(card, keyword);
+  });
+  const configuredCollectibles = collectibles.filter((item) => Object.hasOwn(configCollectibleBindings, item.id));
+  const availableConfigCollectibles = collectibles.filter((item) => {
+    if (Object.hasOwn(configCollectibleBindings, item.id) || item.status !== "unowned") return false;
+    const keyword = configCollectibleKeyword.trim().toLocaleLowerCase();
+    return !keyword || `${item.collectibleNo}${item.name}${item.collectibleTypeLabel}${item.rarityLabel}`.toLocaleLowerCase().includes(keyword);
   });
 
   return (
@@ -503,7 +529,7 @@ export function DigitalAssetManagement() {
                   </div>
                   <div className="flex flex-wrap content-start gap-2 sm:max-w-48">
                     <button className="btn btn-secondary text-xs" disabled={detailLoading === `pack:${pack.id}`} onClick={() => openPack(pack)}>{detailLoading === `pack:${pack.id}` ? "加载原图中…" : "编辑"}</button>
-                    <button className="btn btn-secondary text-xs" onClick={() => openConfiguration(pack)}>卡牌</button>
+                    <button className="btn btn-secondary text-xs" onClick={() => openConfiguration(pack)}>卡牌/收藏品</button>
                     <button className={`btn text-xs ${pack.enabled ? "bg-red-50 text-red-600" : "btn-primary"}`} onClick={() => void togglePack(pack)}>{pack.enabled ? "下架" : "启用上架"}</button>
                     <button className="btn bg-red-50 text-xs text-red-600 disabled:cursor-not-allowed disabled:opacity-40" disabled={pack.cards.length > 0} title={pack.cards.length > 0 ? "已绑定卡牌的卡包不能删除" : "删除卡包"} onClick={() => void deletePack(pack)}><Trash2 size={15} />删除</button>
                   </div>
@@ -614,7 +640,7 @@ export function DigitalAssetManagement() {
       </Modal>}
 
       {configPack && <Modal full onClose={() => setConfigPack(null)}>
-        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">卡牌「{configPack.name}」</h2><p className="mt-1 text-sm text-muted">查看和管理卡包内卡牌，并配置各品质抽取概率。</p></div><button className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100" onClick={() => setConfigPack(null)}><X size={18} /></button></div>
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">卡包「{configPack.name}」</h2><p className="mt-1 text-sm text-muted">统一管理卡包内卡牌、品质概率及关联收藏品。</p></div><button className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-100" aria-label="关闭卡包配置弹窗" onClick={() => setConfigPack(null)}><X size={18} /></button></div>
 
         <section className="mt-5">
           <h3 className="font-black text-ink">品质概率</h3>
@@ -631,6 +657,14 @@ export function DigitalAssetManagement() {
           </div>
 
           {!configPack.enabled && <div className="mt-4 rounded-xl border border-line p-3"><label className="relative block"><Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={16} /><input className="field pr-9" placeholder="搜索卡牌名称、序号或品质" value={configCardKeyword} onChange={(event) => setConfigCardKeyword(event.target.value)} /></label><div className="mt-2 max-h-64 overflow-y-auto">{availableConfigCards.length === 0 ? <p className="p-5 text-center text-sm text-muted">没有可新增的匹配卡牌</p> : availableConfigCards.map((card) => <div key={card.id} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-ink">{card.name}</span><span className="text-xs text-muted">NO.{card.cardNo} · {assetRarityLabel(card.rarity, configPack.packType)}</span></span><button type="button" className="btn btn-secondary px-3 text-xs" disabled={saving} onClick={() => toggleConfigCard(card.id)}><Plus size={14} />新增</button></div>)}</div></div>}
+        </section>
+
+        <section className="mt-6 border-t border-line pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black text-ink">关联收藏品 {configuredCollectibles.length}</h3><p className="mt-1 text-xs leading-5 text-muted">每件收藏品独立计算概率，不要求概率合计为 100%；单次抽卡可以同时获得多件收藏品。</p></div><button className="btn btn-primary" disabled={saving} onClick={() => void savePackCollectibles()}><Save size={16} />保存收藏品</button></div>
+          <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-line">
+            {configuredCollectibles.length === 0 ? <p className="p-6 text-center text-sm text-muted">该卡包尚未关联收藏品</p> : configuredCollectibles.map((item) => <div key={item.id} className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3 last:border-b-0"><span className="min-w-40 flex-1"><span className="block truncate text-sm font-black text-ink">{item.name}</span><span className="text-xs text-muted">NO.{item.collectibleNo} · {item.collectibleTypeLabel} · {item.rarityLabel}</span></span><label className="flex items-center gap-2"><span className="text-xs font-bold text-muted">独立概率</span><input type="number" min="0.000001" max="100" step="0.000001" className="field h-10 w-28 px-2" value={configCollectibleBindings[item.id]} onChange={(event) => setConfigCollectibleBindings((current) => ({ ...current, [item.id]: event.target.value }))} /><span className="text-sm font-bold">%</span></label><button type="button" className="btn bg-red-50 px-3 text-xs text-red-600" disabled={saving} onClick={() => setConfigCollectibleBindings((current) => { const next = { ...current }; delete next[item.id]; return next; })}>移除</button></div>)}
+          </div>
+          <div className="mt-4 rounded-xl border border-line p-3"><label className="relative block"><Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={16} /><input className="field pr-9" placeholder="搜索可关联收藏品的名称、编号、类型或品质" value={configCollectibleKeyword} onChange={(event) => setConfigCollectibleKeyword(event.target.value)} /></label><div className="mt-2 max-h-64 overflow-y-auto">{availableConfigCollectibles.length === 0 ? <p className="p-5 text-center text-sm text-muted">没有可关联的匹配收藏品</p> : availableConfigCollectibles.map((item) => <div key={item.id} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-ink">{item.name}</span><span className="text-xs text-muted">NO.{item.collectibleNo} · {item.collectibleTypeLabel} · {item.rarityLabel}</span></span><button type="button" className="btn btn-secondary px-3 text-xs" disabled={saving} onClick={() => setConfigCollectibleBindings((current) => ({ ...current, [item.id]: "1" }))}><Plus size={14} />关联</button></div>)}</div></div>
         </section>
       </Modal>}
     </div>

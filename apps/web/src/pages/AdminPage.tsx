@@ -13,6 +13,7 @@ import { CardSkeleton } from "../components/Skeletons";
 import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomManagement";
 import { CircleManagement } from "../components/admin/CircleManagement";
 import { StoreManagement } from "../components/admin/StoreManagement";
+import { CollectibleManagement } from "../components/admin/CollectibleManagement";
 import { BannerManagement } from "../components/admin/BannerManagement";
 import { FeedbackManagement } from "../components/admin/FeedbackManagement";
 import { GiftManagement } from "../components/admin/GiftManagement";
@@ -105,6 +106,7 @@ export default function AdminPage() {
           {activeTab === "approvals" && <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} onPendingChange={loadModuleUnread} />}
           {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}
           {activeTab === "circles" && isSuperAdmin && <CircleManagement />}
+          {activeTab === "collectibles" && isSuperAdmin && <CollectibleManagement />}
           {activeTab === "assets" && isSuperAdmin && <StoreManagement />}
           {activeTab === "notices" && <NoticeManagement />}
           {activeTab === "feedback" && <FeedbackManagement />}

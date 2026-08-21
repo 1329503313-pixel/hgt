@@ -194,7 +194,7 @@ export function CardCabinetSection({
     <div className="space-y-3">
       <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 p-4 text-white shadow-soft">
         <div className="flex items-start justify-between gap-3">
-          <div><p className="text-xs font-bold text-cyan-200">{editable ? "我的收藏柜" : `${cabinet.user.nickname}的收藏柜`}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-black"><span>{cabinet.user.totalCollectionValue.toLocaleString()} 收藏值</span><span>{cabinet.user.unlockedCardCount} 张卡</span><span>{cabinet.user.legendaryCardCount} 张传说</span></div></div>
+          <div><p className="text-xs font-bold text-cyan-200">{editable ? "我的收藏卡" : `${cabinet.user.nickname}的收藏柜`}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-black"><span>{cabinet.user.totalCollectionValue.toLocaleString()} 收藏值</span><span>{cabinet.user.unlockedCardCount} 张卡</span><span>{cabinet.user.legendaryCardCount} 张传说</span></div></div>
           <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-cyan-200 transition hover:bg-white/10 active:scale-95" onClick={() => setShowcaseCollapsed((collapsed) => !collapsed)} aria-expanded={!showcaseCollapsed} aria-label={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"} title={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"}><GalleryVerticalEnd size={30} /></button>
         </div>
         {!showcaseCollapsed && <><div className="mt-4 grid grid-cols-3 gap-2 lg:grid-cols-6 lg:gap-3">

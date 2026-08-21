@@ -100,7 +100,7 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
           <button type="button" className={active === "rankings" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
           <button type="button" className={active === "store" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>
           <button type="button" className={active === "tasks" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>
-          <button type="button" className={active === "cards" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/cards")}><GalleryVerticalEnd size={17} />收藏</button>
+          <button type="button" className={active === "cards" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/collection")}><GalleryVerticalEnd size={17} />收藏</button>
           <button type="button" className={active === "achievements" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/achievements")}><Award size={17} />成就</button>
         </nav>
         <div className="home-desktop-account">

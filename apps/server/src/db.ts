@@ -893,6 +893,22 @@ export async function initDatabase() {
   await ensureIndex("mystery_turns", "idx_mystery_turn_run_created", "run_id, created_at");
   await ensureIndex("mystery_turns", "idx_mystery_turn_recovery", "status, processing_expires_at, created_at");
 
+  // 玩汤房间背景音乐由超级管理员维护；下架只影响后续选择，房间中已选音乐继续可播放。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_background_music (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      audio_ref VARCHAR(1000) NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      created_by VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_online_soup_bgm_enabled_sort (enabled, sort_order, created_at),
+      CONSTRAINT fk_online_soup_bgm_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   // 多人在线玩汤（与 AI 玩汤会话完全独立）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS online_soup_rooms (
@@ -909,6 +925,8 @@ export async function initDatabase() {
       current_mystery_id VARCHAR(64) NULL,
       current_mystery_run_id VARCHAR(64) NULL,
       current_round_id VARCHAR(64) NULL,
+      current_background_music_id VARCHAR(64) NULL,
+      background_music_started_at DATETIME(3) NULL,
       last_action_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       host_last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       host_grace_started_at DATETIME NULL,
@@ -1146,6 +1164,8 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery') NOT NULL DEFAULT 'soup' AFTER host_mode");
   await ensureColumn("online_soup_rooms", "current_mystery_id", "current_mystery_id VARCHAR(64) NULL AFTER current_soup_id");
   await ensureColumn("online_soup_rooms", "current_mystery_run_id", "current_mystery_run_id VARCHAR(64) NULL AFTER current_mystery_id");
+  await ensureColumn("online_soup_rooms", "current_background_music_id", "current_background_music_id VARCHAR(64) NULL AFTER current_round_id");
+  await ensureColumn("online_soup_rooms", "background_music_started_at", "background_music_started_at DATETIME(3) NULL AFTER current_background_music_id");
   await ensureColumn(
     "online_soup_rounds",
     "host_mode",
@@ -2469,6 +2489,159 @@ export async function initDatabase() {
       CONSTRAINT fk_asset_draw_result_card FOREIGN KEY (card_id) REFERENCES asset_cards(id) ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectibles (
+      id VARCHAR(64) PRIMARY KEY,
+      collectible_no VARCHAR(32) NOT NULL UNIQUE,
+      name VARCHAR(120) NOT NULL,
+      rarity ENUM('limited','collaboration','legend','epic') NOT NULL,
+      collectible_type ENUM('treasure','commemorative','honor') NOT NULL DEFAULT 'treasure',
+      collectible_value INT UNSIGNED NOT NULL DEFAULT 1,
+      description TEXT NULL,
+      image_url LONGTEXT NOT NULL,
+      thumbnail_url LONGTEXT NULL,
+      motion_mp4_path VARCHAR(500) NULL,
+      motion_webm_path VARCHAR(500) NULL,
+      motion_poster_path VARCHAR(500) NULL,
+      motion_version VARCHAR(80) NULL,
+      motion_processing_version VARCHAR(80) NULL,
+      motion_status ENUM('idle','processing','ready','failed') NOT NULL DEFAULT 'idle',
+      motion_error VARCHAR(500) NULL,
+      owner_user_id VARCHAR(64) NULL,
+      status ENUM('unowned','owned','auction_pending','auction_active','draw_linked') NOT NULL DEFAULT 'unowned',
+      deleted_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_collectibles_status_no (status, collectible_no),
+      INDEX idx_collectibles_owner (owner_user_id, deleted_at),
+      CONSTRAINT fk_collectible_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn("collectibles", "collectible_type", "collectible_type ENUM('treasure','commemorative','honor') NOT NULL DEFAULT 'treasure' AFTER rarity");
+  await ensureColumn("collectibles", "collectible_value", "collectible_value INT UNSIGNED NOT NULL DEFAULT 1 AFTER rarity");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_number_sequences (
+      sequence_key VARCHAR(32) PRIMARY KEY,
+      next_value BIGINT UNSIGNED NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query("INSERT IGNORE INTO collectible_number_sequences (sequence_key, next_value) VALUES ('collectible', 1)");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_transfers (
+      id VARCHAR(64) PRIMARY KEY,
+      collectible_id VARCHAR(64) NOT NULL,
+      from_user_id VARCHAR(64) NULL,
+      to_user_id VARCHAR(64) NULL,
+      transfer_type ENUM('grant','reclaim','auction','draw') NOT NULL,
+      related_type VARCHAR(40) NULL,
+      related_id VARCHAR(64) NULL,
+      operator_id VARCHAR(64) NULL,
+      collectible_snapshot JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_collectible_transfers_item_time (collectible_id, created_at, id),
+      CONSTRAINT fk_collectible_transfer_item FOREIGN KEY (collectible_id) REFERENCES collectibles(id) ON DELETE RESTRICT,
+      CONSTRAINT fk_collectible_transfer_from FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_collectible_transfer_to FOREIGN KEY (to_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_collectible_transfer_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_pack_bindings (
+      collectible_id VARCHAR(64) PRIMARY KEY,
+      pack_id VARCHAR(64) NOT NULL,
+      probability DECIMAL(12,8) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_collectible_binding_item FOREIGN KEY (collectible_id) REFERENCES collectibles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_collectible_binding_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_auctions (
+      id VARCHAR(64) PRIMARY KEY,
+      collectible_id VARCHAR(64) NOT NULL,
+      starting_price INT UNSIGNED NOT NULL,
+      current_price INT UNSIGNED NULL,
+      highest_bidder_id VARCHAR(64) NULL,
+      starts_at DATETIME NOT NULL,
+      ends_at DATETIME NOT NULL,
+      original_ends_at DATETIME NOT NULL,
+      status ENUM('pending','active','sold','unsold','cancelled') NOT NULL DEFAULT 'pending',
+      settled_at DATETIME NULL,
+      created_by VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_collectible_auctions_due (status, starts_at, ends_at),
+      INDEX idx_collectible_auctions_item (collectible_id, created_at),
+      CONSTRAINT fk_collectible_auction_item FOREIGN KEY (collectible_id) REFERENCES collectibles(id) ON DELETE RESTRICT,
+      CONSTRAINT fk_collectible_auction_bidder FOREIGN KEY (highest_bidder_id) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_collectible_auction_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_auction_bids (
+      id VARCHAR(64) PRIMARY KEY,
+      request_id VARCHAR(100) NOT NULL UNIQUE,
+      auction_id VARCHAR(64) NOT NULL,
+      bidder_id VARCHAR(64) NOT NULL,
+      amount INT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_collectible_bids_auction_time (auction_id, created_at, id),
+      CONSTRAINT fk_collectible_bid_auction FOREIGN KEY (auction_id) REFERENCES collectible_auctions(id) ON DELETE CASCADE,
+      CONSTRAINT fk_collectible_bid_user FOREIGN KEY (bidder_id) REFERENCES users(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_follows (
+      collectible_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (collectible_id, user_id),
+      CONSTRAINT fk_collectible_follow_item FOREIGN KEY (collectible_id) REFERENCES collectibles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_collectible_follow_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_draw_awards (
+      id VARCHAR(64) PRIMARY KEY,
+      collectible_id VARCHAR(64) NOT NULL UNIQUE,
+      order_id VARCHAR(64) NOT NULL,
+      draw_index TINYINT UNSIGNED NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      probability_snapshot DECIMAL(12,8) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_collectible_awards_order (order_id, draw_index),
+      CONSTRAINT fk_collectible_award_item FOREIGN KEY (collectible_id) REFERENCES collectibles(id) ON DELETE RESTRICT,
+      CONSTRAINT fk_collectible_award_order FOREIGN KEY (order_id) REFERENCES asset_draw_orders(id) ON DELETE CASCADE,
+      CONSTRAINT fk_collectible_award_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collectible_value_events (
+      id VARCHAR(128) PRIMARY KEY,
+      collectible_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      amount INT NOT NULL,
+      event_type ENUM('grant','reclaim','auction','draw','adjustment') NOT NULL,
+      related_type VARCHAR(40) NULL,
+      related_id VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_collectible_value_user_time (user_id, created_at, id),
+      INDEX idx_collectible_value_item_time (collectible_id, created_at, id),
+      CONSTRAINT fk_collectible_value_item FOREIGN KEY (collectible_id) REFERENCES collectibles(id) ON DELETE RESTRICT,
+      CONSTRAINT fk_collectible_value_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  const [collectibleValueEventTypeColumns] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'collectible_value_events' AND COLUMN_NAME = 'event_type'`,
+    [config.db.database]
+  );
+  if (!String(collectibleValueEventTypeColumns[0]?.COLUMN_TYPE ?? "").includes("'adjustment'")) {
+    await pool.query(
+      "ALTER TABLE collectible_value_events MODIFY COLUMN event_type ENUM('grant','reclaim','auction','draw','adjustment') NOT NULL"
+    );
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS asset_collection_value_events (
       id VARCHAR(128) PRIMARY KEY,

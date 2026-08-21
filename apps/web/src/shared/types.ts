@@ -168,7 +168,7 @@ export type RankingRewardSettlementDetail = {
   periodEnd: string;
   completedAt: string;
   grants: Array<{
-    board: "achievement" | "level" | "collection" | "charm" | "generosity" | "draws";
+    board: "achievement" | "level" | "collection" | "collectible" | "charm" | "generosity" | "draws";
     boardLabel: string;
     rank: number;
     metricValue: number;
@@ -474,6 +474,16 @@ export type OnlineSoupHostMode = "human" | "ai";
 export type OnlineSoupMemberRole = "host" | "player" | "spectator" | "admin";
 export type OnlineSoupAnswer = "yes" | "no" | "both" | "unknown" | "irrelevant";
 
+export type OnlineSoupBackgroundMusic = {
+  id: string;
+  name: string;
+  audioUrl: string;
+  weight?: number;
+  enabled: boolean;
+  startedAt?: string | null;
+  updatedAt?: string | null;
+};
+
 export type OnlineSoupAiHonors = {
   version: 1;
   mvp: {
@@ -602,6 +612,7 @@ export type OnlineSoupSnapshot = {
     participantCapacity: number;
     currentRoundId: string | null;
     bestQuestionMessageId: string | null;
+    backgroundMusic: OnlineSoupBackgroundMusic | null;
     soup: {
       id: string;
       title: string;

@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { LogOut, Maximize2, MessageCircle, Minimize2, Send, Sparkles, VolumeX, Wifi, WifiOff } from "lucide-react";
+import { Ban, LogOut, Maximize2, MessageCircle, Minimize2, Send, Sparkles, Volume2, VolumeX, Wifi, WifiOff } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
-import type { OnlineSoupMessage, OnlineSoupSnapshot } from "../shared/types";
+import type { OnlineSoupBackgroundMusic, OnlineSoupMessage, OnlineSoupSnapshot } from "../shared/types";
 import { GiftMessageBundle, GiftMessageCard } from "../components/GiftMessageCard";
 import { isOnlineSoupAlreadyExited } from "../shared/onlineSoupExit";
 import { useApp } from "./AppContext";
@@ -17,6 +17,7 @@ import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
 import { copyTextToClipboard } from "../shared/clipboard";
 import { VipIdentity } from "../components/VipIdentity";
 import { MutedAvatarIndicator } from "../components/MutedAvatarIndicator";
+import { useOnlineSoupBackgroundMusic } from "../shared/useOnlineSoupBackgroundMusic";
 
 type DockSession = {
   snapshot: OnlineSoupSnapshot;
@@ -30,6 +31,10 @@ type DockMode = "collapsed" | "open";
 type OnlineSoupDockValue = {
   minimizeRoom: (snapshot: OnlineSoupSnapshot) => void;
   showFullRoom: (roomId: string) => void;
+  syncRoomBackgroundMusic: (roomId: string, track: OnlineSoupBackgroundMusic | null) => void;
+  backgroundMusicMuted: boolean;
+  backgroundMusicAutoplayBlocked: boolean;
+  toggleBackgroundMusicMuted: () => void;
 };
 
 const OnlineSoupDockContext = createContext<OnlineSoupDockValue | null>(null);
@@ -59,11 +64,14 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   const [sending, setSending] = useState(false);
   const [content, setContent] = useState("");
   const [messageMode, setMessageMode] = useState<"discussion" | "question">("discussion");
+  const [fullRoomBackgroundMusic, setFullRoomBackgroundMusic] = useState<{ roomId: string; track: OnlineSoupBackgroundMusic | null } | null>(null);
   const minimizedRoomIdRef = useRef<string | null>(null);
   const sessionRef = useRef<DockSession | null>(null);
   const modeRef = useRef<DockMode>("collapsed");
   const refreshRequestStartedRef = useRef(0);
   const refreshRequestAppliedRef = useRef(0);
+  const activeBackgroundMusic = session ? session.snapshot.room.backgroundMusic : fullRoomBackgroundMusic?.track ?? null;
+  const backgroundMusicPlayback = useOnlineSoupBackgroundMusic(activeBackgroundMusic);
 
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -72,6 +80,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     if (user) localStorage.removeItem(storageKey(user.id));
     minimizedRoomIdRef.current = null;
     setSession(null);
+    setFullRoomBackgroundMusic(null);
     setMode("collapsed");
     setConfirmLeave(false);
   }, [user]);
@@ -132,6 +141,10 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     minimizedRoomIdRef.current = null;
     setSession(null);
   }, [user]);
+
+  const syncRoomBackgroundMusic = useCallback((roomId: string, track: OnlineSoupBackgroundMusic | null) => {
+    setFullRoomBackgroundMusic({ roomId, track });
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -227,7 +240,14 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const contextValue = useMemo<OnlineSoupDockValue>(() => ({ minimizeRoom, showFullRoom }), [minimizeRoom, showFullRoom]);
+  const contextValue = useMemo<OnlineSoupDockValue>(() => ({
+    minimizeRoom,
+    showFullRoom,
+    syncRoomBackgroundMusic,
+    backgroundMusicMuted: backgroundMusicPlayback.muted,
+    backgroundMusicAutoplayBlocked: backgroundMusicPlayback.autoplayBlocked,
+    toggleBackgroundMusicMuted: backgroundMusicPlayback.toggleMuted,
+  }), [backgroundMusicPlayback.autoplayBlocked, backgroundMusicPlayback.muted, backgroundMusicPlayback.toggleMuted, minimizeRoom, showFullRoom, syncRoomBackgroundMusic]);
   const inFullRoom = session ? location.pathname === `/online-soup/rooms/${session.snapshot.room.id}` : false;
   const currentMemberMuted = isActiveMute(session?.snapshot.members.find((member) => member.id === user?.id)?.mutedUntil);
   const mutedUserIds = useMemo(() => new Set(session?.snapshot.members.filter((member) => isActiveMute(member.mutedUntil)).map((member) => member.id) ?? []), [session?.snapshot.members]);
@@ -247,6 +267,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
       </button> : <section className="online-soup-mini-chat" aria-label={`${session.snapshot.room.name}迷你聊天窗口`}>
         <header>
           <span className="min-w-0 flex-1"><strong>{session.snapshot.room.name}</strong><small>房间号 {session.snapshot.room.code} · {connected ? "实时连接" : "重新连接中"}</small></span>
+          {session.snapshot.room.backgroundMusic && <button type="button" className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full" onClick={backgroundMusicPlayback.toggleMuted} aria-label={`${backgroundMusicPlayback.muted ? "恢复" : "静音"}背景音乐：${session.snapshot.room.backgroundMusic.name}`} aria-pressed={backgroundMusicPlayback.muted} title={`${session.snapshot.room.backgroundMusic.name} · ${backgroundMusicPlayback.muted ? "已静音" : "点击仅在本机静音"}`}><Volume2 size={17} />{backgroundMusicPlayback.muted && <Ban className="absolute bottom-1 right-1 rounded-full bg-white text-red-500" size={11} strokeWidth={2.5} aria-hidden="true" />}</button>}
           <span title={connected ? "实时连接正常" : "正在重新连接"}>{connected ? <Wifi size={17} className="text-emerald-500" /> : <WifiOff size={17} className="text-red-500" />}</span>
           <button type="button" onClick={() => { setMode("collapsed"); }} aria-label="收起聊天窗" title="收起"><Minimize2 size={17} /></button>
           <button type="button" onClick={() => { showFullRoom(session.snapshot.room.id); navigate(`/online-soup/rooms/${session.snapshot.room.id}`); }} aria-label="返回完整房间" title="放大"><Maximize2 size={17} /></button>

@@ -36,7 +36,9 @@ import {
   syncPendingInviteEmailRewards
 } from "./inviteRewards.js";
 import { registerDigitalAssetRoutes } from "./digitalAssets.js";
+import { registerCollectibleRoutes, startCollectibleAuctionScheduler } from "./collectibles.js";
 import { registerBannerRoutes } from "./banners.js";
+import { registerBackgroundMusicRoutes } from "./backgroundMusic.js";
 import { parseGiftMessage, registerGiftRoutes } from "./gifts.js";
 import { registerCircleRedPacketRoutes, startCircleRedPacketScheduler } from "./circleRedPackets.js";
 import { canonicalConversationUserIds, conversationOtherUserIdentity } from "./conversations.js";
@@ -3101,6 +3103,11 @@ function parseCircleRedPacket(value: unknown) {
   } catch { return null; }
 }
 
+function broadcastUserEvent(event: string, payload: unknown) {
+  const data = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const clients of userEventClients.values()) for (const client of clients) client.write(data);
+}
+
 async function circleForMember(circleId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT c.id, c.name,
@@ -6062,7 +6069,7 @@ app.get("/api/ranking-rewards/:settlementId", async (req, res) => {
       AND inventory.related_id = grants.id
       AND inventory.transaction_type = 'grant'
      WHERE settlements.id = ? AND grants.user_id = ?
-     ORDER BY FIELD(grants.board_type, 'achievement', 'level', 'collection', 'charm', 'generosity', 'draws')`,
+     ORDER BY FIELD(grants.board_type, 'achievement', 'level', 'collection', 'collectible', 'charm', 'generosity', 'draws')`,
     [req.params.settlementId, user.id]
   );
   if (!rows[0]) return sendError(res, 404, "排行榜奖励结算不存在");
@@ -6142,6 +6149,10 @@ app.get("/api/notifications", async (req, res) => {
           ? "/mine/excellent-author"
           : row.type === "excellent_author_application"
             ? "/admin"
+          : row.type === "collectible_auction_started" || row.type === "collectible_outbid" || row.type === "collectible_auction_won"
+            ? `/mine/store/auctions/${row.related_id}`
+          : row.type === "collectible_granted" || row.type === "collectible_reclaimed"
+            ? "/mine/collectibles"
           : row.soup_id ? `/soup/${row.soup_id}` : null,
       isRead: bool(row.is_read),
       createdAt: new Date(row.created_at).toISOString()
@@ -7493,8 +7504,10 @@ app.use("/api/online-soup", async (req, _res, next) => {
 }, onlineSoupRouter);
 
 registerDigitalAssetRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, onBadgeProgress: (userId) => queueSystemBadgeSync([userId]) });
+registerCollectibleRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, emitUserEvent, emitUnreadChanged, broadcastEvent: broadcastUserEvent });
 registerStickerStoreRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage });
 registerBannerRoutes(app, { requireAdmin, sendError });
+registerBackgroundMusicRoutes(app, { requireAuth, requireAdmin, sendError });
 registerGiftRoutes(app, {
   requireAuth,
   requireAdmin,
@@ -7720,6 +7733,7 @@ settleRankingRewards();
 const rankingRewardSettlementTimer = setInterval(settleRankingRewards, 60_000);
 rankingRewardSettlementTimer.unref();
 startCircleRedPacketScheduler({ pool, onPublished: notifyCircleRedPacketPublished });
+startCollectibleAuctionScheduler({ emitUserEvent, emitUnreadChanged, broadcastEvent: broadcastUserEvent });
 }
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);

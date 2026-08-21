@@ -6,9 +6,10 @@ import { MAX_EXPERIENCE } from "./levelSystem.js";
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
 import { resolveRewardGift, type RewardGiftBindingKey } from "./rewardGiftBindings.js";
 import { rankingRewardNotificationSummary } from "./rankingRewardNotifications.js";
+import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES_SQL, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
 
 export type RankingRewardPeriod = "weekly" | "monthly";
-export type RankingRewardBoard = "achievement" | "level" | "collection" | "charm" | "generosity" | "draws";
+export type RankingRewardBoard = "achievement" | "level" | "collection" | "collectible" | "charm" | "generosity" | "draws";
 
 type CurrencyReward = { type: "currency"; experience: number; shell: number };
 type GiftReward = { type: "gift"; giftName: "月亮小船" | "智慧水晶球" | "神秘钥匙" | "深海明珠"; quantity: number };
@@ -16,11 +17,12 @@ export type RankingReward = CurrencyReward | GiftReward;
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
-const BOARD_ORDER: RankingRewardBoard[] = ["achievement", "level", "collection", "charm", "generosity", "draws"];
+const BOARD_ORDER: RankingRewardBoard[] = ["achievement", "level", "collection", "collectible", "charm", "generosity", "draws"];
 export const RANKING_REWARD_BOARD_LABELS: Record<RankingRewardBoard, string> = {
   achievement: "成就榜",
   level: "等级榜",
-  collection: "收藏榜",
+  collection: "卡牌榜",
+  collectible: "收藏品榜",
   charm: "魅力榜",
   generosity: "慷慨榜",
   draws: "抽卡榜"
@@ -116,7 +118,7 @@ async function rankingStandings(
   periodStart: Date,
   periodEnd: Date
 ): Promise<Standings> {
-  const [achievementRows, levelRows, charmRows, generosityRows, collectionRows, drawRows] = await Promise.all([
+  const [achievementRows, levelRows, charmRows, generosityRows, collectionRows, collectibleRows, drawRows] = await Promise.all([
     connection.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.created_at, ubu.badge_key, ubu.unlocked_at,
          lb.achievement_points AS legendary_points
@@ -201,6 +203,13 @@ async function rankingStandings(
       [periodStart, periodEnd]
     ).then(([rows]) => rows),
     connection.query<mysql.RowDataPacket[]>(
+      `SELECT u.id,u.created_at,COALESCE(owned.collectible_value,0) AS metric_value,
+         COALESCE(owned.reached_at,u.created_at) AS reached_at
+       FROM users u LEFT JOIN (${CURRENT_COLLECTIBLE_HOLDINGS_SQL}) owned ON owned.user_id=u.id
+       WHERE u.role IN (${COLLECTIBLE_RANKING_ELIGIBLE_ROLES_SQL})
+      `
+    ).then(([rows])=>rows),
+    connection.query<mysql.RowDataPacket[]>(
       `SELECT events.user_id AS id, users.created_at,
          SUM(events.draw_count) AS metric_value,
          MAX(events.completed_at) AS reached_at
@@ -247,6 +256,7 @@ async function rankingStandings(
     achievement: rankPositiveValues([...achievements.values()]),
     level: rankRows(levelRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
     collection: rankRows(collectionRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
+    collectible: rankRows(collectibleRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
     charm: rankRows(charmRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
     generosity: rankRows(generosityRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
     draws: rankRows(drawRows, (row) => new Date(row.reached_at).getTime())

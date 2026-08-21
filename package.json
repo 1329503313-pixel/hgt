@@ -14,7 +14,7 @@
     "build:all": "npm run build -w packages/shared && npm run build -w apps/server && npm run build -w apps/web",
     "media:migrate": "npm run media:migrate -w apps/server --",
     "check": "npm run check -w apps/server && npm run check -w apps/web && npm run release:check:tooling",
-    "test": "npm run test -w apps/server && npx tsx --test apps/server/src/circleRedPackets.test.ts",
+    "test": "npm run test:collectibles -w apps/server && npm run test -w apps/server && npx tsx --test apps/server/src/circleRedPackets.test.ts",
     "test:e2e": "node e2e/run-e2e.mjs",
     "test:e2e:headed": "node e2e/run-e2e.mjs --headed",
     "test:e2e:install": "playwright install chromium",

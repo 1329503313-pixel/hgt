@@ -601,7 +601,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
             <button type="button" onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>
-            <button type="button" onClick={() => navigateAuthenticated("/mine/cards")}><GalleryVerticalEnd size={17} />收藏</button>
+            <button type="button" onClick={() => navigateAuthenticated("/mine/collection")}><GalleryVerticalEnd size={17} />收藏</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/achievements")}><Award size={17} />成就</button>
           </nav>
           <div className="home-desktop-account">

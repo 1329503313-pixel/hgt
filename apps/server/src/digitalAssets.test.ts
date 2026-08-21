@@ -59,6 +59,22 @@ test("卡包抽取统计将数据库聚合值转换为前端数字", () => {
   });
 });
 
+test("资产排行榜按实时订阅状态返回 VIP 等级与有效状态", () => {
+  const now = new Date("2026-08-21T00:00:00.000Z");
+  assert.deepEqual(digitalAssetRules.assetRankingVipIdentity({
+    role: "vip",
+    vip_growth_value: 800,
+    vip_expires_at: "2026-08-22T00:00:00.000Z",
+    vip_legacy_active: 0
+  } as never, now), { vipLevel: 3, vipActive: true });
+  assert.deepEqual(digitalAssetRules.assetRankingVipIdentity({
+    role: "vip",
+    vip_growth_value: 800,
+    vip_expires_at: "2026-08-20T00:00:00.000Z",
+    vip_legacy_active: 0
+  } as never, now), { vipLevel: 3, vipActive: false });
+});
+
 test("卡包封面固定选择卡号最小的传说卡", () => {
   const cards = [
     { card_no: "010", rarity: "legend" },

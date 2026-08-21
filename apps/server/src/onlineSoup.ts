@@ -213,7 +213,9 @@ async function roomById(id: string, db: mysql.Pool | mysql.PoolConnection = pool
        COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title,
        COALESCE(mystery_run.story_background_snapshot, mystery.story_background) AS mystery_background,
        mystery_run.status AS mystery_run_status, mystery_run.final_ending_id AS mystery_final_ending_id,
-       mystery_run.owner_user_id AS mystery_run_owner_id
+       mystery_run.owner_user_id AS mystery_run_owner_id,
+       bgm.name AS background_music_name, bgm.audio_ref AS background_music_audio_ref,
+       bgm.enabled AS background_music_enabled, bgm.updated_at AS background_music_updated_at
      FROM online_soup_rooms r
      JOIN users u ON u.id = r.host_id
      LEFT JOIN soups s ON s.id = r.current_soup_id
@@ -221,6 +223,7 @@ async function roomById(id: string, db: mysql.Pool | mysql.PoolConnection = pool
      LEFT JOIN online_soup_rounds cr ON cr.id = r.current_round_id
      LEFT JOIN mystery_stories mystery ON mystery.id = r.current_mystery_id
      LEFT JOIN mystery_runs mystery_run ON mystery_run.id = r.current_mystery_run_id
+     LEFT JOIN online_soup_background_music bgm ON bgm.id = r.current_background_music_id
      WHERE r.id = ? LIMIT 1`,
     [id]
   );
@@ -1509,6 +1512,14 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
       participantCapacity: String(room.host_mode ?? "human") === "ai" ? PLAYER_CAPACITY : ONLINE_SOUP_PARTICIPANT_CAPACITY,
       currentRoundId: room.current_round_id ? String(room.current_round_id) : null,
       bestQuestionMessageId: room.best_question_message_id ? String(room.best_question_message_id) : null,
+      backgroundMusic: room.current_background_music_id && room.background_music_audio_ref ? {
+        id: String(room.current_background_music_id),
+        name: String(room.background_music_name),
+        audioUrl: publicOssUrl(room.background_music_audio_ref),
+        startedAt: iso(room.background_music_started_at),
+        enabled: Boolean(room.background_music_enabled),
+        updatedAt: iso(room.background_music_updated_at),
+      } : null,
       soup: room.current_soup_id ? {
         id: String(room.current_soup_id),
         title: roundSoupSnapshot?.title ?? String(room.soup_title),
@@ -2015,6 +2026,29 @@ router.patch("/rooms/:roomId/host-mode", async (req, res) => {
     // 在准备阶段后台预热，避免首个正式问题承担关键事实拆分耗时。
     void splitKeyFactsForSoup(String(context.room.current_soup_id));
   }
+});
+
+router.post("/rooms/:roomId/background-music", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  const parsed = z.object({ trackId: z.string().trim().min(1).max(64).nullable() }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "请选择有效的背景音乐");
+  if (parsed.data.trackId) {
+    const [[track]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM online_soup_background_music WHERE id = ? AND enabled = 1 LIMIT 1",
+      [parsed.data.trackId],
+    );
+    if (!track) return fail(res, 404, "该背景音乐已下架或不存在");
+  }
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE online_soup_rooms
+     SET current_background_music_id = ?, background_music_started_at = ?, last_action_at = NOW()
+     WHERE id = ? AND status <> 'closed'`,
+    [parsed.data.trackId, parsed.data.trackId ? new Date() : null, context.room.id],
+  );
+  if (result.affectedRows !== 1) return fail(res, 409, "房间已关闭");
+  res.json({ ok: true });
+  void notifyRoom(context.room.id, "background_music_changed", { trackId: parsed.data.trackId });
 });
 
 router.post("/rooms/:roomId/join", async (req, res) => {

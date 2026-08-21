@@ -26,6 +26,8 @@ import {
   isEntitlementLimitError,
   tryConsumeDailyEntitlement
 } from "./entitlements.js";
+import { awardCollectiblesForDraw, collectibleAwardsForOrder, collectiblePackCounts, collectiblesForPack } from "./collectibles.js";
+import { vipGrowthSnapshot } from "./vipGrowth.js";
 
 type RouteUser = { id: string; role: UserRole };
 type RouteDependencies = {
@@ -344,6 +346,11 @@ function packDrawStatistics(row: { total_draw_count?: unknown; recent_7d_draw_co
   };
 }
 
+function assetRankingVipIdentity(row: mysql.RowDataPacket, now = new Date()) {
+  const vip = vipGrowthSnapshot(row, now);
+  return { vipLevel: vip.level, vipActive: vip.active };
+}
+
 function starForTotal(total: number) {
   if (total >= 19) return 3;
   if (total >= 9) return 2;
@@ -503,7 +510,7 @@ async function assertCardHasPack(cardId: string, connection: mysql.PoolConnectio
 }
 
 async function drawOrderPayload(orderId: string) {
-  const [orderRows, results] = await Promise.all([
+  const [orderRows, results, collectibleAwards] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
       `SELECT o.id, o.request_id, o.pack_id, o.draw_mode, o.shell_cost, o.used_free_draw, o.created_at,
         p.name AS pack_name, p.pack_type, p.updated_at AS pack_updated_at
@@ -517,7 +524,8 @@ async function drawOrderPayload(orderId: string) {
        FROM asset_draw_results r INNER JOIN asset_cards c ON c.id = r.card_id
        WHERE r.order_id = ? ORDER BY r.draw_index ASC`,
       [orderId]
-    ).then(([rows]) => rows)
+    ).then(([rows]) => rows),
+    collectibleAwardsForOrder(orderId)
   ]);
   const order = orderRows[0];
   if (!order) return null;
@@ -542,7 +550,8 @@ async function drawOrderPayload(orderId: string) {
       starUpgraded: bool(row.star_upgraded),
       fullStarDuplicate: bool(row.full_star_duplicate),
       shellRefund: Number(row.shell_refund)
-    }))
+    })),
+    collectibleAwards
   };
 }
 
@@ -735,6 +744,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
           JSON.stringify({ originalProbability, normalizedProbability, rarityProbability: configuration.rarityProbabilities[cardRarity], pityType: triggeredPity })
         ]
       );
+      await awardCollectiblesForDraw(connection, userId, packId, orderId, index);
     }
 
     await connection.query(
@@ -956,6 +966,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const pityByType = new Map(pityRows.map((row) => [String(row.pack_type), row]));
     const usageByPack = new Map(usageRows.map((row) => [String(row.pack_id), Number(row.used_count)]));
     const onSale = packs.filter((pack) => packStatus(pack) === "on_sale");
+    const collectibleCounts = await collectiblePackCounts(onSale.map((pack) => String(pack.id)));
     const entitlementNow = new Date();
     const previews = await Promise.all(onSale.map(async (pack) => {
       const configuration = await packConfiguration(String(pack.id));
@@ -974,6 +985,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend
         },
         rarityProbabilities: configuration.rarityProbabilities,
+        collectibleCounts: collectibleCounts.get(String(pack.id)) ?? null,
         previewCards
       };
     }));
@@ -989,12 +1001,13 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
     const pityScope = pityScopeForPackType(pack.pack_type);
-    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus] = await Promise.all([
+    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus, collectibleRewards] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, pityScope]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ?", [user.id]).then(([rows]) => rows),
-      dailyEntitlementStatus(user.id, user.role, "extra_free_draw", new Date(), String(pack.id))
+      dailyEntitlementStatus(user.id, user.role, "extra_free_draw", new Date(), String(pack.id)),
+      collectiblesForPack(String(pack.id))
     ]);
     const pity = pityRows[0];
     const usage = usageRows[0];
@@ -1017,6 +1030,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend
         },
         rarityProbabilities: configuration.rarityProbabilities,
+        collectibleRewards,
         cards: configuration.enabled.map((card) => {
           const starLevel = ownedStarLevels.get(String(card.id));
           return {
@@ -1270,7 +1284,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const cutoff = period === "all" ? null : new Date(Date.now() - (period === "7d" ? 7 : 30) * 24 * 60 * 60 * 1000);
     const [rows, eventRows, drawRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(
-        `SELECT u.id, u.nickname, u.avatar IS NOT NULL AS has_avatar, u.created_at,
+        `SELECT u.id, u.nickname, u.role, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active,
+          u.avatar IS NOT NULL AS has_avatar, u.created_at,
           COALESCE(s.total_collection_value, 0) AS total_collection_value,
           COALESCE(s.unlocked_card_count, 0) AS unlocked_card_count,
           COALESCE(s.legendary_card_count, 0) AS legendary_card_count,
@@ -1317,6 +1332,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         totalCollectionValue: cutoff ? periodValues.get(String(row.id))?.value ?? 0 : Number(row.total_collection_value),
         unlockedCardCount: Number(row.unlocked_card_count),
         legendaryCardCount: Number(row.legendary_card_count),
+        ...assetRankingVipIdentity(row),
         reachedAt: cutoff
           ? periodValues.get(String(row.id))?.reachedAt ?? new Date(row.created_at).getTime()
           : new Date(row.score_reached_at).getTime(),
@@ -1340,6 +1356,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           nickname: String(account.nickname),
           avatar: bool(account.has_avatar) ? `/api/media/users/${encodeURIComponent(String(account.id))}/avatar` : null,
           drawCount: Number(row.draw_count ?? 0),
+          ...assetRankingVipIdentity(account),
           reachedAt: new Date(row.reached_at).getTime(),
           createdAt: new Date(account.created_at).getTime()
         };
@@ -1429,7 +1446,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
          FROM asset_draw_results r
          INNER JOIN asset_draw_orders o ON o.id = r.order_id INNER JOIN users u ON u.id = o.user_id
          INNER JOIN asset_packs p ON p.id = o.pack_id INNER JOIN asset_cards c ON c.id = r.card_id
-         ${where} ORDER BY r.created_at DESC, r.order_id DESC, r.draw_index ASC LIMIT ? OFFSET ?`,
+         ${where} ORDER BY o.created_at DESC, o.id DESC, r.draw_index ASC LIMIT ? OFFSET ?`,
         [...params, limit, offset]
       ).then(([items]) => items)
     ]);
@@ -1836,6 +1853,7 @@ export const digitalAssetRules = {
   lowestLegendCard,
   cardRaritySupportsMotion,
   packDrawStatistics,
+  assetRankingVipIdentity,
   pityTrigger,
   pityScopeForPackType,
   updatePity

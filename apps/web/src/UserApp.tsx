@@ -31,6 +31,11 @@ const ShellTransactionsPage = lazy(() => import("./pages/ShellTransactionsPage")
 const AssetStorePage = lazy(() => import("./pages/AssetStorePage"));
 const StickerStorePage = lazy(() => import("./pages/StickerStorePage"));
 const AssetPackPage = lazy(() => import("./pages/AssetPackPage"));
+const CollectionPage = lazy(() => import("./pages/CollectionPage"));
+const MyCollectiblesPage = lazy(() => import("./pages/MyCollectiblesPage"));
+const MyCollectibleDetailPage = lazy(() => import("./pages/MyCollectibleDetailPage"));
+const CollectibleAuctionsPage = lazy(() => import("./pages/CollectibleAuctionsPage"));
+const CollectibleAuctionDetailPage = lazy(() => import("./pages/CollectibleAuctionDetailPage"));
 const CardCabinetPage = lazy(() => import("./pages/CardCabinetPage"));
 const AssetDrawHistoryPage = lazy(() => import("./pages/AssetDrawHistoryPage"));
 const ExcellentAuthorPage = lazy(() => import("./pages/ExcellentAuthorPage"));
@@ -88,6 +93,11 @@ export default function UserApp() {
               <Route path="mine/store" element={<AssetStorePage />} />
               <Route path="mine/store/cards" element={<AssetStorePage />} />
               <Route path="mine/store/stickers" element={<StickerStorePage />} />
+              <Route path="mine/store/auctions" element={<CollectibleAuctionsPage />} />
+              <Route path="mine/store/auctions/:id" element={<CollectibleAuctionDetailPage />} />
+              <Route path="mine/collection" element={<CollectionPage />} />
+              <Route path="mine/collectibles" element={<MyCollectiblesPage />} />
+              <Route path="mine/collectibles/:id" element={<MyCollectibleDetailPage />} />
               <Route path="mine/cards" element={<CardCabinetPage />} />
               <Route path="mine/asset-draw-history" element={<AssetDrawHistoryPage />} />
               <Route path="mine/settings" element={<AccountSettingsPage />} />

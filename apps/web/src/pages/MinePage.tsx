@@ -132,12 +132,10 @@ export default function MinePage() {
 
   useEffect(() => {
     if (!user) return;
-    // The store is a primary action on this page. Warm both its route chunk and
-    // lightweight overview data so tapping the entry does not wait on either.
+    // Warm the primary collection and store route chunks before they are opened.
     void import("./AssetStorePage");
     void prefetchApi("/api/asset-store/packs", 30_000);
-    void import("./CardCabinetPage");
-    void prefetchApi("/api/me/card-cabinet", 30_000);
+    void import("./CollectionPage");
   }, [user?.id]);
 
   useEffect(() => {
@@ -200,7 +198,7 @@ export default function MinePage() {
 
   const features = [
     { label: "数字商城", description: "探索卡包与限定收藏", icon: ShoppingBag, color: "bg-rose-100 text-rose-600", path: "/mine/store" },
-    { label: "收藏柜", description: "整理卡牌与主页陈列", icon: GalleryVerticalEnd, color: "bg-indigo-100 text-indigo-700", path: "/mine/cards" },
+    { label: "收藏", description: "管理收藏卡与收藏品", icon: GalleryVerticalEnd, color: "bg-indigo-100 text-indigo-700", path: "/mine/collection" },
     { label: "优秀作者", description: "查看认证进度与权益", icon: Award, color: "bg-amber-100 text-amber-600", path: "/mine/excellent-author" },
     { label: "我的成就", description: "回顾里程碑与徽章", icon: Trophy, color: "bg-violet-100 text-violet-600", path: "/mine/achievements" },
     { label: "排行榜", description: "查看热度与收藏排名", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" },

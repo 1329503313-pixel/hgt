@@ -12,6 +12,7 @@ import {
   PackageOpen,
   Gift,
   Crown,
+  Gem,
   Radio,
   RefreshCw,
   Soup,
@@ -22,7 +23,7 @@ import { useNavigate } from "react-router-dom";
 import type { UserRole } from "../../shared/types";
 import { isSuperAdminRole } from "../../shared/roles";
 
-export type AdminTab = "data" | "banners" | "users" | "vip" | "entitlements" | "soups" | "mysteries" | "evaluations" | "gifts" | "badges" | "approvals" | "online-soup" | "circles" | "assets" | "notices" | "feedback";
+export type AdminTab = "data" | "banners" | "users" | "vip" | "entitlements" | "soups" | "mysteries" | "evaluations" | "gifts" | "badges" | "approvals" | "online-soup" | "circles" | "collectibles" | "assets" | "notices" | "feedback";
 
 const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "data", label: "数据", icon: <BarChart3 size={17} /> },
@@ -38,6 +39,7 @@ const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
   { key: "approvals", label: "审批", icon: <ClipboardCheck size={17} /> },
   { key: "online-soup", label: "玩汤", icon: <Radio size={17} /> },
   { key: "circles", label: "圈子", icon: <CircleEllipsis size={17} /> },
+  { key: "collectibles", label: "收藏品", icon: <Gem size={17} /> },
   { key: "assets", label: "商城", icon: <PackageOpen size={17} /> },
   { key: "notices", label: "通知", icon: <Bell size={17} /> },
   { key: "feedback", label: "建议", icon: <MessageSquareText size={17} /> }

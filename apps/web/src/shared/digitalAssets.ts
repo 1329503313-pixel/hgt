@@ -60,7 +60,9 @@ export type AssetPack = {
   rarityProbabilities: Record<AssetRarity, number>;
   pity: AssetPity;
   previewCards?: AssetCard[];
+  collectibleCounts?: { available: number; total: number } | null;
   cards?: Array<AssetCard & { actualProbability: number; owned: boolean; starLevel?: number }>;
+  collectibleRewards?: Array<import("./collectibles").Collectible & { probability: number; acquired: boolean }>;
 };
 
 export type CardCabinet = {
@@ -99,6 +101,7 @@ export type AssetDrawOrder = {
   usedFreeDraw: boolean;
   createdAt: string;
   results: AssetDrawResult[];
+  collectibleAwards: Array<import("./collectibles").Collectible & { drawIndex: number; probability: number }>;
 };
 
 export const ASSET_RARITY_LABELS: Record<AssetRarity, string> = {
@@ -131,6 +134,20 @@ export function assetRarityMatchesQuery(rarity: AssetRarity, query: string) {
     const label = assetRarityLabel(rarity, packType).toLocaleLowerCase();
     return label.includes(normalized) || normalized.includes(label);
   });
+}
+
+const ASSET_DRAW_DISPLAY_RARITY_RANK: Record<AssetRarity, number> = {
+  normal: 0,
+  rare: 1,
+  epic: 2,
+  legend: 3
+};
+
+export function sortAssetDrawResultsForDisplay<T extends Pick<AssetDrawResult, "rarity" | "drawIndex">>(results: readonly T[]) {
+  return [...results].sort((left, right) => (
+    ASSET_DRAW_DISPLAY_RARITY_RANK[right.rarity] - ASSET_DRAW_DISPLAY_RARITY_RANK[left.rarity]
+    || left.drawIndex - right.drawIndex
+  ));
 }
 
 const warmedAssetImages = new Set<string>();

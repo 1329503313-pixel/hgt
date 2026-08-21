@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { BookOpen, ChevronRight, Clock3, GalleryVerticalEnd, History, Images, Shell, SmilePlus, Sparkles, Trophy } from "lucide-react";
+import { BookOpen, ChevronRight, Clock3, GalleryVerticalEnd, Gavel, History, Images, Shell, SmilePlus, Sparkles, Trophy } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { api, prefetchApi } from "../api";
+import { api } from "../api";
 import { PageTopBar } from "../components/PageTopBar";
 import { MineBackButton } from "../components/MineBackButton";
 import { ListSkeleton } from "../components/Skeletons";
@@ -64,7 +64,7 @@ export default function AssetStorePage() {
     <section className="space-y-3">
       <PageTopBar title="商城" />
       <MineBackButton hideOnDesktop />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <button type="button" className="group card relative min-h-52 overflow-hidden p-0 text-left transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => navigate("/mine/store/cards")}>
           <span className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600" aria-hidden="true" />
           <span className="absolute -right-8 -top-12 h-48 w-48 rounded-full bg-white/10" aria-hidden="true" />
@@ -80,6 +80,10 @@ export default function AssetStorePage() {
             <span className="grid h-14 w-14 place-items-center rounded-2xl bg-white/15 shadow-inner"><SmilePlus size={30} /></span>
             <span><span className="flex items-center justify-between"><strong className="text-2xl font-black">表情包</strong><ChevronRight className="transition-transform group-hover:translate-x-1" /></span><span className="mt-2 block text-sm leading-6 text-cyan-50">解锁聊天表情，购买后立即加入全部聊天场景</span></span>
           </span>
+        </button>
+        <button type="button" className="group card relative min-h-52 overflow-hidden p-0 text-left transition hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => navigate("/mine/store/auctions")}>
+          <span className="absolute inset-0 bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500" aria-hidden="true" />
+          <span className="relative flex h-full min-h-52 flex-col justify-between p-6 text-white"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-white/15"><Gavel size={30}/></span><span><span className="flex items-center justify-between"><strong className="text-2xl font-black">藏品拍卖</strong><ChevronRight/></span><span className="mt-2 block text-sm leading-6 text-amber-50">参与唯一藏品竞拍，查看待拍与历史成交记录</span></span></span>
         </button>
       </div>
     </section>
@@ -104,8 +108,8 @@ export default function AssetStorePage() {
           <div className="asset-store-wallet-insight"><span>当前在售卡包</span><strong>{onSalePackCount}<small> 个</small></strong></div>
         </div>
         <div className="asset-store-wallet-actions mt-5 grid grid-cols-3 gap-2">
-          <button className="asset-store-wallet-action rounded-xl bg-white/12 px-2 py-3 text-xs font-bold" onPointerEnter={() => { void import("./CardCabinetPage"); void prefetchApi("/api/me/card-cabinet", 60_000); }} onFocus={() => { void import("./CardCabinetPage"); void prefetchApi("/api/me/card-cabinet", 60_000); }} onClick={() => navigate("/mine/cards")}><GalleryVerticalEnd className="mx-auto mb-1" size={18} />收藏柜</button>
-          <button className="asset-store-wallet-action rounded-xl bg-white/12 px-2 py-3 text-xs font-bold" onClick={() => navigate("/mine/rankings", { state: { tab: "collection" } })}><Trophy className="mx-auto mb-1" size={18} />收藏榜</button>
+          <button className="asset-store-wallet-action rounded-xl bg-white/12 px-2 py-3 text-xs font-bold" onPointerEnter={() => { void import("./CollectionPage"); }} onFocus={() => { void import("./CollectionPage"); }} onClick={() => navigate("/mine/collection")}><GalleryVerticalEnd className="mx-auto mb-1" size={18} />收藏</button>
+          <button className="asset-store-wallet-action rounded-xl bg-white/12 px-2 py-3 text-xs font-bold" onClick={() => navigate("/mine/rankings", { state: { tab: "collection" } })}><Trophy className="mx-auto mb-1" size={18} />卡牌榜</button>
           <button className="asset-store-wallet-action rounded-xl bg-white/12 px-2 py-3 text-xs font-bold" onClick={() => navigate("/mine/asset-draw-history")}><History className="mx-auto mb-1" size={18} />抽卡记录</button>
         </div>
       </div>
@@ -125,6 +129,7 @@ export default function AssetStorePage() {
                 <div className="min-w-0 p-4">
                   <div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate text-lg font-black text-ink">{pack.name}</h3><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{pack.description}</p></div><span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-primary">{pack.packTypeLabel}</span></div>
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-muted"><span className="inline-flex items-center gap-1"><Clock3 size={13} />{remainingText(pack.saleEndAt)}</span><span>传说保底 {pack.pity.legend}/{pack.pity.legendLimit}</span></div>
+                  {pack.collectibleCounts && pack.collectibleCounts.total > 0 && <p className="mt-2 inline-flex min-h-7 items-center rounded-full bg-amber-50 px-2.5 text-[11px] font-black text-amber-700">关联收藏品 {pack.collectibleCounts.available}/{pack.collectibleCounts.total}</p>}
                   <div className="mt-3 flex min-w-0 flex-col gap-3 min-[480px]:flex-row min-[480px]:items-end min-[480px]:justify-between">
                     <div className="flex min-w-0 max-w-full -space-x-3 overflow-hidden sm:-space-x-4">{(pack.previewCards ?? []).slice(0, 3).map((card) => <img key={card.id} src={card.thumbnailUrl || card.imageUrl} alt="" className="aspect-[5/7] w-11 shrink-0 rounded-lg border-2 border-white object-cover first:ml-0 sm:w-12" loading="lazy" decoding="async" />)}</div>
                     <div className="grid w-full shrink-0 grid-cols-1 gap-2 min-[360px]:grid-cols-2 min-[480px]:w-[100px] min-[480px]:grid-cols-1"><button type="button" className="inline-flex h-10 w-full items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-1.5 text-[12px] font-black leading-none text-white shadow-[0_6px_14px_rgba(37,99,235,.24)] transition hover:brightness-105 active:scale-[.97] min-[400px]:gap-1.5 min-[400px]:px-2 min-[400px]:text-[13px]" onClick={() => navigate(`/mine/store/cards/${pack.id}`)}><Shell className="shrink-0" size={15} strokeWidth={2.4} />{pack.freeDrawsUnlimited ? "免费抽取" : pack.freeDrawsRemaining > 0 ? `免费抽取（${pack.freeDrawsRemaining}）` : "抽取卡牌"}</button><button type="button" className="inline-flex h-10 w-full items-center justify-center gap-1 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-1.5 text-[12px] font-black leading-none text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] min-[400px]:gap-1.5 min-[400px]:px-2 min-[400px]:text-[13px]" onClick={() => setStoryPack(pack)}><BookOpen className="shrink-0" size={15} strokeWidth={2.4} />卡包故事</button></div>

@@ -171,7 +171,7 @@ export function BannerManagement() {
               海龟汤详情：/soups/作品ID<br />
               商城：/mine/store<br />
               某个卡包：/mine/store/卡包ID<br />
-              收藏柜：/mine/card-cabinet
+              收藏：/mine/collection
             </span>
           </label>
           <label className="block space-y-1"><span className="label">权重</span><input className="field" type="number" min={-999999} max={999999} value={form.weight} onChange={(event) => setForm((current) => ({ ...current, weight: Number(event.target.value) }))} /><span className="text-xs text-muted">权重越大，展示越靠前</span></label>

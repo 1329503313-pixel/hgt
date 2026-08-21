@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { FastForward, Shell, Sparkles, X } from "lucide-react";
-import type { AssetDrawOrder } from "../shared/digitalAssets";
+import { sortAssetDrawResultsForDisplay, type AssetDrawOrder } from "../shared/digitalAssets";
 import { AssetCardVisual } from "./AssetCardVisual";
+import { CollectibleVisual } from "./CollectibleVisual";
 
 const AUTO_SKIP_DRAW_ANIMATION_KEY = "hgt:auto-skip-draw-animation";
 
@@ -32,6 +33,10 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
   const [started, setStarted] = useState(getAutoSkipDrawAnimation);
   const complete = revealed > order.results.length;
   const current = order.results[Math.min(order.results.length - 1, Math.max(0, revealed - 1))];
+  const displayResults = useMemo(
+    () => order.drawMode === "ten" ? sortAssetDrawResultsForDisplay(order.results) : order.results,
+    [order.drawMode, order.results]
+  );
   const waitingForLegend = started && !complete && current?.rarity === "legend";
 
   useEffect(() => {
@@ -124,7 +129,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
         ) : (
           <div className="asset-result-pop py-8">
             <div className={`mx-auto grid gap-3 ${order.results.length === 1 ? "max-w-xs grid-cols-1" : "grid-cols-2 sm:grid-cols-5"}`}>
-              {order.results.map((result) => (
+              {displayResults.map((result) => (
                 <div key={result.drawIndex} className="relative min-w-0">
                   <AssetCardVisual card={result} animated={result.rarity === "legend"} motion packType={order.packType} />
                   {result.firstObtained && <NewCardBurst />}
@@ -134,6 +139,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
                 </div>
               ))}
             </div>
+            {order.collectibleAwards?.length > 0 && <div className="mx-auto mt-8 max-w-3xl rounded-3xl border border-amber-300/30 bg-amber-300/10 p-5"><h3 className="text-center text-lg font-black text-amber-200">额外获得收藏品</h3><p className="mt-1 text-center text-xs text-amber-100/75">每件收藏品均按独立概率判定</p><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{order.collectibleAwards.map(item=><div key={item.id}><CollectibleVisual collectible={item} className="aspect-[5/6]"/><p className="mt-1 text-center text-xs font-bold text-amber-100">第 {item.drawIndex} 抽</p></div>)}</div></div>}
             <div className="mx-auto mt-7 flex max-w-xl flex-wrap items-center justify-center gap-3 rounded-2xl border border-white/15 bg-white/10 p-4 text-sm font-bold">
               <span>{order.usedFreeDraw ? "使用免费单抽" : `消耗 ${order.shellCost} 贝壳`}</span>
               {totalRefund > 0 && <span className="inline-flex items-center gap-1 text-emerald-300"><Shell size={16} />满星返还 +{totalRefund}</span>}
@@ -146,7 +152,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
       {complete && (
         <div className="absolute inset-x-0 bottom-0 z-[90] border-t border-white/15 bg-slate-950/90 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,.35)] backdrop-blur-xl">
           <div className="mx-auto flex max-w-xl gap-3">
-            <button className="min-h-12 flex-1 rounded-xl border border-white/25 bg-white/10 px-4 text-sm font-black text-white transition hover:bg-white/15 active:scale-[.98]" onClick={(event) => { event.stopPropagation(); onClose(); }}>收下卡片</button>
+            <button className="min-h-12 flex-1 rounded-xl border border-white/25 bg-white/10 px-4 text-sm font-black text-white transition hover:bg-white/15 active:scale-[.98]" onClick={(event) => { event.stopPropagation(); onClose(); }}>收下奖励</button>
             <button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-[0_8px_24px_rgba(99,102,241,.35)] transition hover:brightness-110 active:scale-[.98]" onClick={(event) => { event.stopPropagation(); onDrawAgain(order.drawMode); }}><Shell size={17} />{order.drawMode === "ten" ? "再来十连" : "再来一次"}</button>
           </div>
         </div>

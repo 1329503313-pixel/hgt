@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightLeft, ArrowUp, Award, Bot, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, MessageCircleQuestion, Minimize2, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Star, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowRightLeft, ArrowUp, Award, Ban, Bot, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, MessageCircleQuestion, Minimize2, Music, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Star, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
@@ -12,7 +12,7 @@ import { useApp } from "../context/AppContext";
 import { useOnlineSoupDock } from "../context/OnlineSoupDockContext";
 import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
-import type { OnlineSoupAnswer, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
+import type { OnlineSoupAnswer, OnlineSoupBackgroundMusic, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
 import { GiftMessageBundle, GiftMessageCard } from "../components/GiftMessageCard";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { MentionableAvatarButton } from "../components/MentionableAvatarButton";
@@ -68,7 +68,7 @@ type HumanHonorSelection = {
 const structuralRoomEvents = new Set([
   "member_joined", "member_left", "member_kicked", "host_transferred", "soup_selected", "round_started",
   "supplemental_surface_published", "bottom_published", "round_ended", "host_mode_changed",
-  "finish_vote_opened", "finish_vote_updated", "member_muted", "member_unmuted"
+  "finish_vote_opened", "finish_vote_updated", "member_muted", "member_unmuted", "background_music_changed"
 ]);
 
 function mergeMessages(older: OnlineSoupMessage[], newer: OnlineSoupMessage[]) {
@@ -149,7 +149,14 @@ export default function OnlineSoupRoomPage() {
     ? inviteReturnToCandidate
     : "/online-soup";
   const { showToast, user, loadingUser, openAuth } = useApp();
-  const { minimizeRoom, showFullRoom } = useOnlineSoupDock();
+  const {
+    minimizeRoom,
+    showFullRoom,
+    syncRoomBackgroundMusic,
+    backgroundMusicMuted,
+    backgroundMusicAutoplayBlocked,
+    toggleBackgroundMusicMuted,
+  } = useOnlineSoupDock();
   const [snapshot, setSnapshot] = useState<OnlineSoupSnapshot | null>(null);
   const [requestingAiHint, setRequestingAiHint] = useState(false);
   const [submittingFinishVote, setSubmittingFinishVote] = useState(false);
@@ -191,6 +198,10 @@ export default function OnlineSoupRoomPage() {
   const [stickersLoading, setStickersLoading] = useState(true);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [hostActionsOpen, setHostActionsOpen] = useState(true);
+  const [backgroundMusicOpen, setBackgroundMusicOpen] = useState(false);
+  const [backgroundMusicTracks, setBackgroundMusicTracks] = useState<OnlineSoupBackgroundMusic[]>([]);
+  const [backgroundMusicLoading, setBackgroundMusicLoading] = useState(false);
+  const [backgroundMusicSavingId, setBackgroundMusicSavingId] = useState<string | null>(null);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [showAssistantScrollToLatest, setShowAssistantScrollToLatest] = useState(false);
   const [showQuestionModeGuide, setShowQuestionModeGuide] = useState(false);
@@ -242,6 +253,10 @@ export default function OnlineSoupRoomPage() {
   progressQuestionsRef.current = progressQuestions;
   roundCluesRef.current = roundClues;
   useEffect(() => { showFullRoom(roomId); }, [roomId, showFullRoom]);
+  useEffect(() => {
+    syncRoomBackgroundMusic(roomId, snapshot?.room.backgroundMusic ?? null);
+  }, [roomId, snapshot?.room.backgroundMusic?.audioUrl, snapshot?.room.backgroundMusic?.enabled, snapshot?.room.backgroundMusic?.id, snapshot?.room.backgroundMusic?.name, snapshot?.room.backgroundMusic?.startedAt, syncRoomBackgroundMusic]);
+  useEffect(() => () => syncRoomBackgroundMusic(roomId, null), [roomId, syncRoomBackgroundMusic]);
   useEffect(() => () => {
     if (highlightTimerRef.current != null) window.clearTimeout(highlightTimerRef.current);
   }, []);
@@ -978,6 +993,33 @@ export default function OnlineSoupRoomPage() {
     catch (error) { showToast(error instanceof Error ? error.message : "操作失败"); throw error; }
   }
 
+  async function openBackgroundMusic() {
+    setBackgroundMusicOpen(true);
+    setBackgroundMusicLoading(true);
+    try {
+      const data = await api<{ tracks: OnlineSoupBackgroundMusic[] }>("/api/online-soup/background-music", { bypassCache: true, dedupe: false });
+      setBackgroundMusicTracks(data.tracks);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "背景音乐列表加载失败");
+    } finally {
+      setBackgroundMusicLoading(false);
+    }
+  }
+
+  async function changeBackgroundMusic(trackId: string | null) {
+    if (backgroundMusicSavingId !== null) return;
+    setBackgroundMusicSavingId(trackId ?? "stop");
+    try {
+      await hostAction("background-music", { trackId });
+      setBackgroundMusicOpen(false);
+      showToast(trackId ? "背景音乐已开始播放" : "背景音乐已停止");
+    } catch {
+      // hostAction 已展示错误。
+    } finally {
+      setBackgroundMusicSavingId(null);
+    }
+  }
+
   async function publishClue() {
     if (!clue.trim() || clueSaving) return;
     setClueSaving(true);
@@ -1391,6 +1433,7 @@ export default function OnlineSoupRoomPage() {
     {!mysteryMode && snapshot.room.status !== "playing" && !aiHosted && snapshot.room.soup?.enableAiGame && <FloatingAction label="AI主持" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("ai"); }} />}
     {snapshot.room.status === "ended" && <FloatingAction tone="primary" label={mysteryMode ? "更换谜局" : "更换海龟汤"} onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
     {mysteryMode && snapshot.room.status === "playing" && <FloatingAction tone="amber" label="记录线索" onClick={() => { if (mobile) setHostActionsOpen(false); setClue(""); setClueOpen(true); }} />}
+    <FloatingAction tone="primary" label="背景音乐" onClick={() => { if (mobile) setHostActionsOpen(false); void openBackgroundMusic(); }} />
     <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />
   </>;
 
@@ -1401,6 +1444,17 @@ export default function OnlineSoupRoomPage() {
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <UnifiedBackButton compactOnMobile onClick={requestRoomExit} />
             <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]} · {mysteryMode ? <><BookOpen size={12} />谜局</> : aiHosted ? <><Bot size={12} />AI 主持</> : <><Crown size={12} />真人主持</>}</p></div>
+            {snapshot.room.backgroundMusic && <button
+              type="button"
+              className={`relative grid h-11 w-11 shrink-0 place-items-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${backgroundMusicMuted ? "bg-slate-100 text-slate-500" : "bg-blue-50 text-primary hover:bg-blue-100"}`}
+              onClick={toggleBackgroundMusicMuted}
+              aria-label={`${backgroundMusicMuted ? "恢复" : "静音"}背景音乐：${snapshot.room.backgroundMusic.name}`}
+              title={`${snapshot.room.backgroundMusic.name} · ${backgroundMusicMuted ? "已静音，点击恢复" : backgroundMusicAutoplayBlocked ? "等待播放授权，点击后播放" : "点击仅在本机静音"}`}
+              aria-pressed={backgroundMusicMuted}
+            >
+              <Volume2 size={20} />
+              {backgroundMusicMuted && <Ban className="absolute bottom-1 right-1 rounded-full bg-white text-red-500" size={14} strokeWidth={2.5} aria-hidden="true" />}
+            </button>}
             <span className="shrink-0" title={socketConnected ? "实时连接正常" : "正在重新连接"}>{socketConnected ? <Wifi size={18} className="text-emerald-600" /> : <WifiOff size={18} className="text-red-500" />}</span>
           </div>
           <div className="flex shrink-0 items-center justify-end gap-3 lg:max-xl:w-full">
@@ -1664,6 +1718,23 @@ export default function OnlineSoupRoomPage() {
       </div></Modal>}
       {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2><p className="text-xs font-bold text-muted">主持人和玩家 {(groupedMembers.host ? 1 : 0) + groupedMembers.players.length}/{snapshot.room.participantCapacity} 人</p>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} canManage={false} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/{snapshot.room.playerCapacity}</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => { setMembersOpen(false); requestRoomExit(); }}><LogOut size={16} /> 房间退出选项</button></div></Modal>}
       {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
+      {backgroundMusicOpen && <Modal onClose={() => { if (backgroundMusicSavingId === null) setBackgroundMusicOpen(false); }}><div className="space-y-4">
+        <div><h2 className="flex items-center gap-2 text-xl font-black text-ink"><Music size={20} className="text-primary" />背景音乐</h2><p className="mt-1 text-sm leading-6 text-muted">选择后全房间按同一进度循环播放。每位成员可通过顶部喇叭单独静音。</p></div>
+        {snapshot.room.backgroundMusic && <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3"><div className="min-w-0"><p className="text-xs font-bold text-blue-600">正在播放</p><p className="truncate font-black text-ink">{snapshot.room.backgroundMusic.name}</p></div><button type="button" className="btn min-h-11 shrink-0 bg-red-50 text-red-600 hover:bg-red-100" disabled={backgroundMusicSavingId !== null} onClick={() => void changeBackgroundMusic(null)}>{backgroundMusicSavingId === "stop" ? <LoaderCircle size={16} className="animate-spin" /> : <VolumeX size={16} />}停止播放</button></div>}
+        <div className="max-h-[52vh] space-y-2 overflow-y-auto overscroll-contain pr-1" aria-label="可用背景音乐列表">
+          {backgroundMusicLoading && <div className="py-8 text-center text-sm text-muted" role="status"><LoaderCircle className="mx-auto mb-2 animate-spin" size={22} />加载背景音乐…</div>}
+          {!backgroundMusicLoading && backgroundMusicTracks.map((track) => {
+            const playing = snapshot.room.backgroundMusic?.id === track.id;
+            return <button key={track.id} type="button" className={`flex min-h-14 w-full items-center gap-3 rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${playing ? "border-blue-300 bg-blue-50" : "border-line bg-white hover:border-blue-200 hover:bg-slate-50"}`} disabled={backgroundMusicSavingId !== null} onClick={() => void changeBackgroundMusic(track.id)} aria-pressed={playing}>
+              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${playing ? "bg-primary text-white" : "bg-slate-100 text-slate-600"}`}>{backgroundMusicSavingId === track.id ? <LoaderCircle size={19} className="animate-spin" /> : playing ? <Volume2 size={19} /> : <Play size={18} />}</span>
+              <span className="min-w-0 flex-1"><span className="block truncate font-black text-ink">{track.name}</span><span className="block text-xs text-muted">{playing ? "点击重新从当前房间时间开始播放" : "点击播放"}</span></span>
+              {playing && <Check size={18} className="shrink-0 text-primary" />}
+            </button>;
+          })}
+          {!backgroundMusicLoading && backgroundMusicTracks.length === 0 && <div className="rounded-xl border border-dashed border-line py-10 text-center text-sm text-muted"><Music className="mx-auto mb-2" size={24} />暂无已上架背景音乐</div>}
+        </div>
+        <button type="button" className="btn btn-secondary w-full" disabled={backgroundMusicSavingId !== null} onClick={() => setBackgroundMusicOpen(false)}>关闭</button>
+      </div></Modal>}
       {snapshot.room.finishVote?.canVote && <Modal onClose={() => undefined} hideClose><div className="space-y-5 p-1 text-center">
         <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-indigo-100 text-indigo-700"><BookOpen size={28} /></div>
         <div><h2 className="text-xl font-black text-ink">推理进度已达 {snapshot.room.aiProgress ?? 80}%</h2><p className="mt-2 text-sm leading-6 text-muted">现在可以选择查看汤底并尝试结束本轮，也可以继续游戏。达到正式玩家半数选择“查看汤底”时，本轮立即结束；进度达到 100% 时将无条件自动结束。</p></div>
@@ -1822,6 +1893,8 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
     ? <Play size={30} fill="currentColor" />
     : label.includes("更换")
       ? <RefreshCw size={30} />
+    : label === "背景音乐"
+      ? <Music size={30} />
     : label.includes("线索")
         ? <Lightbulb size={30} />
         : label.includes("汤底") || label.includes("谜局")

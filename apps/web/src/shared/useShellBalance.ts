@@ -50,14 +50,26 @@ export function useShellBalance(userId: string | undefined) {
     const unsubscribe = subscribeServerEvent("unread_changed", (event) => {
       try {
         const payload = JSON.parse(event.data) as { source?: string };
-        if (payload.source === "badge_unlock" || payload.source === "shell_adjustment" || payload.source === "gift_received") loadBalance();
+        if (payload.source === "badge_unlock" || payload.source === "shell_adjustment" || payload.source === "gift_received" || payload.source === "collectible_bid" || payload.source === "collectible_outbid") loadBalance();
       } catch {
         // A later event or remount will reconcile the balance.
+      }
+    });
+    const unsubscribeBalance = subscribeServerEvent("shell_balance_changed", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { balance?: unknown };
+        const nextBalance = typeof payload.balance === "number" ? payload.balance : Number.NaN;
+        if (!Number.isFinite(nextBalance)) return;
+        updateVersionRef.current += 1;
+        setBalance(nextBalance);
+      } catch {
+        loadBalance();
       }
     });
     return () => {
       active = false;
       unsubscribe();
+      unsubscribeBalance();
       window.removeEventListener(SHELL_BALANCE_UPDATED_EVENT, handleBalanceUpdate);
     };
   }, [userId]);

@@ -557,6 +557,8 @@ const TRANSACTION_LABELS: Record<string, string> = {
   sticker_purchase: "购买表情包",
   pack_ten_draw: "卡包十连消费",
   duplicate_card_refund: "满星重复卡片返还",
+  collectible_bid_hold: "藏品竞拍出价冻结",
+  collectible_bid_release: "藏品竞拍出价退回",
   admin_add: "后台人工增加",
   admin_deduct: "后台人工扣减",
   ranking_reward: "排行榜奖励",

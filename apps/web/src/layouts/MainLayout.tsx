@@ -5,7 +5,7 @@ import { UnifiedBackButton } from "../components/UnifiedBackButton";
 import { parentRoute } from "../shared/routeHierarchy";
 import { isHomeCategoryRoute } from "../shared/homeRoutes";
 
-const desktopPrimaryPaths = new Set(["/online-soup", "/circles", "/mine/rankings", "/mine/store", "/mine/tasks", "/mine/cards", "/mine/achievements", "/mine", "/messages"]);
+const desktopPrimaryPaths = new Set(["/online-soup", "/circles", "/mine/rankings", "/mine/store", "/mine/tasks", "/mine/collection", "/mine/achievements", "/mine", "/messages"]);
 
 const desktopModules: Record<string, { active: DesktopModuleKey; title: string; eyebrow: string }> = {
   "/online-soup": { active: "online-soup", title: "和朋友一起，进入实时推理房间", eyebrow: "玩汤 · ONLINE SOUP" },
@@ -14,6 +14,7 @@ const desktopModules: Record<string, { active: DesktopModuleKey; title: string; 
   "/mine/store": { active: "store", title: "发现装扮、卡包与更多社区好物", eyebrow: "商城 · STORE" },
   "/mine/store/cards": { active: "store", title: "抽取卡牌，继续你的收藏旅程", eyebrow: "卡包 · CARD PACKS" },
   "/mine/store/stickers": { active: "store", title: "解锁表情，让每一次聊天更生动", eyebrow: "表情包 · STICKERS" },
+  "/mine/store/auctions": { active: "store", title: "竞拍独一无二的珍贵藏品", eyebrow: "藏品拍卖 · AUCTIONS" },
   "/mine/asset-draw-history": { active: "store", title: "回顾每一次抽取与收藏收获", eyebrow: "抽卡记录 · DRAW HISTORY" },
   "/mine/tasks": { active: "tasks", title: "完成每日挑战，积累属于你的奖励", eyebrow: "任务 · MISSIONS" },
   "/mine/shells/transactions": { active: "tasks", title: "查看每一笔贝壳收入与支出", eyebrow: "贝壳明细 · SHELL HISTORY" },
@@ -24,7 +25,9 @@ const desktopModules: Record<string, { active: DesktopModuleKey; title: string; 
   "/mine/likes": { active: "mine", title: "记录每一次真诚的喜欢", eyebrow: "我的点赞 · LIKES" },
   "/mine/achievements": { active: "achievements", title: "记录每一次探索与成长", eyebrow: "我的成就 · ACHIEVEMENTS" },
   "/mine/excellent-author": { active: "achievements", title: "提交作品，申请优秀作者认证", eyebrow: "作者认证 · CREATOR" },
-  "/mine/cards": { active: "cards", title: "收藏故事旅程中的每一张珍贵卡片", eyebrow: "收藏柜 · COLLECTION" },
+  "/mine/collection": { active: "cards", title: "整理收藏卡与更多珍贵藏品", eyebrow: "收藏 · COLLECTION" },
+  "/mine/cards": { active: "cards", title: "收藏故事旅程中的每一张珍贵卡片", eyebrow: "我的收藏卡 · COLLECTION CARDS" },
+  "/mine/collectibles": { active: "cards", title: "查看属于你的每一件唯一藏品", eyebrow: "我的收藏品 · COLLECTIBLES" },
   "/mine/settings": { active: "mine", title: "管理账号、安全与主页展示", eyebrow: "账号设置 · SETTINGS" },
   "/mine/settings/password": { active: "mine", title: "更新密码，守护账号安全", eyebrow: "重置密码 · SECURITY" },
   "/mine/settings/backgrounds": { active: "cards", title: "选择已经解锁的主页背景", eyebrow: "卡牌背景 · BACKGROUNDS" },
@@ -33,7 +36,13 @@ const desktopModules: Record<string, { active: DesktopModuleKey; title: string; 
 };
 
 function desktopModuleForPath(path: string) {
-  if (/^\/mine\/store\/cards\/[^/]+$/.test(path) || (/^\/mine\/store\/[^/]+$/.test(path) && path !== "/mine/store/cards" && path !== "/mine/store/stickers")) {
+  if (/^\/mine\/store\/auctions\/[^/]+$/.test(path)) {
+    return { active: "store" as const, title: "查看竞拍进度与藏品详情", eyebrow: "拍卖详情 · AUCTION DETAILS" };
+  }
+  if (/^\/mine\/collectibles\/[^/]+$/.test(path)) {
+    return { active: "cards" as const, title: "查看唯一藏品的完整信息", eyebrow: "藏品详情 · COLLECTIBLE DETAILS" };
+  }
+  if (/^\/mine\/store\/cards\/[^/]+$/.test(path) || (/^\/mine\/store\/[^/]+$/.test(path) && path !== "/mine/store/cards" && path !== "/mine/store/stickers" && path !== "/mine/store/auctions")) {
     return { active: "store" as const, title: "查看卡包内容，开启新的收藏", eyebrow: "卡包详情 · PACK DETAILS" };
   }
   if (path === "/messages") {
