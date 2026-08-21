@@ -5626,3 +5626,22 @@ textarea {
   .vip-icon-animated, .vip-name-rainbow { animation: none !important; }
   .vip-name-rainbow { background-position: 50% 50%; }
 }
+@keyframes red-packet-open {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.04) rotate(-1deg); }
+  70% { transform: scale(1.04) rotate(1deg); opacity: 1; }
+  100% { transform: scale(.9); opacity: 0; }
+}
+
+@keyframes red-packet-coin {
+  from { transform: rotateY(0); }
+  to { transform: rotateY(720deg); }
+}
+
+.animate-red-packet-open { animation: red-packet-open .4s cubic-bezier(.22,.8,.3,1) forwards; }
+.animate-red-packet-coin { display: block; animation: red-packet-coin .36s cubic-bezier(.2,.7,.2,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-red-packet-open { animation: none; opacity: .01; }
+  .animate-red-packet-coin { animation: none; }
+}

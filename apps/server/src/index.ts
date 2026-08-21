@@ -38,6 +38,7 @@ import {
 import { registerDigitalAssetRoutes } from "./digitalAssets.js";
 import { registerBannerRoutes } from "./banners.js";
 import { parseGiftMessage, registerGiftRoutes } from "./gifts.js";
+import { registerCircleRedPacketRoutes, startCircleRedPacketScheduler } from "./circleRedPackets.js";
 import { canonicalConversationUserIds, conversationOtherUserIdentity } from "./conversations.js";
 import { recordChatMessageForRateLimit, stickerCooldownMessage } from "./chatMessageRateLimit.js";
 import { registerSeoRoutes } from "./seo.js";
@@ -1593,10 +1594,10 @@ const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; targe
   { key: "aiClear:normal", stat: "aiCompletionCount", target: 1 },
   { key: "aiClear:rare", stat: "aiCompletionCount", target: 10 },
   { key: "aiClear:epic", stat: "aiCompletionCount", target: 50 },
-  { key: "heat:normal", stat: "maxOriginalSoupHeat", target: 10_000 },
-  { key: "heat:rare", stat: "maxOriginalSoupHeat", target: 100_000 },
-  { key: "heat:epic", stat: "maxOriginalSoupHeat", target: 300_000 },
-  { key: "heat:legend", stat: "maxOriginalSoupHeat", target: 1_000_000 },
+  { key: "heat:normal", stat: "maxOriginalSoupHeat", target: 5_000 },
+  { key: "heat:rare", stat: "maxOriginalSoupHeat", target: 10_000 },
+  { key: "heat:epic", stat: "maxOriginalSoupHeat", target: 30_000 },
+  { key: "heat:legend", stat: "maxOriginalSoupHeat", target: 100_000 },
   { key: "collectionValue:normal", stat: "totalCollectionValue", target: 100 },
   { key: "collectionValue:rare", stat: "totalCollectionValue", target: 500 },
   { key: "collectionValue:epic", stat: "totalCollectionValue", target: 1_500 },
@@ -3093,6 +3094,14 @@ function parseCircleMentions(value: unknown): Array<{ userId: string; nickname: 
   }
 }
 
+function parseCircleRedPacket(value: unknown) {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed.packetId !== "string") return null;
+    return { id: parsed.packetId, totalShells: Number(parsed.totalShells), packetCount: Number(parsed.packetCount), publishedAt: String(parsed.publishedAt), expiresAt: String(parsed.expiresAt) };
+  } catch { return null; }
+}
+
 async function circleForMember(circleId: string, userId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT c.id, c.name,
@@ -3109,8 +3118,8 @@ async function circleForMember(circleId: string, userId: string) {
 function circleMessagePayload(row: mysql.RowDataPacket) {
   const recalledAt = row.recalled_at ? new Date(row.recalled_at).toISOString() : null;
   const replyRecalledAt = row.reply_recalled_at ? new Date(row.reply_recalled_at).toISOString() : null;
-  const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : row.message_type === "gift" ? "gift" : "text";
-  const replyType = row.reply_message_type === "sticker" ? "sticker" : row.reply_message_type === "room_invite" ? "room_invite" : row.reply_message_type === "soup_share" ? "soup_share" : row.reply_message_type === "gift" ? "gift" : "text";
+  const messageType = row.message_type === "sticker" ? "sticker" : row.message_type === "room_invite" ? "room_invite" : row.message_type === "soup_share" ? "soup_share" : row.message_type === "gift" ? "gift" : row.message_type === "red_packet" ? "red_packet" : "text";
+  const replyType = row.reply_message_type === "sticker" ? "sticker" : row.reply_message_type === "room_invite" ? "room_invite" : row.reply_message_type === "soup_share" ? "soup_share" : row.reply_message_type === "gift" ? "gift" : row.reply_message_type === "red_packet" ? "red_packet" : "text";
   return {
     id: String(row.id),
     sequence: Number(row.message_sequence),
@@ -3133,6 +3142,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
     roomInvite: !recalledAt && messageType === "room_invite" ? parseRoomInvite(row.content) : null,
     soupShare: !recalledAt && messageType === "soup_share" ? parseSoupShare(row.content) : null,
     gift: !recalledAt && messageType === "gift" ? parseGiftMessage(row.content) : null,
+    redPacket: !recalledAt && messageType === "red_packet" ? parseCircleRedPacket(row.content) : null,
     mentions: recalledAt ? [] : parseCircleMentions(row.mentions_json),
     replyTo: row.reply_id ? {
       id: String(row.reply_id),
@@ -3146,6 +3156,7 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
       stickerId: row.reply_sticker_id ? String(row.reply_sticker_id) : null,
       stickerName: row.reply_sticker_id ? getSticker(String(row.reply_sticker_id))?.name ?? null : null,
       gift: !replyRecalledAt && replyType === "gift" ? parseGiftMessage(row.reply_content) : null,
+      redPacket: !replyRecalledAt && replyType === "red_packet" ? parseCircleRedPacket(row.reply_content) : null,
       recalledAt: replyRecalledAt
     } : null,
     createdAt: new Date(row.created_at).toISOString(),
@@ -3237,7 +3248,7 @@ app.get("/api/circles", async (req, res) => {
       } : null,
       latestMessage: row.latest_message_id ? {
         id: String(row.latest_message_id),
-        senderName: row.latest_sender_name ? String(row.latest_sender_name) : "已注销用户",
+        senderName: row.latest_message_type === "red_packet" ? "系统" : row.latest_sender_name ? String(row.latest_sender_name) : "已注销用户",
         content: row.latest_recalled_at
           ? "消息已撤回"
           : row.latest_message_type === "sticker"
@@ -3248,8 +3259,10 @@ app.get("/api/circles", async (req, res) => {
               ? `[海龟汤] ${parseSoupShare(row.latest_content)?.title ?? "查看分享"}`
             : row.latest_message_type === "gift"
               ? `[礼物] ${parseGiftMessage(row.latest_content)?.giftName ?? "收到礼物"} ×${parseGiftMessage(row.latest_content)?.quantity ?? 1}`
+            : row.latest_message_type === "red_packet"
+              ? "[红包] 系统拼手气红包"
             : String(row.latest_content ?? ""),
-        type: row.latest_message_type === "sticker" ? "sticker" : row.latest_message_type === "room_invite" ? "room_invite" : row.latest_message_type === "soup_share" ? "soup_share" : row.latest_message_type === "gift" ? "gift" : "text",
+        type: row.latest_message_type === "sticker" ? "sticker" : row.latest_message_type === "room_invite" ? "room_invite" : row.latest_message_type === "soup_share" ? "soup_share" : row.latest_message_type === "gift" ? "gift" : row.latest_message_type === "red_packet" ? "red_packet" : "text",
         createdAt: new Date(row.latest_created_at).toISOString()
       } : null,
       createdAt: new Date(row.created_at).toISOString(),
@@ -3423,6 +3436,7 @@ app.patch("/api/circles/:id/messages/:messageId/recall", async (req, res) => {
   );
   if (!message) return sendError(res, 404, "消息不存在");
   if (message.message_type === "gift") return sendError(res, 409, "礼物消息不可撤回");
+  if (message.message_type === "red_packet") return sendError(res, 409, "已发布的红包不可撤回");
   if (String(message.sender_id ?? "") !== user.id) return sendError(res, 403, "只能撤回自己的消息");
   if (message.recalled_at) return sendError(res, 409, "消息已经撤回");
   if (!bool(message.within_window)) return sendError(res, 409, "消息发送超过2分钟，无法撤回");
@@ -3484,10 +3498,11 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   if (parsed.data.soupShare && !soupShare) return sendError(res, 400, "海龟汤不存在或暂不可分享");
   if (parsed.data.replyToMessageId) {
     const [[replyTarget]] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT id FROM circle_messages WHERE id = ? AND circle_id = ? AND recalled_at IS NULL LIMIT 1",
+      "SELECT id, message_type FROM circle_messages WHERE id = ? AND circle_id = ? AND recalled_at IS NULL LIMIT 1",
       [parsed.data.replyToMessageId, req.params.id]
     );
     if (!replyTarget) return sendError(res, 400, "被回复的消息不存在、已撤回或不属于当前圈子");
+    if (replyTarget.message_type === "red_packet") return sendError(res, 400, "红包消息不可回复");
   }
   const mentionedUserIds = [...new Set(parsed.data.mentionedUserIds ?? [])].filter((id) => id !== user.id);
   let mentions: Array<{ userId: string; nickname: string }> = [];
@@ -3677,6 +3692,7 @@ app.patch("/api/admin/circles/:id/messages/:messageId/recall", async (req, res) 
   );
   if (!message) return sendError(res, 404, "消息不存在");
   if (message.message_type === "gift") return sendError(res, 409, "礼物消息关联真实送礼流水，不可撤回");
+  if (message.message_type === "red_packet") return sendError(res, 409, "已发布的红包不可撤回");
   if (message.recalled_at) return sendError(res, 409, "消息已经撤回");
   const connection = await pool.getConnection();
   try {
@@ -7517,6 +7533,31 @@ registerGiftRoutes(app, {
     queueSystemBadgeSync(userIds);
   }
 });
+const notifyCircleRedPacketPublished = async (circleId: string, messageId: string) => {
+  const [[stored]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT m.*, NULL AS sender_nickname, 0 AS sender_experience, 'user' AS sender_role,
+       0 AS sender_vip_growth_value, NULL AS sender_vip_expires_at, 0 AS sender_vip_legacy_active,
+       NULL AS sender_avatar, 0 AS sender_has_avatar, NULL AS sender_badge_key, NULL AS sender_badge_icon_url,
+       NULL AS reply_id, NULL AS reply_sequence, NULL AS reply_sender_id, NULL AS reply_sender_nickname,
+       NULL AS reply_content, NULL AS reply_message_type, NULL AS reply_sticker_id, NULL AS reply_recalled_at
+     FROM circle_messages m WHERE m.id = ? LIMIT 1`,
+    [messageId]
+  );
+  if (!stored) return;
+  emitCircleSocketEvent(circleId, "circle_message_created", { circleId, message: circleMessagePayload(stored) });
+  const [members] = await pool.query<mysql.RowDataPacket[]>("SELECT user_id FROM circle_members WHERE circle_id = ?", [circleId]);
+  for (const member of members) {
+    emitUserEvent(String(member.user_id), "circle_unread_changed", { circleId });
+    emitUnreadChanged(String(member.user_id), "circle_red_packet");
+  }
+};
+registerCircleRedPacketRoutes(app, {
+  pool,
+  requireAuth,
+  requireAdmin,
+  sendError,
+  onPublished: notifyCircleRedPacketPublished
+});
 registerEntitlementRoutes(app, { requireAuth, requireAdmin, sendError });
 registerVipRoutes(app, {
   pool,
@@ -7630,6 +7671,7 @@ const settleRankingRewards = () => {
 settleRankingRewards();
 const rankingRewardSettlementTimer = setInterval(settleRankingRewards, 60_000);
 rankingRewardSettlementTimer.unref();
+startCircleRedPacketScheduler({ pool, onPublished: notifyCircleRedPacketPublished });
 }
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);

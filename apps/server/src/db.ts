@@ -962,6 +962,7 @@ export async function initDatabase() {
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      muted_until DATETIME NULL,
       left_at DATETIME NULL,
       PRIMARY KEY (room_id, user_id),
       INDEX idx_online_members_room_active (room_id, is_active, member_role),
@@ -1253,6 +1254,11 @@ export async function initDatabase() {
     "online_soup_members",
     "last_read_activity_sequence",
     "last_read_activity_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER last_seen_at"
+  );
+  await ensureColumn(
+    "online_soup_members",
+    "muted_until",
+    "muted_until DATETIME NULL AFTER last_read_activity_sequence"
   );
   await ensureColumn(
     "online_soup_rooms",
@@ -1946,13 +1952,69 @@ export async function initDatabase() {
   await ensureColumn("circle_members", "last_read_sequence", "last_read_sequence BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER joined_at");
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS circle_red_packet_schedules (
+      circle_id VARCHAR(64) PRIMARY KEY,
+      packet_count INT UNSIGNED NOT NULL,
+      total_shells INT UNSIGNED NOT NULL,
+      publish_time TIME NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      last_published_date DATE NULL,
+      created_by VARCHAR(64) NULL,
+      updated_by VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_circle_red_packet_schedules_due (enabled, publish_time, last_published_date),
+      CONSTRAINT fk_circle_red_packet_schedule_circle FOREIGN KEY (circle_id) REFERENCES circles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_circle_red_packet_schedule_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_circle_red_packet_schedule_updater FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS circle_red_packets (
+      id VARCHAR(64) PRIMARY KEY,
+      circle_id VARCHAR(64) NOT NULL,
+      created_by VARCHAR(64) NULL,
+      source ENUM('one_time','periodic') NOT NULL DEFAULT 'one_time',
+      packet_count INT UNSIGNED NOT NULL,
+      total_shells INT UNSIGNED NOT NULL,
+      status ENUM('scheduled','published','cancelled') NOT NULL DEFAULT 'scheduled',
+      publish_at DATETIME NOT NULL,
+      published_at DATETIME NULL,
+      expires_at DATETIME NULL,
+      message_id VARCHAR(64) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_circle_red_packet_message (message_id),
+      INDEX idx_circle_red_packets_due (status, publish_at),
+      INDEX idx_circle_red_packets_circle_time (circle_id, created_at),
+      CONSTRAINT fk_circle_red_packet_circle FOREIGN KEY (circle_id) REFERENCES circles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_circle_red_packet_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS circle_red_packet_claims (
+      packet_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      amount INT UNSIGNED NOT NULL,
+      claimed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (packet_id, user_id),
+      INDEX idx_circle_red_packet_claims_packet_time (packet_id, claimed_at),
+      INDEX idx_circle_red_packet_claims_user_time (user_id, claimed_at),
+      CONSTRAINT fk_circle_red_packet_claim_packet FOREIGN KEY (packet_id) REFERENCES circle_red_packets(id) ON DELETE CASCADE,
+      CONSTRAINT fk_circle_red_packet_claim_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS circle_messages (
       id VARCHAR(64) PRIMARY KEY,
       message_sequence BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
       circle_id VARCHAR(64) NOT NULL,
       sender_id VARCHAR(64) NULL,
       content VARCHAR(1000) NOT NULL DEFAULT '',
-      message_type ENUM('text','sticker','room_invite','soup_share','gift') NOT NULL DEFAULT 'text',
+      message_type ENUM('text','sticker','room_invite','soup_share','gift','red_packet') NOT NULL DEFAULT 'text',
       sticker_id VARCHAR(64) NULL,
       gift_send_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
@@ -1969,13 +2031,14 @@ export async function initDatabase() {
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'circle_messages' AND COLUMN_NAME = 'message_type'`
   );
-  if (!String(circleMessageType?.COLUMN_TYPE ?? "").includes("'gift'")) {
+  if (!String(circleMessageType?.COLUMN_TYPE ?? "").includes("'red_packet'")) {
     await pool.query(
-      "ALTER TABLE circle_messages MODIFY COLUMN message_type ENUM('text','sticker','room_invite','soup_share','gift') NOT NULL DEFAULT 'text'"
+      "ALTER TABLE circle_messages MODIFY COLUMN message_type ENUM('text','sticker','room_invite','soup_share','gift','red_packet') NOT NULL DEFAULT 'text'"
     );
   }
   await ensureColumn("circle_messages", "mentions_json", "mentions_json JSON NULL AFTER sticker_id");
   await ensureColumn("circle_messages", "gift_send_id", "gift_send_id VARCHAR(64) NULL AFTER sticker_id");
+  await ensureColumn("circle_messages", "red_packet_id", "red_packet_id VARCHAR(64) NULL AFTER gift_send_id");
   await ensureColumn(
     "circle_messages",
     "reply_to_message_id",
@@ -1984,6 +2047,7 @@ export async function initDatabase() {
   await ensureColumn("circle_messages", "recalled_at", "recalled_at DATETIME NULL AFTER created_at");
   await ensureIndex("circle_messages", "idx_circle_messages_reply", "reply_to_message_id");
   await ensureIndex("circle_messages", "idx_circle_messages_gift_send", "gift_send_id");
+  await ensureIndex("circle_messages", "idx_circle_messages_red_packet", "red_packet_id");
 
   // 会话级锁串行化同一聊天范围的表情计数，确保其他用户发言可以原子重置连发状态。
   await pool.query(`

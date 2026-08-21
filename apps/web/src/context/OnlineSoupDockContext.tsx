@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { LogOut, Maximize2, MessageCircle, Minimize2, Send, Sparkles, Wifi, WifiOff } from "lucide-react";
+import { LogOut, Maximize2, MessageCircle, Minimize2, Send, Sparkles, VolumeX, Wifi, WifiOff } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
@@ -16,6 +16,7 @@ import { onlineSoupAnswerPrefix } from "../shared/onlineSoupAnswerLabel";
 import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
 import { copyTextToClipboard } from "../shared/clipboard";
 import { VipIdentity } from "../components/VipIdentity";
+import { MutedAvatarIndicator } from "../components/MutedAvatarIndicator";
 
 type DockSession = {
   snapshot: OnlineSoupSnapshot;
@@ -32,6 +33,10 @@ type OnlineSoupDockValue = {
 };
 
 const OnlineSoupDockContext = createContext<OnlineSoupDockValue | null>(null);
+
+function isActiveMute(mutedUntil: string | null | undefined) {
+  return Boolean(mutedUntil && new Date(mutedUntil).getTime() > Date.now());
+}
 
 export function useOnlineSoupDock() {
   const value = useContext(OnlineSoupDockContext);
@@ -224,6 +229,8 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
 
   const contextValue = useMemo<OnlineSoupDockValue>(() => ({ minimizeRoom, showFullRoom }), [minimizeRoom, showFullRoom]);
   const inFullRoom = session ? location.pathname === `/online-soup/rooms/${session.snapshot.room.id}` : false;
+  const currentMemberMuted = isActiveMute(session?.snapshot.members.find((member) => member.id === user?.id)?.mutedUntil);
+  const mutedUserIds = useMemo(() => new Set(session?.snapshot.members.filter((member) => isActiveMute(member.mutedUntil)).map((member) => member.id) ?? []), [session?.snapshot.members]);
 
   return <OnlineSoupDockContext.Provider value={contextValue}>
     {children}
@@ -248,6 +255,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
         <MiniMessageList
           messages={session.snapshot.messages}
           currentUserId={user?.id ?? ""}
+          mutedUserIds={mutedUserIds}
           onRecall={recallMessage}
           onCopy={copyMessage}
           showAnswerChangeNotices={!session.snapshot.me.isHost}
@@ -257,7 +265,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
             navigate(`/online-soup/rooms/${activeRoomId}?locateMessage=${encodeURIComponent(messageId)}`);
           }}
         />
-        {session.snapshot.me.role !== "spectator" && <div className="online-soup-mini-composer">
+        {session.snapshot.me.role !== "spectator" && !currentMemberMuted && <div className="online-soup-mini-composer">
           {session.snapshot.me.role === "player" && <button
             type="button"
             className={messageMode === "question" ? "is-question" : ""}
@@ -267,6 +275,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
           <textarea rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} placeholder={messageMode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
           <button type="button" className="is-send" disabled={sending || !content.trim()} onClick={() => void sendMessage()} aria-label="发送"><Send size={17} /></button>
         </div>}
+        {session.snapshot.me.role !== "spectator" && currentMemberMuted && <div className="flex items-center justify-center gap-1.5 border-t border-red-100 bg-red-50 px-3 py-3 text-xs font-bold text-red-600" role="status"><VolumeX size={15} />你已被房主禁言</div>}
       </section>}
     </div>}
     {confirmLeave && session && <Modal onClose={() => setConfirmLeave(false)}>
@@ -278,19 +287,19 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   </OnlineSoupDockContext.Provider>;
 }
 
-function MiniMessageList({ messages, currentUserId, onRecall, onCopy, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
+function MiniMessageList({ messages, currentUserId, mutedUserIds, onRecall, onCopy, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; currentUserId: string; mutedUserIds: ReadonlySet<string>; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "end" }); }, [messages]);
   const visibleMessages = messages.filter((message) => showAnswerChangeNotices || !message.targetMessageId).slice(-60);
   return <div className="online-soup-mini-messages">
     {giftTimelineEntries(visibleMessages).map((entry) => entry.kind === "gift_bundle"
       ? <GiftMessageBundle key={entry.key} gifts={entry.gifts} align={entry.gifts[0]?.sender.id === currentUserId ? "right" : "left"} />
-      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} currentUserId={currentUserId} onRecall={onRecall} onCopy={onCopy} onLocate={onLocate} />)}
+      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} currentUserId={currentUserId} muted={Boolean(entry.message.senderId && mutedUserIds.has(entry.message.senderId))} onRecall={onRecall} onCopy={onCopy} onLocate={onLocate} />)}
     <div ref={bottomRef} />
   </div>;
 }
 
-function MiniMessage({ message, currentUserId, onRecall, onCopy, onLocate }: { message: OnlineSoupMessage; currentUserId: string; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
+function MiniMessage({ message, currentUserId, muted, onRecall, onCopy, onLocate }: { message: OnlineSoupMessage; currentUserId: string; muted: boolean; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
@@ -314,6 +323,7 @@ function MiniMessage({ message, currentUserId, onRecall, onCopy, onLocate }: { m
         ? <img src={message.senderAvatar} alt="" />
         : <span>{message.senderName?.slice(0, 1) ?? "?"}</span>}
       {host && <span className="is-host-mark">主</span>}
+      {muted && <MutedAvatarIndicator size="sm" />}
     </span>
     <div className="online-soup-mini-message-body">
       <div className="online-soup-mini-message-meta">

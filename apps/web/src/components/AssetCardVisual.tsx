@@ -5,6 +5,12 @@ import { assetRarityLabel, warmAssetImage } from "../shared/digitalAssets";
 
 type AssetCardGlitterEffect = "gold" | "rainbow" | null;
 export const ASSET_CARD_STAR_POINT_COUNT = 12;
+export const ASSET_MOTION_READY_TIMEOUT_MS = 12_000;
+
+export function haveAllAssetMotionSourcesFailed(failedSources: Iterable<string>, availableSources: readonly string[]) {
+  const failed = new Set(failedSources);
+  return availableSources.length > 0 && availableSources.every((source) => failed.has(source));
+}
 
 type CardEffectVisibilityListener = (isVisible: boolean, clockTimeMs: number) => void;
 
@@ -219,6 +225,12 @@ export function AssetMotionMedia({
   const [nearViewport, setNearViewport] = useState(eager);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const [failedPoster, setFailedPoster] = useState<string | null>(null);
+  const failedSourcesRef = useRef(new Set<string>());
+  const readyRef = useRef(false);
+  const sourceUrls = useMemo(
+    () => [card.motionWebmUrl, card.motionMp4Url].filter((source): source is string => Boolean(source)),
+    [card.motionMp4Url, card.motionWebmUrl]
+  );
   const mediaSource = `${card.motionWebmUrl ?? ""}\n${card.motionMp4Url ?? ""}`;
   const reduceMotion = useMemo(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -230,11 +242,42 @@ export function AssetMotionMedia({
     return rect.bottom >= -320 && rect.top <= window.innerHeight + 320;
   }
 
+  function failMotion() {
+    setFailedSource(mediaSource);
+  }
+
+  function markReady() {
+    readyRef.current = true;
+    onReady?.();
+  }
+
+  function handleSourceError(source: string) {
+    failedSourcesRef.current.add(source);
+    if (haveAllAssetMotionSourcesFailed(failedSourcesRef.current, sourceUrls)) failMotion();
+  }
+
   function playWhenVisible(video: HTMLVideoElement) {
     if (document.visibilityState === "visible" && isNearViewport(video)) {
-      void video.play().catch(() => undefined);
+      void video.play().catch((error: unknown) => {
+        if (error instanceof DOMException && (error.name === "AbortError" || error.name === "NotAllowedError")) return;
+        failMotion();
+      });
     }
   }
+
+  useEffect(() => {
+    failedSourcesRef.current.clear();
+    readyRef.current = false;
+  }, [mediaSource]);
+
+  useEffect(() => {
+    if (!nearViewport || reduceMotion || failedSource === mediaSource || !card.motionMp4Url) return;
+    const timeout = window.setTimeout(() => {
+      const video = videoRef.current;
+      if (!readyRef.current && (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)) failMotion();
+    }, ASSET_MOTION_READY_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [card.motionMp4Url, failedSource, mediaSource, nearViewport, reduceMotion]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -305,12 +348,12 @@ export function AssetMotionMedia({
       preload={nearViewport ? "auto" : "metadata"}
       poster={fallback}
       aria-label={`${card.name}动态卡面`}
-      onError={() => setFailedSource(mediaSource)}
-      onLoadedData={onReady}
+      onError={failMotion}
+      onLoadedData={markReady}
       onCanPlay={(event) => playWhenVisible(event.currentTarget)}
     >
-      {card.motionWebmUrl && <source src={card.motionWebmUrl} type="video/webm" />}
-      <source src={card.motionMp4Url} type="video/mp4" />
+      {card.motionWebmUrl && <source src={card.motionWebmUrl} type="video/webm" onError={() => handleSourceError(card.motionWebmUrl!)} />}
+      <source src={card.motionMp4Url} type="video/mp4" onError={() => handleSourceError(card.motionMp4Url!)} />
     </video>
   );
 }

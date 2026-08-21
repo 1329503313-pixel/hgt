@@ -1,11 +1,12 @@
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
-import { Edit3, Eye, ImagePlus, MessageCircle, Plus, RotateCcw, Trash2, Users, X } from "lucide-react";
+import { CalendarClock, Edit3, Eye, Gift, ImagePlus, MessageCircle, Plus, RotateCcw, Trash2, Users, X } from "lucide-react";
 import { api } from "../../api";
 import type { CircleMessage } from "../../shared/types";
 import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 import { ListSkeleton } from "../Skeletons";
 import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
+import { OneTimeRedPacketDialog, PeriodicRedPacketDialog } from "./CircleRedPacketDialogs";
 
 type AdminCircle = {
   id: string;
@@ -27,6 +28,8 @@ export function CircleManagement() {
   const [editing, setEditing] = useState<AdminCircle | null | "new">(null);
   const [form, setForm] = useState(emptyForm);
   const [previewing, setPreviewing] = useState<AdminCircle | null>(null);
+  const [redPacketCircle, setRedPacketCircle] = useState<AdminCircle | null>(null);
+  const [periodicCircle, setPeriodicCircle] = useState<AdminCircle | null>(null);
   const [messages, setMessages] = useState<CircleMessage[]>([]);
   const [messageCursor, setMessageCursor] = useState<string | null>(null);
   const [messageHasMore, setMessageHasMore] = useState(false);
@@ -128,7 +131,7 @@ export function CircleManagement() {
   }
 
   async function recall(message: CircleMessage) {
-    if (!previewing || message.recalledAt || message.type === "gift") return;
+    if (!previewing || message.recalledAt || message.type === "gift" || message.type === "red_packet") return;
     if (!window.confirm(`确认以管理员身份撤回 ${message.sender?.nickname || "已注销用户"} 的这条消息？`)) return;
     try {
       const result = await api<{ recalledAt: string }>(`/api/admin/circles/${previewing.id}/messages/${message.id}/recall`, { method: "PATCH" });
@@ -160,7 +163,9 @@ export function CircleManagement() {
                     <span>创建于 {new Date(circle.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button className="btn btn-secondary px-3" onClick={() => setRedPacketCircle(circle)}><Gift size={16} />发红包</button>
+                  <button className="btn btn-secondary px-3" onClick={() => setPeriodicCircle(circle)}><CalendarClock size={16} />周期红包</button>
                   <button className="btn btn-secondary px-3" onClick={() => preview(circle)}><Eye size={16} />预览</button>
                   <button className="btn btn-secondary px-3" onClick={() => edit(circle)}><Edit3 size={16} />编辑</button>
                   <button className="btn bg-red-50 px-3 text-red-600 hover:bg-red-100" onClick={() => void remove(circle)}><Trash2 size={16} />删除</button>
@@ -189,18 +194,20 @@ export function CircleManagement() {
       </Modal>}
       {previewing && <Modal full onClose={() => setPreviewing(null)}>
         <div className="flex items-start justify-between gap-3 border-b border-line pb-3">
-          <div><h2 className="text-xl font-black text-ink">聊天记录 · {previewing.name}</h2><p className="mt-1 text-sm text-muted">按发送时间倒序展示；管理员可撤回他人消息且不受时间限制，礼物消息不可撤回。</p></div>
+          <div><h2 className="text-xl font-black text-ink">聊天记录 · {previewing.name}</h2><p className="mt-1 text-sm text-muted">按发送时间倒序展示；管理员可撤回普通消息且不受时间限制，礼物和红包消息不可撤回。</p></div>
           <button className="btn btn-secondary px-3" onClick={() => setPreviewing(null)}><X size={17} />关闭</button>
         </div>
         <div className="py-4">
           <div className="space-y-2">
-            {messages.map((message) => <div key={message.id} className="flex items-start gap-3 rounded-xl border border-line p-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><strong className="text-sm text-ink">{message.sender?.nickname || "已注销用户"}</strong><span className="text-xs text-muted">{new Date(message.createdAt).toLocaleString()}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-muted">{message.type}</span></div><p className={`mt-2 whitespace-pre-wrap break-words text-sm ${message.recalledAt ? "italic text-muted" : "text-ink"}`}>{adminMessageText(message)}</p></div>{!message.recalledAt && message.type !== "gift" && <button className="btn btn-danger h-8 shrink-0 px-2 text-xs" onClick={() => void recall(message)}><RotateCcw size={14} />撤回</button>}</div>)}
+            {messages.map((message) => <div key={message.id} className="flex items-start gap-3 rounded-xl border border-line p-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><strong className="text-sm text-ink">{message.type === "red_packet" ? "系统" : message.sender?.nickname || "已注销用户"}</strong><span className="text-xs text-muted">{new Date(message.createdAt).toLocaleString()}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-muted">{message.type}</span></div><p className={`mt-2 whitespace-pre-wrap break-words text-sm ${message.recalledAt ? "italic text-muted" : "text-ink"}`}>{adminMessageText(message)}</p></div>{!message.recalledAt && message.type !== "gift" && message.type !== "red_packet" && <button className="btn btn-danger h-8 shrink-0 px-2 text-xs" onClick={() => void recall(message)}><RotateCcw size={14} />撤回</button>}</div>)}
           </div>
           {messageHasMore && <button className="btn btn-secondary mx-auto mt-4 flex" disabled={messagesLoading || !messageCursor} onClick={() => messageCursor && void loadMessages(previewing, messageCursor)}>{messagesLoading ? "加载中…" : "加载更早记录"}</button>}
           {!messagesLoading && messages.length === 0 && <p className="py-16 text-center text-sm text-muted">暂无聊天记录</p>}
           {messagesLoading && messages.length === 0 && <ListSkeleton rows={6} />}
         </div>
       </Modal>}
+      {redPacketCircle && <OneTimeRedPacketDialog circle={redPacketCircle} onClose={() => setRedPacketCircle(null)} />}
+      {periodicCircle && <PeriodicRedPacketDialog circle={periodicCircle} onClose={() => setPeriodicCircle(null)} />}
     </section>
   );
 }
@@ -209,6 +216,7 @@ function adminMessageText(message: CircleMessage) {
   if (message.recalledAt) return "该消息已撤回";
   if (message.type === "sticker") return `[表情] ${message.stickerName || message.stickerId || ""}`.trim();
   if (message.type === "gift") return `[礼物] ${message.gift?.giftName || "礼物"} × ${message.gift?.quantity || 1}`;
+  if (message.type === "red_packet") return `[系统红包] ${message.redPacket?.packetCount || 0} 个，共 ${message.redPacket?.totalShells || 0} 贝壳`;
   if (message.type === "soup_share") return `[汤品分享] ${message.soupShare?.title || ""}`.trim();
   if (message.type === "room_invite") return `[玩汤房间邀请] ${message.roomInvite?.roomName || ""}`.trim();
   return message.content || "—";

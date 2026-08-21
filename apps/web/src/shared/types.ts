@@ -323,6 +323,26 @@ export type GiftMessage = {
   createdAt: string;
 };
 
+export type CircleRedPacket = {
+  id: string;
+  totalShells: number;
+  packetCount: number;
+  publishedAt: string;
+  expiresAt: string;
+};
+
+export type CircleRedPacketDetail = CircleRedPacket & {
+  circleId: string;
+  source: "one_time" | "periodic";
+  status: "published";
+  publishAt: string;
+  claimedCount: number;
+  claimedShells: number;
+  myAmount: number | null;
+  canClaim: boolean;
+  claims: Array<{ userId: string; nickname: string; amount: number; claimedAt: string }>;
+};
+
 export type GiftCatalogItem = {
   id: string;
   name: string;
@@ -396,7 +416,7 @@ export type CircleSummary = {
     id: string;
     senderName: string;
     content: string;
-    type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
+    type: "text" | "sticker" | "room_invite" | "soup_share" | "gift" | "red_packet";
     createdAt: string;
   } | null;
   createdAt: string;
@@ -413,10 +433,11 @@ export type CircleMessageReply = {
   sequence: number;
   sender: Pick<PublicUser, "id" | "nickname"> | null;
   content: string;
-  type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
+  type: "text" | "sticker" | "room_invite" | "soup_share" | "gift" | "red_packet";
   stickerId: string | null;
   stickerName?: string | null;
   gift?: GiftMessage | null;
+  redPacket?: CircleRedPacket | null;
   recalledAt: string | null;
 };
 
@@ -426,12 +447,13 @@ export type CircleMessage = {
   circleId: string;
   sender: (Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge" | "vipGrowthValue" | "vipLevel" | "vipActive"> & { isOnline: boolean }) | null;
   content: string;
-  type: "text" | "sticker" | "room_invite" | "soup_share" | "gift";
+  type: "text" | "sticker" | "room_invite" | "soup_share" | "gift" | "red_packet";
   stickerId: string | null;
   stickerName?: string | null;
   roomInvite?: OnlineSoupRoomInvite | null;
   soupShare?: SoupShare | null;
   gift?: GiftMessage | null;
+  redPacket?: CircleRedPacket | null;
   mentions: Array<{
     userId: string;
     nickname: string;
@@ -496,7 +518,7 @@ export type OnlineSoupChoice = {
   summary: string;
   enableAiGame: boolean;
   coverImage: string | null;
-  source: "mine" | "library";
+  source: "recommended" | "random" | "latest" | "liked" | "favorited" | "played" | "mine";
 };
 
 export type OnlineSoupMessage = {
@@ -601,7 +623,7 @@ export type OnlineSoupSnapshot = {
     createdAt: string;
   };
   me: { role: OnlineSoupMemberRole; isHost: boolean };
-  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; joinedAt: string }>;
+  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; mutedUntil: string | null; joinedAt: string }>;
   messages: OnlineSoupMessage[];
   messagesHasMore: boolean;
   messagesNextCursor: string | null;

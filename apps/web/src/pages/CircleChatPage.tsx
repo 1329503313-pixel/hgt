@@ -14,6 +14,7 @@ import { connectCircleSocket } from "../shared/circleSocket";
 import { OnlineSoupRoomInviteCard } from "../components/OnlineSoupRoomInviteCard";
 import { SoupShareCard } from "../components/SoupShareCard";
 import { GiftMessageBundle, GiftMessageCard } from "../components/GiftMessageCard";
+import { CircleRedPacketCard } from "../components/CircleRedPacketCard";
 import { StickerKeyboard } from "../components/StickerKeyboard";
 import { ChatComposerIconButton } from "../components/ChatComposerIconButton";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
@@ -74,6 +75,7 @@ function messagePreview(message: CircleMessage | CircleMessageReply) {
   if (message.type === "room_invite") return "[玩汤房间邀请]";
   if (message.type === "soup_share") return "[海龟汤分享]";
   if (message.type === "gift") return `[礼物] ${message.gift?.giftName ?? "礼物"} ×${message.gift?.quantity ?? 1}`;
+  if (message.type === "red_packet") return "[系统红包]";
   return message.content.trim() || "[空消息]";
 }
 
@@ -516,9 +518,16 @@ export default function CircleChatPage() {
             if (message.recalledAt) {
               return <div id={`circle-message-${message.id}`} key={message.id} className="scroll-mt-24"><RecalledMessageNotice mine={mine} senderName={senderName} /></div>;
             }
+            if (message.type === "red_packet" && message.redPacket) {
+              return <div id={`circle-message-${message.id}`} key={message.id} className="scroll-mt-24 px-1">
+                <div className="mb-1 text-[11px] font-bold text-muted">系统红包</div>
+                <CircleRedPacketCard circleId={circleId} packet={message.redPacket} />
+                <span className="mt-1 block px-1 text-[10px] text-muted">{new Date(message.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
+              </div>;
+            }
             const messageActions = [
               { label: "回复", onSelect: () => beginReply(message) },
-              ...(message.type !== "gift" && mine && canRecallMessage(message.createdAt, message.recalledAt)
+              ...(message.type !== "gift" && message.type !== "red_packet" && mine && canRecallMessage(message.createdAt, message.recalledAt)
                 ? [{ label: "撤回", tone: "danger" as const, availableUntil: new Date(message.createdAt).getTime() + 120_000, onSelect: () => void recallMessage(message) }]
                 : [])
             ];

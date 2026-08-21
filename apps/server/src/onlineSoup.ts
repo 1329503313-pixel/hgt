@@ -24,11 +24,13 @@ import { parseOnlineSoupAiHonors, selectOnlineSoupAiHonors, selectOnlineSoupHuma
 import { ONLINE_SOUP_SINGLE_USER_IDLE_MINUTES, shouldAutoCloseIdleOnlineSoupRoom } from "./onlineSoupRoomIdle.js";
 import { consumeDailyEntitlement, isEntitlementLimitError } from "./entitlements.js";
 import { publicOssUrl } from "./ossStorage.js";
+import { onlineSoupEligibleSourceSql, onlineSoupEligibleSources } from "./onlineSoupEligibleSource.js";
 import { buildMysteryOpeningNarrative, mysteryTurnConflictAction, processMysteryTurn, startOrContinueMysteryRun } from "./mystery/runtime.js";
 import { MysteryInvariantError } from "./mystery/engine.js";
 import { MysteryModelError } from "./mystery/models.js";
 import { mysteryClueContentSchema, nextMysteryClueNumber } from "./mystery/clues.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
+import { ONLINE_SOUP_MUTE_DURATIONS, onlineSoupMuteRemainingMinutes } from "./onlineSoupMute.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
@@ -336,7 +338,7 @@ async function transferDepartedHost(
     [roomId, previousHostId]
   );
   await db.query(
-    `UPDATE online_soup_members SET member_role = ?, last_seen_at = NOW()
+    `UPDATE online_soup_members SET member_role = ?, muted_until = NULL, last_seen_at = NOW()
      WHERE room_id = ? AND user_id = ? AND is_active = 1`,
     [hostMode === "ai" ? "player" : "host", roomId, successor.userId]
   );
@@ -1434,7 +1436,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   if (!room) return null;
   const [[memberRows], messagePage, finishVote] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, u.nickname, u.experience, u.role,
+    `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, m.muted_until, u.nickname, u.experience, u.role,
        u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.avatar IS NOT NULL AS has_avatar,
        u.equipped_badge_key, u.equipped_badge_icon_url, lb.name AS special_badge_name, lb.tier AS special_badge_tier
      FROM online_soup_members m JOIN users u ON u.id = m.user_id
@@ -1544,6 +1546,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
       vipActive: vipGrowthSnapshot(row).active,
       avatar: row.has_avatar ? `/api/media/users/${encodeURIComponent(String(row.user_id))}/avatar` : null,
       equippedBadge: memberBadge(row.equipped_badge_key, row.equipped_badge_icon_url, row.special_badge_name, row.special_badge_tier),
+      mutedUntil: row.member_role !== "host" && onlineSoupMuteRemainingMinutes(row.muted_until) > 0 ? iso(row.muted_until) : null,
       joinedAt: iso(row.joined_at)
     })),
     ...(messagePage ? {
@@ -1764,15 +1767,20 @@ router.get("/soups/eligible", async (req, res) => {
   if (!user) return fail(res, 401, "请先登录");
   const parsed = z.object({
     roomId: z.string().trim().max(64).optional(),
-    source: z.enum(["library", "mine"]).default("library"),
+    source: z.preprocess(
+      (value) => value === "library" ? "recommended" : value,
+      z.enum(onlineSoupEligibleSources).default("recommended")
+    ),
+    seed: z.string().trim().max(64).default("default"),
     q: z.string().trim().max(100).default(""),
     page: z.coerce.number().int().min(0).default(0),
     limit: z.coerce.number().int().min(1).max(60).default(40)
   }).safeParse(req.query);
-  if (!parsed.success) return fail(res, 400, "汤库筛选条件不正确");
-  const { source, q, page, limit } = parsed.data;
+  if (!parsed.success) return fail(res, 400, "选汤筛选条件不正确");
+  const { source, q, page, limit, seed } = parsed.data;
   const conditions = ["s.review_status = 'approved'"];
   const params: Array<string | number> = [user.id];
+  let sourceSql = onlineSoupEligibleSourceSql(source, user.id, seed);
   let hostMode: "human" | "ai" = "human";
   if (parsed.data.roomId) {
     const room = await roomById(parsed.data.roomId);
@@ -1784,28 +1792,26 @@ router.get("/soups/eligible", async (req, res) => {
     }
   }
   if (hostMode === "human") {
-    if (source === "mine") {
-      conditions.push("s.creator_id = ?");
-      params.push(user.id);
-    } else {
-      conditions.push("s.creator_id <> ?");
-      conditions.push("(s.is_bottom_public = 1 OR g.user_id IS NOT NULL OR ? = 1)");
-      params.push(user.id, canViewAllSoupContentRole(user.role) ? 1 : 0);
-    }
+    conditions.push("(s.creator_id = ? OR s.is_bottom_public = 1 OR g.user_id IS NOT NULL OR ? = 1)");
+    params.push(user.id, canViewAllSoupContentRole(user.role) ? 1 : 0);
+  } else {
+    sourceSql = onlineSoupEligibleSourceSql("recommended", user.id, seed);
   }
+  conditions.push(...sourceSql.conditions);
+  params.push(...sourceSql.conditionParams);
   if (q) {
     conditions.push("(s.title LIKE ? OR s.author LIKE ?)");
     params.push(`%${q}%`, `%${q}%`);
   }
-  params.push(limit + 1, page * limit);
+  params.push(...sourceSql.orderParams, limit + 1, page * limit);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT DISTINCT s.id, s.title, s.type, s.author, s.summary, s.creator_id, s.created_at,
+    `SELECT s.id, s.title, s.type, s.author, s.summary, s.creator_id, s.created_at,
        (s.enable_ai_game = 1 AND creator.role IN ('super_admin','backoffice_admin','admin','vip')) AS enable_ai_game,
        s.cover_thumbnail IS NOT NULL AS has_cover
      FROM soups s JOIN users creator ON creator.id = s.creator_id
      LEFT JOIN soup_access_grants g ON g.soup_id = s.id AND g.user_id = ?
      WHERE ${conditions.join(" AND ")}
-     ORDER BY s.created_at DESC, s.id DESC LIMIT ? OFFSET ?`,
+     ORDER BY ${sourceSql.orderBy} LIMIT ? OFFSET ?`,
     params
   );
   const hasMore = rows.length > limit;
@@ -1818,7 +1824,7 @@ router.get("/soups/eligible", async (req, res) => {
     summary: String(row.summary ?? ""),
     enableAiGame: Boolean(row.enable_ai_game),
     coverImage: row.has_cover ? `/api/media/soups/${encodeURIComponent(String(row.id))}/thumbnail` : null,
-    source: hostMode === "ai" ? "library" : source
+    source: hostMode === "ai" ? "recommended" : source
   })), hostMode, hasMore, nextPage: hasMore ? page + 1 : null });
 });
 
@@ -1984,7 +1990,7 @@ router.patch("/rooms/:roomId/host-mode", async (req, res) => {
       return fail(res, 409, "房间已解散，请返回房间列表");
     }
     await connection.query(
-      "UPDATE online_soup_members SET member_role = ? WHERE room_id = ? AND user_id = ? AND is_active = 1",
+      "UPDATE online_soup_members SET member_role = ?, muted_until = NULL WHERE room_id = ? AND user_id = ? AND is_active = 1",
       [parsed.data.hostMode === "ai" ? "player" : "host", context.room.id, context.user.id]
     );
     if (!clearCurrentSoup && context.room.current_round_id) await connection.query(
@@ -2634,6 +2640,44 @@ router.post("/rooms/:roomId/members/:userId/kick", async (req, res) => {
   void notifyRoom(context.room.id, "member_kicked", { userId: req.params.userId, nickname: targetNickname });
 });
 
+router.post("/rooms/:roomId/members/:userId/mute", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  if (req.params.userId === context.user.id) return fail(res, 400, "房主不能禁言自己");
+  const parsed = z.object({ durationMinutes: z.union([z.literal(1), z.literal(5)]) }).safeParse(req.body);
+  if (!parsed.success || !ONLINE_SOUP_MUTE_DURATIONS.includes(parsed.data.durationMinutes)) {
+    return fail(res, 400, "禁言时长只能选择 1 分钟或 5 分钟");
+  }
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE online_soup_members members
+     JOIN online_soup_rooms rooms ON rooms.id = members.room_id
+     SET members.muted_until = DATE_ADD(NOW(), INTERVAL ? MINUTE)
+     WHERE members.room_id = ? AND members.user_id = ? AND members.is_active = 1
+       AND members.member_role <> 'host' AND rooms.host_id = ? AND rooms.status <> 'closed'`,
+    [parsed.data.durationMinutes, context.room.id, req.params.userId, context.user.id]
+  );
+  if (result.affectedRows !== 1) return fail(res, 409, "成员或房主状态已变化，请刷新后重试");
+  res.json({ ok: true });
+  void notifyRoom(context.room.id, "member_muted", { userId: req.params.userId });
+});
+
+router.post("/rooms/:roomId/members/:userId/unmute", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  if (req.params.userId === context.user.id) return fail(res, 400, "房主没有被禁言");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE online_soup_members members
+     JOIN online_soup_rooms rooms ON rooms.id = members.room_id
+     SET members.muted_until = NULL
+     WHERE members.room_id = ? AND members.user_id = ? AND members.is_active = 1
+       AND members.member_role <> 'host' AND rooms.host_id = ? AND rooms.status <> 'closed'`,
+    [context.room.id, req.params.userId, context.user.id]
+  );
+  if (result.affectedRows !== 1) return fail(res, 409, "成员或房主状态已变化，请刷新后重试");
+  res.json({ ok: true });
+  void notifyRoom(context.room.id, "member_unmuted", { userId: req.params.userId });
+});
+
 router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
@@ -2680,11 +2724,11 @@ router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => 
     );
     const aiHosted = String(room.host_mode ?? "human") === "ai";
     await connection.query(
-      "UPDATE online_soup_members SET member_role = ? WHERE room_id = ? AND user_id = ? AND is_active = 1",
+      "UPDATE online_soup_members SET member_role = ?, muted_until = NULL WHERE room_id = ? AND user_id = ? AND is_active = 1",
       [previousRole, context.room.id, context.user.id]
     );
     await connection.query(
-      "UPDATE online_soup_members SET member_role = ? WHERE room_id = ? AND user_id = ? AND is_active = 1",
+      "UPDATE online_soup_members SET member_role = ?, muted_until = NULL WHERE room_id = ? AND user_id = ? AND is_active = 1",
       [aiHosted ? "player" : "host", context.room.id, req.params.userId]
     );
     await systemMessage(
@@ -2761,9 +2805,10 @@ router.post("/rooms/:roomId/select-mystery", async (req, res) => {
     );
     await connection.query(
       `UPDATE online_soup_members SET member_role = CASE WHEN user_id = ? THEN 'host'
-        WHEN member_role = 'host' THEN 'player' ELSE member_role END
+        WHEN member_role = 'host' THEN 'player' ELSE member_role END,
+        muted_until = CASE WHEN user_id = ? THEN NULL ELSE muted_until END
        WHERE room_id = ? AND is_active = 1`,
-      [context.user.id, context.room.id],
+      [context.user.id, context.user.id, context.room.id],
     );
     if (continued) {
       await restoreMysteryRunMessages(connection, {
@@ -2994,6 +3039,12 @@ router.post("/rooms/:roomId/start", async (req, res) => {
 router.post("/rooms/:roomId/messages", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
+  const muteRemainingMinutes = context.user.id === String(context.room.host_id)
+    ? 0
+    : onlineSoupMuteRemainingMinutes(context.member?.muted_until);
+  if (muteRemainingMinutes > 0) {
+    return fail(res, 403, `你已被房主禁言，约 ${muteRemainingMinutes} 分钟后可发言`, "ROOM_MEMBER_MUTED");
+  }
   const parsed = z.discriminatedUnion("type", [
     z.object({
       type: z.enum(["discussion", "question"]),

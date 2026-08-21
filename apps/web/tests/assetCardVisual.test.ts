@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { ASSET_CARD_STAR_POINT_COUNT, AssetCardEffectTimer, assetCardEffectClockDelay, assetCardGlitterEffect } from "../src/components/AssetCardVisual";
+import {
+  ASSET_CARD_STAR_POINT_COUNT,
+  ASSET_MOTION_READY_TIMEOUT_MS,
+  AssetCardEffectTimer,
+  assetCardEffectClockDelay,
+  assetCardGlitterEffect,
+  haveAllAssetMotionSourcesFailed
+} from "../src/components/AssetCardVisual";
 
 const assetCardStyles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
@@ -40,4 +47,16 @@ test("所有星级覆盖效果使用同一个文档时间轴延迟", () => {
   assert.equal(assetCardEffectClockDelay(5200.126), assetCardEffectClockDelay(5200.126));
   assert.match(assetCardStyles, /var\(--asset-card-effect-delay, 0s\)/);
   assert.doesNotMatch(assetCardStyles, /--glitter-effect-delay/);
+});
+
+test("动态卡面仅在全部可用视频源失败后降级", () => {
+  const sources = ["card.webm", "card.mp4"];
+  assert.equal(haveAllAssetMotionSourcesFailed([], sources), false);
+  assert.equal(haveAllAssetMotionSourcesFailed(["card.webm"], sources), false);
+  assert.equal(haveAllAssetMotionSourcesFailed(["card.webm", "card.mp4"], sources), true);
+  assert.equal(haveAllAssetMotionSourcesFailed(["card.mp4"], ["card.mp4"]), true);
+});
+
+test("动态卡面使用有限等待时间，避免手机浏览器长期显示损坏媒体", () => {
+  assert.equal(ASSET_MOTION_READY_TIMEOUT_MS, 12_000);
 });
