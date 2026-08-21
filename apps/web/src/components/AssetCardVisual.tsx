@@ -125,7 +125,6 @@ export function AssetCardVisual({
   const motionAllowed = forceMotion || (displayedStarLevel ?? 0) >= 2;
   const glitterEffect = assetCardGlitterEffect(card.rarity, displayedStarLevel);
   const showMotion = motion
-    && card.rarity === "legend"
     && Boolean(card.motionMp4Url)
     && motionAllowed;
   const displayPackType = packType ?? ("packs" in card ? card.packs[0]?.packType : undefined);

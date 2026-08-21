@@ -70,6 +70,14 @@ test("卡包封面固定选择卡号最小的传说卡", () => {
   assert.equal(digitalAssetRules.lowestLegendCard(cards.filter((card) => card.rarity !== "legend")), null);
 });
 
+test("普通、稀有、史诗和传说卡均支持动态卡面", () => {
+  assert.deepEqual(
+    ["normal", "rare", "epic", "legend"].map(digitalAssetRules.cardRaritySupportsMotion),
+    [true, true, true, true]
+  );
+  assert.equal(digitalAssetRules.cardRaritySupportsMotion("unknown"), false);
+});
+
 test("礼物图标压缩为透明背景正方形 WebP", async () => {
   const source = await sharp({
     create: {

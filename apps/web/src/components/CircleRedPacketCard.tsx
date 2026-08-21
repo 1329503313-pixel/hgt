@@ -5,7 +5,7 @@ import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import type { CircleRedPacket, CircleRedPacketDetail } from "../shared/types";
 
-export function CircleRedPacketCard({ circleId, packet }: { circleId: string; packet: CircleRedPacket }) {
+export function CircleRedPacketCard({ circleId, packet, onStatusChange }: { circleId: string; packet: CircleRedPacket; onStatusChange?: () => void }) {
   const { showToast, triggerRefresh } = useApp();
   const [detail, setDetail] = useState<CircleRedPacketDetail | null>(null);
   const [open, setOpen] = useState(false);
@@ -20,6 +20,7 @@ export function CircleRedPacketCard({ circleId, packet }: { circleId: string; pa
       const data = await api<{ packet: CircleRedPacketDetail }>(`/api/circles/${circleId}/red-packets/${packet.id}`, { bypassCache: true, dedupe: false });
       setDetail(data.packet);
       setPhase(data.packet.canClaim ? "envelope" : "result");
+      if (!data.packet.canClaim) onStatusChange?.();
     } catch (error) { setOpen(false); showToast((error as Error).message); }
   }
 
@@ -35,6 +36,7 @@ export function CircleRedPacketCard({ circleId, packet }: { circleId: string; pa
       ]);
       setDetail(data.packet);
       setPhase("result");
+      onStatusChange?.();
     } catch (error) {
       try {
         const data = await api<{ packet: CircleRedPacketDetail }>(`/api/circles/${circleId}/red-packets/${packet.id}`, { bypassCache: true, dedupe: false });

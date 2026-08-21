@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
-import { Award, Bell, BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, FileText, GalleryVerticalEnd, Home, ListChecks, LoaderCircle, LogOut, MessageCircleQuestion, Plus, RotateCcw, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
+import { Award, Bell, BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, GalleryVerticalEnd, Home, ListChecks, LoaderCircle, LogOut, MessageCircleQuestion, Plus, RotateCcw, Search, Settings, Shell, Shield, ShoppingBag, SlidersHorizontal, Trophy, UserRound } from "lucide-react";
 import type { PublicUser, SoupSummary } from "../shared/types";
 import { api, SoupsResponse } from "../api";
 import { useApp, soupDifficulties, soupTypes } from "../context/AppContext";
@@ -12,7 +12,7 @@ import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
 import { LevelBadge } from "../components/LevelBadge";
 import { VipIdentity } from "../components/VipIdentity";
-import { useMessageUnread } from "../shared/useMessageUnread";
+import { useMessageUnreadCounts } from "../shared/useMessageUnread";
 import { desktopNavigationBannerUrl } from "../shared/staticAssets";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
@@ -22,6 +22,7 @@ import { DesktopGlobalSearch } from "../components/DesktopGlobalSearch";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { homeCategoryRoutes, type HomeCategory } from "../shared/homeRoutes";
 import { Modal } from "../components/Modal";
+import { CircleNavigationIcon, circleNavigationStatus } from "../components/CircleNavigationIcon";
 
 type HomeCacheData = Pick<SoupsResponse, "soups" | "total" | "hasMore">;
 type SearchUser = Pick<PublicUser, "id" | "nickname" | "avatar" | "level" | "equippedBadge" | "vipLevel" | "vipActive" | "vipGrowthValue">;
@@ -184,7 +185,12 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
     bottomPublic: restoredSnapshot?.filters.bottomPublic ?? routeState?.homeFilters?.bottomPublic ?? "all",
     aiGame: restoredSnapshot?.filters.aiGame ?? routeState?.homeFilters?.aiGame ?? "all"
   };
-  const unread = useMessageUnread(user?.id, Boolean(user));
+  const unreadCounts = useMessageUnreadCounts(user?.id, Boolean(user));
+  const unread = unreadCounts.total;
+  const circleStatus = circleNavigationStatus({
+    hasUnclaimedRedPacket: unreadCounts.circleUnclaimedRedPackets > 0,
+    hasUnreadMention: unreadCounts.circleMentions > 0
+  });
   const heroParallax = useDesktopHeroParallax<HTMLDivElement>();
   const shellBalance = useShellBalance(user?.id);
   const userMenuRef = useDismissibleDetails();
@@ -591,7 +597,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
           <nav className="home-desktop-nav-links" aria-label="首页主导航">
             <button type="button" className="is-active" onClick={() => triggerRefresh()}><Home size={17} />首页</button>
             <button type="button" onClick={() => navigateAuthenticated("/online-soup")}><MessageCircleQuestion size={17} />玩汤</button>
-            <button type="button" onClick={() => navigateAuthenticated("/circles")}><CircleEllipsis size={17} />圈子</button>
+            <button type="button" onClick={() => navigateAuthenticated("/circles")} aria-label={circleStatus === "red_packet" ? "圈子，有未领取红包" : circleStatus === "mention" ? "圈子，有未读@消息" : "圈子"}><CircleNavigationIcon status={circleStatus} size={17} />圈子</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>

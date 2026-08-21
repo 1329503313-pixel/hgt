@@ -1,9 +1,10 @@
-import { Home, MessageCircleQuestion, Plus, User, CircleEllipsis } from "lucide-react";
+import { Home, MessageCircleQuestion, Plus, User } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { api } from "../api";
 import { useMessageUnreadCounts } from "../shared/useMessageUnread";
 import { isHomeCategoryRoute } from "../shared/homeRoutes";
+import { CircleNavigationIcon, circleNavigationStatus } from "./CircleNavigationIcon";
 
 export function BottomNav() {
   const navigate = useNavigate();
@@ -19,7 +20,13 @@ export function BottomNav() {
   const isCirclesActive = path.startsWith("/circles");
   const isCirclesList = path === "/circles" || path === "/circles/";
   const showCircleUnread = Boolean(user && !isCirclesList && unreadCounts.circleMessages > 0);
-  const showCircleMention = Boolean(user && !isCirclesList && unreadCounts.circleMentions > 0);
+  const showCircleMention = Boolean(user && unreadCounts.circleMentions > 0);
+  const showCircleRedPacket = Boolean(user && unreadCounts.circleUnclaimedRedPackets > 0);
+  const circleStatus = circleNavigationStatus({
+    hasUnclaimedRedPacket: showCircleRedPacket,
+    hasUnreadMention: showCircleMention,
+    hasUnreadMessage: showCircleUnread
+  });
 
   function handleHome() {
     if (isHomeRoute) {
@@ -75,16 +82,9 @@ export function BottomNav() {
         <button
           className={`flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold transition ${isCirclesActive ? "text-primary" : "text-ink hover:bg-blue-50 hover:text-primary"}`}
           onClick={() => { if (!user) { openAuth(); return; } navigate("/circles"); }}
-          aria-label={showCircleMention ? "圈子，有未读@消息" : showCircleUnread ? "圈子，有未读消息" : "圈子"}
+          aria-label={showCircleRedPacket ? "圈子，有未领取红包" : showCircleMention ? "圈子，有未读@消息" : showCircleUnread ? "圈子，有未读消息" : "圈子"}
         >
-          <span className="relative grid h-5 w-5 place-items-center">
-            <CircleEllipsis size={20} />
-            {showCircleMention ? (
-              <span className="absolute -right-2 -top-1 grid h-3 w-3 place-items-center text-[12px] font-black leading-none text-red-500" aria-hidden="true">@</span>
-            ) : showCircleUnread ? (
-              <span className="absolute -right-2 -top-1 grid h-3 w-3 place-items-center" aria-hidden="true"><span className="h-2.5 w-2.5 rounded-full bg-red-500" /></span>
-            ) : null}
-          </span>
+          <CircleNavigationIcon status={circleStatus} />
           <span>圈子</span>
         </button>
         <button

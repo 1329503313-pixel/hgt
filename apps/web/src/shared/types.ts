@@ -412,6 +412,10 @@ export type CircleSummary = {
     id: string;
     content: string;
   } | null;
+  unclaimedRedPacket: {
+    messageId: string;
+    expiresAt: string;
+  } | null;
   latestMessage: {
     id: string;
     senderName: string;
@@ -463,7 +467,7 @@ export type CircleMessage = {
   recalledAt: string | null;
 };
 
-export type CircleDetail = Omit<CircleSummary, "isJoined" | "latestMessage" | "unreadMention">;
+export type CircleDetail = Omit<CircleSummary, "isJoined" | "latestMessage" | "unreadMention" | "unclaimedRedPacket">;
 
 export type OnlineSoupRoomStatus = "preparing" | "playing" | "ended" | "closed";
 export type OnlineSoupHostMode = "human" | "ai";

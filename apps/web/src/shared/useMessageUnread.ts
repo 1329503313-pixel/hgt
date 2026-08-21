@@ -10,6 +10,8 @@ export type MessageUnreadCounts = {
   privateMessages: number;
   circleMessages: number;
   circleMentions: number;
+  circleUnclaimedRedPackets: number;
+  circleUnclaimedRedPacketNextExpiryAt: string | null;
   total: number;
 };
 
@@ -21,6 +23,8 @@ const emptyCounts: MessageUnreadCounts = {
   privateMessages: 0,
   circleMessages: 0,
   circleMentions: 0,
+  circleUnclaimedRedPackets: 0,
+  circleUnclaimedRedPacketNextExpiryAt: null,
   total: 0
 };
 const countsByUser = new Map<string, MessageUnreadCounts>();
@@ -85,6 +89,17 @@ export function useMessageUnreadCounts(userId: string | undefined, enabled = tru
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [enabled, userId]);
+
+  useEffect(() => {
+    if (!enabled || !userId || !counts.circleUnclaimedRedPacketNextExpiryAt) return;
+    const expiresAt = new Date(counts.circleUnclaimedRedPacketNextExpiryAt).getTime();
+    if (!Number.isFinite(expiresAt)) return;
+    const timer = window.setTimeout(
+      () => void loadUnreadCounts(userId, true).catch(() => {}),
+      Math.max(0, expiresAt - Date.now() + 100)
+    );
+    return () => window.clearTimeout(timer);
+  }, [counts.circleUnclaimedRedPacketNextExpiryAt, enabled, userId]);
 
   return counts;
 }

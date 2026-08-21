@@ -204,6 +204,10 @@ function rarity(value: unknown): Rarity {
   return candidate in RARITY_RANK ? candidate : "normal";
 }
 
+function cardRaritySupportsMotion(value: unknown) {
+  return Object.prototype.hasOwnProperty.call(RARITY_RANK, String(value));
+}
+
 function packType(value: unknown): PackType {
   const candidate = String(value) as PackType;
   return candidate in PACK_TYPE_LABELS ? candidate : "permanent";
@@ -280,7 +284,7 @@ function packMediaUrl(row: mysql.RowDataPacket, variant: "cover" | "thumbnail") 
 }
 
 function cardPayload(row: mysql.RowDataPacket, useMediaUrls = false) {
-  const hasMotion = rarity(row.rarity) === "legend" && Boolean(row.motion_mp4_path);
+  const hasMotion = cardRaritySupportsMotion(row.rarity) && Boolean(row.motion_mp4_path);
   return {
     id: String(row.id ?? row.card_id),
     cardNo: String(row.card_no),
@@ -899,7 +903,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       `SELECT rarity, ${columns[format]} AS media_path FROM asset_cards WHERE id = ? LIMIT 1`,
       [req.params.id]
     );
-    if (!card || rarity(card.rarity) !== "legend" || !card.media_path) return sendError(res, 404, "动态卡面不存在");
+    if (!card || !cardRaritySupportsMotion(card.rarity) || !card.media_path) return sendError(res, 404, "动态卡面不存在");
     try {
       if (format === "poster") {
         const publicUrl = publicOssUrl(card.media_path);
@@ -1107,9 +1111,9 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         name: String(card.name),
         rarity: rarity(card.rarity),
         thumbnailUrl: cardMediaUrl(card, "thumbnail"),
-        motionMp4Url: rarity(card.rarity) === "legend" && card.motion_mp4_path ? cardMotionMediaUrl(card, "mp4") : null,
-        motionWebmUrl: rarity(card.rarity) === "legend" && card.motion_webm_path ? cardMotionMediaUrl(card, "webm") : null,
-        motionPosterUrl: rarity(card.rarity) === "legend" && card.motion_poster_path ? cardMotionMediaUrl(card, "poster") : null,
+        motionMp4Url: cardRaritySupportsMotion(card.rarity) && card.motion_mp4_path ? cardMotionMediaUrl(card, "mp4") : null,
+        motionWebmUrl: cardRaritySupportsMotion(card.rarity) && card.motion_webm_path ? cardMotionMediaUrl(card, "webm") : null,
+        motionPosterUrl: cardRaritySupportsMotion(card.rarity) && card.motion_poster_path ? cardMotionMediaUrl(card, "poster") : null,
         starLevel: Number(card.star_level)
       })),
       total: Number(totalRow?.total ?? 0),
@@ -1505,7 +1509,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         [req.params.id]
       );
       if (!card) return sendError(res, 404, "卡片不存在");
-      if (rarity(card.rarity) !== "legend") return sendError(res, 400, "仅传说卡支持动态卡面");
+      if (!cardRaritySupportsMotion(card.rarity)) return sendError(res, 400, "当前卡片品质不支持动态卡面");
       if (!Buffer.isBuffer(req.body)) return sendError(res, 400, "视频文件无效");
       let staged: Awaited<ReturnType<typeof stageCardMotionVideo>> | null = null;
       try {
@@ -1594,9 +1598,6 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const changesProtectedField = (parsed.data.rarity != null && parsed.data.rarity !== current.rarity)
       || (parsed.data.cardNo != null && parsed.data.cardNo !== current.card_no);
     if (Number(usage.count) > 0 && changesProtectedField) return sendError(res, 409, "已有用户获得的卡片不能修改编号或品质");
-    if (parsed.data.rarity && parsed.data.rarity !== "legend" && current.motion_mp4_path) {
-      return sendError(res, 409, "请先删除动态卡面，再将卡片品质改为非传说");
-    }
     const { packIds, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
     const changes: Record<string, unknown> = { ...parsedChanges };
     if (typeof changes.imageUrl === "string") {
@@ -1833,6 +1834,7 @@ export const digitalAssetRules = {
   duplicateProgress,
   nextStarRequirement,
   lowestLegendCard,
+  cardRaritySupportsMotion,
   packDrawStatistics,
   pityTrigger,
   pityScopeForPackType,

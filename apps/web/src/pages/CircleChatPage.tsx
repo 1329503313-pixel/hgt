@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, AtSign, ChevronDown, Reply, Send, Smile, Users, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowLeft, AtSign, ChevronDown, Gift, Reply, Send, Smile, Users, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -23,12 +23,13 @@ import { giftTimelineEntries } from "../shared/giftTimeline";
 import { useKeepMessageListPinned } from "../shared/useKeepMessageListPinned";
 
 type CircleState = {
-  circle: Omit<CircleSummary, "isJoined" | "latestMessage">;
+  circle: Omit<CircleSummary, "isJoined" | "latestMessage" | "unreadMention" | "unclaimedRedPacket">;
   members: CircleMember[];
 };
 type MessagePage = { messages: CircleMessage[]; hasMore: boolean; nextCursor: string | null };
 type SendResponse = { message: CircleMessage };
 type UnreadMention = { id: string; sequence: number };
+type UnclaimedRedPacket = { packetId: string; messageId: string; sequence: number; expiresAt: string };
 type MentionRequest = { userId: string; nickname: string; key: number };
 
 function circleMemberOrder(a: CircleMember, b: CircleMember) {
@@ -122,6 +123,7 @@ export default function CircleChatPage() {
   const [stickersLoading, setStickersLoading] = useState(true);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [unreadMentions, setUnreadMentions] = useState<UnreadMention[]>([]);
+  const [unclaimedRedPackets, setUnclaimedRedPackets] = useState<UnclaimedRedPacket[]>([]);
   const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(null);
   const [navigatingMention, setNavigatingMention] = useState(false);
   const [replyingTo, setReplyingTo] = useState<CircleMessage | null>(null);
@@ -134,17 +136,24 @@ export default function CircleChatPage() {
   const highlightTimerRef = useRef<number | null>(null);
   const requestedMentionId = (location.state as { circleMentionMessageId?: string } | null)?.circleMentionMessageId ?? "";
 
+  async function refreshUnclaimedRedPackets() {
+    const data = await api<{ packets: UnclaimedRedPacket[] }>(`/api/circles/${circleId}/red-packets/unclaimed`, { bypassCache: true, dedupe: false });
+    setUnclaimedRedPackets(data.packets);
+  }
+
   async function loadInitial() {
-    const [detail, page, mentionData] = await Promise.all([
+    const [detail, page, mentionData, packetData] = await Promise.all([
       api<CircleState>(`/api/circles/${circleId}`, { bypassCache: true, dedupe: false }),
       api<MessagePage>(`/api/circles/${circleId}/messages?limit=100`, { bypassCache: true, dedupe: false }),
-      api<{ mentions: UnreadMention[] }>(`/api/circles/${circleId}/mentions`, { bypassCache: true, dedupe: false })
+      api<{ mentions: UnreadMention[] }>(`/api/circles/${circleId}/mentions`, { bypassCache: true, dedupe: false }),
+      api<{ packets: UnclaimedRedPacket[] }>(`/api/circles/${circleId}/red-packets/unclaimed`, { bypassCache: true, dedupe: false })
     ]);
     setState(detail);
     setMessages(page.messages);
     setHasMore(page.hasMore);
     setNextCursor(page.nextCursor);
     setUnreadMentions(mentionData.mentions);
+    setUnclaimedRedPackets(packetData.packets);
     void markRead();
   }
 
@@ -182,6 +191,15 @@ export default function CircleChatPage() {
   }, [circleId]);
 
   useEffect(() => {
+    const expiries = unclaimedRedPackets.map((packet) => new Date(packet.expiresAt).getTime()).filter((value) => value > Date.now());
+    if (!expiries.length) return;
+    const timer = window.setTimeout(() => {
+      setUnclaimedRedPackets((current) => current.filter((packet) => new Date(packet.expiresAt).getTime() > Date.now()));
+    }, Math.min(...expiries) - Date.now() + 100);
+    return () => window.clearTimeout(timer);
+  }, [unclaimedRedPackets]);
+
+  useEffect(() => {
     void api<{ series: StickerSeries[] }>("/api/stickers", { cacheTtlMs: 30 * 60_000 })
       .then((data) => setStickerSeries(data.series))
       .catch(() => {})
@@ -201,6 +219,7 @@ export default function CircleChatPage() {
             : [...current, { id: message.id, sequence: message.sequence }]);
         }
         void markRead();
+        if (message.type === "red_packet") void refreshUnclaimedRedPackets().catch(() => {});
       } else if (event === "circle_message_recalled") {
         const messageId = String(payload?.messageId ?? "");
         const recalledAt = String(payload?.recalledAt ?? "");
@@ -243,6 +262,8 @@ export default function CircleChatPage() {
       } else if (event === "circle_updated") {
         const circle = payload?.circle as { name?: string; avatar?: string; updatedAt?: string } | undefined;
         if (circle) setState((current) => current ? { ...current, circle: { ...current.circle, ...circle } } : current);
+      } else if (event === "circle_red_packet_changed") {
+        void refreshUnclaimedRedPackets().catch(() => {});
       } else if (event === "circle_deleted") {
         showToast("该圈子已被删除");
         navigate("/circles", { replace: true });
@@ -301,7 +322,7 @@ export default function CircleChatPage() {
     }
   }
 
-  async function locateMessage(messageId: string) {
+  async function locateMessage(messageId: string, missingMessage = "未找到被回复的原消息") {
     let loadedMessages = messages;
     let cursor = nextCursor;
     let more = hasMore;
@@ -315,7 +336,7 @@ export default function CircleChatPage() {
       more = page.hasMore;
     }
     if (!loadedMessages.some((message) => message.id === messageId)) {
-      showToast("未找到被回复的原消息");
+      showToast(missingMessage);
       return false;
     }
     setMessages(loadedMessages);
@@ -361,6 +382,19 @@ export default function CircleChatPage() {
     const target = unreadMentions[unreadMentions.length - 1];
     if (!target) return;
     await openMention(target);
+  }
+
+  async function openLatestUnclaimedRedPacket() {
+    const target = unclaimedRedPackets[unclaimedRedPackets.length - 1];
+    if (!target || navigatingMention) return;
+    setNavigatingMention(true);
+    try {
+      await locateMessage(target.messageId, "未找到未领取红包");
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setNavigatingMention(false);
+    }
   }
 
   function mentionMember(member: Pick<CircleMember, "id" | "nickname">) {
@@ -519,9 +553,9 @@ export default function CircleChatPage() {
               return <div id={`circle-message-${message.id}`} key={message.id} className="scroll-mt-24"><RecalledMessageNotice mine={mine} senderName={senderName} /></div>;
             }
             if (message.type === "red_packet" && message.redPacket) {
-              return <div id={`circle-message-${message.id}`} key={message.id} className="scroll-mt-24 px-1">
+              return <div id={`circle-message-${message.id}`} key={message.id} className={`scroll-mt-24 rounded-2xl px-1 py-1 outline-offset-4 transition-[outline-color,background-color] ${highlightedMessageId === message.id ? "bg-red-50 outline outline-2 outline-red-300" : "outline-transparent"}`}>
                 <div className="mb-1 text-[11px] font-bold text-muted">系统红包</div>
-                <CircleRedPacketCard circleId={circleId} packet={message.redPacket} />
+                <CircleRedPacketCard circleId={circleId} packet={message.redPacket} onStatusChange={() => void refreshUnclaimedRedPackets().catch(() => {})} />
                 <span className="mt-1 block px-1 text-[10px] text-muted">{new Date(message.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
               </div>;
             }
@@ -595,9 +629,10 @@ export default function CircleChatPage() {
           {!messages.length && <p className="py-20 text-center text-sm text-muted">发送第一条消息吧</p>}
         </div>
 
-        {unreadMentions.length > 0 && !stickersOpen && (
-          <button
-            className={`fixed right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-blue-200 bg-primary text-white shadow-[0_8px_24px_rgba(15,23,42,0.2)] lg:absolute lg:right-6 ${showScrollBottom ? "bottom-32 lg:bottom-36" : "bottom-20 lg:bottom-24"}`}
+        {!stickersOpen && (unreadMentions.length > 0 || unclaimedRedPackets.length > 0 || showScrollBottom) && <div className="fixed bottom-20 right-4 z-30 flex flex-col-reverse items-center gap-2 lg:absolute lg:bottom-24 lg:right-6">
+          {showScrollBottom && <button className="grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)]" onClick={() => { followBottomRef.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowScrollBottom(false); }} aria-label="回到底部"><ChevronDown size={22} /></button>}
+          {unreadMentions.length > 0 && <button
+            className="relative grid h-11 w-11 place-items-center rounded-full border border-blue-200 bg-primary text-white shadow-[0_8px_24px_rgba(15,23,42,0.2)]"
             disabled={navigatingMention}
             onClick={() => void openNextMention()}
             aria-label={`查看@我的消息，剩余${unreadMentions.length}条`}
@@ -606,9 +641,20 @@ export default function CircleChatPage() {
             <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-black text-white">
               {unreadMentions.length > 99 ? "99+" : unreadMentions.length}
             </span>
-          </button>
-        )}
-        {showScrollBottom && !stickersOpen && <button className="fixed bottom-20 right-4 z-30 grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] lg:absolute lg:bottom-24 lg:right-6" onClick={() => { followBottomRef.current = true; messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" }); setShowScrollBottom(false); }} aria-label="回到底部"><ChevronDown size={22} /></button>}
+          </button>}
+          {unclaimedRedPackets.length > 0 && <button
+            className="relative grid h-11 w-11 place-items-center rounded-full border border-red-200 bg-red-500 text-white shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition-colors hover:bg-red-600 disabled:opacity-60"
+            disabled={navigatingMention}
+            onClick={() => void openLatestUnclaimedRedPacket()}
+            aria-label={`定位到未领取红包，共${unclaimedRedPackets.length}个`}
+            title="定位到未领取红包"
+          >
+            <Gift size={21} />
+            <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-amber-400 px-1 text-[10px] font-black text-red-950">
+              {unclaimedRedPackets.length > 99 ? "99+" : unclaimedRedPackets.length}
+            </span>
+          </button>}
+        </div>}
         <Composer
           members={state.members}
           currentUserId={user?.id ?? ""}

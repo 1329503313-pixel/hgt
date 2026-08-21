@@ -2907,8 +2907,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
     soupTotalPromise
   ]);
   const follow = followRows[0] ?? {};
-  const backgroundMotionEnabled = target.background_card_rarity === "legend"
-    && Number(target.background_card_star_level ?? 0) >= 2
+  const backgroundMotionEnabled = Number(target.background_card_star_level ?? 0) >= 2
     && Boolean(target.background_motion_mp4_path);
   const backgroundMotionVersion = encodeURIComponent(String(target.background_motion_version ?? 0));
   const backgroundMotionBase = target.background_card_id
@@ -3197,7 +3196,9 @@ app.get("/api/circles", async (req, res) => {
        latest.message_type AS latest_message_type, latest.sticker_id AS latest_sticker_id,
        latest.recalled_at AS latest_recalled_at,
        latest.created_at AS latest_created_at, sender.nickname AS latest_sender_name,
-       mention.id AS unread_mention_id, mention.content AS unread_mention_content
+       mention.id AS unread_mention_id, mention.content AS unread_mention_content,
+       unclaimed_packet.message_id AS unclaimed_red_packet_message_id,
+       unclaimed_packet.expires_at AS unclaimed_red_packet_expires_at
      FROM circles c
      LEFT JOIN circle_members mine ON mine.circle_id = c.id AND mine.user_id = ?
      LEFT JOIN circle_messages latest ON latest.id = (
@@ -3214,9 +3215,23 @@ app.get("/api/circles", async (req, res) => {
        ORDER BY mentioned_message.message_sequence DESC
        LIMIT 1
      )
+     LEFT JOIN circle_red_packets unclaimed_packet ON unclaimed_packet.id = (
+       SELECT pending_packet.id
+       FROM circle_red_packets pending_packet
+       WHERE pending_packet.circle_id = c.id
+         AND pending_packet.status = 'published'
+         AND pending_packet.expires_at > UTC_TIMESTAMP()
+         AND NOT EXISTS (
+           SELECT 1 FROM circle_red_packet_claims mine_claim
+           WHERE mine_claim.packet_id = pending_packet.id AND mine_claim.user_id = ?
+         )
+         AND (SELECT COUNT(*) FROM circle_red_packet_claims packet_claims WHERE packet_claims.packet_id = pending_packet.id) < pending_packet.packet_count
+       ORDER BY pending_packet.published_at DESC, pending_packet.id DESC
+       LIMIT 1
+     )
      LEFT JOIN users sender ON sender.id = latest.sender_id
      ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.created_at ASC`,
-    [user.id, user.id]
+    [user.id, user.id, user.id]
   );
   const onlineCounts = new Map<string, number>();
   const onlineUserIds = [...visiblyOnlineUsers];
@@ -3245,6 +3260,10 @@ app.get("/api/circles", async (req, res) => {
       unreadMention: row.unread_mention_id ? {
         id: String(row.unread_mention_id),
         content: String(row.unread_mention_content ?? "")
+      } : null,
+      unclaimedRedPacket: bool(row.is_joined) && row.unclaimed_red_packet_message_id ? {
+        messageId: String(row.unclaimed_red_packet_message_id),
+        expiresAt: new Date(row.unclaimed_red_packet_expires_at).toISOString()
       } : null,
       latestMessage: row.latest_message_id ? {
         id: String(row.latest_message_id),
@@ -3944,7 +3963,7 @@ app.get("/api/messages/unread-counts", async (req, res) => {
   const placeholders = interactionTypes.map(() => "?").join(",");
   const requestWhere = isSuperAdminRole(user.role) ? "" : "AND owner_id = ?";
   const requestParams = isSuperAdminRole(user.role) ? [] : [user.id];
-  const [[notificationCounts], [requestCounts], [noticeCounts], [privateMessageCounts], [circleMessageCounts], [circleMentionCounts]] = await Promise.all([
+  const [[notificationCounts], [requestCounts], [noticeCounts], [privateMessageCounts], [circleMessageCounts], [circleMentionCounts], [circleRedPacketCounts]] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
       `SELECT
          SUM(CASE WHEN is_read = 0 AND type <> 'view_request' AND type NOT IN (${placeholders}) THEN 1 ELSE 0 END) AS system_count,
@@ -3986,6 +4005,19 @@ app.get("/api/messages/unread-counts", async (req, res) => {
        FROM circle_message_mentions
        WHERE user_id = ? AND read_at IS NULL`,
       [user.id]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS circle_unclaimed_red_packet_count,
+         MIN(packet.expires_at) AS circle_unclaimed_red_packet_next_expiry_at
+       FROM circle_members member
+       INNER JOIN circle_red_packets packet ON packet.circle_id = member.circle_id
+       WHERE member.user_id = ? AND packet.status = 'published' AND packet.expires_at > UTC_TIMESTAMP()
+         AND NOT EXISTS (
+           SELECT 1 FROM circle_red_packet_claims mine
+           WHERE mine.packet_id = packet.id AND mine.user_id = ?
+         )
+         AND (SELECT COUNT(*) FROM circle_red_packet_claims claimed WHERE claimed.packet_id = packet.id) < packet.packet_count`,
+      [user.id, user.id]
     )
   ]);
   const counts = {
@@ -3995,10 +4027,17 @@ app.get("/api/messages/unread-counts", async (req, res) => {
     notices: Number(noticeCounts[0]?.notice_count ?? 0),
     privateMessages: Number(privateMessageCounts[0]?.private_message_count ?? 0),
     circleMessages: Number(circleMessageCounts[0]?.circle_message_count ?? 0),
-    circleMentions: Number(circleMentionCounts[0]?.circle_mention_count ?? 0)
+    circleMentions: Number(circleMentionCounts[0]?.circle_mention_count ?? 0),
+    circleUnclaimedRedPackets: Number(circleRedPacketCounts[0]?.circle_unclaimed_red_packet_count ?? 0),
+    circleUnclaimedRedPacketNextExpiryAt: circleRedPacketCounts[0]?.circle_unclaimed_red_packet_next_expiry_at
+      ? new Date(circleRedPacketCounts[0].circle_unclaimed_red_packet_next_expiry_at).toISOString()
+      : null
   };
   const payload = { counts: { ...counts, total: counts.system + counts.interactions + counts.requests + counts.notices + counts.privateMessages } };
-  unreadCountsCache.set(user.id, { expiresAt: Date.now() + 5_000, payload });
+  const nextRedPacketExpiry = counts.circleUnclaimedRedPacketNextExpiryAt
+    ? new Date(counts.circleUnclaimedRedPacketNextExpiryAt).getTime()
+    : Number.POSITIVE_INFINITY;
+  unreadCountsCache.set(user.id, { expiresAt: Math.min(Date.now() + 5_000, nextRedPacketExpiry), payload });
   if (unreadCountsCache.size > 1000) unreadCountsCache.delete(unreadCountsCache.keys().next().value!);
   res.json(payload);
 });
@@ -7551,12 +7590,21 @@ const notifyCircleRedPacketPublished = async (circleId: string, messageId: strin
     emitUnreadChanged(String(member.user_id), "circle_red_packet");
   }
 };
+const notifyCircleRedPacketClaimed = async (circleId: string, packetId: string) => {
+  emitCircleSocketEvent(circleId, "circle_red_packet_changed", { circleId, packetId });
+  const [members] = await pool.query<mysql.RowDataPacket[]>("SELECT user_id FROM circle_members WHERE circle_id = ?", [circleId]);
+  for (const member of members) {
+    emitUserEvent(String(member.user_id), "circle_unread_changed", { circleId });
+    emitUnreadChanged(String(member.user_id), "circle_red_packet_claimed");
+  }
+};
 registerCircleRedPacketRoutes(app, {
   pool,
   requireAuth,
   requireAdmin,
   sendError,
-  onPublished: notifyCircleRedPacketPublished
+  onPublished: notifyCircleRedPacketPublished,
+  onClaimed: notifyCircleRedPacketClaimed
 });
 registerEntitlementRoutes(app, { requireAuth, requireAdmin, sendError });
 registerVipRoutes(app, {

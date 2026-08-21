@@ -23,6 +23,17 @@ function latestMessage(circle: CircleSummary) {
   return "还没有消息，来聊第一句吧";
 }
 
+function hasUnclaimedRedPacket(circle: CircleSummary) {
+  return Boolean(circle.isJoined && circle.unclaimedRedPacket && new Date(circle.unclaimedRedPacket.expiresAt).getTime() > Date.now());
+}
+
+function CircleMessageSummary({ circle, className = "" }: { circle: CircleSummary; className?: string }) {
+  return <span className={`flex min-w-0 items-center gap-1 text-sm ${className}`}>
+    {hasUnclaimedRedPacket(circle) && <span className="shrink-0 font-black text-red-500">【有未领取红包】</span>}
+    <span className="min-w-0 truncate">{latestMessage(circle)}</span>
+  </span>;
+}
+
 function CircleAvatar({ circle, size = "h-14 w-14" }: { circle: CircleSummary; size?: string }) {
   return (
     <span className={`relative shrink-0 ${size}`}>
@@ -61,6 +72,15 @@ export default function CirclesPage() {
     setLoading(true);
     void load().catch((error) => showToast((error as Error).message)).finally(() => setLoading(false));
   }, [user?.id, loadingUser, load]);
+
+  useEffect(() => {
+    const expiries = circles
+      .map((circle) => circle.unclaimedRedPacket ? new Date(circle.unclaimedRedPacket.expiresAt).getTime() : 0)
+      .filter((value) => value > Date.now());
+    if (!expiries.length) return;
+    const timer = window.setTimeout(() => void load().catch(() => {}), Math.min(...expiries) - Date.now() + 100);
+    return () => window.clearTimeout(timer);
+  }, [circles, load]);
 
   useEffect(() => {
     if (!user) return;
@@ -136,7 +156,7 @@ export default function CirclesPage() {
                   <CircleAvatar circle={circle} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2"><span className="truncate text-base font-black text-ink">{circle.name}</span>{!circle.isJoined && <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">未加入</span>}</span>
-                    <span className={`mt-1 block truncate text-sm ${circle.unreadMention ? "font-bold text-primary" : "text-muted"}`}>{latestMessage(circle)}</span>
+                    <CircleMessageSummary circle={circle} className={`mt-1 ${circle.unreadMention ? "font-bold text-primary" : "text-muted"}`} />
                     <span className="mt-1.5 flex items-center gap-3 text-xs text-muted"><span className="inline-flex items-center gap-1"><Users size={13} />{circle.memberCount} 位成员</span><span className="inline-flex items-center gap-1 text-emerald-600"><span className="h-2 w-2 rounded-full bg-emerald-500" />{circle.onlineCount} 人在线</span></span>
                   </span>
                   <span className="shrink-0 self-start pt-1 text-xs text-muted">{circle.latestMessage ? messageTime(circle.latestMessage.createdAt) : <MessageCircle size={17} />}</span>
@@ -159,7 +179,7 @@ export default function CirclesPage() {
                 <div className="grid grid-cols-2 gap-5">
                   {joinedCircles.map((circle) => (
                     <button key={circle.id} type="button" className="card group flex min-h-44 flex-col p-5 text-left transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg" onClick={() => openCircle(circle)}>
-                      <div className="flex items-start gap-4"><CircleAvatar circle={circle} size="h-16 w-16" /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><span className="truncate text-lg font-black text-ink">{circle.name}</span>{circle.unreadMention && <span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-primary">@我</span>}</span><span className={`mt-2 block truncate text-sm ${circle.unreadMention ? "font-bold text-primary" : "text-muted"}`}>{latestMessage(circle)}</span></span><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-50 text-muted transition group-hover:bg-primary group-hover:text-white"><ArrowUpRight size={18} /></span></div>
+                      <div className="flex items-start gap-4"><CircleAvatar circle={circle} size="h-16 w-16" /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><span className="truncate text-lg font-black text-ink">{circle.name}</span>{circle.unreadMention && <span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black text-primary">@我</span>}</span><CircleMessageSummary circle={circle} className={`mt-2 ${circle.unreadMention ? "font-bold text-primary" : "text-muted"}`} /></span><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-50 text-muted transition group-hover:bg-primary group-hover:text-white"><ArrowUpRight size={18} /></span></div>
                       <div className="mt-auto flex items-center gap-5 border-t border-line pt-4 text-xs font-bold text-muted"><span className="inline-flex items-center gap-1.5"><Users size={14} />{circle.memberCount} 位成员</span><span className="inline-flex items-center gap-1.5 text-emerald-600"><span className="h-2 w-2 rounded-full bg-emerald-500" />{circle.onlineCount} 人在线</span>{circle.latestMessage && <span className="ml-auto font-normal">{messageTime(circle.latestMessage.createdAt)}</span>}</div>
                     </button>
                   ))}

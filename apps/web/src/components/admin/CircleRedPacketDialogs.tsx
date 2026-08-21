@@ -96,7 +96,7 @@ export function PeriodicRedPacketDialog({ circle, onClose }: { circle: CircleRef
     finally { setSaving(false); }
   }
   return <Modal onClose={() => !saving && onClose()}><div className="space-y-5">
-    <div><h2 className="text-xl font-black text-ink">周期红包 · {circle.name}</h2><p className="mt-1 text-sm text-muted">每天按北京时间自动发布。新建配置默认禁用，已发布红包不可撤回。</p></div>
+    <div><h2 className="text-xl font-black text-ink">周期红包 · {circle.name}</h2><p className="mt-1 text-sm text-muted">每天按北京时间自动发布。若保存时已超过当天设定时间，则从次日开始，不补发当天红包；已发布红包不可撤回。新建配置默认禁用。</p></div>
     <div className="grid grid-cols-2 gap-3"><label className="space-y-1"><span className="label">每天发多少个</span><input className="field" type="number" min={1} max={1000} value={packetCount} onChange={(e) => setPacketCount(e.target.value)} /></label><label className="space-y-1"><span className="label">每天共多少贝壳</span><input className="field" type="number" min={1} value={totalShells} onChange={(e) => setTotalShells(e.target.value)} /></label></div>
     <label className="space-y-1"><span className="label">每天发布时间（北京时间）</span><input className="field" type="time" value={publishTime} onChange={(e) => setPublishTime(e.target.value)} /></label>
     <label className="flex min-h-14 cursor-pointer items-center justify-between rounded-xl border border-line px-4"><span><strong className="block text-sm text-ink">启用周期红包</strong><span className="text-xs text-muted">关闭后保留配置，但不会自动发布</span></span><input className="h-5 w-5 accent-blue-600" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /></label>

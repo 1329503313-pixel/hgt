@@ -1,7 +1,6 @@
 import {
   Award,
   Bell,
-  CircleEllipsis,
   GalleryVerticalEnd,
   Home,
   ListChecks,
@@ -20,20 +19,26 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import { desktopNavigationBannerUrl } from "../shared/staticAssets";
-import { useMessageUnread } from "../shared/useMessageUnread";
+import { useMessageUnreadCounts } from "../shared/useMessageUnread";
 import { useDesktopHeroParallax } from "../shared/useDesktopHeroParallax";
 import { useShellBalance } from "../shared/useShellBalance";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { canAccessAdmin } from "../shared/roles";
 import { DesktopAppDownload } from "./DesktopAppDownload";
 import { DesktopGlobalSearch } from "./DesktopGlobalSearch";
+import { CircleNavigationIcon, circleNavigationStatus } from "./CircleNavigationIcon";
 
 export type DesktopModuleKey = "online-soup" | "circles" | "rankings" | "store" | "tasks" | "mine" | "achievements" | "cards" | "messages";
 
 export function DesktopModuleHeader({ active, title, eyebrow }: { active: DesktopModuleKey; title: string; eyebrow: string }) {
   const { user, openAuth, openSoupEditor, setUser, showToast, triggerRefresh } = useApp();
   const navigate = useNavigate();
-  const unread = useMessageUnread(user?.id, Boolean(user));
+  const unreadCounts = useMessageUnreadCounts(user?.id, Boolean(user));
+  const unread = unreadCounts.total;
+  const circleStatus = circleNavigationStatus({
+    hasUnclaimedRedPacket: unreadCounts.circleUnclaimedRedPackets > 0,
+    hasUnreadMention: unreadCounts.circleMentions > 0
+  });
   const heroParallax = useDesktopHeroParallax<HTMLElement>();
   const shellBalance = useShellBalance(user?.id);
   const userMenuRef = useDismissibleDetails();
@@ -91,7 +96,7 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
         <nav className="home-desktop-nav-links" aria-label="主导航">
           <button type="button" onClick={() => navigate("/")}><Home size={17} />首页</button>
           <button type="button" className={active === "online-soup" ? "is-active" : ""} onClick={() => navigateAuthenticated("/online-soup")}><MessageCircleQuestion size={17} />玩汤</button>
-          <button type="button" className={active === "circles" ? "is-active" : ""} onClick={() => navigateAuthenticated("/circles")}><CircleEllipsis size={17} />圈子</button>
+          <button type="button" className={active === "circles" ? "is-active" : ""} onClick={() => navigateAuthenticated("/circles")} aria-label={circleStatus === "red_packet" ? "圈子，有未领取红包" : circleStatus === "mention" ? "圈子，有未读@消息" : "圈子"}><CircleNavigationIcon status={circleStatus} size={17} />圈子</button>
           <button type="button" className={active === "rankings" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
           <button type="button" className={active === "store" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>
           <button type="button" className={active === "tasks" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/tasks")}><ListChecks size={17} />任务</button>

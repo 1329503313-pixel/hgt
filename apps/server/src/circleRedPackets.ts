@@ -16,6 +16,7 @@ type Dependencies = {
   requireAdmin: (req: express.Request, res: express.Response) => Promise<RouteUser | null>;
   sendError: (res: express.Response, status: number, message: string) => unknown;
   onPublished: (circleId: string, messageId: string) => Promise<void> | void;
+  onClaimed: (circleId: string, packetId: string) => Promise<void> | void;
 };
 
 const packetSchema = z.object({
@@ -95,13 +96,18 @@ function packetResponse(row: mysql.RowDataPacket) {
 function beijingParts(now = new Date()) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
   }).formatToParts(now).map((part) => [part.type, part.value]));
-  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}:00` };
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}:${parts.second}` };
+}
+
+export function periodicRedPacketSkipDateOnSave(publishTime: string, now = new Date()) {
+  const beijing = beijingParts(now);
+  return beijing.time > `${publishTime}:00` ? beijing.date : null;
 }
 
 export function registerCircleRedPacketRoutes(app: express.Express, dependencies: Dependencies) {
-  const { pool, requireAuth, requireAdmin, sendError, onPublished } = dependencies;
+  const { pool, requireAuth, requireAdmin, sendError, onPublished, onClaimed } = dependencies;
 
   app.get("/api/admin/circles/:id/red-packets/pending", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
@@ -185,14 +191,47 @@ export function registerCircleRedPacketRoutes(app: express.Express, dependencies
     if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "周期红包参数不正确");
     const [[circle]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM circles WHERE id = ? LIMIT 1", [req.params.id]);
     if (!circle) return sendError(res, 404, "圈子不存在");
+    const skipDate = periodicRedPacketSkipDateOnSave(parsed.data.publishTime);
     await pool.query(
-      `INSERT INTO circle_red_packet_schedules (circle_id, packet_count, total_shells, publish_time, enabled, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO circle_red_packet_schedules (circle_id, packet_count, total_shells, publish_time, enabled, last_published_date, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE packet_count = VALUES(packet_count), total_shells = VALUES(total_shells),
-         publish_time = VALUES(publish_time), enabled = VALUES(enabled), updated_by = VALUES(updated_by)`,
-      [req.params.id, parsed.data.packetCount, parsed.data.totalShells, `${parsed.data.publishTime}:00`, parsed.data.enabled, admin.id, admin.id]
+         publish_time = VALUES(publish_time), enabled = VALUES(enabled),
+         last_published_date = COALESCE(VALUES(last_published_date), last_published_date), updated_by = VALUES(updated_by)`,
+      [req.params.id, parsed.data.packetCount, parsed.data.totalShells, `${parsed.data.publishTime}:00`, parsed.data.enabled, skipDate, admin.id, admin.id]
     );
     res.json({ schedule: parsed.data });
+  });
+
+  app.get("/api/circles/:circleId/red-packets/unclaimed", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const [[membership]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT 1 FROM circle_members WHERE circle_id = ? AND user_id = ? LIMIT 1",
+      [req.params.circleId, user.id]
+    );
+    if (!membership) return sendError(res, 403, "请先加入圈子");
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT p.id AS packet_id, p.message_id, p.expires_at, m.message_sequence
+       FROM circle_red_packets p
+       INNER JOIN circle_messages m ON m.id = p.message_id AND m.circle_id = p.circle_id
+       WHERE p.circle_id = ? AND p.status = 'published' AND p.expires_at > UTC_TIMESTAMP()
+         AND NOT EXISTS (
+           SELECT 1 FROM circle_red_packet_claims mine
+           WHERE mine.packet_id = p.id AND mine.user_id = ?
+         )
+         AND (SELECT COUNT(*) FROM circle_red_packet_claims claimed WHERE claimed.packet_id = p.id) < p.packet_count
+       ORDER BY m.message_sequence ASC`,
+      [req.params.circleId, user.id]
+    );
+    res.json({
+      packets: rows.map((row) => ({
+        packetId: String(row.packet_id),
+        messageId: String(row.message_id),
+        sequence: Number(row.message_sequence),
+        expiresAt: new Date(row.expires_at).toISOString()
+      }))
+    });
   });
 
   app.get("/api/circles/:circleId/red-packets/:packetId", async (req, res) => {
@@ -246,6 +285,9 @@ export function registerCircleRedPacketRoutes(app: express.Express, dependencies
         [nanoid(), user.id, amount, balanceAfter, packet.id, `circle-red-packet:${packet.id}:${user.id}`]
       );
       await connection.commit();
+      void Promise.resolve(onClaimed(req.params.circleId, req.params.packetId)).catch((error) => {
+        console.error("Circle red packet claim notification failed:", error);
+      });
       res.json({ amount, balance: balanceAfter });
     } catch (error) {
       await connection.rollback().catch(() => {});
