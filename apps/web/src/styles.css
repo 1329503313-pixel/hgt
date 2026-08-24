@@ -465,7 +465,7 @@ body {
   box-shadow: 0 8px 24px rgba(17, 24, 39, 0.04);
 }
 
-/* AI 玩汤：脱离详情页和网站页脚的独立全屏工作区。 */
+/* AI 主持：脱离详情页和网站页脚的独立全屏工作区。 */
 .ai-game-workspace {
   position: fixed;
   inset: 0;
@@ -935,7 +935,7 @@ body {
   .ai-game-message { max-width: 92%; }
 }
 
-/* 玩汤房间顶栏高度会在中等桌面宽度下变为两行，由文档流为工作区稳定占位。 */
+/* 游戏房间顶栏高度会在中等桌面宽度下变为两行，由文档流为工作区稳定占位。 */
 .online-soup-room-header {
   position: relative;
   flex: 0 0 auto;
@@ -1028,6 +1028,10 @@ textarea {
 
 .btn-secondary {
   @apply border border-line bg-blue-50 text-primary hover:border-primary hover:bg-blue-50 hover:text-primary;
+}
+
+.btn.segmented-choice {
+  font-size: 14px;
 }
 
 .mine-card-action {

@@ -35,9 +35,9 @@ public class WechatSharePlugin extends Plugin {
                 .setType("image/png")
                 .setPackage(WECHAT_PACKAGE)
                 .putExtra(Intent.EXTRA_STREAM, contentUri)
-                .putExtra(Intent.EXTRA_SUBJECT, call.getString("title", "玩汤房间邀请"))
+                .putExtra(Intent.EXTRA_SUBJECT, call.getString("title", "游戏房间邀请"))
                 .putExtra(Intent.EXTRA_TEXT, call.getString("text", ""));
-            intent.setClipData(ClipData.newRawUri("玩汤房间邀请", contentUri));
+            intent.setClipData(ClipData.newRawUri("游戏房间邀请", contentUri));
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             getActivity().startActivity(intent);
             call.resolve();

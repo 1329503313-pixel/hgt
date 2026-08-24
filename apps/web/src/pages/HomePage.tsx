@@ -134,7 +134,7 @@ function MysteryCatalog({ keyword, onOpen }: { keyword: string; onOpen: (mystery
 
       {selected && <Modal onClose={() => setSelected(null)}>
         <div className="space-y-4">
-          <div><p className="text-xs font-black tracking-[.12em] text-primary">进入谜局</p><h2 className="mt-1 text-xl font-black text-ink">{selected.title}</h2><p className="mt-2 text-sm leading-6 text-muted">将创建一个在线玩汤房间。进程绑定你这位房主，正式行动也只能由你提交。</p></div>
+          <div><p className="text-xs font-black tracking-[.12em] text-primary">进入谜局</p><h2 className="mt-1 text-xl font-black text-ink">{selected.title}</h2><p className="mt-2 text-sm leading-6 text-muted">将创建一个游戏房间。进程绑定你这位房主，正式行动也只能由你提交。</p></div>
           <div className="grid gap-2 sm:grid-cols-2">
             <button type="button" className="btn btn-primary min-h-12" disabled={!selected.canContinue} onClick={() => onOpen(selected, "continue")}>继续游戏</button>
             <button type="button" className="btn btn-secondary min-h-12" onClick={() => onOpen(selected, "restart")}>{selected.canContinue ? "重新开始" : "开始新游戏"}</button>
@@ -592,11 +592,11 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
         <div className="home-desktop-nav">
           <button type="button" className="home-desktop-brand" onClick={() => triggerRefresh()} aria-label="刷新首页">
             <img className="home-desktop-brand-mark" src="/logo.png" alt="" aria-hidden="true" />
-            <span>汤汤解谜乐园</span>
+            <span>汤物语</span>
           </button>
           <nav className="home-desktop-nav-links" aria-label="首页主导航">
             <button type="button" className="is-active" onClick={() => triggerRefresh()}><Home size={17} />首页</button>
-            <button type="button" onClick={() => navigateAuthenticated("/online-soup")}><MessageCircleQuestion size={17} />玩汤</button>
+            <button type="button" onClick={() => navigateAuthenticated("/online-soup")}><MessageCircleQuestion size={17} />大厅</button>
             <button type="button" onClick={() => navigateAuthenticated("/circles")} aria-label={circleStatus === "red_packet" ? "圈子，有未领取红包" : circleStatus === "mention" ? "圈子，有未读@消息" : "圈子"}><CircleNavigationIcon status={circleStatus} size={17} />圈子</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
             <button type="button" onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>
@@ -635,7 +635,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
           </div>
         </div>
         <div className="home-desktop-hero-copy">
-          <span>汤汤解谜乐园</span>
+          <span>汤物语丨汤汤解谜乐园</span>
           <strong>从一个问题开始，走向故事真正的结局</strong>
         </div>
         <div className="home-desktop-search-tools">
@@ -673,7 +673,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
                 </select>
               </label>
               <label>
-                <span>AI 玩汤</span>
+                <span>AI 主持</span>
                 <select value={filters.aiGame} onChange={(event) => setFilters((old) => ({ ...old, aiGame: event.target.value }))}>
                   <option value="all">全部</option>
                   <option value="enabled">已开启</option>
@@ -756,7 +756,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
             </select>
           </label>
           <label className="filter-field">
-            <span>AI 玩汤</span>
+            <span>AI 主持</span>
             <select className="field" value={filters.aiGame} onChange={(e) => setFilters((old) => ({ ...old, aiGame: e.target.value }))}>
               <option value="all">全部</option>
               <option value="enabled">已开启</option>

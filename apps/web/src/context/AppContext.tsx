@@ -7,7 +7,7 @@ import { removeSessionCachePrefix } from "../shared/sessionCache";
 export type BadgeUnlockEvent = { key: string; stats: StatsResponse; specialBadge?: SpecialBadgeUnlock };
 
 // ---------- 常量 ----------
-export const soupTypes = ["本格清汤", "本格红汤", "本格黑汤", "变格清汤", "变格红汤", "变格黑汤", "纯机制汤", "其他"];
+export const soupTypes = ["本格清汤", "本格红汤", "本格黑汤", "变格清汤", "变格红汤", "变格黑汤", "纯机制汤", "王八汤", "其他"];
 export const soupDifficulties = ["简单", "普通", "困难", "地狱"] as const;
 export function formatViews(value: number) {
   if (value >= 10000) return `${Number((value / 10000).toFixed(value >= 100000 ? 0 : 1))}w`;

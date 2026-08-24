@@ -8,7 +8,7 @@ export type MessagePreview = {
 };
 
 export function privateMessagePreview(message: MessagePreview) {
-  if (message.type === "room_invite") return `[玩汤邀请] ${message.roomInvite?.roomName || "加入房间"}`;
+  if (message.type === "room_invite") return `[游戏邀请] ${message.roomInvite?.roomName || "加入房间"}`;
   if (message.type === "soup_share") return `[海龟汤] ${message.soupShare?.title || "查看分享"}`;
   if (message.type === "gift") return `[礼物] ${message.gift?.giftName || "收到礼物"} ×${message.gift?.quantity || 1}`;
   if (message.type !== "sticker") return message.content;

@@ -20,8 +20,8 @@ function messageContent(message: OnlineSoupMessage) {
 export function OnlineSoupRoomManagement() {
   const [tab, setTab] = useState<"rooms" | "music">("rooms");
   return <div className="space-y-4">
-    <div className="flex min-h-12 gap-1 rounded-xl bg-slate-100 p-1" role="tablist" aria-label="玩汤管理分类">
-      <button type="button" role="tab" aria-selected={tab === "rooms"} className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-sm font-black transition ${tab === "rooms" ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => setTab("rooms")}><Radio size={17} />玩汤房间</button>
+    <div className="flex min-h-12 gap-1 rounded-xl bg-slate-100 p-1" role="tablist" aria-label="大厅管理分类">
+      <button type="button" role="tab" aria-selected={tab === "rooms"} className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-sm font-black transition ${tab === "rooms" ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => setTab("rooms")}><Radio size={17} />游戏房间</button>
       <button type="button" role="tab" aria-selected={tab === "music"} className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-sm font-black transition ${tab === "music" ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => setTab("music")}><Music size={17} />背景音乐</button>
     </div>
     {tab === "rooms" ? <OnlineSoupRoomList /> : <BackgroundMusicManagement />}
@@ -60,7 +60,7 @@ function OnlineSoupRoomList() {
   }
 
   return <div className="space-y-4">
-    <div className="flex items-center justify-between"><div><h2 className="text-xl font-black text-ink">玩汤房间</h2><p className="text-sm text-muted">查看全部房间及当前成员、汤面和轮次状态</p></div><button className="btn btn-secondary" onClick={load}><RefreshCw size={16} /> 刷新</button></div>
+    <div className="flex items-center justify-between"><div><h2 className="text-xl font-black text-ink">游戏房间</h2><p className="text-sm text-muted">查看全部房间及当前成员、汤面和轮次状态</p></div><button className="btn btn-secondary" onClick={load}><RefreshCw size={16} /> 刷新</button></div>
     {error && <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-600">{error}</div>}
     <div className="card overflow-x-auto">
       <table className="w-full min-w-[900px] text-left text-sm"><thead className="border-b border-line bg-slate-50 text-xs text-muted"><tr><th className="p-3">房间</th><th className="p-3">类型</th><th className="p-3">房主</th><th className="p-3">参与人数</th><th className="p-3">当前海龟汤</th><th className="p-3">状态</th><th className="p-3">创建时间</th><th className="p-3">操作</th></tr></thead><tbody>{rooms.map((room) => <tr key={room.id} className="border-b border-line last:border-0"><td className="p-3"><p className="font-bold text-ink">{room.name}</p><p className="text-xs text-muted">#{room.code}</p></td><td className="p-3">{room.hasPassword ? <span className="inline-flex items-center gap-1"><LockKeyhole size={14} />密码房</span> : "公开房"}</td><td className="p-3"><p>{room.host.nickname}</p><p className="text-xs text-muted">{room.hostUsername}</p></td><td className="p-3"><span className="inline-flex items-center gap-1"><Users size={14} />{room.participantCount}/{room.participantCapacity}</span></td><td className="max-w-48 truncate p-3">{room.soupTitle ?? "—"}</td><td className="p-3">{statusText[room.status]}</td><td className="p-3 text-xs">{new Date(room.createdAt).toLocaleString("zh-CN")}</td><td className="p-3"><button className="btn btn-secondary px-3" onClick={() => openDetail(room.id)}><Eye size={15} /> 详情</button></td></tr>)}</tbody></table>

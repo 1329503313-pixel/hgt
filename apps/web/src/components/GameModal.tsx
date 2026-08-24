@@ -43,7 +43,7 @@ export function GameModal({
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // AI 玩汤是独立工作区。锁定背景滚动，并通过 Portal 脱离详情页的层叠上下文。
+  // AI 主持是独立工作区。锁定背景滚动，并通过 Portal 脱离详情页的层叠上下文。
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -174,7 +174,7 @@ export function GameModal({
         : "已解锁方向性提示";
 
   return createPortal(
-    <div className="ai-game-workspace" role="dialog" aria-modal="true" aria-label={`AI 玩汤：${soup.title}`}>
+    <div className="ai-game-workspace" role="dialog" aria-modal="true" aria-label={`AI 主持：${soup.title}`}>
       <header className="ai-game-header">
         <div className="ai-game-header-inner">
           <button className="ai-game-back" onClick={onBack} aria-label="返回海龟汤详情">
@@ -183,7 +183,7 @@ export function GameModal({
           </button>
           <div className="ai-game-brand">
             <span className="ai-game-brand-icon"><Sparkles size={17} /></span>
-            <span><strong>AI 玩汤</strong><small>沉浸式推理</small></span>
+            <span><strong>AI 主持</strong><small>沉浸式推理</small></span>
           </div>
           <span className="ai-game-header-title" title={soup.title}>{soup.title}</span>
         </div>

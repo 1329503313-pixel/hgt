@@ -1,12 +1,12 @@
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
-import { CalendarClock, Edit3, Eye, Gift, ImagePlus, MessageCircle, Plus, RotateCcw, Trash2, Users, X } from "lucide-react";
+import { CalendarClock, Edit3, Eye, Gift, History, ImagePlus, MessageCircle, Plus, RotateCcw, Trash2, Users, X } from "lucide-react";
 import { api } from "../../api";
 import type { CircleMessage } from "../../shared/types";
 import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 import { ListSkeleton } from "../Skeletons";
 import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
-import { OneTimeRedPacketDialog, PeriodicRedPacketDialog } from "./CircleRedPacketDialogs";
+import { OneTimeRedPacketDialog, PeriodicRedPacketDialog, RedPacketHistoryDialog } from "./CircleRedPacketDialogs";
 
 type AdminCircle = {
   id: string;
@@ -30,6 +30,7 @@ export function CircleManagement() {
   const [previewing, setPreviewing] = useState<AdminCircle | null>(null);
   const [redPacketCircle, setRedPacketCircle] = useState<AdminCircle | null>(null);
   const [periodicCircle, setPeriodicCircle] = useState<AdminCircle | null>(null);
+  const [redPacketHistoryCircle, setRedPacketHistoryCircle] = useState<AdminCircle | null>(null);
   const [messages, setMessages] = useState<CircleMessage[]>([]);
   const [messageCursor, setMessageCursor] = useState<string | null>(null);
   const [messageHasMore, setMessageHasMore] = useState(false);
@@ -166,6 +167,7 @@ export function CircleManagement() {
                 <div className="flex flex-wrap justify-end gap-2">
                   <button className="btn btn-secondary px-3" onClick={() => setRedPacketCircle(circle)}><Gift size={16} />发红包</button>
                   <button className="btn btn-secondary px-3" onClick={() => setPeriodicCircle(circle)}><CalendarClock size={16} />周期红包</button>
+                  <button className="btn btn-secondary px-3" onClick={() => setRedPacketHistoryCircle(circle)}><History size={16} />红包记录</button>
                   <button className="btn btn-secondary px-3" onClick={() => preview(circle)}><Eye size={16} />预览</button>
                   <button className="btn btn-secondary px-3" onClick={() => edit(circle)}><Edit3 size={16} />编辑</button>
                   <button className="btn bg-red-50 px-3 text-red-600 hover:bg-red-100" onClick={() => void remove(circle)}><Trash2 size={16} />删除</button>
@@ -208,6 +210,7 @@ export function CircleManagement() {
       </Modal>}
       {redPacketCircle && <OneTimeRedPacketDialog circle={redPacketCircle} onClose={() => setRedPacketCircle(null)} />}
       {periodicCircle && <PeriodicRedPacketDialog circle={periodicCircle} onClose={() => setPeriodicCircle(null)} />}
+      {redPacketHistoryCircle && <RedPacketHistoryDialog circle={redPacketHistoryCircle} onClose={() => setRedPacketHistoryCircle(null)} />}
     </section>
   );
 }
@@ -218,6 +221,6 @@ function adminMessageText(message: CircleMessage) {
   if (message.type === "gift") return `[礼物] ${message.gift?.giftName || "礼物"} × ${message.gift?.quantity || 1}`;
   if (message.type === "red_packet") return `[系统红包] ${message.redPacket?.packetCount || 0} 个，共 ${message.redPacket?.totalShells || 0} 贝壳`;
   if (message.type === "soup_share") return `[汤品分享] ${message.soupShare?.title || ""}`.trim();
-  if (message.type === "room_invite") return `[玩汤房间邀请] ${message.roomInvite?.roomName || ""}`.trim();
+  if (message.type === "room_invite") return `[游戏房间邀请] ${message.roomInvite?.roomName || ""}`.trim();
   return message.content || "—";
 }

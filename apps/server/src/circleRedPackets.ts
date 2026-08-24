@@ -118,6 +118,56 @@ export function registerCircleRedPacketRoutes(app: express.Express, dependencies
     res.json({ packets: rows.map(packetResponse) });
   });
 
+  app.get("/api/admin/circles/:id/red-packets/history", async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT p.id, p.source, p.packet_count, p.total_shells, p.published_at, p.expires_at,
+              COUNT(c.user_id) AS claimed_count, COALESCE(SUM(c.amount), 0) AS claimed_shells
+       FROM circle_red_packets p
+       LEFT JOIN circle_red_packet_claims c ON c.packet_id = p.id
+       WHERE p.circle_id = ? AND p.status = 'published'
+       GROUP BY p.id
+       ORDER BY p.published_at DESC, p.id DESC
+       LIMIT 100`,
+      [req.params.id]
+    );
+    const packetIds = rows.map((row) => String(row.id));
+    const claimsByPacket = new Map<string, Array<{ userId: string; nickname: string; amount: number; claimedAt: string }>>();
+    if (packetIds.length > 0) {
+      const placeholders = packetIds.map(() => "?").join(",");
+      const [claims] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT c.packet_id, c.user_id, c.amount, c.claimed_at, u.nickname
+         FROM circle_red_packet_claims c
+         INNER JOIN users u ON u.id = c.user_id
+         WHERE c.packet_id IN (${placeholders})
+         ORDER BY c.claimed_at ASC`,
+        packetIds
+      );
+      for (const claim of claims) {
+        const packetId = String(claim.packet_id);
+        const list = claimsByPacket.get(packetId) ?? [];
+        list.push({
+          userId: String(claim.user_id),
+          nickname: String(claim.nickname),
+          amount: Number(claim.amount),
+          claimedAt: new Date(claim.claimed_at).toISOString()
+        });
+        claimsByPacket.set(packetId, list);
+      }
+    }
+    res.json({ packets: rows.map((row) => ({
+      id: String(row.id),
+      source: String(row.source),
+      packetCount: Number(row.packet_count),
+      totalShells: Number(row.total_shells),
+      claimedCount: Number(row.claimed_count),
+      claimedShells: Number(row.claimed_shells),
+      publishedAt: new Date(row.published_at).toISOString(),
+      expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+      claims: claimsByPacket.get(String(row.id)) ?? []
+    })) });
+  });
+
   app.post("/api/admin/circles/:id/red-packets", async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;

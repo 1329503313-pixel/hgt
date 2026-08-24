@@ -48,7 +48,7 @@ function loadImage(source: string) {
 }
 
 function splitPosterTitle(context: CanvasRenderingContext2D, title: string, maxWidth: number) {
-  const characters = Array.from(title.trim() || "在线玩汤房间");
+  const characters = Array.from(title.trim() || "游戏房间");
   const lines: string[] = [];
   let current = "";
 
@@ -133,7 +133,7 @@ async function createInvitePoster(roomName: string, roomCode: string, qrCode: st
 
   context.fillStyle = "#3970d4";
   context.font = `900 27px ${uiFont}`;
-  context.fillText("在线玩汤", 292, 100);
+  context.fillText("游戏大厅", 292, 100);
   context.fillStyle = "#6b7c99";
   context.font = `700 20px ${uiFont}`;
   context.fillText("好友邀请你加入房间", 260, 151);
@@ -224,7 +224,7 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
       void document.fonts?.ready.then(() => createInvitePoster(roomName, roomCode, qrCode)).then((dataUrl) => {
         if (cancelled) return;
         setPosterDataUrl(dataUrl);
-        setPosterFile(dataUrlToPngFile(dataUrl, `玩汤邀请-${roomCode}.png`));
+        setPosterFile(dataUrlToPngFile(dataUrl, `游戏邀请-${roomCode}.png`));
       }).catch((error) => { if (!cancelled) showToast(error instanceof Error ? error.message : "邀请图片生成失败"); });
     });
     return () => { cancelled = true; window.cancelAnimationFrame(frame); };
@@ -236,7 +236,7 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
     try {
       await shareImageToWechat({
         file: posterFile,
-        title: `${roomName}｜在线玩汤邀请`,
+        title: `${roomName}｜游戏房间邀请`,
         text: `房间号 ${roomCode}，点击或扫码加入房间`
       });
     } catch (error) {
@@ -292,12 +292,12 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
     <div className="space-y-3">
       {panel === "main" ? <>
         <div className="pr-10">
-          <h2 className="text-xl font-black text-ink">邀请好友来玩汤</h2>
+          <h2 className="text-xl font-black text-ink">邀请好友加入游戏</h2>
           <p className="mt-1 text-sm text-muted">分享到微信、圈子或已关注的好友</p>
         </div>
         <div className="overflow-hidden rounded-2xl bg-slate-100 py-2">
           {posterDataUrl
-            ? <img className="mx-auto h-[360px] w-[260px] rounded-[24px]" src={posterDataUrl} alt={`${roomName}玩汤房间邀请海报`} />
+            ? <img className="mx-auto h-[360px] w-[260px] rounded-[24px]" src={posterDataUrl} alt={`${roomName}游戏房间邀请海报`} />
             : <div className="mx-auto grid h-[360px] w-[260px] place-items-center rounded-[24px] bg-[#eaf2ff] text-sm font-bold text-muted">{preparing || qrCode ? "邀请图片生成中…" : "邀请图片生成失败"}</div>}
         </div>
 
@@ -319,7 +319,7 @@ export function OnlineSoupInviteModal({ roomId, roomName, roomCode, onClose, sho
 
     {confirmTarget && <Modal onClose={() => !sharing && setConfirmTarget(null)}>
       <div className="space-y-4 text-center">
-        <div><h2 className="text-xl font-black text-ink">是否分享至「{confirmTarget.name}」？</h2><p className="mt-2 text-sm text-muted">将发送一张可点击、可免密加入的玩汤房间邀请卡片。</p></div>
+        <div><h2 className="text-xl font-black text-ink">是否分享至「{confirmTarget.name}」？</h2><p className="mt-2 text-sm text-muted">将发送一张可点击、可免密加入的游戏房间邀请卡片。</p></div>
         <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={sharing} onClick={() => setConfirmTarget(null)}>取消</button><button className="btn btn-primary" disabled={sharing} onClick={() => void confirmShare()}>{sharing ? "分享中…" : "分享"}</button></div>
       </div>
     </Modal>}

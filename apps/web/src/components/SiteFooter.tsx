@@ -69,7 +69,7 @@ export function SiteFooter() {
           ))}
         </nav>
         <div className="site-footer-rule" aria-hidden="true" />
-        <p>汤汤解谜乐园 版权所有</p>
+        <p>汤物语丨汤汤解谜乐园 版权所有</p>
       </div>
     </footer>
   );

@@ -359,7 +359,7 @@ export function AdminDashboard() {
             ["非原创", data.soups.nonOriginal, "bg-slate-100 text-slate-700"],
             ["公开汤面", data.soups.publicSurface, "bg-blue-50 text-primary"],
             ["公开汤底", data.soups.publicBottom, "bg-cyan-50 text-cyan-700"],
-            ["AI 玩汤", data.soups.aiEnabled, "bg-violet-50 text-violet-700"],
+            ["AI 主持作品", data.soups.aiEnabled, "bg-violet-50 text-violet-700"],
             ["敏感内容", data.soups.sensitive, "bg-red-50 text-red-600"]
           ].map(([label, value, className]) => (
             <div key={String(label)} className={`rounded-xl p-3 ${className}`}><strong className="block text-xl">{numberFormat.format(Number(value))}</strong><span className="text-xs font-semibold">{label}</span></div>

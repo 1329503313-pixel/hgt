@@ -36,7 +36,7 @@ test("renderSeoHtml replaces metadata and adds crawlable page content", () => {
 
   assert.match(html, /<title>测试汤题｜海龟汤推理解谜<\/title>/);
   assert.match(html, /name="description" content="测试描述"/);
-  assert.match(html, /name="keywords" content="汤汤解谜乐园,海龟汤,AI海龟汤,在线海龟汤,多人海龟汤,情境推理,推理解谜"/);
+  assert.match(html, /name="keywords" content="汤物语,汤汤解谜乐园,海龟汤,AI海龟汤,在线海龟汤,多人海龟汤,情境推理,推理解谜"/);
   assert.match(html, /rel="canonical" href="https:\/\/example\.com\/soup\/abc"/);
   assert.match(html, /property="og:type" content="article"/);
   assert.match(html, /<main class="seo-fallback" data-seo-fallback>/);

@@ -101,7 +101,7 @@ test("任务日期使用北京时间自然日", () => {
   assert.equal(beijingTaskDate(new Date("2026-07-20T16:00:00.000Z")), "2026-07-21");
 });
 
-test("玩汤时长必须严格大于5分钟", () => {
+test("游戏时长必须严格大于5分钟", () => {
   const start = new Date("2026-07-20T00:00:00.000Z");
   assert.equal(isEligibleOnlineSoupDuration(start, new Date("2026-07-20T00:04:59.999Z")), false);
   assert.equal(isEligibleOnlineSoupDuration(start, new Date("2026-07-20T00:05:00.000Z")), false);
@@ -115,7 +115,7 @@ test("圈子发言任务统计文字和表情包，不统计分享消息", () =>
   assert.equal(isEligibleCircleTaskMessageType("soup_share"), false);
 });
 
-test("作品完整玩汤奖励必须有作者之外的有效玩家", () => {
+test("作品完整体验奖励必须有作者之外的有效玩家", () => {
   assert.equal(hasOtherEligibleOnlineSoupPlayer("creator", []), false);
   assert.equal(hasOtherEligibleOnlineSoupPlayer("creator", ["creator"]), false);
   assert.equal(hasOtherEligibleOnlineSoupPlayer("creator", ["creator", "player"]), true);

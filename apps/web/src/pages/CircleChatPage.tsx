@@ -73,7 +73,7 @@ function CircleMessageText({ message, currentUserId }: { message: CircleMessage;
 function messagePreview(message: CircleMessage | CircleMessageReply) {
   if (message.recalledAt) return "[消息已撤回]";
   if (message.type === "sticker") return `[表情] ${message.stickerName ?? "表情"}`;
-  if (message.type === "room_invite") return "[玩汤房间邀请]";
+  if (message.type === "room_invite") return "[游戏房间邀请]";
   if (message.type === "soup_share") return "[海龟汤分享]";
   if (message.type === "gift") return `[礼物] ${message.gift?.giftName ?? "礼物"} ×${message.gift?.quantity ?? 1}`;
   if (message.type === "red_packet") return "[系统红包]";

@@ -93,7 +93,7 @@ export function PwaInstallPrompt() {
   return (
     <>
       {visible && (
-        <aside className="pwa-install-card" aria-label="安装汤汤解谜乐园">
+        <aside className="pwa-install-card" aria-label="安装汤物语">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-primary" aria-hidden="true">
             <Smartphone size={22} />
           </span>

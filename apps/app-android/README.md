@@ -1,4 +1,4 @@
-# HGT Android
+# 汤物语 Android
 
 Android 客户端采用 Capacitor 封装 `apps/web` 的用户端手机构建。APK 内不包含 Web 管理后台，也不加载线上网页作为入口。
 
@@ -49,7 +49,7 @@ npm run app:android:verify
 
 - 系统返回键先关闭最上层 Web 弹窗，再回退路由；首页根节点才退出 APP。
 - 前后台切换会通知 Web 用户端恢复实时连接与可见状态。
-- 海龟汤海报和玩汤邀请图走 Android 原生分享面板，临时文件只写 APP Cache。
+- 海龟汤海报和游戏邀请图走 Android 原生分享面板，临时文件只写 APP Cache。
 - `target=_blank` 的 HTTPS 外链由 Android 浏览器能力打开。
 - `https://hgt.caqis.com` 用户端深链可恢复到 APP 内同一路由；自动验证唤起需单独审批线上 `assetlinks.json`，当前仅提供 Android 系统选择入口。
 - APP 使用版本接口检查普通/强制更新；APK 只允许从 `https://zgkc-storage.kjcxchina.com/hgt/apps/` 下载，并交给 Android 系统安装页确认。

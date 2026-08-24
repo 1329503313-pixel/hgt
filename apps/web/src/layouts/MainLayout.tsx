@@ -8,7 +8,7 @@ import { isHomeCategoryRoute } from "../shared/homeRoutes";
 const desktopPrimaryPaths = new Set(["/online-soup", "/circles", "/mine/rankings", "/mine/store", "/mine/tasks", "/mine/collection", "/mine/achievements", "/mine", "/messages"]);
 
 const desktopModules: Record<string, { active: DesktopModuleKey; title: string; eyebrow: string }> = {
-  "/online-soup": { active: "online-soup", title: "和朋友一起，进入实时推理房间", eyebrow: "玩汤 · ONLINE SOUP" },
+  "/online-soup": { active: "online-soup", title: "和朋友一起，进入实时推理房间", eyebrow: "游戏大厅 · GAME LOBBY" },
   "/circles": { active: "circles", title: "找到同好，分享每一个精彩脑洞", eyebrow: "圈子 · COMMUNITY" },
   "/mine/rankings": { active: "rankings", title: "看看最受欢迎的创作者与故事", eyebrow: "排行 · RANKINGS" },
   "/mine/store": { active: "store", title: "发现装扮、卡包与更多社区好物", eyebrow: "商城 · STORE" },

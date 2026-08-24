@@ -1,6 +1,8 @@
 import nodemailer from "nodemailer";
 import { config } from "./config.js";
 
+const BRAND_NAME = "汤物语丨汤汤解谜乐园";
+
 let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
 
 type SmtpConfiguration = typeof config.smtp;
@@ -73,11 +75,11 @@ export async function sendEmailVerificationCode(
   const action = purpose === "change" ? "更换绑定邮箱" : "绑定邮箱";
   await sendMail({
     to: email,
-    subject: `【汤汤解谜乐园】${action}验证码`,
+    subject: `【${BRAND_NAME}】${action}验证码`,
     text: `您正在${action}。验证码：${code}。验证码 10 分钟内有效，请勿转发给他人。如非本人操作，请忽略本邮件。`,
     html: `
       <div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;line-height:1.7">
-        <h2 style="margin:0 0 16px">汤汤解谜乐园</h2>
+        <h2 style="margin:0 0 16px">${BRAND_NAME}</h2>
         <p>您正在${escapeHtml(action)}，验证码为：</p>
         <p style="margin:20px 0;font-size:30px;font-weight:800;letter-spacing:8px;color:#2563eb">${escapeHtml(code)}</p>
         <p>验证码 10 分钟内有效，请勿转发给他人。</p>
@@ -94,11 +96,11 @@ export function passwordResetEmailContent(username: string, token: string) {
   const escapedUrl = escapeHtml(resetUrl.toString());
   const escapedUsername = escapeHtml(username);
   return {
-    subject: "【汤汤解谜乐园】重置登录密码",
+    subject: `【${BRAND_NAME}】重置登录密码`,
     text: `账号名称：${username}\n请在 20 分钟内打开以下链接重置密码：${resetUrl.toString()}。如非本人操作，请忽略本邮件。`,
     html: `
       <div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;line-height:1.7">
-        <h2 style="margin:0 0 16px">汤汤解谜乐园</h2>
+        <h2 style="margin:0 0 16px">${BRAND_NAME}</h2>
         <p>我们收到了重置您登录密码的请求。</p>
         <p>账号名称：<strong>${escapedUsername}</strong></p>
         <p style="margin:24px 0">
@@ -125,15 +127,15 @@ export async function sendEmailSecurityNotice(
 ) {
   const content = {
     changed: {
-      subject: "【汤汤解谜乐园】绑定邮箱已更换",
+      subject: `【${BRAND_NAME}】绑定邮箱已更换`,
       body: "您的账号绑定邮箱已成功更换。"
     },
     unbound: {
-      subject: "【汤汤解谜乐园】绑定邮箱已解绑",
+      subject: `【${BRAND_NAME}】绑定邮箱已解绑`,
       body: "您的账号绑定邮箱已成功解绑。"
     },
     password_reset: {
-      subject: "【汤汤解谜乐园】登录密码已重置",
+      subject: `【${BRAND_NAME}】登录密码已重置`,
       body: "您的账号登录密码已成功重置，其他设备上的旧登录状态已经失效。"
     }
   }[event];
@@ -143,7 +145,7 @@ export async function sendEmailSecurityNotice(
     text: `${content.body}如非本人操作，请立即联系网站管理员。`,
     html: `
       <div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;line-height:1.7">
-        <h2 style="margin:0 0 16px">汤汤解谜乐园</h2>
+        <h2 style="margin:0 0 16px">${BRAND_NAME}</h2>
         <p>${escapeHtml(content.body)}</p>
         <p style="color:#dc2626">如非本人操作，请立即联系网站管理员。</p>
       </div>

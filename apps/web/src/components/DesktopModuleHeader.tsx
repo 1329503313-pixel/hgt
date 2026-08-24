@@ -91,11 +91,11 @@ export function DesktopModuleHeader({ active, title, eyebrow }: { active: Deskto
       <div className="home-desktop-nav">
         <button type="button" className="home-desktop-brand" onClick={() => navigate("/")} aria-label="返回首页">
           <img className="home-desktop-brand-mark" src="/logo.png" alt="" aria-hidden="true" />
-          <span>汤汤解谜乐园</span>
+          <span>汤物语</span>
         </button>
         <nav className="home-desktop-nav-links" aria-label="主导航">
           <button type="button" onClick={() => navigate("/")}><Home size={17} />首页</button>
-          <button type="button" className={active === "online-soup" ? "is-active" : ""} onClick={() => navigateAuthenticated("/online-soup")}><MessageCircleQuestion size={17} />玩汤</button>
+          <button type="button" className={active === "online-soup" ? "is-active" : ""} onClick={() => navigateAuthenticated("/online-soup")}><MessageCircleQuestion size={17} />大厅</button>
           <button type="button" className={active === "circles" ? "is-active" : ""} onClick={() => navigateAuthenticated("/circles")} aria-label={circleStatus === "red_packet" ? "圈子，有未领取红包" : circleStatus === "mention" ? "圈子，有未读@消息" : "圈子"}><CircleNavigationIcon status={circleStatus} size={17} />圈子</button>
           <button type="button" className={active === "rankings" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/rankings")}><Trophy size={17} />排行</button>
           <button type="button" className={active === "store" ? "is-active" : ""} onClick={() => navigateAuthenticated("/mine/store")}><ShoppingBag size={17} />商城</button>

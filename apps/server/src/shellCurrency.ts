@@ -86,13 +86,13 @@ export const SHELL_TASKS: readonly ShellTaskDefinition[] = [
   { type: "favorite_soup", name: "收藏海龟汤", description: "收藏不同的海龟汤", reward: 2, dailyLimit: 3 },
   { type: "publish_evaluation", name: "发表评论", description: "首次发布评分或评论", reward: 3, dailyLimit: 1, consumeBeyondDailyLimit: true },
   { type: "speak_circle", name: "圈子发言", description: "在任意圈子发送文字或表情包", reward: 2, dailyLimit: 3 },
-  { type: "join_online_soup", name: "完整参与玩汤", description: "满足完整参与条件并完成一轮", reward: 5, dailyLimit: 2, giftReward: { name: "汤汤抱枕", quantity: 3 } },
-  { type: "host_online_soup", name: "完整主持玩汤", description: "满足完整主持条件并完成一轮", reward: 10, dailyLimit: 1, giftReward: { name: "幸运贝壳", quantity: 1 } },
+  { type: "join_online_soup", name: "完整参与游戏", description: "满足完整参与条件并完成一轮", reward: 5, dailyLimit: 2, giftReward: { name: "汤汤抱枕", quantity: 3 } },
+  { type: "host_online_soup", name: "完整主持游戏", description: "满足完整主持条件并完成一轮", reward: 10, dailyLimit: 1, giftReward: { name: "幸运贝壳", quantity: 1 } },
   { type: "receive_soup_like", name: "作品获得点赞", description: "其他用户首次点赞你发布的作品", reward: 2, dailyLimit: 3, consumeBeyondDailyLimit: true },
   { type: "receive_soup_favorite", name: "作品获得收藏", description: "其他用户首次收藏你发布的作品", reward: 2, dailyLimit: 3, consumeBeyondDailyLimit: true },
   { type: "receive_soup_evaluation", name: "作品获得评论", description: "其他用户首次评论你发布的作品", reward: 5, dailyLimit: 3, consumeBeyondDailyLimit: true },
-  { type: "soup_ai_played", name: "作品被 AI 玩汤", description: "其他用户使用 AI 玩汤开启你的作品", reward: 5, dailyLimit: 3, consumeBeyondDailyLimit: true },
-  { type: "soup_online_completed", name: "作品被完整玩汤", description: "其他玩家完整玩完你发布的作品", reward: 10, dailyLimit: 2, consumeBeyondDailyLimit: true }
+  { type: "soup_ai_played", name: "作品用于 AI 主持", description: "其他用户使用你的作品开启 AI 主持", reward: 5, dailyLimit: 3, consumeBeyondDailyLimit: true },
+  { type: "soup_online_completed", name: "作品被完整体验", description: "其他玩家完整体验你发布的作品", reward: 10, dailyLimit: 2, consumeBeyondDailyLimit: true }
 ] as const;
 
 export const BEGINNER_TASKS: readonly BeginnerTaskDefinition[] = [

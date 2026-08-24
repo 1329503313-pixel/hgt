@@ -349,7 +349,7 @@ export default function DetailPage() {
             {soup.summary && <p className="detail-summary mt-3 line-clamp-3 text-sm leading-7 text-muted lg:text-base">{soup.summary}</p>}
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>
-              {soup.enableAiGame && <span className="pill bg-violet-50 text-violet-600">AI玩汤</span>}
+              {soup.enableAiGame && <span className="pill bg-violet-50 text-violet-600">AI主持</span>}
               <span className="pill bg-orange-50 text-orange-600">{soup.difficulty}</span>
               <span className="pill bg-teal-50 text-accent">{soup.isBottomPublic ? "汤底公开" : "汤底需授权"}</span>
             </div>

@@ -326,7 +326,7 @@ function MiniMessage({ message, currentUserId, muted, onRecall, onCopy, onLocate
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
   if (message.type === "system") return <p className="online-soup-mini-system">— {message.content} {message.targetMessageId && <button type="button" className="font-black text-primary hover:underline" onClick={() => onLocate(message.targetMessageId!)}>【定位】</button>} —</p>;
   if (message.type === "ai_honor" && message.aiHonors) return <OnlineSoupHonorCard honors={message.aiHonors} compact />;
-  if (message.type === "ai_advice") return <article className="online-soup-mini-event is-progress"><strong className="flex items-center gap-1"><Sparkles size={14} />AI 玩汤建议</strong><p className="whitespace-pre-line">{message.content}</p></article>;
+  if (message.type === "ai_advice") return <article className="online-soup-mini-event is-progress"><strong className="flex items-center gap-1"><Sparkles size={14} />AI 主持建议</strong><p className="whitespace-pre-line">{message.content}</p></article>;
   if (message.type === "clue") return <article className="online-soup-mini-event is-clue"><strong>主持人线索</strong><p>{message.content}</p></article>;
   if (message.type === "supplemental_surface" || message.type === "bottom" || message.type === "manual") {
     const title = message.type === "supplemental_surface" ? "补充汤面" : message.type === "bottom" ? "汤底已公布" : "主持人手册";

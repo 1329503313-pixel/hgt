@@ -72,9 +72,9 @@ const soupFieldLabels: Record<string, string> = {
   manual: "主持人手册",
   isSurfacePublic: "汤面公开设置",
   isBottomPublic: "汤底公开设置",
-  enableAiGame: "AI 玩汤开关",
-  keyFacts: "AI 玩汤高级设置关键点",
-  keyFactsCustomized: "AI 玩汤高级设置"
+  enableAiGame: "AI 主持开关",
+  keyFacts: "AI 主持高级设置关键点",
+  keyFactsCustomized: "AI 主持高级设置"
 };
 
 export function soupValidationMessage(issues: SoupValidationIssue[]) {
@@ -85,12 +85,12 @@ export function soupValidationMessage(issues: SoupValidationIssue[]) {
   if (field === "keyFacts") {
     if (typeof rawIndex === "number") {
       const position = rawIndex + 1;
-      if (keyFactField === "content") return `AI 玩汤高级设置：第 ${position} 个关键点未填写`;
-      if (keyFactField === "weight") return `AI 玩汤高级设置：第 ${position} 个关键点未填写有效进度值（1–99）`;
+      if (keyFactField === "content") return `AI 主持高级设置：第 ${position} 个关键点未填写`;
+      if (keyFactField === "weight") return `AI 主持高级设置：第 ${position} 个关键点未填写有效进度值（1–99）`;
     }
-    if (issue.message.includes("权重总和")) return "AI 玩汤高级设置：进度值总和必须为 100";
-    if (issue.message.includes("至少保留 1 个")) return "AI 玩汤高级设置：手动管理关键点时至少保留 1 个关键点";
-    return `AI 玩汤高级设置关键点有误：${issue.message}`;
+    if (issue.message.includes("权重总和")) return "AI 主持高级设置：进度值总和必须为 100";
+    if (issue.message.includes("至少保留 1 个")) return "AI 主持高级设置：手动管理关键点时至少保留 1 个关键点";
+    return `AI 主持高级设置关键点有误：${issue.message}`;
   }
 
   const label = soupFieldLabels[String(field)] ?? "海龟汤信息";

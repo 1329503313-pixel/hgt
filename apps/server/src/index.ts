@@ -3280,7 +3280,7 @@ app.get("/api/circles", async (req, res) => {
           : row.latest_message_type === "sticker"
           ? `[表情] ${getSticker(String(row.latest_sticker_id ?? ""))?.name ?? ""}`.trim()
           : row.latest_message_type === "room_invite"
-            ? `[玩汤邀请] ${parseRoomInvite(row.latest_content)?.roomName ?? "加入房间"}`
+            ? `[游戏邀请] ${parseRoomInvite(row.latest_content)?.roomName ?? "加入房间"}`
             : row.latest_message_type === "soup_share"
               ? `[海龟汤] ${parseSoupShare(row.latest_content)?.title ?? "查看分享"}`
             : row.latest_message_type === "gift"
@@ -3519,7 +3519,7 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   const roomInvite = parsed.data.roomInvite
     ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
     : null;
-  if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "玩汤房间邀请无效或房间已关闭");
+  if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "游戏房间邀请无效或房间已关闭");
   const soupShare = parsed.data.soupShare ? await sharedSoupCard(parsed.data.soupShare.soupId) : null;
   if (parsed.data.soupShare && !soupShare) return sendError(res, 400, "海龟汤不存在或暂不可分享");
   if (parsed.data.replyToMessageId) {
@@ -4195,7 +4195,7 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
   const roomInvite = parsed.data.roomInvite
     ? await onlineSoupRoomInvite(parsed.data.roomInvite.roomId, parsed.data.roomInvite.inviteToken)
     : null;
-  if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "玩汤房间邀请无效或房间已关闭");
+  if (parsed.data.roomInvite && !roomInvite) return sendError(res, 400, "游戏房间邀请无效或房间已关闭");
   const soupShare = parsed.data.soupShare ? await sharedSoupCard(parsed.data.soupShare.soupId) : null;
   if (parsed.data.soupShare && !soupShare) return sendError(res, 400, "海龟汤不存在或暂不可分享");
   const messageType = roomInvite ? "room_invite" : soupShare ? "soup_share" : sticker ? "sticker" : "text";
@@ -5579,7 +5579,7 @@ app.put("/api/soups/:id", async (req, res) => {
   if (creatorCanConfigureAiGame && enableAiGame) {
     runPostCommitTask("AI key fact generation after soup edit", () => splitKeyFactsForSoup(req.params.id));
   } else if (creatorCanConfigureAiGame && !enableAiGame) {
-    // 关闭 AI 玩汤时清空缓存
+    // 关闭 AI 主持时清空缓存
     runPostCommitTask("AI key fact cleanup after soup edit", () => pool.query("UPDATE soups SET key_facts = NULL, key_facts_hash = NULL, key_fact_atoms = NULL, key_fact_atoms_hash = NULL, key_facts_customized = 0 WHERE id = ?", [req.params.id]));
   }
 });
@@ -5592,7 +5592,7 @@ app.post("/api/soups/:id/reanalyze-keyfacts", async (req, res) => {
   if (!soup) return sendError(res, 404, "海龟汤不存在");
   if (!isSuperAdminRole(user.role) && user.id !== soup.creator_id) return sendError(res, 403, "没有编辑权限");
   const [[creator]] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [soup.creator_id]);
-  if (!canEnableAiGameRole(creator?.role)) return sendError(res, 403, "该上传者无权配置 AI 玩汤");
+  if (!canEnableAiGameRole(creator?.role)) return sendError(res, 403, "该上传者无权配置 AI 主持");
 
   forceReanalyzeKeyFacts(req.params.id).catch(() => {});
   res.json({ ok: true });
@@ -5608,7 +5608,7 @@ app.delete("/api/soups/:id", async (req, res) => {
     "SELECT id FROM online_soup_rounds WHERE soup_id = ? AND status IN ('preparing','playing') LIMIT 1",
     [req.params.id],
   );
-  if (activeRound) return sendError(res, 409, "该海龟汤正在玩汤房间中使用，请在本轮结束后再删除");
+  if (activeRound) return sendError(res, 409, "该海龟汤正在游戏房间中使用，请在本轮结束后再删除");
   await pool.query("DELETE FROM soups WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -7289,7 +7289,7 @@ app.delete("/api/admin/users/:id", async (req, res) => {
      LIMIT 1`,
     [req.params.id],
   );
-  if (activeRound) return sendError(res, 409, "该用户的海龟汤正在玩汤房间中使用，请在本轮结束后再删除用户");
+  if (activeRound) return sendError(res, 409, "该用户的海龟汤正在游戏房间中使用，请在本轮结束后再删除用户");
   await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -7497,7 +7497,7 @@ app.use("/api/game", async (req, _res, next) => {
   next();
 }, gameRouter);
 
-// ---------- 多人在线玩汤路由（独立于 AI 玩汤） ----------
+// ---------- 多人游戏大厅路由（独立于 AI 主持） ----------
 app.use("/api/online-soup", async (req, _res, next) => {
   (req as any).user = await currentUser(req);
   next();

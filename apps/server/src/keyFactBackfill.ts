@@ -5,7 +5,7 @@ export const AI_KEY_FACT_BACKFILL_INTERVAL_MS = 60 * 60 * 1000;
 type Queryable = Pick<mysql.Pool, "query">;
 
 /**
- * 补齐所有已开启 AI 玩汤、但尚无进度关键点的作品。
+ * 补齐所有已开启 AI 主持、但尚无进度关键点的作品。
  * 不筛选审核状态，使待审核作品也能提前准备；生成器自身负责保护用户手动配置。
  */
 export async function backfillMissingAiKeyFacts(

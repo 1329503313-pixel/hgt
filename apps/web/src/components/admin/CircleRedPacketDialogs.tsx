@@ -1,11 +1,22 @@
 import { useEffect, useState } from "react";
-import { CalendarClock, Trash2 } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronUp, History, Shell, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import { useApp } from "../../context/AppContext";
 import { Modal } from "../Modal";
 
 type CircleRef = { id: string; name: string };
 type PendingPacket = { id: string; packetCount: number; totalShells: number; publishAt: string };
+type RedPacketHistory = {
+  id: string;
+  source: "one_time" | "periodic";
+  packetCount: number;
+  totalShells: number;
+  claimedCount: number;
+  claimedShells: number;
+  publishedAt: string;
+  expiresAt: string | null;
+  claims: Array<{ userId: string; nickname: string; amount: number; claimedAt: string }>;
+};
 
 function valid(count: string, total: string) {
   const c = Number(count), t = Number(total);
@@ -101,5 +112,37 @@ export function PeriodicRedPacketDialog({ circle, onClose }: { circle: CircleRef
     <label className="space-y-1"><span className="label">每天发布时间（北京时间）</span><input className="field" type="time" value={publishTime} onChange={(e) => setPublishTime(e.target.value)} /></label>
     <label className="flex min-h-14 cursor-pointer items-center justify-between rounded-xl border border-line px-4"><span><strong className="block text-sm text-ink">启用周期红包</strong><span className="text-xs text-muted">关闭后保留配置，但不会自动发布</span></span><input className="h-5 w-5 accent-blue-600" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /></label>
     <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary min-h-11" disabled={saving} onClick={onClose}>取消</button><button className="btn btn-primary min-h-11" disabled={saving || !valid(packetCount, totalShells) || !publishTime} onClick={() => void save()}>{saving ? "保存中…" : "保存设置"}</button></div>
+  </div></Modal>;
+}
+
+export function RedPacketHistoryDialog({ circle, onClose }: { circle: CircleRef; onClose: () => void }) {
+  const { showToast } = useApp();
+  const [packets, setPackets] = useState<RedPacketHistory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  useEffect(() => {
+    setLoading(true);
+    void api<{ packets: RedPacketHistory[] }>(`/api/admin/circles/${circle.id}/red-packets/history`, { bypassCache: true, dedupe: false })
+      .then((data) => setPackets(data.packets))
+      .catch((error) => showToast((error as Error).message))
+      .finally(() => setLoading(false));
+  }, [circle.id]);
+  return <Modal onClose={onClose}><div className="space-y-4">
+    <div><h2 className="flex items-center gap-2 text-xl font-black text-ink"><History size={20} className="text-primary" />红包发放记录 · {circle.name}</h2><p className="mt-1 text-sm text-muted">展示最近 100 条已发放红包及领取明细。</p></div>
+    <div className="max-h-[65vh] space-y-2 overflow-y-auto overscroll-contain pr-1">
+      {loading && <p className="py-12 text-center text-sm text-muted">加载中…</p>}
+      {!loading && packets.length === 0 && <p className="rounded-xl border border-dashed border-line py-12 text-center text-sm text-muted">暂无红包发放记录</p>}
+      {packets.map((packet) => { const expanded = expandedId === packet.id; return <article key={packet.id} className="overflow-hidden rounded-xl border border-line bg-white">
+        <button type="button" className="flex min-h-14 w-full items-center gap-3 p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedId(expanded ? null : packet.id)} aria-expanded={expanded}>
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-red-50 text-red-600"><Shell size={20} /></span>
+          <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="text-sm text-ink">{packet.source === "periodic" ? "周期发放" : "单次发放"}</strong><span className="text-xs text-muted">{new Date(packet.publishedAt).toLocaleString("zh-CN", { hour12: false })}</span></span><span className="mt-1 block text-xs text-muted">{packet.packetCount} 个 · {packet.totalShells} 贝壳 · 已领 {packet.claimedCount}/{packet.packetCount}（{packet.claimedShells} 贝壳）</span></span>
+          {expanded ? <ChevronUp size={18} className="text-muted" /> : <ChevronDown size={18} className="text-muted" />}
+        </button>
+        {expanded && <div className="border-t border-line bg-slate-50 px-3 py-2">
+          {packet.claims.length === 0 ? <p className="py-4 text-center text-xs text-muted">暂时无人领取</p> : <div className="divide-y divide-line">{packet.claims.map((claim) => <div key={claim.userId} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate font-bold text-ink">{claim.nickname}</span><span className="shrink-0 text-right"><strong className="text-amber-700">+{claim.amount} 贝壳</strong><time className="ml-2 text-xs text-muted">{new Date(claim.claimedAt).toLocaleString("zh-CN", { hour12: false })}</time></span></div>)}</div>}
+        </div>}
+      </article>; })}
+    </div>
+    <button type="button" className="btn btn-secondary w-full min-h-11" onClick={onClose}>关闭</button>
   </div></Modal>;
 }

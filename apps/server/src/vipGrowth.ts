@@ -7,6 +7,11 @@ export const VIP_DAILY_ACTIVE_GROWTH = 10;
 export const VIP_DAILY_INACTIVE_DECAY = 5;
 export const VIP_GRANT_GROWTH_PER_DAY = 5;
 
+export function inactiveVipGrowthSettlement(currentGrowth: number) {
+  const growth = Math.max(0, Math.floor(Number(currentGrowth) || 0));
+  return growth === 0 ? 0 : -Math.min(VIP_DAILY_INACTIVE_DECAY, growth);
+}
+
 export type VipGrowthEventType = "grant" | "daily_active" | "daily_inactive" | "adjustment";
 
 export function vipLevelForGrowth(value: number) {
@@ -106,11 +111,20 @@ export async function settleVipGrowthForDate(
   date = beijingDateKey()
 ) {
   const userId = String(user.id);
+  const active = isVipActiveRow(user);
+  const [[currentUser]] = await connection.query<mysql.RowDataPacket[]>(
+    "SELECT vip_growth_value FROM users WHERE id = ? LIMIT 1 FOR UPDATE",
+    [userId]
+  );
+  const currentGrowth = Math.max(0, Math.floor(Number(currentUser?.vip_growth_value ?? 0) || 0));
+  const settlementAmount = active
+    ? VIP_DAILY_ACTIVE_GROWTH
+    : inactiveVipGrowthSettlement(currentGrowth);
   await connection.query(
     `INSERT IGNORE INTO vip_growth_daily_settlements
       (user_id, growth_date, active_at_settlement, amount)
      VALUES (?, ?, ?, ?)`,
-    [userId, date, isVipActiveRow(user), isVipActiveRow(user) ? VIP_DAILY_ACTIVE_GROWTH : -VIP_DAILY_INACTIVE_DECAY]
+    [userId, date, active, settlementAmount]
   );
   const [rows] = await connection.query<mysql.RowDataPacket[]>(
     `SELECT amount, active_at_settlement

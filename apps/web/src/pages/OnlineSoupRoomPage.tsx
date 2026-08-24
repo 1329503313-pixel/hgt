@@ -205,6 +205,8 @@ export default function OnlineSoupRoomPage() {
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [showAssistantScrollToLatest, setShowAssistantScrollToLatest] = useState(false);
   const [showQuestionModeGuide, setShowQuestionModeGuide] = useState(false);
+  const [showMusicMuteGuide, setShowMusicMuteGuide] = useState(false);
+  const [hostMenuOffset, setHostMenuOffset] = useState({ x: 0, y: 0 });
   const [highlightedMessageId, setHighlightedMessageId] = useState("");
   const [managedMemberId, setManagedMemberId] = useState<string | null>(null);
   const [memberManagementAction, setMemberManagementAction] = useState<"kick" | "transfer" | "mute" | null>(null);
@@ -247,6 +249,8 @@ export default function OnlineSoupRoomPage() {
   const highlightTimerRef = useRef<number | null>(null);
   const locatedRequestRef = useRef("");
   const leavingRoomRef = useRef(false);
+  const hostMenuDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
+  const suppressHostMenuClickRef = useRef(false);
   const roomReadAbortRef = useRef(new AbortController());
   const stateRequestStarted = useRef(0);
   const stateRequestApplied = useRef(0);
@@ -734,6 +738,17 @@ export default function OnlineSoupRoomPage() {
     setShowQuestionModeGuide(mysteryMode ? isHost : snapshot?.me.role === "player");
   }, [isHost, mysteryMode, roomId, snapshot?.me.role]);
   useEffect(() => {
+    const music = snapshot?.room.backgroundMusic;
+    if (!music) {
+      setShowMusicMuteGuide(false);
+      return;
+    }
+    const guideKey = `hgt:online-soup:music-guide:${roomId}:${music.id}:${music.startedAt}`;
+    if (sessionStorage.getItem(guideKey)) return;
+    sessionStorage.setItem(guideKey, "1");
+    setShowMusicMuteGuide(true);
+  }, [roomId, snapshot?.room.backgroundMusic?.id, snapshot?.room.backgroundMusic?.startedAt]);
+  useEffect(() => {
     setHostPanelGroup("materials");
     setSoupTab("surface");
     setHostRoundTab("clues");
@@ -1159,7 +1174,7 @@ export default function OnlineSoupRoomPage() {
   }
 
   function openSoupSelector() {
-    navigate(`/online-soup/rooms/${roomId}/select-soup`);
+    navigate(`/online-soup/rooms/${roomId}/select-soup?contentType=${mysteryMode ? "mystery" : "soup"}`);
   }
 
   function openMemberProfile(userId: string) {
@@ -1270,7 +1285,7 @@ export default function OnlineSoupRoomPage() {
     try {
       const result = await api<{ soupCleared?: boolean }>(`/api/online-soup/rooms/${roomId}/host-mode`, { method: "PATCH", body: { hostMode } });
       showToast(result.soupCleared
-        ? (hostMode === "ai" ? "已切换为 AI 主持，原海龟汤不支持 AI 玩汤，已取消选择" : "已切换为真人主持，尚未获得原海龟汤汤底，已取消选择")
+        ? (hostMode === "ai" ? "已切换为 AI 主持，原海龟汤不支持 AI 主持，已取消选择" : "已切换为真人主持，尚未获得原海龟汤汤底，已取消选择")
         : hostMode === "ai" ? "已切换为 AI 主持" : "已切换为真人主持");
       await load(true);
     } catch (error) { showToast(error instanceof Error ? error.message : "主持方式更改失败"); }
@@ -1444,17 +1459,24 @@ export default function OnlineSoupRoomPage() {
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <UnifiedBackButton compactOnMobile onClick={requestRoomExit} />
             <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]} · {mysteryMode ? <><BookOpen size={12} />谜局</> : aiHosted ? <><Bot size={12} />AI 主持</> : <><Crown size={12} />真人主持</>}</p></div>
-            {snapshot.room.backgroundMusic && <button
-              type="button"
-              className={`relative grid h-11 w-11 shrink-0 place-items-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${backgroundMusicMuted ? "bg-slate-100 text-slate-500" : "bg-blue-50 text-primary hover:bg-blue-100"}`}
-              onClick={toggleBackgroundMusicMuted}
-              aria-label={`${backgroundMusicMuted ? "恢复" : "静音"}背景音乐：${snapshot.room.backgroundMusic.name}`}
-              title={`${snapshot.room.backgroundMusic.name} · ${backgroundMusicMuted ? "已静音，点击恢复" : backgroundMusicAutoplayBlocked ? "等待播放授权，点击后播放" : "点击仅在本机静音"}`}
-              aria-pressed={backgroundMusicMuted}
-            >
-              <Volume2 size={20} />
-              {backgroundMusicMuted && <Ban className="absolute bottom-1 right-1 rounded-full bg-white text-red-500" size={14} strokeWidth={2.5} aria-hidden="true" />}
-            </button>}
+            {snapshot.room.backgroundMusic && <div className="relative shrink-0">
+              {showMusicMuteGuide && <div className="question-mode-guide absolute right-0 top-[calc(100%+10px)] z-50 w-36 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
+                点击可静音
+                <button type="button" className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full text-slate-300 transition hover:bg-white/10 hover:text-white" onClick={() => setShowMusicMuteGuide(false)} aria-label="关闭背景音乐提示"><X size={14} /></button>
+                <span className="absolute -top-1.5 right-4 h-3 w-3 rotate-45 bg-slate-900" aria-hidden="true" />
+              </div>}
+              <button
+                type="button"
+                className={`relative grid h-11 w-11 place-items-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${backgroundMusicMuted ? "bg-slate-100 text-slate-500" : "bg-blue-50 text-primary hover:bg-blue-100"}`}
+                onClick={() => { setShowMusicMuteGuide(false); toggleBackgroundMusicMuted(); }}
+                aria-label={`${backgroundMusicMuted ? "恢复" : "静音"}背景音乐：${snapshot.room.backgroundMusic.name}`}
+                title={`${snapshot.room.backgroundMusic.name} · ${backgroundMusicMuted ? "已静音，点击恢复" : backgroundMusicAutoplayBlocked ? "等待播放授权，点击后播放" : "点击仅在本机静音"}`}
+                aria-pressed={backgroundMusicMuted}
+              >
+                <Volume2 size={20} />
+                {backgroundMusicMuted && <Ban className="absolute bottom-1 right-1 rounded-full bg-white text-red-500" size={14} strokeWidth={2.5} aria-hidden="true" />}
+              </button>
+            </div>}
             <span className="shrink-0" title={socketConnected ? "实时连接正常" : "正在重新连接"}>{socketConnected ? <Wifi size={18} className="text-emerald-600" /> : <WifiOff size={18} className="text-red-500" />}</span>
           </div>
           <div className="flex shrink-0 items-center justify-end gap-3 lg:max-xl:w-full">
@@ -1470,9 +1492,15 @@ export default function OnlineSoupRoomPage() {
         </div>
       </header>
 
-      <main className={`online-soup-room-workspace mx-auto grid min-h-0 w-full flex-1 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-3 lg:grid-rows-1 lg:gap-4 lg:px-6 lg:pb-5 lg:pt-5 ${isHost ? "max-w-[1480px] lg:grid-cols-[340px_minmax(0,1fr)_76px_76px]" : "max-w-[1388px] lg:grid-cols-[340px_minmax(0,1fr)_76px]"}`}>
+      <main className={`online-soup-room-workspace mx-auto grid min-h-0 w-full flex-1 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-3 lg:grid-rows-1 lg:gap-4 lg:px-6 lg:pb-5 lg:pt-5 ${isHost ? "max-w-[1480px] lg:grid-cols-[340px_minmax(0,1fr)_76px_76px]" : "max-w-[1388px] lg:grid-cols-[340px_minmax(0,1fr)_76px]"}`}>
         <aside className="flex max-h-[30dvh] min-h-0 flex-col gap-3 overflow-hidden lg:order-1 lg:max-h-none">
           {!snapshot.room.hostOnline && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-700">房主暂时离线，房间不会解散。若房主未在 {snapshot.room.hostOfflineDeadline ? new Date(snapshot.room.hostOfflineDeadline).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "15 分钟内"} 返回，本轮将结束、取消当前{mysteryMode ? "谜局" : "选汤"}，并由在线成员接任房主。</div>}
+          {mysteryMode && !snapshot.room.mystery && <section className="card shrink-0 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0"><h2 className="text-sm font-black text-ink">尚未选择谜局</h2><p className="mt-1 text-xs leading-5 text-muted">选择谜局并决定继续存档或重新开始后即可开局。</p></div>
+              {isHost && <button type="button" className="btn btn-primary shrink-0" onClick={openSoupSelector}><BookOpen size={16} />选择谜局</button>}
+            </div>
+          </section>}
           {mysteryMode && snapshot.room.mystery && <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded ? "flex-1" : "shrink-0"}`}>
             <div className="flex shrink-0 items-center gap-2 px-3 py-2.5">
               {isHost && snapshot.room.status === "preparing" ? <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left" onClick={openSoupSelector} aria-label="更换谜局"><BookOpen size={17} className="shrink-0 text-primary" /><span className="truncate text-sm font-black text-ink">{snapshot.room.mystery.title}</span></button> : <div className="flex min-w-0 flex-1 items-center gap-2"><BookOpen size={17} className="shrink-0 text-primary" /><span className="truncate text-sm font-black text-ink">{snapshot.room.mystery.title}</span></div>}
@@ -1601,7 +1629,7 @@ export default function OnlineSoupRoomPage() {
 
         </aside>
 
-        <section className="online-soup-room-member-rail flex min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
+        <section className="online-soup-room-member-rail hidden min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:flex lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
           {snapshot.members.map((member) => { const canManage = isHost && member.id !== user?.id; const muted = isActiveMute(member.mutedUntil); return <MentionableAvatarButton key={member.id} canMention={member.id !== user?.id && Boolean(canDiscuss)} onMention={() => requestMention(member.id, member.nickname)} onOpen={() => openMemberProfile(member.id)} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.role === "host" ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} ariaLabel={canManage ? `管理成员${member.nickname}${muted ? "，已禁言" : ""}，长按@他` : `查看${member.nickname}的主页${muted ? "，已禁言" : ""}，长按@他`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.role === "host" && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}{muted && <MutedAvatarIndicator size="sm" />}</MentionableAvatarButton>; })}
           <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
         </section>
@@ -1685,11 +1713,16 @@ export default function OnlineSoupRoomPage() {
         </section>
       </main>
 
-      {isHost ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition duration-200 lg:hidden ${stickersOpen ? "pointer-events-none translate-y-2 opacity-0" : "opacity-100"}`}>
+      {isHost ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition-[opacity] duration-200 lg:hidden ${stickersOpen ? "pointer-events-none opacity-0" : "opacity-100"}`} style={{ transform: `translate3d(${hostMenuOffset.x}px, ${hostMenuOffset.y}px, 0)` }}>
         {hostActionsOpen && <div className="absolute bottom-full right-1/2 mb-2 flex translate-x-1/2 flex-col items-center gap-2">
           {renderHostActions(true)}
         </div>}
-        <button className={`grid h-12 w-12 place-items-center rounded-full border shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${hostActionsOpen ? "border-blue-500 bg-primary text-white" : "border-blue-200 bg-white text-primary"}`} onClick={() => setHostActionsOpen((open) => !open)} aria-label="主持人更多操作" title="主持人更多操作"><Menu size={22} /></button>
+        <button className={`grid h-12 w-12 touch-none place-items-center rounded-full border shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition-colors ${hostActionsOpen ? "border-blue-500 bg-primary text-white" : "border-blue-200 bg-white text-primary"}`}
+          onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); hostMenuDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: hostMenuOffset.x, originY: hostMenuOffset.y, moved: false }; }}
+          onPointerMove={(event) => { const drag = hostMenuDragRef.current; if (!drag || drag.pointerId !== event.pointerId) return; const dx = event.clientX - drag.startX; const dy = event.clientY - drag.startY; if (Math.hypot(dx, dy) > 6) { drag.moved = true; setHostActionsOpen(false); } if (!drag.moved) return; setHostMenuOffset({ x: Math.min(0, Math.max(-(window.innerWidth - 60), drag.originX + dx)), y: Math.min(0, Math.max(-(window.innerHeight - 140), drag.originY + dy)) }); }}
+          onPointerUp={(event) => { const drag = hostMenuDragRef.current; if (!drag || drag.pointerId !== event.pointerId) return; suppressHostMenuClickRef.current = drag.moved; hostMenuDragRef.current = null; event.currentTarget.releasePointerCapture(event.pointerId); }}
+          onPointerCancel={() => { hostMenuDragRef.current = null; }}
+          onClick={() => { if (suppressHostMenuClickRef.current) { suppressHostMenuClickRef.current = false; return; } setHostActionsOpen((open) => !open); }} aria-label="主持人更多操作，可拖动" title="主持人更多操作（按住可拖动）"><Menu size={22} /></button>
       </div> : null}
 
       {managedMember && <Modal onClose={() => { if (!memberManagementLoading) { setManagedMemberId(null); setMemberManagementAction(null); } }}><div className="space-y-4">
@@ -1913,7 +1946,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, senderMu
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
   if (message.type === "system") return <div className="py-1 text-center text-xs font-bold text-muted">— {message.senderId && message.content.endsWith("进入了房间") ? <><VipIdentity nickname={message.senderName ?? "用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} showUserLevel={false} className="mx-1 inline-flex" /><span>进入了房间</span></> : message.content} {message.targetMessageId && !isHost && <button type="button" className="ml-1 font-black text-primary underline-offset-2 hover:underline" onClick={() => void onLocate(message.targetMessageId!)} aria-label={`定位到${message.content.match(/#\d+/)?.[0] ?? "被变更回答的提问"}`}>【定位】</button>} —</div>;
   if (message.type === "ai_honor" && message.aiHonors) return <OnlineSoupHonorCard honors={message.aiHonors} onOpenUser={onOpenUser} />;
-  if (message.type === "ai_advice") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Sparkles size={17} />AI 玩汤建议</div><ul className="mt-2 space-y-1.5 text-sm leading-6 text-slate-700">{message.content.split("\n").filter(Boolean).map((line) => <li key={line} className="flex gap-2"><span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /><span>{line}</span></li>)}</ul></article>;
+  if (message.type === "ai_advice") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Sparkles size={17} />AI 主持建议</div><ul className="mt-2 space-y-1.5 text-sm leading-6 text-slate-700">{message.content.split("\n").filter(Boolean).map((line) => <li key={line} className="flex gap-2"><span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /><span>{line}</span></li>)}</ul></article>;
   if (message.type === "mystery_narrative") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-white to-blue-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><BookOpen size={17} />故事回应</div><p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-ink">{message.content}</p></article>;
   if (message.type === "clue") return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-amber-800"><Lightbulb size={16} /> 主持人线索</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></div>;
   if (message.type === "supplemental_surface") return <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Soup size={16} /> 补充汤面 {(message.contentIndex ?? 0) + 1}</div><div className="content-block mt-2 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></div>;

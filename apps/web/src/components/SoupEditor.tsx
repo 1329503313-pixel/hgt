@@ -133,13 +133,13 @@ export function SoupEditor() {
   const aiAdvancedSettingsError = !value.enableAiGame || !value.keyFactsCustomized
     ? ""
     : value.keyFacts.length === 0
-    ? "AI 玩汤高级设置：手动管理关键点时至少保留 1 个关键点"
+    ? "AI 主持高级设置：手动管理关键点时至少保留 1 个关键点"
     : emptyKeyFactIndex >= 0
-    ? `AI 玩汤高级设置：第 ${emptyKeyFactIndex + 1} 个关键点未填写`
+    ? `AI 主持高级设置：第 ${emptyKeyFactIndex + 1} 个关键点未填写`
     : invalidKeyFactWeightIndex >= 0
-      ? `AI 玩汤高级设置：第 ${invalidKeyFactWeightIndex + 1} 个关键点未填写有效进度值（1–99）`
+      ? `AI 主持高级设置：第 ${invalidKeyFactWeightIndex + 1} 个关键点未填写有效进度值（1–99）`
       : !keyFactsWeightValid
-        ? `AI 玩汤高级设置：进度值总和必须为 100，当前为 ${keyFactsTotalWeight}`
+        ? `AI 主持高级设置：进度值总和必须为 100，当前为 ${keyFactsTotalWeight}`
         : "";
 
   // 清除关键点（服务端仍沿用原有重新生成逻辑）
@@ -363,7 +363,7 @@ export function SoupEditor() {
           <CheckRow label="公开汤底和主持人手册" desc="勾选后，其他用户无需申请即可查看完整内容。" checked={value.isBottomPublic} onChange={(c) => patch({ isBottomPublic: c })} />
           {canEnableAiGame && <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <CheckRow label="开启 AI 玩汤" desc="" checked={value.enableAiGame} onChange={(c) => {
+              <CheckRow label="开启 AI 主持" desc="" checked={value.enableAiGame} onChange={(c) => {
                 patch({ enableAiGame: c });
                 if (!c) setAdvSettingsOpen(false);
               }} />
@@ -380,7 +380,7 @@ export function SoupEditor() {
             {value.enableAiGame && (
               <>
                 <p className="pl-7 text-[11px] leading-5 text-muted">
-                  仅无任何机制的汤建议开启 AI 玩汤，开启后用户如通关，可以直接获得汤底。
+                  仅无任何机制的汤建议开启 AI 主持，开启后用户如通关，可以直接获得汤底。
                 </p>
                 {aiAdvancedSettingsError && (
                   <button type="button" className="pl-7 text-left text-xs font-bold text-danger" onClick={() => setAdvSettingsOpen(true)}>
@@ -501,7 +501,7 @@ export function SoupEditor() {
                 <p className={`py-4 text-center text-sm ${value.keyFactsCustomized ? "font-bold text-danger" : "text-muted"}`}>
                   {value.keyFactsCustomized
                     ? "手动管理关键点时至少保留 1 个关键点，当前状态无法保存。"
-                    : "暂无自定义关键点，发布或开启 AI 玩汤后将由 AI 自动拆分。"}
+                    : "暂无自定义关键点，发布或开启 AI 主持后将由 AI 自动拆分。"}
                 </p>
               )}
 

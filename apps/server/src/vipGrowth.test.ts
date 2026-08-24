@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { vipBenefitValue, vipGrowthDateKey, vipGrowthMultiplier, vipLevelForGrowth, isVipActiveRow } from "./vipGrowth.js";
+import { vipBenefitValue, vipGrowthDateKey, vipGrowthMultiplier, vipLevelForGrowth, isVipActiveRow, inactiveVipGrowthSettlement } from "./vipGrowth.js";
 
 test("VIP growth thresholds map to the nine configured levels", () => {
   assert.equal(vipLevelForGrowth(0), 0);
@@ -34,4 +34,11 @@ test("VIP settlement dates normalize MySQL DATE values returned as Date objects"
   assert.equal(vipGrowthDateKey("2026-08-19"), "2026-08-19");
   assert.equal(vipGrowthDateKey("2026-08-19T00:00:00.000Z"), "2026-08-19");
   assert.equal(vipGrowthDateKey("Wed Aug 19 2026"), null);
+});
+
+test("非 VIP 成长值扣减不会在零值继续倒扣，并按实际余额截断", () => {
+  assert.equal(inactiveVipGrowthSettlement(0), 0);
+  assert.equal(inactiveVipGrowthSettlement(3), -3);
+  assert.equal(inactiveVipGrowthSettlement(5), -5);
+  assert.equal(inactiveVipGrowthSettlement(300), -5);
 });

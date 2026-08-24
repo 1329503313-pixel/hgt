@@ -109,7 +109,7 @@ export function BackgroundMusicManagement() {
   }
 
   return <div className="space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">背景音乐</h2><p className="text-sm text-muted">管理房主可在玩汤房间选择的循环背景音乐</p></div><div className="flex gap-2"><button type="button" className="btn btn-secondary min-h-11" onClick={() => void load()} disabled={loading}><RefreshCw size={16} />刷新</button><button type="button" className="btn btn-primary min-h-11" onClick={() => setForm({ ...emptyForm })}><Plus size={16} />上传背景音乐</button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">背景音乐</h2><p className="text-sm text-muted">管理房主可在游戏房间选择的循环背景音乐</p></div><div className="flex gap-2"><button type="button" className="btn btn-secondary min-h-11" onClick={() => void load()} disabled={loading}><RefreshCw size={16} />刷新</button><button type="button" className="btn btn-primary min-h-11" onClick={() => setForm({ ...emptyForm })}><Plus size={16} />上传背景音乐</button></div></div>
     <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm leading-6 text-blue-800">下架后房主不能再选择该音乐；已经在房间播放的音乐会继续播放，直到房主停止或更换。</div>
     {error && <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-600" role="alert">{error}</div>}
     {loading && <div className="card p-10 text-center text-muted" role="status"><LoaderCircle className="mx-auto mb-2 animate-spin" />加载中…</div>}

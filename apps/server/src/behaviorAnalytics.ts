@@ -4,7 +4,7 @@ import { pool } from "./db.js";
 export const USER_BEHAVIOR_DEFINITIONS = [
   { key: "publish_soup", label: "发布海龟汤" },
   { key: "view_soup", label: "查看汤" },
-  { key: "start_ai_game", label: "AI 玩汤" },
+  { key: "start_ai_game", label: "AI 主持" },
   { key: "like_soup", label: "点赞" },
   { key: "favorite_soup", label: "收藏" },
   { key: "save_evaluation", label: "评论" },
@@ -12,9 +12,9 @@ export const USER_BEHAVIOR_DEFINITIONS = [
   { key: "send_gift", label: "送礼" },
   { key: "speak_circle", label: "圈子发言" },
   { key: "speak_private", label: "私信发言" },
-  { key: "create_online_room", label: "开玩汤房间" },
-  { key: "join_online_room", label: "进入玩汤房间" },
-  { key: "complete_online_round", label: "完成一次玩汤" }
+  { key: "create_online_room", label: "创建游戏房间" },
+  { key: "join_online_room", label: "进入游戏房间" },
+  { key: "complete_online_round", label: "完成一轮游戏" }
 ] as const;
 
 export type UserBehaviorType = typeof USER_BEHAVIOR_DEFINITIONS[number]["key"];

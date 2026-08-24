@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "汤汤解谜乐园",
-  "short_name": "汤汤解谜",
+  "name": "汤物语",
+  "short_name": "汤物语",
   "description": "海龟汤创作、评价、推理和玩家交流社区",
   "lang": "zh-CN",
   "start_url": "/?source=pwa",

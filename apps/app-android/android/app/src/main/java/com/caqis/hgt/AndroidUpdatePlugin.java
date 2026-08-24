@@ -39,7 +39,7 @@ public class AndroidUpdatePlugin extends Plugin {
         String fileName = "hgt-update-" + System.currentTimeMillis() + ".apk";
         File destination = new File(downloads, fileName);
         DownloadManager.Request request = new DownloadManager.Request(Uri.parse(validated.toString()))
-            .setTitle("汤汤解谜乐园更新")
+            .setTitle("汤物语更新")
             .setDescription("新版 APK 下载中")
             .setMimeType("application/vnd.android.package-archive")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)

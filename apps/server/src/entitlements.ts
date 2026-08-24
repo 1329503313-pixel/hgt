@@ -118,7 +118,7 @@ const metricLabels: Record<EntitlementMetric, string> = {
   like: "点赞",
   favorite: "收藏",
   draw: "抽卡",
-  ai_question: "AI 玩汤提问",
+  ai_question: "AI 主持提问",
   mystery_question: "谜局提问",
   gift_send_shell_value: "送出礼物价值",
   charm_receive: "获取魅力",

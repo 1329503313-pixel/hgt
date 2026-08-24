@@ -1,4 +1,4 @@
-# 海龟汤评价管理系统
+# 汤物语丨汤汤解谜乐园
 
 ## 开发环境
 
@@ -78,7 +78,7 @@ npm run migrate:prod -w apps/server
 - `EMAIL_VERIFICATION_SECRET`：独立的随机密钥，建议使用 `openssl rand -hex 32` 生成。
 - `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURE`：SMTP 服务地址与连接方式。
 - `SMTP_USER`、`SMTP_PASSWORD`：SMTP 账号和授权码。
-- `SMTP_FROM`：发件人，例如 `汤汤解谜乐园 <no-reply@hgt.caqis.com>`。
+- `SMTP_FROM`：发件人，例如 `汤物语 <no-reply@hgt.caqis.com>`。
 - `SMTP_REPLY_TO`：可选回复地址。
 - `PUBLIC_SITE_URL`：公开站点地址，用于生成密码重置链接。
 

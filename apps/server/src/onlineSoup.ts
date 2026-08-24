@@ -1665,7 +1665,7 @@ router.get("/rooms/:roomId/invite-preview", async (req, res) => {
 router.get("/rooms/:roomId/invite-status", async (req, res) => {
   const inviteToken = String(req.query.inviteToken ?? "");
   if (!validRoomInviteToken(req.params.roomId, inviteToken)) {
-    return fail(res, 403, "玩汤房间邀请无效");
+    return fail(res, 403, "游戏房间邀请无效");
   }
   const room = await roomById(req.params.roomId);
   if (!room) return fail(res, 404, "房间不存在", "ROOM_CLOSED");
@@ -1890,6 +1890,7 @@ router.post("/rooms", async (req, res) => {
   const parsed = z.object({
     name: z.string().trim().min(1).max(50), type: z.enum(["public", "password"]),
     password: z.string().max(4).optional().default(""),
+    contentType: z.enum(["soup", "mystery"]).default("soup"),
     hostMode: z.enum(["human", "ai"]).default("human"),
     mysteryId: z.string().trim().min(1).max(64).optional(),
     mysteryChoice: z.enum(["continue", "restart"]).optional(),
@@ -1897,7 +1898,8 @@ router.post("/rooms", async (req, res) => {
   if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "房间信息不正确");
   if (parsed.data.type === "password" && parsed.data.password.length !== 4) return fail(res, 400, "房间密码必须为 4 位");
   if (parsed.data.mysteryId && !parsed.data.mysteryChoice) return fail(res, 400, "请选择继续谜局或重新开始");
-  if (parsed.data.mysteryId && parsed.data.hostMode !== "human") return fail(res, 400, "谜局固定使用世界裁决器，不能选择 AI 主持模式");
+  const contentType = parsed.data.mysteryId ? "mystery" : parsed.data.contentType;
+  if (contentType === "mystery" && parsed.data.hostMode !== "human") return fail(res, 400, "谜局固定使用世界裁决器，不能选择 AI 主持模式");
   let code = "";
   for (let i = 0; i < 10; i++) {
     code = String(Math.floor(100000 + Math.random() * 900000));
@@ -1911,9 +1913,9 @@ router.post("/rooms", async (req, res) => {
   try {
     await connection.beginTransaction();
     await connection.query(
-      `INSERT INTO online_soup_rooms (id, room_code, name, host_id, host_mode, room_type, password_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [roomId, code, parsed.data.name, user.id, parsed.data.hostMode, parsed.data.type, passwordHash]
+      `INSERT INTO online_soup_rooms (id, room_code, name, host_id, host_mode, content_type, room_type, password_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [roomId, code, parsed.data.name, user.id, parsed.data.hostMode, contentType, parsed.data.type, passwordHash]
     );
     await connection.query(
       "INSERT INTO online_soup_members (room_id, user_id, member_role) VALUES (?, ?, ?)",
@@ -1950,7 +1952,7 @@ router.post("/rooms", async (req, res) => {
     throw error;
   } finally { connection.release(); }
   recordUserBehavior("create_online_room");
-  res.status(201).json({ roomId, code, contentType: mysteryRun ? "mystery" : "soup", mysteryRunId: mysteryRun?.runId ?? null });
+  res.status(201).json({ roomId, code, contentType, mysteryRunId: mysteryRun?.runId ?? null });
   notifyLobby("room_created");
 });
 
@@ -2789,6 +2791,7 @@ router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => 
 router.post("/rooms/:roomId/select-mystery", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
+  if (String(context.room.content_type ?? "soup") !== "mystery") return fail(res, 409, "海龟汤房不能选择谜局");
   if (context.room.status === "playing") return fail(res, 409, "请先结束当前游戏再更换谜局");
   const parsed = z.object({
     mysteryId: z.string().trim().min(1).max(64),
@@ -2866,6 +2869,7 @@ router.post("/rooms/:roomId/select-mystery", async (req, res) => {
 router.post("/rooms/:roomId/select-soup", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
+  if (String(context.room.content_type ?? "soup") !== "soup") return fail(res, 409, "谜局房不能选择海龟汤");
   if (context.room.status === "playing") return fail(res, 409, "请先发布当前汤底再更换海龟汤");
   const parsed = z.object({ soupId: z.string().min(1) }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "请选择海龟汤");

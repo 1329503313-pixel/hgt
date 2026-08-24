@@ -46,7 +46,7 @@ const FIELDS: Array<{
   { key: "dailyLikeLimit", label: "每日限制点赞数量", unit: "次", description: "新增点赞计数，取消点赞不受限。" },
   { key: "dailyFavoriteLimit", label: "每日限制收藏数量", unit: "次", description: "新增收藏计数，取消收藏不受限。" },
   { key: "dailyDrawLimit", label: "每日限制抽卡次数", unit: "抽", description: "单抽计 1 次，十连抽计 10 次。" },
-  { key: "dailyAiQuestionLimit", label: "每日 AI 玩汤提问次数", unit: "次", description: "仅 AI 主持下的正式提问计数。" },
+  { key: "dailyAiQuestionLimit", label: "每日 AI 主持提问次数", unit: "次", description: "仅 AI 主持下的正式提问计数。" },
   { key: "dailyAiHintLimit", label: "每日 AI 提示次数", unit: "次", description: "与正式提问独立计数。" },
   { key: "dailyMysteryQuestionLimit", label: "每日限制谜局提问次数", unit: "次", description: "当前仅保留配置与接口，暂不拦截业务。" },
   { key: "dailyGiftSendShellValueLimit", label: "每日可送出礼物价值", unit: "贝壳", description: "按礼物单价 × 数量计数，库存礼物同样计入价值。" },
@@ -189,7 +189,7 @@ export function EntitlementManagement() {
         <p className="mt-1 text-sm text-muted">本期只读展示，不参与次日数值配置。</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl border border-line p-3"><p className="font-bold text-ink">查看受限汤内容</p><p className="mt-1 text-sm text-muted">普通用户：否 · VIP / 后台管理员：是</p></div>
-          <div className="rounded-xl border border-line p-3"><p className="font-bold text-ink">配置 AI 玩汤</p><p className="mt-1 text-sm text-muted">普通用户：否 · VIP / 后台管理员：是</p></div>
+          <div className="rounded-xl border border-line p-3"><p className="font-bold text-ink">配置 AI 主持</p><p className="mt-1 text-sm text-muted">普通用户：否 · VIP / 后台管理员：是</p></div>
         </div>
       </section>
     </div>

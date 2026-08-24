@@ -19,7 +19,7 @@ import {
   trimRoomAiHistory,
 } from "./gameLogic.js";
 
-test("AI 玩汤公开消息只返回 answer，不暴露关键事实", () => {
+test("AI 主持公开消息只返回 answer，不暴露关键事实", () => {
   const messages = toPublicGameMessages([
     { role: "system", content: "完整汤底" },
     { role: "assistant", content: "欢迎开始推理" },

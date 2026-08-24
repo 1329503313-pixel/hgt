@@ -8,6 +8,7 @@ import { ListSkeleton } from "../components/Skeletons";
 import { LevelBadge } from "../components/LevelBadge";
 import { useApp } from "../context/AppContext";
 import { VipIdentity } from "../components/VipIdentity";
+import { copyTextToClipboard } from "../shared/clipboard";
 
 type InvitationSummary = {
   inviteCode: string;
@@ -64,7 +65,7 @@ export default function MyInvitationsPage() {
   async function copyInviteCode() {
     if (!summary?.inviteCode) return;
     try {
-      await navigator.clipboard.writeText(summary.inviteCode);
+      await copyTextToClipboard(summary.inviteCode);
       setCopied(true);
       showToast("邀请码已复制");
       window.setTimeout(() => setCopied(false), 1600);

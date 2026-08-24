@@ -658,7 +658,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "difficulty", "difficulty ENUM('简单','普通','困难','地狱') NOT NULL DEFAULT '普通' AFTER type");
 
   // 谜局：故事草稿、不可变发布版本、房主存档、运行状态与只追加事件账本。
-  // Story Package、Run State、Event Ledger 分表保存，禁止复用 AI 玩汤的 game_sessions 快照。
+  // Story Package、Run State、Event Ledger 分表保存，禁止复用 AI 主持的 game_sessions 快照。
   await pool.query(`
     CREATE TABLE IF NOT EXISTS mystery_stories (
       id VARCHAR(64) PRIMARY KEY,
@@ -893,7 +893,7 @@ export async function initDatabase() {
   await ensureIndex("mystery_turns", "idx_mystery_turn_run_created", "run_id, created_at");
   await ensureIndex("mystery_turns", "idx_mystery_turn_recovery", "status, processing_expires_at, created_at");
 
-  // 玩汤房间背景音乐由超级管理员维护；下架只影响后续选择，房间中已选音乐继续可播放。
+  // 游戏房间背景音乐由超级管理员维护；下架只影响后续选择，房间中已选音乐继续可播放。
   await pool.query(`
     CREATE TABLE IF NOT EXISTS online_soup_background_music (
       id VARCHAR(64) PRIMARY KEY,
@@ -909,7 +909,7 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  // 多人在线玩汤（与 AI 玩汤会话完全独立）
+  // 多人游戏大厅（与 AI 主持会话完全独立）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS online_soup_rooms (
       id VARCHAR(64) PRIMARY KEY,
@@ -1463,7 +1463,7 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  // AI 玩汤关键点命中历史：同一用户、同一汤、同一关键点永久只计一次
+  // AI 主持关键点命中历史：同一用户、同一汤、同一关键点永久只计一次
   await pool.query(`
     CREATE TABLE IF NOT EXISTS game_key_hits (
       user_id VARCHAR(64) NOT NULL,

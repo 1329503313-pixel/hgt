@@ -71,7 +71,7 @@ export function BottomNav() {
           onClick={() => { if (!user) { openAuth(); return; } navigate("/online-soup"); }}
         >
           <MessageCircleQuestion size={20} />
-          <span>玩汤</span>
+          <span>大厅</span>
         </button>
         <button className="flex min-h-[64px] flex-col items-center justify-end gap-1 text-xs font-semibold text-ink" onClick={handleCreate}>
           <span className="grid h-11 w-11 place-items-center rounded-full bg-primary text-white shadow-[0_8px_20px_rgba(37,99,235,0.28)]">

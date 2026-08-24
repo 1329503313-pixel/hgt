@@ -4,7 +4,7 @@ const localProfile = process.env.HGT_ANDROID_PROFILE === "local";
 
 const config: CapacitorConfig = {
   appId: "com.caqis.hgt",
-  appName: "汤汤解谜乐园",
+  appName: "汤物语",
   webDir: "../web/dist-android",
   loggingBehavior: "debug",
   backgroundColor: "#dcefd8",

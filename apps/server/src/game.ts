@@ -157,7 +157,7 @@ async function aiRateLimiter(req: any, res: any, next: any) {
     const quota = await consumeAiQuota(user.id);
     if (!quota.allowed) {
       res.setHeader("Retry-After", quota.dailyExceeded ? 86400 : 60);
-      return res.status(429).json({ error: quota.dailyExceeded ? "今日 AI 玩汤次数已达上限" : "AI 请求过于频繁，请稍后再试" });
+      return res.status(429).json({ error: quota.dailyExceeded ? "今日 AI 主持次数已达上限" : "AI 请求过于频繁，请稍后再试" });
     }
     next();
   } catch (error) {

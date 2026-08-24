@@ -15,7 +15,7 @@ export function SoupCard({
 }) {
   const tags = [
     { label: soup.type, className: "bg-blue-50 text-primary ring-blue-100" },
-    soup.enableAiGame ? { label: "AI玩汤", className: "bg-violet-50 text-violet-600 ring-violet-100" } : null,
+    soup.enableAiGame ? { label: "AI主持", className: "bg-violet-50 text-violet-600 ring-violet-100" } : null,
     soup.isOriginal ? { label: "原创汤", className: "bg-emerald-50 text-emerald-600 ring-emerald-100" } : null,
     soup.isBottomPublic
       ? { label: "汤底公开", className: "bg-teal-50 text-accent ring-teal-100" }

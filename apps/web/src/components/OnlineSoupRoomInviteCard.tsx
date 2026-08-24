@@ -31,7 +31,7 @@ export function OnlineSoupRoomInviteCard({ invite, align = "left" }: { invite: O
       )}
     >
       <span className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-3 text-white">
-        <span className="inline-flex min-w-0 items-center gap-2 font-black"><DoorOpen size={18} /><span className="truncate">玩汤房间邀请</span></span>
+        <span className="inline-flex min-w-0 items-center gap-2 font-black"><DoorOpen size={18} /><span className="truncate">游戏房间邀请</span></span>
         <span className="shrink-0 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold" aria-live="polite">{statusLabels[liveInvite.status]}</span>
       </span>
       <span className="block space-y-2.5 p-4">

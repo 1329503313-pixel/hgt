@@ -2,10 +2,10 @@ import type express from "express";
 import type { Pool, RowDataPacket } from "mysql2/promise";
 import { readFileSync } from "node:fs";
 
-const SITE_NAME = "汤汤解谜乐园";
-const HOME_TITLE = "汤汤解谜乐园｜AI海龟汤、多人玩汤与原创谜题社区";
-const HOME_DESCRIPTION = "汤汤解谜乐园是海龟汤与情境推理社区，提供原创海龟汤题目、AI主持在线玩汤、多人推理房间、作品评价与玩家交流。";
-const KEYWORDS = "汤汤解谜乐园,海龟汤,AI海龟汤,在线海龟汤,多人海龟汤,情境推理,推理解谜";
+const SITE_NAME = "汤物语丨汤汤解谜乐园";
+const HOME_TITLE = "汤物语丨汤汤解谜乐园｜游戏大厅、AI海龟汤与原创谜题社区";
+const HOME_DESCRIPTION = "汤物语丨汤汤解谜乐园是海龟汤与情境推理社区，游戏大厅提供 AI 主持、多人推理房间、原创谜题、作品评价与玩家交流。";
+const KEYWORDS = "汤物语,汤汤解谜乐园,海龟汤,AI海龟汤,在线海龟汤,多人海龟汤,情境推理,推理解谜";
 
 type SeoRouteDependencies = {
   frontendIndexPath: string;
@@ -220,11 +220,11 @@ export function registerSeoRoutes(app: express.Express, dependencies: SeoRouteDe
       jsonLd: {
         "@context": "https://schema.org",
         "@graph": [
-          { "@type": "WebSite", name: SITE_NAME, alternateName: "汤汤解谜", url: canonical, inLanguage: "zh-CN" },
+          { "@type": "WebSite", name: SITE_NAME, alternateName: "汤物语", url: canonical, inLanguage: "zh-CN" },
           { "@type": "Organization", name: SITE_NAME, url: canonical },
           ...(allLinks.length ? [{
             "@type": "ItemList",
-            name: "汤汤解谜乐园公开海龟汤",
+            name: "汤物语公开海龟汤",
             itemListElement: allLinks.map((link, index) => ({
               "@type": "ListItem", position: index + 1, name: link.label, url: link.href
             }))
