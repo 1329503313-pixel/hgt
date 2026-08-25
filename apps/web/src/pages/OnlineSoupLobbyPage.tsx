@@ -11,11 +11,17 @@ import { getRandomOnlineSoupRoomName } from "../shared/onlineSoupRoomNames";
 import type { OnlineSoupLobbyRoom } from "../shared/types";
 
 const statusText = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
+function roomStatusText(room: Pick<OnlineSoupLobbyRoom, "status" | "contentType">) {
+  if (room.contentType === "impostor" && room.status === "playing") return "游戏中";
+  if (room.contentType === "impostor" && room.status === "ended") return "本局已结束";
+  return statusText[room.status];
+}
 type InvitePreview = {
   id: string;
   code: string;
   name: string;
   type: "public" | "password";
+  contentType: "soup" | "mystery" | "impostor";
   status: "preparing" | "playing" | "ended" | "closed";
   hasPassword: boolean;
 };
@@ -178,7 +184,9 @@ export default function OnlineSoupLobbyPage() {
         body: { inviteToken: pendingInvite.inviteToken, password: pendingInvitePassword }
       });
       sessionStorage.removeItem("onlineSoupPendingInvite");
-      if (joined.role === "spectator") showToast("玩家席位已满，已作为旁观者进入");
+      if (joined.role === "spectator") showToast(pendingInvite.room.contentType === "impostor" && pendingInvite.room.status === "playing"
+        ? "对局已开始，已作为旁观者进入"
+        : "玩家席位已满，已作为旁观者进入");
       navigate(`/online-soup/rooms/${pendingInvite.roomId}`, { replace: true });
     } catch (error) {
       if (error instanceof ApiError && isTerminalOnlineSoupJoinError(error)) {
@@ -308,7 +316,7 @@ export default function OnlineSoupLobbyPage() {
             <article key={room.id} className="online-soup-room-card card">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0"><h3 className="truncate text-base font-black text-ink">{room.name}</h3><p className="mt-1 text-xs font-semibold text-muted">房间号 {room.code} · 房主 {room.host.nickname}</p></div>
-                <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{statusText[room.status]}</span></div>
+                <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{roomStatusText(room)}</span></div>
               </div>
               <div className="online-soup-room-current"><span className="flex items-center gap-1">{room.contentType === "impostor" ? <VenetianMask size={13} /> : room.contentType === "mystery" ? <MessageCircleQuestion size={13} /> : room.hostMode === "ai" ? <Bot size={13} /> : <Crown size={13} />}{room.contentType === "impostor" ? "阵营推理" : room.contentType === "mystery" ? "谜局" : room.hostMode === "ai" ? "AI 主持" : "真人主持"}</span><strong title={room.contentType === "impostor" ? "谁是伪人" : room.mysteryTitle ?? room.soupTitle ?? "尚未选择内容"}>{room.contentType === "impostor" ? "谁是伪人" : room.mysteryTitle ?? room.soupTitle ?? "尚未选择内容"}</strong></div>
               <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.participantCount}/{room.participantCapacity} 人</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>{room.viewerRole ? "返回房间" : "加入房间"}</button></div>

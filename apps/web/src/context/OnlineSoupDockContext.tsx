@@ -28,6 +28,17 @@ type DockSession = {
 type ActiveRoomResponse = { session: DockSession | null };
 type DockMode = "collapsed" | "open";
 
+const impostorPhaseLabels: Record<NonNullable<OnlineSoupSnapshot["room"]["impostorGame"]>["phase"], string> = {
+  night: "夜间行动",
+  clue: "留下线索",
+  day_ready: "白天准备",
+  day_vote: "任务人选投票",
+  mission: "执行任务",
+  assassination: "伪人刺杀",
+  accusation: "最终指认",
+  ended: "本局结束",
+};
+
 type OnlineSoupDockValue = {
   minimizeRoom: (snapshot: OnlineSoupSnapshot) => void;
   showFullRoom: (roomId: string) => void;
@@ -254,6 +265,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   const inFullRoom = session ? location.pathname === `/online-soup/rooms/${session.snapshot.room.id}` : false;
   const currentMemberMuted = isActiveMute(session?.snapshot.members.find((member) => member.id === user?.id)?.mutedUntil);
   const mutedUserIds = useMemo(() => new Set(session?.snapshot.members.filter((member) => isActiveMute(member.mutedUntil)).map((member) => member.id) ?? []), [session?.snapshot.members]);
+  const miniImpostorGame = session?.snapshot.room.contentType === "impostor" ? session.snapshot.room.impostorGame : null;
 
   return <OnlineSoupDockContext.Provider value={contextValue}>
     {children}
@@ -290,6 +302,10 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
             navigate(`/online-soup/rooms/${activeRoomId}?locateMessage=${encodeURIComponent(messageId)}`);
           }}
         />
+        {miniImpostorGame && miniImpostorGame.phase !== "ended" && <button type="button" className="online-soup-mini-impostor-action" onClick={() => { const activeRoomId = session.snapshot.room.id; showFullRoom(activeRoomId); navigate(`/online-soup/rooms/${activeRoomId}`); }}>
+          <span>第 {miniImpostorGame.day} 天 · {impostorPhaseLabels[miniImpostorGame.phase]}</span>
+          <strong>{miniImpostorGame.me ? "返回完整房间操作" : "返回完整房间查看"}<Maximize2 size={14} /></strong>
+        </button>}
         {session.snapshot.me.role !== "spectator" && !currentMemberMuted && <div className="online-soup-mini-composer">
           {session.snapshot.me.role === "player" && session.snapshot.room.contentType !== "impostor" && <button
             type="button"

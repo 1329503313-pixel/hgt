@@ -351,7 +351,7 @@ export default function RankingsPage() {
                 const Icon = option.icon;
                 return (
                   <button key={option.key} type="button" className={`${option.tone} ${tab === option.key ? "is-active" : ""}`} onClick={() => setTab(option.key)} aria-pressed={tab === option.key}>
-                    <Icon size={16} />
+                    <Icon className={option.group === "user" ? "hidden lg:block" : undefined} size={16} />
                     <span>{option.shortLabel}</span>
                   </button>
                 );

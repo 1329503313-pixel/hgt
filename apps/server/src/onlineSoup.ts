@@ -44,6 +44,7 @@ import {
   submitImpostorMissionChoice,
   submitImpostorNightAction,
   submitImpostorNomination,
+  submitImpostorReady,
   terminateImpostorGame,
   type ImpostorGameState,
   type ImpostorNightAction,
@@ -1500,6 +1501,7 @@ function parseImpostorState(value: unknown): ImpostorGameState | null {
 
 async function currentImpostorGame(roomId: string, advanceExpired = true) {
   const connection = await pool.getConnection();
+  let changedState: ImpostorGameState | null = null;
   try {
     await connection.beginTransaction();
     const [[row]] = await connection.query<mysql.RowDataPacket[]>(
@@ -1528,8 +1530,10 @@ async function currentImpostorGame(roomId: string, advanceExpired = true) {
         "UPDATE online_soup_rooms SET status = 'ended', last_action_at = NOW() WHERE id = ? AND content_type = 'impostor'",
         [roomId],
       );
+      changedState = state;
     }
     await connection.commit();
+    if (changedState) notifyRoom(roomId, "impostor_state_changed", { phase: changedState.phase, day: changedState.day });
     return { id: String(row.id), state };
   } catch (error) {
     await connection.rollback().catch(() => {});
@@ -1557,6 +1561,7 @@ function impostorClientState(state: ImpostorGameState, viewerId: string) {
     successes: state.successes,
     failures: state.failures,
     deadlineAt: state.deadlineAt,
+    readyUserIds: state.readyUserIds ?? [],
     playerSeats: state.players.map((player) => ({ userId: player.userId, seat: player.seat })),
     isolatedUserIds: state.isolatedUserIds,
     nomination: state.nomination ? {
@@ -1588,6 +1593,7 @@ function impostorClientState(state: ImpostorGameState, viewerId: string) {
       seat: me.seat,
       role: me.role,
       roleLabel: impostorRoleLabel(me.role),
+      readySubmitted: (state.readyUserIds ?? []).includes(viewerId),
       nightActionTypes,
       nightSubmitted,
       investigation: me.role === "detective" ? state.investigation : null,
@@ -1606,15 +1612,35 @@ async function writeImpostorTransitionMessages(
   before: ImpostorGameState,
   after: ImpostorGameState,
 ) {
-  if (before.phase === "night" && after.phase !== "night") {
+  const seats = new Map(after.players.map((player) => [player.userId, player.seat]));
+  const readyBefore = new Set(before.readyUserIds ?? []);
+  const newlyReady = (after.readyUserIds ?? []).filter((userId) => !readyBefore.has(userId));
+  const namesNeeded = newlyReady.length > 0
+    || (before.phase !== "day_ready" && after.phase === "day_ready" && after.isolatedUserIds.length > 0)
+    || (before.phase !== "mission" && after.phase === "mission");
+  let playerNames = new Map<string, string>();
+  if (namesNeeded) {
+    const playerIds = after.players.map((player) => player.userId);
+    const [playerRows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, nickname FROM users WHERE id IN (${playerIds.map(() => "?").join(",")})`,
+      playerIds,
+    );
+    playerNames = new Map(playerRows.map((row) => [String(row.id), String(row.nickname)]));
+  }
+  const playerDescription = (userId: string) => `${seats.get(userId) ?? "?"}号 ${playerNames.get(userId) ?? "玩家"}`;
+
+  if (before.phase !== "day_ready" && after.phase === "day_ready") {
     if (after.isolatedUserIds.length) {
-      const seats = new Map(after.players.map((player) => [player.userId, player.seat]));
-      await systemMessage(roomId, null, `天亮了：${after.isolatedUserIds.map((id) => `${seats.get(id)}号`).join("、")}玩家被隔离，今日不能成为任务候选人`, connection);
+      await systemMessage(roomId, null, `天亮了，${after.isolatedUserIds.map(playerDescription).join("、")}已被隔离`, connection);
     } else {
-      await systemMessage(roomId, null, `第${after.day}天天亮了，本日无人被隔离`, connection);
+      await systemMessage(roomId, null, "天亮了", connection);
     }
   }
+  for (const userId of newlyReady) {
+    await systemMessage(roomId, null, `${playerNames.get(userId) ?? `${seats.get(userId) ?? "?"}号`}玩家已准备`, connection);
+  }
   if (after.publicClues.length > before.publicClues.length) {
+    await systemMessage(roomId, null, "昨天有新的线索", connection);
     for (const clue of after.publicClues.slice(before.publicClues.length)) {
       await connection.query(
         "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, NULL, NULL, 'clue', ?)",
@@ -1624,7 +1650,29 @@ async function writeImpostorTransitionMessages(
   }
   if (after.history.length > before.history.length) {
     const result = after.history[after.history.length - 1];
-    await systemMessage(roomId, null, `第${result.day}天任务${result.result === "success" ? "成功" : "失败"}，当前比分：成功 ${after.successes} / 失败 ${after.failures}`, connection);
+    await systemMessage(roomId, null, `本轮任务${result.result === "success" ? "成功" : "失败"}，当前比分：成功 ${after.successes} / 失败 ${after.failures}`, connection);
+  }
+  if (before.phase === "night" && after.phase === "clue") {
+    await systemMessage(roomId, null, "夜间行动结束，所有玩家留下线索", connection);
+  }
+  if (before.phase === "day_ready" && after.phase === "day_vote") {
+    await systemMessage(roomId, null, `所有玩家已准备，开始投票选择今日参与任务成员，今日任务共需要${after.nomination?.required ?? after.players.length}人（第${after.gameNumber}局第${after.day}天）`, connection);
+  } else if (before.phase === "day_vote" && after.phase === "day_vote" && (after.nomination?.attempt ?? 0) > (before.nomination?.attempt ?? 0)) {
+    await systemMessage(roomId, null, `任务人选出现平票，请进行第${after.nomination?.attempt ?? 2}次投票（第${after.gameNumber}局第${after.day}天）`, connection);
+  }
+  if (before.phase !== "mission" && after.phase === "mission") {
+    await systemMessage(roomId, null, `投票结束，今日参与任务成员为：${after.missionTeamUserIds.map(playerDescription).join("、")}`, connection);
+  }
+  if (before.phase !== "night" && after.phase === "night") {
+    await systemMessage(roomId, null, "天黑了，等待行动中", connection);
+  }
+  if (before.phase !== "assassination" && after.phase === "assassination") {
+    await systemMessage(roomId, null, `伪人选择刺杀目标（第${after.gameNumber}局）`, connection);
+  }
+  if (before.phase !== "accusation" && after.phase === "accusation") {
+    await systemMessage(roomId, null, `所有玩家选择公投目标（第${after.gameNumber}局）`, connection);
+  } else if (before.phase === "accusation" && after.phase === "accusation" && (after.accusation?.attempt ?? 0) > (before.accusation?.attempt ?? 0)) {
+    await systemMessage(roomId, null, `公投出现平票，所有玩家重新选择公投目标（第${after.gameNumber}局）`, connection);
   }
   if (before.phase !== "ended" && after.phase === "ended") {
     await systemMessage(roomId, null, `${after.winner === "good" ? "好人阵营" : after.winner === "impostor" ? "伪人阵营" : "本局无人"}获胜：${after.endReason ?? "对局结束"}`, connection);
@@ -1903,6 +1951,7 @@ router.get("/rooms/:roomId/invite-preview", async (req, res) => {
       code: String(room.room_code),
       name: String(room.name),
       type: String(room.room_type),
+      contentType: String(room.content_type ?? "soup"),
       status: String(room.status),
       host: { id: String(room.host_id), nickname: String(room.host_name) },
       playerCount: Number(counts.player_count ?? 0),
@@ -3246,7 +3295,8 @@ router.post("/rooms/:roomId/start", async (req, res) => {
          WHERE id = ?`,
         [context.room.id],
       );
-      await systemMessage(context.room.id, null, `“谁是伪人”第 ${state.gameNumber} 局开始，身份已秘密发放。第一天夜晚开始。`, connection);
+      await systemMessage(context.room.id, null, `“谁是伪人”第 ${state.gameNumber} 局开始，身份已秘密发放`, connection);
+      await systemMessage(context.room.id, null, "天黑了，等待行动中", connection);
       await connection.commit();
     } catch (error) {
       await connection.rollback().catch(() => {});
@@ -3436,6 +3486,19 @@ router.post("/rooms/:roomId/impostor/night-action", async (req, res) => {
   }
 });
 
+router.post("/rooms/:roomId/impostor/ready", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isImpostorRoom(context.room)) return fail(res, 409, "当前不是谁是伪人房间");
+  try {
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorReady(current, context.user.id), context.user.id);
+    res.json({ ok: true, game: impostorClientState(state, context.user.id) });
+    void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
+  } catch (error) {
+    if (!sendImpostorMutationError(res, error)) throw error;
+  }
+});
+
 router.post("/rooms/:roomId/impostor/clue", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
@@ -3455,10 +3518,13 @@ router.post("/rooms/:roomId/impostor/nomination", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
   if (!isImpostorRoom(context.room)) return fail(res, 409, "当前不是谁是伪人房间");
-  const parsed = z.object({ candidateUserIds: z.array(z.string().min(1).max(64)).max(IMPOSTOR_MAX_PLAYERS) }).safeParse(req.body);
+  const parsed = z.object({
+    attempt: z.number().int().positive(),
+    candidateUserIds: z.array(z.string().min(1).max(64)).max(IMPOSTOR_MAX_PLAYERS),
+  }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "任务人选投票不正确");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorNomination(current, context.user.id, parsed.data.candidateUserIds), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorNomination(current, context.user.id, parsed.data.candidateUserIds, new Date(), parsed.data.attempt), context.user.id);
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -3500,10 +3566,13 @@ router.post("/rooms/:roomId/impostor/accuse", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
   if (!isImpostorRoom(context.room)) return fail(res, 409, "当前不是谁是伪人房间");
-  const parsed = z.object({ targetUserId: z.string().min(1).max(64).nullable() }).safeParse(req.body);
+  const parsed = z.object({
+    attempt: z.number().int().positive().max(2),
+    targetUserId: z.string().min(1).max(64).nullable(),
+  }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "指认目标不正确");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorAccusation(current, context.user.id, parsed.data.targetUserId), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorAccusation(current, context.user.id, parsed.data.targetUserId, new Date(), parsed.data.attempt), context.user.id);
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {

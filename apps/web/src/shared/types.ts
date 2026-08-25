@@ -475,7 +475,7 @@ export type OnlineSoupHostMode = "human" | "ai";
 export type OnlineSoupMemberRole = "host" | "player" | "spectator" | "admin";
 export type OnlineSoupAnswer = "yes" | "no" | "both" | "unknown" | "irrelevant";
 export type ImpostorRole = "detective" | "civilian" | "impostor";
-export type ImpostorPhase = "night" | "clue" | "day_vote" | "mission" | "assassination" | "accusation" | "ended";
+export type ImpostorPhase = "night" | "clue" | "day_ready" | "day_vote" | "mission" | "assassination" | "accusation" | "ended";
 export type OnlineImpostorGame = {
   gameNumber: number;
   phase: ImpostorPhase;
@@ -484,6 +484,7 @@ export type OnlineImpostorGame = {
   successes: number;
   failures: number;
   deadlineAt: string | null;
+  readyUserIds: string[];
   playerSeats: Array<{ userId: string; seat: number }>;
   isolatedUserIds: string[];
   nomination: {
@@ -516,6 +517,7 @@ export type OnlineImpostorGame = {
     seat: number;
     role: ImpostorRole;
     roleLabel: string;
+    readySubmitted: boolean;
     nightActionTypes: Array<"chaos" | "isolate" | "guard" | "investigate" | "skip">;
     nightSubmitted: boolean;
     investigation: { targetUserIds: string[]; reportedHasImpostor: boolean } | null;

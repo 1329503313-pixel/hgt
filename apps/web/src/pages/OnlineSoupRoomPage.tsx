@@ -24,10 +24,15 @@ import { copyTextToClipboard } from "../shared/clipboard";
 import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
 import { useKeepMessageListPinned } from "../shared/useKeepMessageListPinned";
 import { MutedAvatarIndicator } from "../components/MutedAvatarIndicator";
-import { ImpostorGamePanel } from "../components/ImpostorGamePanel";
+import { ImpostorChatActionCard, ImpostorGamePanel } from "../components/ImpostorGamePanel";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
+function roomStatusLabel(status: keyof typeof statusLabels, impostorMode: boolean) {
+  if (impostorMode && status === "playing") return "游戏中";
+  if (impostorMode && status === "ended") return "本局已结束";
+  return statusLabels[status];
+}
 type MessagePage = { messages: OnlineSoupMessage[]; hasMore: boolean; nextCursor: string | null };
 type RoomState = Pick<OnlineSoupSnapshot, "room" | "me" | "members">;
 type ProgressQuestion = {
@@ -200,6 +205,7 @@ export default function OnlineSoupRoomPage() {
   const [stickersLoading, setStickersLoading] = useState(true);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [hostActionsOpen, setHostActionsOpen] = useState(true);
+  const [impostorReadySaving, setImpostorReadySaving] = useState(false);
   const [backgroundMusicOpen, setBackgroundMusicOpen] = useState(false);
   const [backgroundMusicTracks, setBackgroundMusicTracks] = useState<OnlineSoupBackgroundMusic[]>([]);
   const [backgroundMusicLoading, setBackgroundMusicLoading] = useState(false);
@@ -728,6 +734,7 @@ export default function OnlineSoupRoomPage() {
   const isHost = snapshot?.me.isHost ?? false;
   const mysteryMode = snapshot?.room.contentType === "mystery";
   const impostorMode = snapshot?.room.contentType === "impostor";
+  const impostorNightMode = Boolean(impostorMode && ["night", "clue"].includes(snapshot?.room.impostorGame?.phase ?? ""));
   const aiHosted = snapshot?.room.hostMode === "ai";
   const canHumanHost = isHost && !aiHosted && !mysteryMode && !impostorMode;
   const currentMemberMuted = isActiveMute(snapshot?.members.find((member) => member.id === user?.id)?.mutedUntil);
@@ -746,6 +753,10 @@ export default function OnlineSoupRoomPage() {
   useEffect(() => {
     if (!canQuestion && mode === "question") setMode("discussion");
   }, [canQuestion, mode]);
+  useEffect(() => {
+    document.body.classList.toggle("impostor-night-theme", impostorNightMode);
+    return () => document.body.classList.remove("impostor-night-theme");
+  }, [impostorNightMode]);
   useEffect(() => {
     setShowQuestionModeGuide(!impostorMode && (mysteryMode ? isHost : snapshot?.me.role === "player"));
   }, [impostorMode, isHost, mysteryMode, roomId, snapshot?.me.role]);
@@ -1018,6 +1029,20 @@ export default function OnlineSoupRoomPage() {
       else await Promise.all([loadState(), loadNewMessages()]);
     }
     catch (error) { showToast(error instanceof Error ? error.message : "操作失败"); throw error; }
+  }
+
+  async function submitImpostorReady() {
+    if (impostorReadySaving) return;
+    setImpostorReadySaving(true);
+    try {
+      await api(`/api/online-soup/rooms/${roomId}/impostor/ready`, { method: "POST" });
+      await Promise.all([loadState(), loadNewMessages()]);
+      setHostActionsOpen(false);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "准备失败，请稍后重试");
+    } finally {
+      setImpostorReadySaving(false);
+    }
   }
 
   async function openBackgroundMusic() {
@@ -1451,9 +1476,26 @@ export default function OnlineSoupRoomPage() {
     </Modal>}
   </div>;
 
+  const activeImpostorActionPrompt = impostorMode && snapshot.room.impostorGame
+    ? snapshot.room.impostorGame.phase === "day_vote"
+      ? snapshot.room.impostorGame.nomination?.attempt === 1
+        ? `所有玩家已准备，开始投票选择今日参与任务成员，今日任务共需要${snapshot.room.impostorGame.nomination?.required ?? snapshot.room.impostorGame.missionSize}人（第${snapshot.room.impostorGame.gameNumber}局第${snapshot.room.impostorGame.day}天）`
+        : `任务人选出现平票，请进行第${snapshot.room.impostorGame.nomination?.attempt ?? 2}次投票（第${snapshot.room.impostorGame.gameNumber}局第${snapshot.room.impostorGame.day}天）`
+      : snapshot.room.impostorGame.phase === "assassination"
+        ? `伪人选择刺杀目标（第${snapshot.room.impostorGame.gameNumber}局）`
+        : snapshot.room.impostorGame.phase === "accusation"
+          ? snapshot.room.impostorGame.accusation?.attempt === 1 ? `所有玩家选择公投目标（第${snapshot.room.impostorGame.gameNumber}局）` : `公投出现平票，所有玩家重新选择公投目标（第${snapshot.room.impostorGame.gameNumber}局）`
+          : null
+    : null;
+  const activeImpostorActionMessageId = activeImpostorActionPrompt
+    ? [...snapshot.messages].reverse().find((message) => message.type === "system" && message.content === activeImpostorActionPrompt)?.id ?? null
+    : null;
+  const showRoomActions = isHost || Boolean(impostorMode && snapshot.room.impostorGame?.phase === "day_ready" && snapshot.room.impostorGame.me);
+
   const renderHostActions = (mobile = false) => impostorMode ? <>
-    <FloatingAction tone="primary" label="背景音乐" onClick={() => { if (mobile) setHostActionsOpen(false); void openBackgroundMusic(); }} />
-    <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />
+    {snapshot.room.impostorGame?.phase === "day_ready" && snapshot.room.impostorGame.me && <FloatingAction tone="primary" label={snapshot.room.impostorGame.me.readySubmitted ? "已准备" : "准备"} disabled={impostorReadySaving || snapshot.room.impostorGame.me.readySubmitted} onClick={() => void submitImpostorReady()} />}
+    {isHost && <FloatingAction tone="primary" label="背景音乐" onClick={() => { if (mobile) setHostActionsOpen(false); void openBackgroundMusic(); }} />}
+    {isHost && <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />}
   </> : <>
     {snapshot.room.status === "preparing" && !snapshot.room.soup && !snapshot.room.mystery && <FloatingAction tone="primary" label="选择内容" onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
     {snapshot.room.status !== "playing" && (snapshot.room.soup || snapshot.room.mystery) && <FloatingAction tone="primary" label="开始游戏" onClick={() => { if (mobile) setHostActionsOpen(false); void hostAction("start"); }} />}
@@ -1475,12 +1517,12 @@ export default function OnlineSoupRoomPage() {
   </>;
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-page">
+    <div className="online-soup-room-theme flex h-[100dvh] flex-col overflow-hidden bg-page">
       <header className="top-nav-shell online-soup-room-header">
         <div className="mx-auto flex max-w-[1492px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 lg:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <UnifiedBackButton compactOnMobile onClick={requestRoomExit} />
-            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]} · {impostorMode ? <><VenetianMask size={12} />谁是伪人</> : mysteryMode ? <><BookOpen size={12} />谜局</> : aiHosted ? <><Bot size={12} />AI 主持</> : <><Crown size={12} />真人主持</>}</p></div>
+            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {roomStatusLabel(snapshot.room.status, impostorMode)} · {impostorMode ? <><VenetianMask size={12} />谁是伪人</> : mysteryMode ? <><BookOpen size={12} />谜局</> : aiHosted ? <><Bot size={12} />AI 主持</> : <><Crown size={12} />真人主持</>}</p></div>
             {snapshot.room.backgroundMusic && <div className="relative shrink-0">
               {showMusicMuteGuide && <div className="question-mode-guide absolute right-0 top-[calc(100%+10px)] z-50 w-36 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
                 点击可静音
@@ -1514,7 +1556,7 @@ export default function OnlineSoupRoomPage() {
         </div>
       </header>
 
-      <main className={`online-soup-room-workspace mx-auto grid min-h-0 w-full flex-1 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-3 lg:grid-rows-1 lg:gap-4 lg:px-6 lg:pb-5 lg:pt-5 ${isHost ? "max-w-[1480px] lg:grid-cols-[340px_minmax(0,1fr)_76px_76px]" : "max-w-[1388px] lg:grid-cols-[340px_minmax(0,1fr)_76px]"}`}>
+      <main className={`online-soup-room-workspace mx-auto grid min-h-0 w-full flex-1 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-3 lg:grid-rows-1 lg:gap-4 lg:px-6 lg:pb-5 lg:pt-5 ${showRoomActions ? "max-w-[1480px] lg:grid-cols-[340px_minmax(0,1fr)_76px_76px]" : "max-w-[1388px] lg:grid-cols-[340px_minmax(0,1fr)_76px]"}`}>
         <aside className="flex max-h-[30dvh] min-h-0 flex-col gap-3 overflow-hidden lg:order-1 lg:max-h-none">
           {!snapshot.room.hostOnline && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-700">房主暂时离线，房间不会解散。若房主未在 {snapshot.room.hostOfflineDeadline ? new Date(snapshot.room.hostOfflineDeadline).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "15 分钟内"} 返回，系统将由在线成员接任房主。</div>}
           {impostorMode && <ImpostorGamePanel roomId={roomId} game={snapshot.room.impostorGame} members={snapshot.members} currentUserId={user?.id ?? ""} currentMemberRole={snapshot.me.role} isHost={isHost} onChanged={() => load()} showToast={showToast} />}
@@ -1657,7 +1699,7 @@ export default function OnlineSoupRoomPage() {
           <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
         </section>
 
-        {isHost && <aside className="online-soup-room-host-actions hidden min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-4 lg:flex lg:py-3" aria-label="主持人操作">
+        {showRoomActions && <aside className="online-soup-room-host-actions hidden min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-4 lg:flex lg:py-3" aria-label="房间更多操作">
           <div className="online-soup-room-host-actions-list flex w-full min-h-0 flex-col items-center gap-3 overflow-y-auto overscroll-contain">
             {renderHostActions()}
           </div>
@@ -1686,9 +1728,14 @@ export default function OnlineSoupRoomPage() {
                   key={message.id}
                   className={`scroll-mt-24 rounded-2xl transition duration-500 ${highlightedMessageId === message.id ? "bg-violet-100/80 ring-2 ring-violet-400 ring-offset-4" : ""}`}
                 >
-                  <MessageItem message={message} currentUserId={user?.id ?? ""} senderMuted={isActiveMute(snapshot.members.find((member) => member.id === message.senderId)?.mutedUntil)} isHost={canHumanHost} mysteryMode={mysteryMode} canRetryAi={!mysteryMode && snapshot.me.isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onToggleBestQuestion={toggleBestQuestion} bestQuestionSaving={bestQuestionSavingId === message.id} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onCopy={async (copyText) => { try { await copyTextToClipboard(copyText); showToast("消息已复制"); } catch { showToast("复制失败，请稍后重试"); } }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
+                  <MessageItem message={message} currentUserId={user?.id ?? ""} senderMuted={isActiveMute(snapshot.members.find((member) => member.id === message.senderId)?.mutedUntil)} isHost={canHumanHost} mysteryMode={mysteryMode} impostorMode={impostorMode} canRetryAi={!mysteryMode && snapshot.me.isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onToggleBestQuestion={toggleBestQuestion} bestQuestionSaving={bestQuestionSavingId === message.id} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onCopy={async (copyText) => { try { await copyTextToClipboard(copyText); showToast("消息已复制"); } catch { showToast("复制失败，请稍后重试"); } }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
+                  {message.id === activeImpostorActionMessageId && <ImpostorChatActionCard roomId={roomId} game={snapshot.room.impostorGame} members={snapshot.members} currentUserId={user?.id ?? ""} onChanged={() => Promise.all([loadState(), loadNewMessages()]).then(() => undefined)} showToast={showToast} />}
                 </div>;
               })}
+              {activeImpostorActionPrompt && !activeImpostorActionMessageId && <div className="rounded-2xl">
+                <div className="py-1 text-center text-xs font-bold text-muted">— {activeImpostorActionPrompt} —</div>
+                <ImpostorChatActionCard roomId={roomId} game={snapshot.room.impostorGame} members={snapshot.members} currentUserId={user?.id ?? ""} onChanged={() => Promise.all([loadState(), loadNewMessages()]).then(() => undefined)} showToast={showToast} />
+              </div>}
             </div>
             {showScrollToLatest && <button
               className="absolute bottom-3 right-3 z-30 grid h-12 w-12 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_8px_24px_rgba(15,23,42,0.2)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-95"
@@ -1736,7 +1783,7 @@ export default function OnlineSoupRoomPage() {
         </section>
       </main>
 
-      {isHost ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition-[opacity] duration-200 lg:hidden ${stickersOpen ? "pointer-events-none opacity-0" : "opacity-100"}`} style={{ transform: `translate3d(${hostMenuOffset.x}px, ${hostMenuOffset.y}px, 0)` }}>
+      {showRoomActions ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition-[opacity] duration-200 lg:hidden ${stickersOpen ? "pointer-events-none opacity-0" : "opacity-100"}`} style={{ transform: `translate3d(${hostMenuOffset.x}px, ${hostMenuOffset.y}px, 0)` }}>
         {hostActionsOpen && <div className="absolute bottom-full right-1/2 mb-2 flex translate-x-1/2 flex-col items-center gap-2">
           {renderHostActions(true)}
         </div>}
@@ -1745,7 +1792,7 @@ export default function OnlineSoupRoomPage() {
           onPointerMove={(event) => { const drag = hostMenuDragRef.current; if (!drag || drag.pointerId !== event.pointerId) return; const dx = event.clientX - drag.startX; const dy = event.clientY - drag.startY; if (Math.hypot(dx, dy) > 6) { drag.moved = true; setHostActionsOpen(false); } if (!drag.moved) return; setHostMenuOffset({ x: Math.min(0, Math.max(-(window.innerWidth - 60), drag.originX + dx)), y: Math.min(0, Math.max(-(window.innerHeight - 140), drag.originY + dy)) }); }}
           onPointerUp={(event) => { const drag = hostMenuDragRef.current; if (!drag || drag.pointerId !== event.pointerId) return; suppressHostMenuClickRef.current = drag.moved; hostMenuDragRef.current = null; event.currentTarget.releasePointerCapture(event.pointerId); }}
           onPointerCancel={() => { hostMenuDragRef.current = null; }}
-          onClick={() => { if (suppressHostMenuClickRef.current) { suppressHostMenuClickRef.current = false; return; } setHostActionsOpen((open) => !open); }} aria-label="主持人更多操作，可拖动" title="主持人更多操作（按住可拖动）"><Menu size={22} /></button>
+          onClick={() => { if (suppressHostMenuClickRef.current) { suppressHostMenuClickRef.current = false; return; } setHostActionsOpen((open) => !open); }} aria-label="更多操作，可拖动" title="更多操作（按住可拖动）"><Menu size={22} /></button>
       </div> : null}
 
       {managedMember && <Modal onClose={() => { if (!memberManagementLoading) { setManagedMemberId(null); setMemberManagementAction(null); } }}><div className="space-y-4">
@@ -1935,7 +1982,7 @@ function ProgressQuestionCard({
   </article>;
 }
 
-function FloatingAction({ label, onClick, tone = "default" }: { label: string; onClick: () => void; tone?: "default" | "primary" | "amber" | "danger" }) {
+function FloatingAction({ label, onClick, tone = "default", disabled = false }: { label: string; onClick: () => void; tone?: "default" | "primary" | "amber" | "danger"; disabled?: boolean }) {
   const tones = {
     default: "border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 text-slate-700 hover:border-slate-300",
     primary: "border-blue-200 bg-gradient-to-br from-white via-blue-50 to-blue-100 text-blue-700 hover:border-blue-300",
@@ -1948,7 +1995,9 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
     const semanticSplit = label.includes("海龟汤") || label.startsWith("发布") ? 2 : Math.ceil(characters.length / 2);
     lines = [characters.slice(0, semanticSplit).join(""), characters.slice(semanticSplit).join("")];
   }
-  const icon = label === "开始游戏"
+  const icon = label === "准备" || label === "已准备"
+    ? <Check size={30} />
+    : label === "开始游戏"
     ? <Play size={30} fill="currentColor" />
     : label.includes("更换")
       ? <RefreshCw size={30} />
@@ -1963,10 +2012,10 @@ function FloatingAction({ label, onClick, tone = "default" }: { label: string; o
             : label.includes("关闭")
               ? <X size={30} />
               : null;
-  return <button className={`group relative grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-full border px-1 text-center text-[12px] font-black leading-[1.25] ring-1 ring-white/80 transition duration-200 hover:-translate-y-1 hover:scale-[1.03] active:translate-y-0 active:scale-95 ${tones[tone]}`} onClick={onClick} aria-label={label} title={label}><span className="pointer-events-none absolute inset-1 rounded-full border border-white/80" /><span className="pointer-events-none absolute inset-0 grid place-items-center opacity-[0.12] transition duration-200 group-hover:scale-110 group-hover:opacity-[0.18]">{icon}</span><span className="relative drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]">{lines.map((line) => <span className="block" key={line}>{line}</span>)}</span></button>;
+  return <button disabled={disabled} className={`group relative grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-full border px-1 text-center text-[12px] font-black leading-[1.25] ring-1 ring-white/80 transition duration-200 hover:-translate-y-1 hover:scale-[1.03] active:translate-y-0 active:scale-95 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:scale-100 ${tones[tone]}`} onClick={onClick} aria-label={label} title={label}><span className="pointer-events-none absolute inset-1 rounded-full border border-white/80" /><span className="pointer-events-none absolute inset-0 grid place-items-center opacity-[0.12] transition duration-200 group-hover:scale-110 group-hover:opacity-[0.18]">{icon}</span><span className="relative drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]">{lines.map((line) => <span className="block" key={line}>{line}</span>)}</span></button>;
 }
 
-const MessageItem = memo(function MessageItem({ message, currentUserId, senderMuted, isHost, mysteryMode, canRetryAi, canReply, onAnswer, onToggleBestQuestion, bestQuestionSaving, onRetryAi, retryingAi, onRecall, onReply, onCopy, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; senderMuted: boolean; isHost: boolean; mysteryMode: boolean; canRetryAi: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onToggleBestQuestion: (message: OnlineSoupMessage) => void; bestQuestionSaving: boolean; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onCopy: (copyText: string) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
+const MessageItem = memo(function MessageItem({ message, currentUserId, senderMuted, isHost, mysteryMode, impostorMode, canRetryAi, canReply, onAnswer, onToggleBestQuestion, bestQuestionSaving, onRetryAi, retryingAi, onRecall, onReply, onCopy, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; senderMuted: boolean; isHost: boolean; mysteryMode: boolean; impostorMode: boolean; canRetryAi: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onToggleBestQuestion: (message: OnlineSoupMessage) => void; bestQuestionSaving: boolean; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onCopy: (copyText: string) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
@@ -1974,7 +2023,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, senderMu
   if (message.type === "ai_honor" && message.aiHonors) return <OnlineSoupHonorCard honors={message.aiHonors} onOpenUser={onOpenUser} />;
   if (message.type === "ai_advice") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Sparkles size={17} />AI 主持建议</div><ul className="mt-2 space-y-1.5 text-sm leading-6 text-slate-700">{message.content.split("\n").filter(Boolean).map((line) => <li key={line} className="flex gap-2"><span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /><span>{line}</span></li>)}</ul></article>;
   if (message.type === "mystery_narrative") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-white to-blue-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><BookOpen size={17} />故事回应</div><p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-ink">{message.content}</p></article>;
-  if (message.type === "clue") return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-amber-800"><Lightbulb size={16} /> 主持人线索</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></div>;
+  if (message.type === "clue") return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-amber-800"><Lightbulb size={16} /> {impostorMode ? "身份线索" : "主持人线索"}</div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></div>;
   if (message.type === "supplemental_surface") return <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Soup size={16} /> 补充汤面 {(message.contentIndex ?? 0) + 1}</div><div className="content-block mt-2 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></div>;
   if (message.type === "bottom") return <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-indigo-700"><Clapperboard size={17} /> {message.contentIndex === 0 ? "汤底已公布" : `补充汤底 ${message.contentIndex} 已公布`}</div><div className="content-block mt-2 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} />{soupId && <button className="btn btn-primary mt-3" onClick={() => onOpenSoup(soupId)}><Eye size={16} /> 查看完整汤底</button>}</div>;
   if (message.type === "manual") return <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4"><div className="flex items-center gap-2 text-sm font-black text-violet-800"><BookOpen size={16} /> 主持人手册</div><div className="content-block mt-2 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></div>;

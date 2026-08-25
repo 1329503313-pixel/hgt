@@ -5,7 +5,7 @@ export const IMPOSTOR_MAX_PLAYERS = 6;
 export const IMPOSTOR_MISSION_SIZES = [0, 2, 1, 3, 2, 3] as const;
 
 export type ImpostorRole = "detective" | "civilian" | "impostor";
-export type ImpostorPhase = "night" | "clue" | "day_vote" | "mission" | "assassination" | "accusation" | "ended";
+export type ImpostorPhase = "night" | "clue" | "day_ready" | "day_vote" | "mission" | "assassination" | "accusation" | "ended";
 export type ImpostorWinner = "good" | "impostor" | "draw";
 export type ImpostorNightActionType = "chaos" | "isolate" | "guard" | "investigate" | "skip";
 export type ImpostorMissionChoice = "protect" | "sabotage";
@@ -39,6 +39,7 @@ export type ImpostorGameState = {
   successes: number;
   failures: number;
   deadlineAt: string | null;
+  readyUserIds: string[];
   nightEligibleUserIds: string[];
   nightActions: Record<string, ImpostorNightAction>;
   nightChaosCounts: Record<string, number>;
@@ -123,7 +124,17 @@ function beginDayVote(state: ImpostorGameState, now: Date): ImpostorGameState {
   next.nomination = { attempt: 1, lockedUserIds: [], candidateUserIds: candidates, required, ballots: {} };
   next.missionTeamUserIds = [];
   next.missionChoices = {};
-  if (candidates.length === required) return beginMission(next, candidates, now);
+  return next;
+}
+
+function beginDayReady(state: ImpostorGameState): ImpostorGameState {
+  const next = cloneState(state);
+  next.phase = "day_ready";
+  next.deadlineAt = null;
+  next.readyUserIds = [];
+  next.nomination = null;
+  next.missionTeamUserIds = [];
+  next.missionChoices = {};
   return next;
 }
 
@@ -141,13 +152,13 @@ function beginMission(state: ImpostorGameState, team: string[], now: Date): Impo
 function beginNight(state: ImpostorGameState, now: Date, eligibleUserIds: string[]): ImpostorGameState {
   const next = cloneState(state);
   next.phase = "night";
-  next.deadlineAt = deadline(now, 60);
+  next.deadlineAt = deadline(now, 30);
+  next.readyUserIds = [];
   next.nightEligibleUserIds = [...new Set(eligibleUserIds)];
   next.nightActions = {};
   next.nightChaosCounts = {};
   next.isolatedUserIds = [];
   next.investigation = null;
-  if (next.nightEligibleUserIds.length === 0) return settleNight(next, now);
   return next;
 }
 
@@ -188,6 +199,7 @@ export function createImpostorGame(
     successes: 0,
     failures: 0,
     deadlineAt: null,
+    readyUserIds: [],
     nightEligibleUserIds: [],
     nightActions: {},
     nightChaosCounts: {},
@@ -242,7 +254,7 @@ export function submitImpostorNightAction(
   validateNightAction(state, userId, action);
   const next = cloneState(state);
   next.nightActions[userId] = { type: action.type, targetUserIds: [...action.targetUserIds] };
-  return allSubmitted(next, next.nightActions, next.nightEligibleUserIds) ? settleNight(next, now, randomIndex) : next;
+  return next;
 }
 
 function settleNight(state: ImpostorGameState, now: Date, randomIndex: RandomIndex = defaultRandomIndex): ImpostorGameState {
@@ -275,7 +287,17 @@ function settleNight(state: ImpostorGameState, now: Date, randomIndex: RandomInd
     next.clues = {};
     return next;
   }
-  return beginDayVote(next, now);
+  return beginDayReady(next);
+}
+
+export function submitImpostorReady(state: ImpostorGameState, userId: string, now = new Date()) {
+  assertPlayer(state, userId);
+  if (state.phase !== "day_ready") throw new ImpostorGameRuleError("当前不是白天准备阶段");
+  const readyUserIds = state.readyUserIds ?? [];
+  if (readyUserIds.includes(userId)) throw new ImpostorGameRuleError("你已经准备完成");
+  const next = cloneState(state);
+  next.readyUserIds = [...readyUserIds, userId];
+  return next.readyUserIds.length === next.players.length ? beginDayVote(next, now) : next;
 }
 
 export function submitImpostorClue(state: ImpostorGameState, userId: string, content: string | null, now = new Date(), randomIndex: RandomIndex = defaultRandomIndex) {
@@ -296,12 +318,21 @@ function revealClues(state: ImpostorGameState, now: Date, randomIndex: RandomInd
     const content = next.clues[player.userId];
     return content ? [{ role: player.role, content }] : [];
   }), randomIndex);
-  return beginDayVote(next, now);
+  return beginDayReady(next);
 }
 
-export function submitImpostorNomination(state: ImpostorGameState, userId: string, candidateUserIds: string[], now = new Date()) {
+export function submitImpostorNomination(
+  state: ImpostorGameState,
+  userId: string,
+  candidateUserIds: string[],
+  now = new Date(),
+  expectedAttempt?: number,
+) {
   assertPlayer(state, userId);
   if (state.phase !== "day_vote" || !state.nomination) throw new ImpostorGameRuleError("当前不是任务人选投票阶段");
+  if (expectedAttempt != null && expectedAttempt !== state.nomination.attempt) {
+    throw new ImpostorGameRuleError("投票轮次已更新，请按最新候选人重新选择");
+  }
   if (Object.prototype.hasOwnProperty.call(state.nomination.ballots, userId)) throw new ImpostorGameRuleError("你已经提交过本轮投票");
   const choices = [...new Set(candidateUserIds)];
   if (choices.length !== state.nomination.required) throw new ImpostorGameRuleError(`请选择 ${state.nomination.required} 名候选人`);
@@ -400,9 +431,18 @@ export function submitImpostorAssassination(state: ImpostorGameState, userId: st
     : endGame(next, "good", "伪人未能刺杀侦探");
 }
 
-export function submitImpostorAccusation(state: ImpostorGameState, userId: string, targetUserId: string | null, now = new Date()) {
+export function submitImpostorAccusation(
+  state: ImpostorGameState,
+  userId: string,
+  targetUserId: string | null,
+  now = new Date(),
+  expectedAttempt?: number,
+) {
   assertPlayer(state, userId);
   if (state.phase !== "accusation" || !state.accusation) throw new ImpostorGameRuleError("当前不是最终指认阶段");
+  if (expectedAttempt != null && expectedAttempt !== state.accusation.attempt) {
+    throw new ImpostorGameRuleError("公投轮次已更新，请按最新候选人重新选择");
+  }
   if (Object.prototype.hasOwnProperty.call(state.accusation.ballots, userId)) throw new ImpostorGameRuleError("你已经提交过最终指认");
   if (targetUserId === userId) throw new ImpostorGameRuleError("不能指认自己");
   if (targetUserId && !state.accusation.candidateUserIds.includes(targetUserId)) throw new ImpostorGameRuleError("指认目标无效");

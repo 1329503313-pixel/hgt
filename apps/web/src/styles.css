@@ -66,6 +66,7 @@ body {
   color: #374151;
   font-family:
     "PingFang SC", "HarmonyOS Sans", MiSans, "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif;
+  transition: background-color 500ms ease;
 }
 
 .seo-fallback {
@@ -941,6 +942,14 @@ body {
   flex: 0 0 auto;
 }
 
+/* 谁是伪人夜间主题只作用于房间环境背景，不改写任何子元素或语义色。 */
+.online-soup-room-theme { transition: background-color 500ms ease; }
+
+body.impostor-night-theme,
+body.impostor-night-theme .online-soup-room-theme {
+  background-color: #1b1f24 !important;
+}
+
 @media (max-width: 1023px) {
   /* MainLayout 已为固定顶栏预留高度；首项只保留与首页搜索框一致的页面节奏。 */
   .main-layout > section > .top-nav-shell + * {
@@ -1797,6 +1806,7 @@ textarea {
   border-radius: 20px;
   background: #f8fafc;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+  transition: background-color 500ms ease;
 }
 
 .online-soup-mini-chat > header {
@@ -1945,6 +1955,25 @@ textarea {
 .online-soup-mini-event > strong { color: #92400e; font-size: 11px; font-weight: 900; }
 .online-soup-mini-message-body > small { display: inline-flex; margin-top: 5px; border: 1px solid #ddd6fe; border-radius: 999px; background: #f5f3ff; padding: 3px 7px; color: #6d28d9; font-size: 9px; font-weight: 800; }
 .online-soup-mini-system { margin: 8px 0; color: #94a3b8; font-size: 10px; font-weight: 700; text-align: center; }
+
+.online-soup-mini-impostor-action {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #ddd6fe;
+  background: #f5f3ff;
+  padding: 8px 12px;
+  color: #6d28d9;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: left;
+  transition: background-color 500ms ease, border-color 500ms ease, color 500ms ease;
+}
+
+.online-soup-mini-impostor-action > strong { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.online-soup-mini-impostor-action:hover { background: #ede9fe; }
 
 .online-soup-mini-composer {
   display: flex;
