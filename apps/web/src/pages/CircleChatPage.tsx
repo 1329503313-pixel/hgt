@@ -3,7 +3,7 @@ import { ArrowLeft, AtSign, ChevronDown, Gift, Reply, Send, Smile, Users, Wifi, 
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
-import type { CircleMember, CircleMessage, CircleMessageReply, CircleSummary, StickerAsset, StickerSeries } from "../shared/types";
+import type { CircleMember, CircleMessage, CircleMessageReply, CircleRedPacketDetail, CircleSummary, StickerAsset, StickerSeries } from "../shared/types";
 import { PageTopBar } from "../components/PageTopBar";
 import { ListSkeleton } from "../components/Skeletons";
 import { Modal } from "../components/Modal";
@@ -141,6 +141,17 @@ export default function CircleChatPage() {
     setUnclaimedRedPackets(data.packets);
   }
 
+  function applyRedPacketDetail(detail: CircleRedPacketDetail) {
+    setMessages((current) => current.map((message) => message.redPacket?.id === detail.id
+      ? { ...message, redPacket: { ...message.redPacket, claimedCount: detail.claimedCount, myAmount: detail.myAmount } }
+      : message));
+  }
+
+  async function refreshRedPacketMessageStatus(packetId: string) {
+    const data = await api<{ packet: CircleRedPacketDetail }>(`/api/circles/${circleId}/red-packets/${packetId}`, { bypassCache: true, dedupe: false });
+    applyRedPacketDetail(data.packet);
+  }
+
   async function loadInitial() {
     const [detail, page, mentionData, packetData] = await Promise.all([
       api<CircleState>(`/api/circles/${circleId}`, { bypassCache: true, dedupe: false }),
@@ -263,7 +274,9 @@ export default function CircleChatPage() {
         const circle = payload?.circle as { name?: string; avatar?: string; updatedAt?: string } | undefined;
         if (circle) setState((current) => current ? { ...current, circle: { ...current.circle, ...circle } } : current);
       } else if (event === "circle_red_packet_changed") {
+        const packetId = String(payload?.packetId ?? "");
         void refreshUnclaimedRedPackets().catch(() => {});
+        if (packetId) void refreshRedPacketMessageStatus(packetId).catch(() => {});
       } else if (event === "circle_deleted") {
         showToast("该圈子已被删除");
         navigate("/circles", { replace: true });
@@ -555,7 +568,7 @@ export default function CircleChatPage() {
             if (message.type === "red_packet" && message.redPacket) {
               return <div id={`circle-message-${message.id}`} key={message.id} className={`scroll-mt-24 rounded-2xl px-1 py-1 outline-offset-4 transition-[outline-color,background-color] ${highlightedMessageId === message.id ? "bg-red-50 outline outline-2 outline-red-300" : "outline-transparent"}`}>
                 <div className="mb-1 text-[11px] font-bold text-muted">系统红包</div>
-                <CircleRedPacketCard circleId={circleId} packet={message.redPacket} onStatusChange={() => void refreshUnclaimedRedPackets().catch(() => {})} />
+                <CircleRedPacketCard circleId={circleId} packet={message.redPacket} onStatusChange={(detail) => { applyRedPacketDetail(detail); void refreshUnclaimedRedPackets().catch(() => {}); }} />
                 <span className="mt-1 block px-1 text-[10px] text-muted">{new Date(message.createdAt).toLocaleString("zh-CN", { hour12: false })}</span>
               </div>;
             }

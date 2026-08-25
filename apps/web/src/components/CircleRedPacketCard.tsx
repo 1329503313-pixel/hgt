@@ -5,13 +5,22 @@ import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import type { CircleRedPacket, CircleRedPacketDetail } from "../shared/types";
 
-export function CircleRedPacketCard({ circleId, packet, onStatusChange }: { circleId: string; packet: CircleRedPacket; onStatusChange?: () => void }) {
+export function CircleRedPacketCard({ circleId, packet, onStatusChange }: { circleId: string; packet: CircleRedPacket; onStatusChange?: (detail: CircleRedPacketDetail) => void }) {
   const { showToast, triggerRefresh } = useApp();
   const [detail, setDetail] = useState<CircleRedPacketDetail | null>(null);
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<"loading" | "envelope" | "opening" | "result">("loading");
   const closeRef = useRef<HTMLButtonElement>(null);
   const expired = new Date(packet.expiresAt).getTime() <= Date.now();
+  const claimedByMe = (detail?.myAmount ?? packet.myAmount) !== null;
+  const claimedCount = detail?.claimedCount ?? packet.claimedCount;
+  const description = claimedByMe
+    ? "红包已领取"
+    : claimedCount >= packet.packetCount
+      ? "红包已领完"
+      : expired
+        ? "红包已过期"
+        : "领取红包，看看手气";
 
   async function showPacket() {
     setOpen(true);
@@ -20,7 +29,7 @@ export function CircleRedPacketCard({ circleId, packet, onStatusChange }: { circ
       const data = await api<{ packet: CircleRedPacketDetail }>(`/api/circles/${circleId}/red-packets/${packet.id}`, { bypassCache: true, dedupe: false });
       setDetail(data.packet);
       setPhase(data.packet.canClaim ? "envelope" : "result");
-      if (!data.packet.canClaim) onStatusChange?.();
+      if (!data.packet.canClaim) onStatusChange?.(data.packet);
     } catch (error) { setOpen(false); showToast((error as Error).message); }
   }
 
@@ -36,12 +45,13 @@ export function CircleRedPacketCard({ circleId, packet, onStatusChange }: { circ
       ]);
       setDetail(data.packet);
       setPhase("result");
-      onStatusChange?.();
+      onStatusChange?.(data.packet);
     } catch (error) {
       try {
         const data = await api<{ packet: CircleRedPacketDetail }>(`/api/circles/${circleId}/red-packets/${packet.id}`, { bypassCache: true, dedupe: false });
         setDetail(data.packet);
         setPhase(data.packet.canClaim ? "envelope" : "result");
+        if (!data.packet.canClaim) onStatusChange?.(data.packet);
       } catch { setPhase("envelope"); }
       showToast((error as Error).message);
     }
@@ -59,7 +69,7 @@ export function CircleRedPacketCard({ circleId, packet, onStatusChange }: { circ
 
   return <>
     <button type="button" onClick={() => void showPacket()} className={`w-full max-w-[330px] overflow-hidden rounded-xl text-left shadow-[0_8px_24px_rgba(125,45,28,0.18)] transition-transform active:scale-[0.98] ${expired ? "bg-[#c98972]" : "bg-[#e95d3f]"}`}>
-      <span className="flex min-h-[88px] items-center gap-3 px-4 py-3 text-white"><span className="grid h-12 w-10 shrink-0 place-items-center rounded-md border-2 border-[#ffe1a6] bg-[#f8b84e] text-[#fff7df]"><Shell size={25} /></span><span><strong className="block text-[15px]">系统拼手气红包</strong><span className="mt-1 block text-xs text-white/80">{expired ? "红包已过期" : "领取红包，看看手气"}</span></span></span>
+      <span className="flex min-h-[88px] items-center gap-3 px-4 py-3 text-white"><span className="grid h-12 w-10 shrink-0 place-items-center rounded-md border-2 border-[#ffe1a6] bg-[#f8b84e] text-[#fff7df]"><Shell size={25} /></span><span><strong className="block text-[15px]">系统拼手气红包</strong><span className="mt-1 block text-xs text-white/80">{description}</span></span></span>
       <span className="block bg-white px-4 py-1.5 text-[10px] text-slate-500">海龟汤 · 系统红包</span>
     </button>
     {open && createPortal(<div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="系统红包">

@@ -75,6 +75,9 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => {
+    if (session?.snapshot.room.contentType === "impostor") setMessageMode("discussion");
+  }, [session?.snapshot.room.contentType]);
 
   const clearDock = useCallback(() => {
     if (user) localStorage.removeItem(storageKey(user.id));
@@ -193,7 +196,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     try {
       await api(`/api/online-soup/rooms/${session.snapshot.room.id}/messages`, {
         method: "POST",
-        body: { type: messageMode, content: content.trim() }
+        body: { type: session.snapshot.room.contentType === "impostor" ? "discussion" : messageMode, content: content.trim() }
       });
       setContent("");
       await refreshSession();
@@ -275,6 +278,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
         </header>
         <MiniMessageList
           messages={session.snapshot.messages}
+          contentType={session.snapshot.room.contentType}
           currentUserId={user?.id ?? ""}
           mutedUserIds={mutedUserIds}
           onRecall={recallMessage}
@@ -287,13 +291,13 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
           }}
         />
         {session.snapshot.me.role !== "spectator" && !currentMemberMuted && <div className="online-soup-mini-composer">
-          {session.snapshot.me.role === "player" && <button
+          {session.snapshot.me.role === "player" && session.snapshot.room.contentType !== "impostor" && <button
             type="button"
             className={messageMode === "question" ? "is-question" : ""}
             disabled={session.snapshot.room.status !== "playing"}
             onClick={() => setMessageMode((current) => current === "discussion" ? "question" : "discussion")}
           >{messageMode === "question" ? "提问" : "讨论"}</button>}
-          <textarea rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} placeholder={messageMode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
+          <textarea rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} placeholder={session.snapshot.room.contentType !== "impostor" && messageMode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
           <button type="button" className="is-send" disabled={sending || !content.trim()} onClick={() => void sendMessage()} aria-label="发送"><Send size={17} /></button>
         </div>}
         {session.snapshot.me.role !== "spectator" && currentMemberMuted && <div className="flex items-center justify-center gap-1.5 border-t border-red-100 bg-red-50 px-3 py-3 text-xs font-bold text-red-600" role="status"><VolumeX size={15} />你已被房主禁言</div>}
@@ -301,33 +305,33 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     </div>}
     {confirmLeave && session && <Modal onClose={() => setConfirmLeave(false)}>
       <div className="space-y-4 text-center">
-        <div><h2 className="text-xl font-black text-ink">确认退出房间？</h2><p className="mt-2 text-sm leading-6 text-muted">{session.snapshot.me.isHost ? session.snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的本轮会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div>
+        <div><h2 className="text-xl font-black text-ink">确认退出房间？</h2><p className="mt-2 text-sm leading-6 text-muted">{session.snapshot.room.contentType === "impostor" && session.snapshot.room.status === "playing" && session.snapshot.me.role === "player" ? "你是本局游戏者，退出会立即终止本局并按平局结算；你的房间席位随后释放。" : session.snapshot.me.isHost ? session.snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的游戏会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div>
         <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmLeave(false)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => void leaveRoom()}>确认退出</button></div>
       </div>
     </Modal>}
   </OnlineSoupDockContext.Provider>;
 }
 
-function MiniMessageList({ messages, currentUserId, mutedUserIds, onRecall, onCopy, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; currentUserId: string; mutedUserIds: ReadonlySet<string>; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
+function MiniMessageList({ messages, contentType, currentUserId, mutedUserIds, onRecall, onCopy, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; contentType: OnlineSoupSnapshot["room"]["contentType"]; currentUserId: string; mutedUserIds: ReadonlySet<string>; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "end" }); }, [messages]);
   const visibleMessages = messages.filter((message) => showAnswerChangeNotices || !message.targetMessageId).slice(-60);
   return <div className="online-soup-mini-messages">
     {giftTimelineEntries(visibleMessages).map((entry) => entry.kind === "gift_bundle"
       ? <GiftMessageBundle key={entry.key} gifts={entry.gifts} align={entry.gifts[0]?.sender.id === currentUserId ? "right" : "left"} />
-      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} currentUserId={currentUserId} muted={Boolean(entry.message.senderId && mutedUserIds.has(entry.message.senderId))} onRecall={onRecall} onCopy={onCopy} onLocate={onLocate} />)}
+      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} clueLabel={contentType === "impostor" ? "身份线索" : "主持人线索"} currentUserId={currentUserId} muted={Boolean(entry.message.senderId && mutedUserIds.has(entry.message.senderId))} onRecall={onRecall} onCopy={onCopy} onLocate={onLocate} />)}
     <div ref={bottomRef} />
   </div>;
 }
 
-function MiniMessage({ message, currentUserId, muted, onRecall, onCopy, onLocate }: { message: OnlineSoupMessage; currentUserId: string; muted: boolean; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
+function MiniMessage({ message, clueLabel, currentUserId, muted, onRecall, onCopy, onLocate }: { message: OnlineSoupMessage; clueLabel: string; currentUserId: string; muted: boolean; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
   if (message.type === "system") return <p className="online-soup-mini-system">— {message.content} {message.targetMessageId && <button type="button" className="font-black text-primary hover:underline" onClick={() => onLocate(message.targetMessageId!)}>【定位】</button>} —</p>;
   if (message.type === "ai_honor" && message.aiHonors) return <OnlineSoupHonorCard honors={message.aiHonors} compact />;
   if (message.type === "ai_advice") return <article className="online-soup-mini-event is-progress"><strong className="flex items-center gap-1"><Sparkles size={14} />AI 主持建议</strong><p className="whitespace-pre-line">{message.content}</p></article>;
-  if (message.type === "clue") return <article className="online-soup-mini-event is-clue"><strong>主持人线索</strong><p>{message.content}</p></article>;
+  if (message.type === "clue") return <article className="online-soup-mini-event is-clue"><strong>{clueLabel}</strong><p>{message.content}</p></article>;
   if (message.type === "supplemental_surface" || message.type === "bottom" || message.type === "manual") {
     const title = message.type === "supplemental_surface" ? "补充汤面" : message.type === "bottom" ? "汤底已公布" : "主持人手册";
     return <article className="online-soup-mini-event is-progress"><strong>{title}</strong><div dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.content) }} /></article>;

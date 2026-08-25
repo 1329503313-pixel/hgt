@@ -1,4 +1,4 @@
-import { DoorOpen, Hash, Soup, Users } from "lucide-react";
+import { DoorOpen, Hash, Soup, Users, VenetianMask } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { subscribeOnlineSoupInviteStatus } from "../shared/onlineSoupInviteStatus";
@@ -37,8 +37,8 @@ export function OnlineSoupRoomInviteCard({ invite, align = "left" }: { invite: O
       <span className="block space-y-2.5 p-4">
         <span className="block truncate text-base font-black text-ink">{liveInvite.roomName}</span>
         <span className="flex items-center gap-2 text-xs text-muted"><Hash size={14} className="text-primary" /><span>房间号</span><strong className="font-mono text-sm tracking-[.12em] text-primary">{liveInvite.roomCode}</strong></span>
-        <span className="flex min-w-0 items-center gap-2 text-xs text-muted"><Soup size={14} className="shrink-0 text-amber-600" /><span className="shrink-0">当前汤品</span><strong className="truncate text-ink">{liveInvite.soupTitle || "尚未选择海龟汤"}</strong></span>
-        <span className="flex items-center gap-2 text-xs text-muted"><Users size={14} className="text-emerald-600" /><span>房间人数</span><strong className="text-ink" aria-live="polite">{liveInvite.participantCount ?? liveInvite.playerCount + 1}/{liveInvite.participantCapacity ?? liveInvite.playerCapacity + 1}</strong></span>
+        <span className="flex min-w-0 items-center gap-2 text-xs text-muted">{liveInvite.contentType === "impostor" ? <VenetianMask size={14} className="shrink-0 text-violet-600" /> : <Soup size={14} className="shrink-0 text-amber-600" />}<span className="shrink-0">{liveInvite.contentType === "impostor" ? "游戏类型" : "当前汤品"}</span><strong className="truncate text-ink">{liveInvite.contentType === "impostor" ? "谁是伪人" : liveInvite.soupTitle || "尚未选择海龟汤"}</strong></span>
+        <span className="flex items-center gap-2 text-xs text-muted"><Users size={14} className="text-emerald-600" /><span>{liveInvite.contentType === "impostor" ? "游戏者" : "房间人数"}</span><strong className="text-ink" aria-live="polite">{liveInvite.participantCount ?? liveInvite.playerCount + (liveInvite.contentType === "impostor" ? 0 : 1)}/{liveInvite.participantCapacity ?? liveInvite.playerCapacity + (liveInvite.contentType === "impostor" ? 0 : 1)}</strong></span>
         <span className="block rounded-xl bg-blue-50 px-3 py-2 text-center text-xs font-black text-primary">{closed ? "房间已关闭" : "点击免密加入房间"}</span>
       </span>
     </button>

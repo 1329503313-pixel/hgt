@@ -301,6 +301,7 @@ export type OnlineSoupRoomInvite = {
   roomName: string;
   roomCode: string;
   soupTitle: string | null;
+  contentType?: "soup" | "mystery" | "impostor";
   status: OnlineSoupRoomStatus;
   playerCount: number;
   playerCapacity: number;
@@ -329,6 +330,8 @@ export type CircleRedPacket = {
   packetCount: number;
   publishedAt: string;
   expiresAt: string;
+  claimedCount: number;
+  myAmount: number | null;
 };
 
 export type CircleRedPacketDetail = CircleRedPacket & {
@@ -336,9 +339,7 @@ export type CircleRedPacketDetail = CircleRedPacket & {
   source: "one_time" | "periodic";
   status: "published";
   publishAt: string;
-  claimedCount: number;
   claimedShells: number;
-  myAmount: number | null;
   canClaim: boolean;
   claims: Array<{ userId: string; nickname: string; amount: number; claimedAt: string }>;
 };
@@ -473,6 +474,58 @@ export type OnlineSoupRoomStatus = "preparing" | "playing" | "ended" | "closed";
 export type OnlineSoupHostMode = "human" | "ai";
 export type OnlineSoupMemberRole = "host" | "player" | "spectator" | "admin";
 export type OnlineSoupAnswer = "yes" | "no" | "both" | "unknown" | "irrelevant";
+export type ImpostorRole = "detective" | "civilian" | "impostor";
+export type ImpostorPhase = "night" | "clue" | "day_vote" | "mission" | "assassination" | "accusation" | "ended";
+export type OnlineImpostorGame = {
+  gameNumber: number;
+  phase: ImpostorPhase;
+  day: number;
+  missionSize: number;
+  successes: number;
+  failures: number;
+  deadlineAt: string | null;
+  playerSeats: Array<{ userId: string; seat: number }>;
+  isolatedUserIds: string[];
+  nomination: {
+    attempt: number;
+    lockedUserIds: string[];
+    candidateUserIds: string[];
+    required: number;
+    submittedUserIds: string[];
+  } | null;
+  missionTeamUserIds: string[];
+  missionSubmittedUserIds: string[];
+  publicClues: Array<{ role: ImpostorRole; roleLabel: string; content: string }>;
+  accusation: {
+    attempt: number;
+    candidateUserIds: string[];
+    submittedUserIds: string[];
+  } | null;
+  winner: "good" | "impostor" | "draw" | null;
+  endReason: string | null;
+  history: Array<{
+    day: number;
+    isolatedUserIds: string[];
+    missionTeamUserIds: string[];
+    result: "success" | "failure";
+    missionChoices?: Record<string, { choice: "protect" | "sabotage"; automatic: boolean; effectiveChoice: "protect" | "sabotage" }>;
+    nightActions?: Record<string, { type: "chaos" | "isolate" | "guard" | "investigate" | "skip"; targetUserIds: string[] }>;
+  }>;
+  roleReveal: Array<{ userId: string; seat: number; role: ImpostorRole; roleLabel: string }> | null;
+  me: {
+    seat: number;
+    role: ImpostorRole;
+    roleLabel: string;
+    nightActionTypes: Array<"chaos" | "isolate" | "guard" | "investigate" | "skip">;
+    nightSubmitted: boolean;
+    investigation: { targetUserIds: string[]; reportedHasImpostor: boolean } | null;
+    clueSubmitted: boolean;
+    nominationSubmitted: boolean;
+    missionChoiceSubmitted: boolean;
+    accusationSubmitted: boolean;
+    canAssassinate: boolean;
+  } | null;
+};
 
 export type OnlineSoupBackgroundMusic = {
   id: string;
@@ -511,7 +564,7 @@ export type OnlineSoupLobbyRoom = {
   type: "public" | "password";
   status: OnlineSoupRoomStatus;
   hostMode: OnlineSoupHostMode;
-  contentType: "soup" | "mystery";
+  contentType: "soup" | "mystery" | "impostor";
   host: { id: string; nickname: string };
   soupTitle: string | null;
   mysteryTitle: string | null;
@@ -592,7 +645,7 @@ export type OnlineSoupSnapshot = {
     type: "public" | "password";
     status: OnlineSoupRoomStatus;
     hostMode: OnlineSoupHostMode;
-    contentType: "soup" | "mystery";
+    contentType: "soup" | "mystery" | "impostor";
     aiProgress: number | null;
     finishVote: {
       id: string;
@@ -635,10 +688,11 @@ export type OnlineSoupSnapshot = {
       runStatus: "active" | "completed" | "superseded" | "abandoned" | null;
       gameEnded: boolean;
     } | null;
+    impostorGame: OnlineImpostorGame | null;
     createdAt: string;
   };
   me: { role: OnlineSoupMemberRole; isHost: boolean };
-  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; mutedUntil: string | null; joinedAt: string }>;
+  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; isRoomHost: boolean; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; mutedUntil: string | null; joinedAt: string }>;
   messages: OnlineSoupMessage[];
   messagesHasMore: boolean;
   messagesNextCursor: string | null;

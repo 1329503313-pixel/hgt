@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightLeft, ArrowUp, Award, Ban, Bot, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, MessageCircleQuestion, Minimize2, Music, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Star, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowRightLeft, ArrowUp, Award, Ban, Bot, BookOpen, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, MessageCircleQuestion, Minimize2, Music, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Star, Users, VenetianMask, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
@@ -10,6 +10,7 @@ import { StickerKeyboard } from "../components/StickerKeyboard";
 import { canRecallMessage, MessageActionMenu, RecalledMessageNotice } from "../components/MessageActionMenu";
 import { useApp } from "../context/AppContext";
 import { useOnlineSoupDock } from "../context/OnlineSoupDockContext";
+import { isClosedOnlineSoupInvite, isTerminalOnlineSoupJoinError } from "../shared/onlineSoupInviteRecovery";
 import { sanitizeHtml } from "../sanitizeHtml";
 import { connectOnlineSoupSocket } from "../shared/onlineSoupSocket";
 import type { OnlineSoupAnswer, OnlineSoupBackgroundMusic, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
@@ -23,6 +24,7 @@ import { copyTextToClipboard } from "../shared/clipboard";
 import { OnlineSoupHonorCard } from "../components/OnlineSoupHonorCard";
 import { useKeepMessageListPinned } from "../shared/useKeepMessageListPinned";
 import { MutedAvatarIndicator } from "../components/MutedAvatarIndicator";
+import { ImpostorGamePanel } from "../components/ImpostorGamePanel";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -216,6 +218,7 @@ export default function OnlineSoupRoomPage() {
   const [entryPasswordOpen, setEntryPasswordOpen] = useState(false);
   const [entryPassword, setEntryPassword] = useState("");
   const [entryError, setEntryError] = useState<string | null>(null);
+  const [entryRetryError, setEntryRetryError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const messageComposingRef = useRef(false);
@@ -306,6 +309,7 @@ export default function OnlineSoupRoomPage() {
         try {
           const data = await api<OnlineSoupSnapshot>(`/api/online-soup/rooms/${roomId}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
           if (leavingRoomRef.current) return;
+          setEntryRetryError(null);
           const isQuietPass = quietPass;
           setSnapshot((current) => {
             if (!isQuietPass || !current || !historyExpanded.current) return data;
@@ -328,27 +332,34 @@ export default function OnlineSoupRoomPage() {
               if (joined.role === "spectator") showToast("玩家席位已满，已作为旁观者进入");
               const data = await api<OnlineSoupSnapshot>(`/api/online-soup/rooms/${roomId}`, { bypassCache: true, dedupe: false, signal: roomReadAbortRef.current.signal });
               if (leavingRoomRef.current) return;
+              setEntryRetryError(null);
               setSnapshot(data);
             } catch (joinError) {
               if (joinError instanceof ApiError && joinError.code === "PASSWORD_REQUIRED") {
                 setEntryPasswordOpen(true);
-              } else if (joinError instanceof ApiError && joinError.code === "ROOM_FULL") {
-                setEntryError("房间已满");
-              } else if (joinError instanceof ApiError && joinError.code === "ROOM_CLOSED") {
-                setEntryError("房间不存在或已关闭");
+              } else if (isTerminalOnlineSoupJoinError(joinError)) {
+                setEntryError(isClosedOnlineSoupInvite(joinError) ? "房间不存在或已关闭" : "房间已满");
               } else {
-                showToast(joinError instanceof Error ? joinError.message : "加入房间失败");
+                setEntryRetryError(joinError instanceof Error ? joinError.message : "加入房间失败");
               }
             }
           } else if (!quietPass) {
-            setEntryError(error instanceof ApiError && error.code === "ROOM_CLOSED" ? "房间不存在或已关闭" : null);
-            showToast(error instanceof Error ? error.message : "房间加载失败");
+            setEntryError(isClosedOnlineSoupInvite(error) ? "房间不存在或已关闭" : null);
+            if (!isClosedOnlineSoupInvite(error)) {
+              setEntryRetryError(error instanceof Error ? error.message : "房间加载失败");
+            }
           }
         }
         quietPass = true;
       } while (refreshQueued.current && !leavingRoomRef.current);
     } finally { refreshPending.current = false; setLoading(false); }
   }, [inviteToken, roomId, returnFromInvite, showToast]);
+
+  const retryEntry = useCallback(() => {
+    setEntryRetryError(null);
+    setLoading(true);
+    void load();
+  }, [load]);
 
   useEffect(() => {
     if (loadingUser || entryStarted.current) return;
@@ -716,12 +727,13 @@ export default function OnlineSoupRoomPage() {
 
   const isHost = snapshot?.me.isHost ?? false;
   const mysteryMode = snapshot?.room.contentType === "mystery";
+  const impostorMode = snapshot?.room.contentType === "impostor";
   const aiHosted = snapshot?.room.hostMode === "ai";
-  const canHumanHost = isHost && !aiHosted && !mysteryMode;
+  const canHumanHost = isHost && !aiHosted && !mysteryMode && !impostorMode;
   const currentMemberMuted = isActiveMute(snapshot?.members.find((member) => member.id === user?.id)?.mutedUntil);
   const canParticipate = Boolean(snapshot && snapshot.me.role !== "spectator" && snapshot.room.status !== "closed");
   const canDiscuss = canParticipate && !currentMemberMuted;
-  const canQuestion = Boolean(snapshot && snapshot.room.status === "playing" && (mysteryMode ? isHost : snapshot.me.role === "player"));
+  const canQuestion = Boolean(snapshot && !impostorMode && snapshot.room.status === "playing" && (mysteryMode ? isHost : snapshot.me.role === "player"));
   const activeMention = activeMentionAt(content, cursorPosition);
   const mentionCandidates = activeMention && snapshot
     ? snapshot.members
@@ -735,8 +747,8 @@ export default function OnlineSoupRoomPage() {
     if (!canQuestion && mode === "question") setMode("discussion");
   }, [canQuestion, mode]);
   useEffect(() => {
-    setShowQuestionModeGuide(mysteryMode ? isHost : snapshot?.me.role === "player");
-  }, [isHost, mysteryMode, roomId, snapshot?.me.role]);
+    setShowQuestionModeGuide(!impostorMode && (mysteryMode ? isHost : snapshot?.me.role === "player"));
+  }, [impostorMode, isHost, mysteryMode, roomId, snapshot?.me.role]);
   useEffect(() => {
     const music = snapshot?.room.backgroundMusic;
     if (!music) {
@@ -1430,9 +1442,19 @@ export default function OnlineSoupRoomPage() {
     {entryError && <Modal onClose={returnFromInvite}>
       <div className="space-y-4 text-center"><h2 className="text-xl font-black text-ink">{entryError}</h2><p className="text-sm text-muted">暂时无法进入该房间</p><button className="btn btn-primary w-full" onClick={returnFromInvite}>确认</button></div>
     </Modal>}
+    {entryRetryError && !entryPasswordOpen && !entryError && <Modal onClose={returnFromInvite}>
+      <div className="space-y-4 text-center">
+        <div><h2 className="text-xl font-black text-ink">进入房间失败</h2><p className="mt-2 text-sm leading-6 text-muted">{entryRetryError}</p></div>
+        <p className="text-xs leading-5 text-muted">二维码邀请仍然有效，请检查网络后重新尝试。</p>
+        <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={returnFromInvite}>返回大厅</button><button className="btn btn-primary" onClick={retryEntry}>重新进入</button></div>
+      </div>
+    </Modal>}
   </div>;
 
-  const renderHostActions = (mobile = false) => <>
+  const renderHostActions = (mobile = false) => impostorMode ? <>
+    <FloatingAction tone="primary" label="背景音乐" onClick={() => { if (mobile) setHostActionsOpen(false); void openBackgroundMusic(); }} />
+    <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />
+  </> : <>
     {snapshot.room.status === "preparing" && !snapshot.room.soup && !snapshot.room.mystery && <FloatingAction tone="primary" label="选择内容" onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
     {snapshot.room.status !== "playing" && (snapshot.room.soup || snapshot.room.mystery) && <FloatingAction tone="primary" label="开始游戏" onClick={() => { if (mobile) setHostActionsOpen(false); void hostAction("start"); }} />}
     {snapshot.room.status === "preparing" && (snapshot.room.soup || snapshot.room.mystery) && <FloatingAction label={mysteryMode ? "更换谜局" : "更换海龟汤"} onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
@@ -1458,7 +1480,7 @@ export default function OnlineSoupRoomPage() {
         <div className="mx-auto flex max-w-[1492px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 lg:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <UnifiedBackButton compactOnMobile onClick={requestRoomExit} />
-            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]} · {mysteryMode ? <><BookOpen size={12} />谜局</> : aiHosted ? <><Bot size={12} />AI 主持</> : <><Crown size={12} />真人主持</>}</p></div>
+            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {statusLabels[snapshot.room.status]} · {impostorMode ? <><VenetianMask size={12} />谁是伪人</> : mysteryMode ? <><BookOpen size={12} />谜局</> : aiHosted ? <><Bot size={12} />AI 主持</> : <><Crown size={12} />真人主持</>}</p></div>
             {snapshot.room.backgroundMusic && <div className="relative shrink-0">
               {showMusicMuteGuide && <div className="question-mode-guide absolute right-0 top-[calc(100%+10px)] z-50 w-36 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
                 点击可静音
@@ -1494,7 +1516,8 @@ export default function OnlineSoupRoomPage() {
 
       <main className={`online-soup-room-workspace mx-auto grid min-h-0 w-full flex-1 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden px-4 pb-3 pt-3 lg:grid-rows-1 lg:gap-4 lg:px-6 lg:pb-5 lg:pt-5 ${isHost ? "max-w-[1480px] lg:grid-cols-[340px_minmax(0,1fr)_76px_76px]" : "max-w-[1388px] lg:grid-cols-[340px_minmax(0,1fr)_76px]"}`}>
         <aside className="flex max-h-[30dvh] min-h-0 flex-col gap-3 overflow-hidden lg:order-1 lg:max-h-none">
-          {!snapshot.room.hostOnline && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-700">房主暂时离线，房间不会解散。若房主未在 {snapshot.room.hostOfflineDeadline ? new Date(snapshot.room.hostOfflineDeadline).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "15 分钟内"} 返回，本轮将结束、取消当前{mysteryMode ? "谜局" : "选汤"}，并由在线成员接任房主。</div>}
+          {!snapshot.room.hostOnline && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-700">房主暂时离线，房间不会解散。若房主未在 {snapshot.room.hostOfflineDeadline ? new Date(snapshot.room.hostOfflineDeadline).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "15 分钟内"} 返回，系统将由在线成员接任房主。</div>}
+          {impostorMode && <ImpostorGamePanel roomId={roomId} game={snapshot.room.impostorGame} members={snapshot.members} currentUserId={user?.id ?? ""} currentMemberRole={snapshot.me.role} isHost={isHost} onChanged={() => load()} showToast={showToast} />}
           {mysteryMode && !snapshot.room.mystery && <section className="card shrink-0 p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><h2 className="text-sm font-black text-ink">尚未选择谜局</h2><p className="mt-1 text-xs leading-5 text-muted">选择谜局并决定继续存档或重新开始后即可开局。</p></div>
@@ -1521,7 +1544,7 @@ export default function OnlineSoupRoomPage() {
               </>}
             </div>}
           </section>}
-          {!mysteryMode && <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded && snapshot.room.soup ? "flex-1" : "shrink-0"}`}>
+          {!mysteryMode && !impostorMode && <section className={`card flex min-h-0 flex-col overflow-hidden ${soupExpanded && snapshot.room.soup ? "flex-1" : "shrink-0"}`}>
             <div className="shrink-0 px-3 py-2.5">
               <div className="flex items-center gap-2">
                 {isHost && snapshot.room.status === "preparing" ? <button
@@ -1630,7 +1653,7 @@ export default function OnlineSoupRoomPage() {
         </aside>
 
         <section className="online-soup-room-member-rail hidden min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:flex lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
-          {snapshot.members.map((member) => { const canManage = isHost && member.id !== user?.id; const muted = isActiveMute(member.mutedUntil); return <MentionableAvatarButton key={member.id} canMention={member.id !== user?.id && Boolean(canDiscuss)} onMention={() => requestMention(member.id, member.nickname)} onOpen={() => openMemberProfile(member.id)} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.role === "host" ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} ariaLabel={canManage ? `管理成员${member.nickname}${muted ? "，已禁言" : ""}，长按@他` : `查看${member.nickname}的主页${muted ? "，已禁言" : ""}，长按@他`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.role === "host" && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}{muted && <MutedAvatarIndicator size="sm" />}</MentionableAvatarButton>; })}
+          {snapshot.members.map((member) => { const canManage = isHost && member.id !== user?.id; const muted = isActiveMute(member.mutedUntil); return <MentionableAvatarButton key={member.id} canMention={member.id !== user?.id && Boolean(canDiscuss)} onMention={() => requestMention(member.id, member.nickname)} onOpen={() => openMemberProfile(member.id)} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.isRoomHost ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} ariaLabel={canManage ? `管理成员${member.nickname}${muted ? "，已禁言" : ""}，长按@他` : `查看${member.nickname}的主页${muted ? "，已禁言" : ""}，长按@他`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.isRoomHost && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}{muted && <MutedAvatarIndicator size="sm" />}</MentionableAvatarButton>; })}
           <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
         </section>
 
@@ -1641,7 +1664,7 @@ export default function OnlineSoupRoomPage() {
         </aside>}
 
         <section className="card relative flex min-h-0 flex-col overflow-hidden lg:order-2">
-          <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">{mysteryMode ? "讨论、房主行动和故事回应会实时同步" : "讨论、正式提问、主持人回复和线索会实时同步"}</p></div>
+          <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">{impostorMode ? "游戏者自由讨论；旁观者保持只读" : mysteryMode ? "讨论、房主行动和故事回应会实时同步" : "讨论、正式提问、主持人回复和线索会实时同步"}</p></div>
           <div className="relative min-h-0 flex-1">
             <div ref={messagesRef} className={`h-full space-y-3 overflow-y-auto overscroll-contain px-4 pt-4 ${showScrollToLatest ? "pb-16" : "pb-3"}`} onScroll={updateMessagesScrollPosition}>
               {snapshot.messagesHasMore && <button className="mx-auto block rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-blue-50 disabled:opacity-50" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
@@ -1680,7 +1703,7 @@ export default function OnlineSoupRoomPage() {
             {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-40 border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></span></button>)}</div></div>}
             {replyingTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-2"><Reply size={16} className="shrink-0 text-primary" /><p className="min-w-0 flex-1 truncate text-xs text-muted"><span className="font-bold text-primary">回复 {replyingTo.senderName ?? "已注销用户"}：</span>{onlineMessagePreview(replyingTo)}</p><button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-white hover:text-ink" onClick={() => setReplyingTo(null)} aria-label="取消回复"><X size={16} /></button></div>}
             <div className="flex items-end gap-1">
-              {(mysteryMode ? isHost : snapshot.me.role === "player") && <div className="relative shrink-0">
+              {!impostorMode && (mysteryMode ? isHost : snapshot.me.role === "player") && <div className="relative shrink-0">
                 {showQuestionModeGuide && <div className="question-mode-guide absolute bottom-[calc(100%+14px)] left-0 z-50 w-56 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
                   {mysteryMode ? "房主可点击此处切换为正式行动" : "如需要提问，请点击此按钮变更为提问"}
                   <button type="button" className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full text-slate-300 transition hover:bg-white/10 hover:text-white" onClick={() => setShowQuestionModeGuide(false)} aria-label="关闭提问指引"><X size={14} /></button>
@@ -1703,7 +1726,7 @@ export default function OnlineSoupRoomPage() {
                   <ArrowRightLeft size={14} className="shrink-0 transition-transform duration-200 group-hover:rotate-180" />
                 </button>
               </div>}
-              <textarea ref={messageInputRef} className="field room-message-input min-w-0 flex-1 resize-none" rows={1} maxLength={1000} value={content} onChange={(event) => { setContent(event.target.value); if ((event.nativeEvent as InputEvent).isComposing) return; const cursor = event.target.selectionStart ?? event.target.value.length; setCursorPosition(cursor); if (stickersOpen && activeMentionAt(event.target.value, cursor)) setStickersOpen(false); }} onCompositionStart={() => { messageComposingRef.current = true; }} onCompositionEnd={(event) => { messageComposingRef.current = false; const cursor = event.currentTarget.selectionStart ?? event.currentTarget.value.length; setContent(event.currentTarget.value); setCursorPosition(cursor); }} onFocus={() => { setStickersOpen(false); isNearMessagesBottom.current = true; window.requestAnimationFrame(() => scrollToLatestMessage("auto")); }} onClick={(event) => setCursorPosition(event.currentTarget.selectionStart ?? content.length)} onKeyUp={(event) => { if (!event.nativeEvent.isComposing) setCursorPosition(event.currentTarget.selectionStart ?? content.length); }} placeholder={mysteryMode && mode === "question" ? "描述你的正式行动…" : isHost && !mysteryMode ? "主持人发言…" : mode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} />
+              <textarea ref={messageInputRef} className="field room-message-input min-w-0 flex-1 resize-none" rows={1} maxLength={1000} value={content} onChange={(event) => { setContent(event.target.value); if ((event.nativeEvent as InputEvent).isComposing) return; const cursor = event.target.selectionStart ?? event.target.value.length; setCursorPosition(cursor); if (stickersOpen && activeMentionAt(event.target.value, cursor)) setStickersOpen(false); }} onCompositionStart={() => { messageComposingRef.current = true; }} onCompositionEnd={(event) => { messageComposingRef.current = false; const cursor = event.currentTarget.selectionStart ?? event.currentTarget.value.length; setContent(event.currentTarget.value); setCursorPosition(cursor); }} onFocus={() => { setStickersOpen(false); isNearMessagesBottom.current = true; window.requestAnimationFrame(() => scrollToLatestMessage("auto")); }} onClick={(event) => setCursorPosition(event.currentTarget.selectionStart ?? content.length)} onKeyUp={(event) => { if (!event.nativeEvent.isComposing) setCursorPosition(event.currentTarget.selectionStart ?? content.length); }} placeholder={impostorMode ? "自由讨论…" : mysteryMode && mode === "question" ? "描述你的正式行动…" : isHost && !mysteryMode ? "主持人发言…" : mode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} />
               <ChatComposerIconButton tone={stickersOpen ? "active" : "neutral"} onClick={() => { if (!stickersOpen) messageInputRef.current?.blur(); setStickersOpen((open) => !open); setHostActionsOpen(false); }} aria-label="表情包" title="表情包"><Smile size={23} /></ChatComposerIconButton>
               <ChatComposerIconButton tone="send" disabled={sending || (mode === "question" && !canQuestion)} onClick={sendMessage} aria-label="发送" title="发送"><Send size={22} /></ChatComposerIconButton>
             </div>
@@ -1735,21 +1758,24 @@ export default function OnlineSoupRoomPage() {
             {memberManagementAction === "kick"
               ? `确认将「${managedMember.nickname}」踢出房间？该成员的当前席位会立即释放。`
               : memberManagementAction === "transfer"
-                ? `确认将房主转让给「${managedMember.nickname}」？转让后你将变为${managedMember.role === "player" ? "玩家" : "旁观者"}，对方将立即获得主持权限。`
+                ? impostorMode
+                  ? `确认将房主转让给「${managedMember.nickname}」？双方当前的游戏者或旁观者身份不会改变，对方将获得房间管理权限。`
+                  : `确认将房主转让给「${managedMember.nickname}」？转让后你将变为${managedMember.role === "player" ? "玩家" : "旁观者"}，对方将立即获得主持权限。`
                 : `请选择禁言「${managedMember.nickname}」的时长。禁言期间无法发送讨论、正式提问或表情。`}
           </div>
           {memberManagementAction === "mute" ? <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary min-h-11" disabled={memberManagementLoading} onClick={() => void manageMember("mute", 1)}>1 分钟</button><button className="btn min-h-11 bg-red-500 text-white hover:bg-red-600" disabled={memberManagementLoading} onClick={() => void manageMember("mute", 5)}>{memberManagementLoading ? "处理中…" : "5 分钟"}</button><button className="btn btn-secondary col-span-2 min-h-11" disabled={memberManagementLoading} onClick={() => setMemberManagementAction(null)}>返回</button></div> : <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={memberManagementLoading} onClick={() => setMemberManagementAction(null)}>返回</button><button className={`btn text-white ${memberManagementAction === "kick" ? "bg-red-500 hover:bg-red-600" : "bg-violet-600 hover:bg-violet-700"}`} disabled={memberManagementLoading} onClick={() => void manageMember(memberManagementAction)}>{memberManagementLoading ? "处理中…" : memberManagementAction === "kick" ? "确认踢出" : "确认转让"}</button></div>}
         </> : <>
           <button className="btn w-full justify-start bg-blue-50 text-primary hover:bg-blue-100" onClick={() => { const targetId = managedMember.id; setManagedMemberId(null); navigate(`/users/${targetId}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } }); }}><Eye size={17} />查看主页</button>
           <button className="btn w-full justify-start bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => setMemberManagementAction("transfer")}><ArrowRightLeft size={17} />转让房主</button>
-          <button className="btn w-full justify-start bg-red-50 text-red-600 hover:bg-red-100" onClick={() => setMemberManagementAction("kick")}><LogOut size={17} />踢出房间</button>
+          {!(impostorMode && snapshot.room.status === "playing" && managedMember.role === "player") && <button className="btn w-full justify-start bg-red-50 text-red-600 hover:bg-red-100" onClick={() => setMemberManagementAction("kick")}><LogOut size={17} />踢出房间</button>}
+          {impostorMode && snapshot.room.status === "playing" && managedMember.role === "player" && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-700">对局中的游戏者席位已锁定，需先由房主终止本局。</p>}
           {isActiveMute(managedMember.mutedUntil)
             ? <button className="btn w-full justify-start bg-emerald-50 text-emerald-700 hover:bg-emerald-100" disabled={memberManagementLoading} onClick={() => void manageMember("unmute")}><Volume2 size={17} />{memberManagementLoading ? "处理中…" : "取消禁言"}</button>
             : <button className="btn w-full justify-start bg-amber-50 text-amber-700 hover:bg-amber-100" onClick={() => setMemberManagementAction("mute")}><VolumeX size={17} />禁言</button>}
           <button className="btn btn-secondary w-full" onClick={() => setManagedMemberId(null)}>取消</button>
         </>}
       </div></Modal>}
-      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2><p className="text-xs font-bold text-muted">主持人和玩家 {(groupedMembers.host ? 1 : 0) + groupedMembers.players.length}/{snapshot.room.participantCapacity} 人</p>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} canManage={false} />}<div><p className="mb-2 text-xs font-bold text-muted">玩家 {groupedMembers.players.length}/{snapshot.room.playerCapacity}</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => { setMembersOpen(false); requestRoomExit(); }}><LogOut size={16} /> 房间退出选项</button></div></Modal>}
+      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2><p className="text-xs font-bold text-muted">{impostorMode ? "游戏者" : "主持人和玩家"} {(groupedMembers.host ? 1 : 0) + groupedMembers.players.length}/{snapshot.room.participantCapacity} 人</p>{groupedMembers.host && <MemberRow member={groupedMembers.host} onOpenUser={openMemberProfile} canManage={false} />}<div><p className="mb-2 text-xs font-bold text-muted">{impostorMode ? "游戏者" : "玩家"} {groupedMembers.players.length}/{snapshot.room.playerCapacity}</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => { setMembersOpen(false); requestRoomExit(); }}><LogOut size={16} /> 房间退出选项</button></div></Modal>}
       {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
       {backgroundMusicOpen && <Modal onClose={() => { if (backgroundMusicSavingId === null) setBackgroundMusicOpen(false); }}><div className="space-y-4">
         <div><h2 className="flex items-center gap-2 text-xl font-black text-ink"><Music size={20} className="text-primary" />背景音乐</h2><p className="mt-1 text-sm leading-6 text-muted">选择后全房间按同一进度循环播放。每位成员可通过顶部喇叭单独静音。</p></div>
@@ -1775,7 +1801,7 @@ export default function OnlineSoupRoomPage() {
         <div className="grid grid-cols-2 gap-2"><button type="button" className="btn btn-secondary min-h-11" disabled={submittingFinishVote} onClick={() => void submitFinishVote("continue")}>继续游戏</button><button type="button" className="btn btn-primary min-h-11" disabled={submittingFinishVote} onClick={() => void submitFinishVote("view_bottom")}>{submittingFinishVote ? <LoaderCircle size={16} className="animate-spin" /> : <Eye size={16} />}查看汤底</button></div>
       </div></Modal>}
       {exitChoiceOpen && <Modal onClose={() => setExitChoiceOpen(false)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">离开完整房间</h2><p className="mt-2 text-sm leading-6 text-muted">收起后会继续保持在线，并在桌面右下角接收聊天、线索和进度。</p></div><button className="btn btn-primary !hidden w-full lg:!flex" onClick={minimizeCurrentRoom}><Minimize2 size={17} />收起到右下角</button><button className="btn w-full bg-red-50 text-red-600 hover:bg-red-100" onClick={() => { setExitChoiceOpen(false); setConfirmAction("leave"); }}><LogOut size={17} />{isHost ? "退出房间" : "退出并释放席位"}</button><button className="btn btn-secondary w-full" onClick={() => setExitChoiceOpen(false)}>取消</button></div></Modal>}
-      {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "end-round" ? "确认关闭本轮？" : confirmAction === "close" ? "确认解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "end-round" ? "关闭后将结束本轮推理，但不会解散房间，也不会自动发布尚未公布的汤底。" : confirmAction === "close" ? "解散后所有成员都会退出，此操作无法撤销。" : isHost ? snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的本轮会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "end-round") void endRound(); else if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{confirmAction === "end-round" ? "关闭本轮" : confirmAction === "close" ? "确认解散" : "确认退出"}</button></div></div></Modal>}
+      {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "end-round" ? "确认关闭本轮？" : confirmAction === "close" ? "确认解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "end-round" ? "关闭后将结束本轮推理，但不会解散房间，也不会自动发布尚未公布的汤底。" : confirmAction === "close" ? "解散后所有成员都会退出，此操作无法撤销。" : impostorMode && snapshot.room.status === "playing" && snapshot.me.role === "player" ? "你是本局游戏者，退出会立即终止本局并按平局结算；你的房间席位随后释放。" : isHost ? snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的游戏会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "end-round") void endRound(); else if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{confirmAction === "end-round" ? "关闭本轮" : confirmAction === "close" ? "确认解散" : "确认退出"}</button></div></div></Modal>}
       {clueOpen && <Modal onClose={closeClueModal} hideClose={clueSaving}><div className="space-y-4">
         <div><h2 className="text-xl font-black text-ink">{mysteryMode ? "记录线索" : "发布主持人线索"}</h2><p className="mt-1 text-sm leading-6 text-muted">{mysteryMode ? "线索会保存到当前谜局存档，继续游戏时仍可查看。" : "线索发布后，房间内所有成员都能看到。"}</p></div>
         <label className="block"><span className="mb-2 block text-sm font-black text-ink">线索内容</span><textarea autoFocus className="field min-h-36 w-full resize-y text-base leading-6" maxLength={2000} value={clue} disabled={clueSaving} onChange={(event) => setClue(event.target.value)} placeholder={mysteryMode ? "输入需要记录的线索…" : "输入给所有玩家看的线索…"} /></label>
@@ -1847,7 +1873,7 @@ function HonorCandidateAvatar({ avatar, nickname, small = false }: { avatar: str
 
 function MemberRow({ member, onOpenUser, canManage }: { member: OnlineSoupSnapshot["members"][number]; onOpenUser: (id: string) => void; canManage: boolean }) {
   const muted = isActiveMute(member.mutedUntil);
-  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="relative shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={`${canManage ? `管理成员${member.nickname}` : `查看${member.nickname}的主页`}${muted ? "，已禁言" : ""}`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}{muted && <MutedAvatarIndicator size="sm" />}</button><div className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></div>{member.role === "host" && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 主持人</span>}{muted && <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600"><VolumeX size={12} />禁言中</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
+  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="relative shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={`${canManage ? `管理成员${member.nickname}` : `查看${member.nickname}的主页`}${muted ? "，已禁言" : ""}`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}{muted && <MutedAvatarIndicator size="sm" />}</button><div className="min-w-0 flex-1"><VipIdentity nickname={member.nickname} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></div>{member.isRoomHost && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 房主</span>}{muted && <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600"><VolumeX size={12} />禁言中</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
 }
 
 function ProgressQuestionCard({

@@ -115,6 +115,7 @@ import onlineSoupRouter, {
 import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.js";
 import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
+import { IMPOSTOR_MAX_PLAYERS } from "./impostorGame.js";
 import { registerVipRoutes, syncExpiredVipRoles } from "./vip.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import {
@@ -3024,7 +3025,7 @@ const circleMessageSchema = z.object({
 async function onlineSoupRoomInvite(roomId: string, inviteToken: string) {
   if (!validRoomInviteToken(roomId, inviteToken)) return null;
   const [[room]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT r.id, r.room_code, r.name, r.status, s.title AS soup_title,
+    `SELECT r.id, r.room_code, r.name, r.status, r.content_type, r.host_mode, s.title AS soup_title,
        (SELECT COUNT(*) FROM online_soup_members m
         WHERE m.room_id = r.id AND m.member_role = 'player' AND m.is_active = 1) AS player_count
      FROM online_soup_rooms r
@@ -3033,17 +3034,21 @@ async function onlineSoupRoomInvite(roomId: string, inviteToken: string) {
     [roomId]
   );
   if (!room || String(room.status) === "closed") return null;
+  const impostorRoom = String(room.content_type ?? "soup") === "impostor";
+  const aiHosted = String(room.host_mode ?? "human") === "ai";
+  const playerCount = Number(room.player_count ?? 0);
   return {
     roomId: String(room.id),
     inviteToken,
     roomName: String(room.name),
     roomCode: String(room.room_code),
     soupTitle: room.soup_title ? String(room.soup_title) : null,
+    contentType: String(room.content_type ?? "soup"),
     status: String(room.status),
-    playerCount: Number(room.player_count ?? 0),
-    playerCapacity: ONLINE_SOUP_PLAYER_CAPACITY,
-    participantCount: Number(room.player_count ?? 0) + 1,
-    participantCapacity: ONLINE_SOUP_PARTICIPANT_CAPACITY
+    playerCount,
+    playerCapacity: impostorRoom ? IMPOSTOR_MAX_PLAYERS : ONLINE_SOUP_PLAYER_CAPACITY,
+    participantCount: impostorRoom ? playerCount : playerCount + (aiHosted ? 0 : 1),
+    participantCapacity: impostorRoom ? IMPOSTOR_MAX_PLAYERS : aiHosted ? ONLINE_SOUP_PLAYER_CAPACITY : ONLINE_SOUP_PARTICIPANT_CAPACITY
   };
 }
 
@@ -3095,11 +3100,19 @@ function parseCircleMentions(value: unknown): Array<{ userId: string; nickname: 
   }
 }
 
-function parseCircleRedPacket(value: unknown) {
+function parseCircleRedPacket(value: unknown, status?: { claimedCount?: unknown; myAmount?: unknown }) {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
     if (!parsed || typeof parsed.packetId !== "string") return null;
-    return { id: parsed.packetId, totalShells: Number(parsed.totalShells), packetCount: Number(parsed.packetCount), publishedAt: String(parsed.publishedAt), expiresAt: String(parsed.expiresAt) };
+    return {
+      id: parsed.packetId,
+      totalShells: Number(parsed.totalShells),
+      packetCount: Number(parsed.packetCount),
+      publishedAt: String(parsed.publishedAt),
+      expiresAt: String(parsed.expiresAt),
+      claimedCount: Number(status?.claimedCount ?? 0),
+      myAmount: status?.myAmount == null ? null : Number(status.myAmount)
+    };
   } catch { return null; }
 }
 
@@ -3148,7 +3161,10 @@ function circleMessagePayload(row: mysql.RowDataPacket) {
     roomInvite: !recalledAt && messageType === "room_invite" ? parseRoomInvite(row.content) : null,
     soupShare: !recalledAt && messageType === "soup_share" ? parseSoupShare(row.content) : null,
     gift: !recalledAt && messageType === "gift" ? parseGiftMessage(row.content) : null,
-    redPacket: !recalledAt && messageType === "red_packet" ? parseCircleRedPacket(row.content) : null,
+    redPacket: !recalledAt && messageType === "red_packet" ? parseCircleRedPacket(row.content, {
+      claimedCount: row.red_packet_claimed_count,
+      myAmount: row.red_packet_my_amount
+    }) : null,
     mentions: recalledAt ? [] : parseCircleMentions(row.mentions_json),
     replyTo: row.reply_id ? {
       id: String(row.reply_id),
@@ -3409,7 +3425,7 @@ app.get("/api/circles/:id/messages", async (req, res) => {
   const requestedLimit = Number(req.query.limit ?? 100);
   const limit = Math.min(100, Math.max(10, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 100));
   const before = String(req.query.before ?? "").trim();
-  const params: unknown[] = [req.params.id];
+  const params: unknown[] = [user.id, req.params.id];
   let beforeClause = "";
   if (before) {
     const [[cursor]] = await pool.query<mysql.RowDataPacket[]>(
@@ -3424,6 +3440,8 @@ app.get("/api/circles/:id/messages", async (req, res) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT m.*, u.nickname AS sender_nickname, u.experience AS sender_experience, u.role AS sender_role,
        u.vip_growth_value AS sender_vip_growth_value, u.vip_expires_at AS sender_vip_expires_at, u.vip_legacy_active AS sender_vip_legacy_active,
+       (SELECT COUNT(*) FROM circle_red_packet_claims packet_claim WHERE packet_claim.packet_id = m.red_packet_id) AS red_packet_claimed_count,
+       (SELECT mine.amount FROM circle_red_packet_claims mine WHERE mine.packet_id = m.red_packet_id AND mine.user_id = ? LIMIT 1) AS red_packet_my_amount,
        NULL AS sender_avatar, u.avatar IS NOT NULL AS sender_has_avatar,
        u.equipped_badge_key AS sender_badge_key, u.equipped_badge_icon_url AS sender_badge_icon_url,
        reply.id AS reply_id, reply.message_sequence AS reply_sequence,
@@ -6363,6 +6381,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
     [trendRows],
     [activityRows],
     [activityDailyRows],
+    [stableActivityDailyRows],
     [typeRows],
     [soupStateRows],
     [behaviorRows],
@@ -6403,6 +6422,20 @@ app.get("/api/admin/dashboard", async (req, res) => {
       [rangeStartKey, todayKey]
     ),
     pool.query<mysql.RowDataPacket[]>(
+      `SELECT DATE_FORMAT(current_day.login_date, '%Y-%m-%d') AS day_key,
+        COUNT(DISTINCT current_day.user_id) AS stable_count
+       FROM user_login_days current_day
+       INNER JOIN user_login_days previous_day
+         ON previous_day.user_id = current_day.user_id
+        AND previous_day.login_date = DATE_SUB(current_day.login_date, INTERVAL 1 DAY)
+       INNER JOIN user_login_days two_days_ago
+         ON two_days_ago.user_id = current_day.user_id
+        AND two_days_ago.login_date = DATE_SUB(current_day.login_date, INTERVAL 2 DAY)
+       WHERE current_day.login_date >= ? AND current_day.login_date <= ?
+       GROUP BY current_day.login_date ORDER BY current_day.login_date`,
+      [rangeStartKey, todayKey]
+    ),
+    pool.query<mysql.RowDataPacket[]>(
       "SELECT type AS name, COUNT(*) AS count FROM soups GROUP BY type ORDER BY count DESC, type ASC"
     ),
     pool.query<mysql.RowDataPacket[]>(
@@ -6439,6 +6472,7 @@ app.get("/api/admin/dashboard", async (req, res) => {
 
   const trendByDate = new Map(trendRows.map((row) => [String(row.day_key), row]));
   const activityByDate = new Map(activityDailyRows.map((row) => [String(row.day_key), Number(row.active_count ?? 0)]));
+  const stableActivityByDate = new Map(stableActivityDailyRows.map((row) => [String(row.day_key), Number(row.stable_count ?? 0)]));
   const behaviorByDate = new Map<string, Record<string, number>>();
   const behaviorTotals = new Map<string, number>();
   for (const row of behaviorRows) {
@@ -6461,12 +6495,15 @@ app.get("/api/admin/dashboard", async (req, res) => {
   let usersCreatedAfterDay = 0;
   const activityDaily = [...trend].reverse().map(({ date, users: newUsers }) => {
     const activeUsers = activityByDate.get(date) ?? 0;
+    const stableUsers = stableActivityByDate.get(date) ?? 0;
     const totalUsersAtDayEnd = Math.max(0, userMetric.total - usersCreatedAfterDay);
     usersCreatedAfterDay += newUsers;
     return {
       date,
       users: activeUsers,
-      rate: totalUsersAtDayEnd > 0 ? Number((activeUsers / totalUsersAtDayEnd * 100).toFixed(1)) : null
+      rate: totalUsersAtDayEnd > 0 ? Number((activeUsers / totalUsersAtDayEnd * 100).toFixed(1)) : null,
+      stableUsers,
+      stableRate: totalUsersAtDayEnd > 0 ? Number((stableUsers / totalUsersAtDayEnd * 100).toFixed(1)) : null
     };
   }).reverse();
   const activity = activityRows[0] ?? {};
@@ -7127,16 +7164,24 @@ app.delete("/api/admin/notices/:id", async (req, res) => {
 app.get("/api/admin/users", async (req, res) => {
   if (!(await requireBackofficeAdmin(req, res))) return;
   const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
-  const loggedToday = req.query.loggedToday === "yes" || req.query.loggedToday === "no"
+  const loggedToday = req.query.loggedToday === "yes" || req.query.loggedToday === "no" || req.query.loggedToday === "online"
     ? String(req.query.loggedToday)
     : "all";
+  const currentlyOnlineUserIds = [...visiblyOnlineUsers];
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (keyword) {
     conditions.push("(u.nickname LIKE ? OR u.username LIKE ?)");
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
-  if (loggedToday !== "all") {
+  if (loggedToday === "online") {
+    if (currentlyOnlineUserIds.length === 0) {
+      conditions.push("1 = 0");
+    } else {
+      conditions.push(`u.id IN (${currentlyOnlineUserIds.map(() => "?").join(", ")})`);
+      params.push(...currentlyOnlineUserIds);
+    }
+  } else if (loggedToday !== "all") {
     conditions.push(`${loggedToday === "yes" ? "" : "NOT "}EXISTS (
       SELECT 1 FROM user_login_days uld
       WHERE uld.user_id = u.id
@@ -7164,7 +7209,7 @@ app.get("/api/admin/users", async (req, res) => {
   const sortColumn = sortColumns[String(req.query.sortBy ?? "createdAt")] ?? sortColumns.createdAt;
   const sortOrder = req.query.sortOrder === "asc" ? "ASC" : "DESC";
   const prioritizeOnline = sortColumn === sortColumns.lastLoginAt && sortOrder === "DESC";
-  const onlineUserIds = prioritizeOnline ? [...visiblyOnlineUsers] : [];
+  const onlineUserIds = prioritizeOnline ? currentlyOnlineUserIds : [];
   const onlineOrderClause = prioritizeOnline
     ? onlineUserIds.length > 0
       ? `CASE WHEN u.id IN (${onlineUserIds.map(() => "?").join(", ")}) THEN 0 ELSE 1 END ASC, `

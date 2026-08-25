@@ -917,7 +917,7 @@ export async function initDatabase() {
       name VARCHAR(50) NOT NULL,
       host_id VARCHAR(64) NOT NULL,
       host_mode ENUM('human','ai') NOT NULL DEFAULT 'human',
-      content_type ENUM('soup','mystery') NOT NULL DEFAULT 'soup',
+      content_type ENUM('soup','mystery','impostor') NOT NULL DEFAULT 'soup',
       room_type ENUM('public','password') NOT NULL DEFAULT 'public',
       password_hash VARCHAR(128) NULL,
       status ENUM('preparing','playing','ended','closed') NOT NULL DEFAULT 'preparing',
@@ -1015,6 +1015,24 @@ export async function initDatabase() {
       INDEX idx_online_finish_vote_room (room_id, status),
       CONSTRAINT fk_online_finish_vote_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE CASCADE,
       CONSTRAINT fk_online_finish_vote_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // “谁是伪人”使用独立、版本化的服务端状态快照。完整快照包含身份与秘密行动，
+  // 只允许由服务端按当前查看者裁剪后下发，禁止直接暴露给客户端。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_impostor_games (
+      id VARCHAR(64) PRIMARY KEY,
+      room_id VARCHAR(64) NOT NULL,
+      game_number INT UNSIGNED NOT NULL,
+      status ENUM('playing','ended') NOT NULL DEFAULT 'playing',
+      state_json JSON NOT NULL,
+      started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      ended_at DATETIME NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_online_impostor_room_number (room_id, game_number),
+      INDEX idx_online_impostor_room_status (room_id, status, game_number),
+      CONSTRAINT fk_online_impostor_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await ensureColumn("users", "vip_expires_at", "vip_expires_at DATETIME NULL AFTER role");
@@ -1161,7 +1179,16 @@ export async function initDatabase() {
     "host_mode",
     "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER host_id"
   );
-  await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery') NOT NULL DEFAULT 'soup' AFTER host_mode");
+  await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery','impostor') NOT NULL DEFAULT 'soup' AFTER host_mode");
+  const [[onlineSoupContentType]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_rooms' AND COLUMN_NAME = 'content_type'`
+  );
+  if (!String(onlineSoupContentType?.COLUMN_TYPE ?? "").includes("'impostor'")) {
+    await pool.query(
+      "ALTER TABLE online_soup_rooms MODIFY COLUMN content_type ENUM('soup','mystery','impostor') NOT NULL DEFAULT 'soup'"
+    );
+  }
   await ensureColumn("online_soup_rooms", "current_mystery_id", "current_mystery_id VARCHAR(64) NULL AFTER current_soup_id");
   await ensureColumn("online_soup_rooms", "current_mystery_run_id", "current_mystery_run_id VARCHAR(64) NULL AFTER current_mystery_id");
   await ensureColumn("online_soup_rooms", "current_background_music_id", "current_background_music_id VARCHAR(64) NULL AFTER current_round_id");

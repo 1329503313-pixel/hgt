@@ -32,7 +32,7 @@ type DashboardResponse = {
     today: number;
     last7Days: number;
     todayRate: number | null;
-    daily: Array<{ date: string; users: number; rate: number | null }>;
+    daily: Array<{ date: string; users: number; rate: number | null; stableUsers: number; stableRate: number | null }>;
   };
   userBehavior: {
     definitions: Array<{ key: string; label: string }>;
@@ -198,6 +198,26 @@ export function AdminDashboard() {
         yAxisID: "yRate",
         tension: 0.3,
         pointRadius: 2
+      },
+      {
+        label: "稳定登录用户",
+        data: data?.userActivity.daily.map((item) => item.stableUsers) ?? [],
+        borderColor: "#0F766E",
+        backgroundColor: "rgba(15,118,110,.12)",
+        yAxisID: "y",
+        borderDash: [7, 4],
+        tension: 0.3,
+        pointRadius: 2
+      },
+      {
+        label: "稳定活跃度",
+        data: data?.userActivity.daily.map((item) => item.stableRate) ?? [],
+        borderColor: "#7C3AED",
+        backgroundColor: "rgba(124,58,237,.12)",
+        yAxisID: "yRate",
+        borderDash: [3, 4],
+        tension: 0.3,
+        pointRadius: 2
       }
     ]
   }), [data]);
@@ -259,7 +279,7 @@ export function AdminDashboard() {
   const activityLineOptions = {
     ...lineOptions,
     plugins: {
-      legend: { position: "top" as const, labels: { usePointStyle: true, boxWidth: 8 } },
+      legend: { position: "top" as const, labels: { usePointStyle: false, boxWidth: 24, boxHeight: 2 } },
       tooltip: {
         callbacks: {
           label: (context: { dataset: { label?: string; yAxisID?: string }; parsed: { y: number | null } }) =>
@@ -278,7 +298,7 @@ export function AdminDashboard() {
         beginAtZero: true,
         max: 100,
         position: "right" as const,
-        title: { display: true, text: "活跃率" },
+        title: { display: true, text: "活跃度" },
         ticks: { callback: (value: string | number) => `${value}%` },
         grid: { drawOnChartArea: false }
       }
@@ -338,13 +358,13 @@ export function AdminDashboard() {
       </ChartCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="用户登录活跃" description="登录用户指当天有登录或会话初始化记录的用户；活跃率 = 当天登录用户数 ÷ 当日累计用户数">
+        <ChartCard title="用户登录活跃" description="稳定登录用户指近三天均登录过平台的用户">
           <div className="mb-4 grid grid-cols-3 gap-2">
             <div className="rounded-xl bg-blue-50 p-3"><Activity size={16} className="text-primary" /><strong className="mt-2 block text-xl text-ink">{numberFormat.format(data.userActivity.today)}</strong><span className="text-xs text-muted">今日登录</span></div>
             <div className="rounded-xl bg-teal-50 p-3"><CalendarDays size={16} className="text-teal-600" /><strong className="mt-2 block text-xl text-ink">{numberFormat.format(data.userActivity.last7Days)}</strong><span className="text-xs text-muted">近 7 天登录</span></div>
             <div className="rounded-xl bg-amber-50 p-3"><TrendingUp size={16} className="text-amber-600" /><strong className="mt-2 block text-xl text-ink">{data.userActivity.todayRate == null ? "—" : `${data.userActivity.todayRate}%`}</strong><span className="text-xs text-muted">今日活跃率</span></div>
           </div>
-          <div className="h-52"><Line data={activityData} options={activityLineOptions} /></div>
+          <div className="h-52"><Line data={activityData} options={activityLineOptions} role="img" aria-label="用户登录活跃趋势：包含登录用户、活跃率、稳定登录用户和稳定活跃度四项指标" /></div>
         </ChartCard>
 
         <ChartCard title="汤品类型分布" description="按当前存续汤品统计">

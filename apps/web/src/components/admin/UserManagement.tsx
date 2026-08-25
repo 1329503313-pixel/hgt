@@ -31,7 +31,7 @@ type AdminUser = PublicUser & {
 };
 
 type UsersResponseExt = { users: AdminUser[]; total: number };
-type TodayFilter = "all" | "yes" | "no";
+type LoginStatusFilter = "all" | "online" | "yes" | "no";
 type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "charmValue" | "collectionValue" | "achievementPoints" | "experience" | "vipGrowth";
 type SortOrder = "asc" | "desc";
 type UserColumn = "user" | "role" | "level" | "vipGrowth" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "charmValue" | "collectionValue" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
@@ -65,7 +65,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [pageSize, setPageSize] = useState<AdminPageSize>(10);
   const [keyword, setKeyword] = useState("");
   const [submittedKeyword, setSubmittedKeyword] = useState("");
-  const [todayFilter, setTodayFilter] = useState<TodayFilter>("all");
+  const [loginStatusFilter, setLoginStatusFilter] = useState<LoginStatusFilter>("all");
   const [sortBy, setSortBy] = useState<UserSortBy>("createdAt");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
@@ -106,7 +106,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     try {
       const params = new URLSearchParams();
       if (submittedKeyword) params.set("keyword", submittedKeyword);
-      if (todayFilter !== "all") params.set("loggedToday", todayFilter);
+      if (loginStatusFilter !== "all") params.set("loggedToday", loginStatusFilter);
       params.set("limit", String(pageSize));
       params.set("offset", String((page - 1) * pageSize));
       params.set("sortBy", sortBy);
@@ -115,7 +115,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       setUsers(data.users);
       setTotal(data.total);
     } finally { setLoading(false); }
-  }, [submittedKeyword, todayFilter, page, pageSize, sortBy, sortOrder]);
+  }, [submittedKeyword, loginStatusFilter, page, pageSize, sortBy, sortOrder]);
 
   useEffect(() => { loadUsers().catch(() => {}); }, [loadUsers]);
 
@@ -125,7 +125,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         const payload = JSON.parse(event.data) as { userId?: string; online?: boolean };
         if (!payload.userId) return;
         setUsers((current) => current.map((item) => item.id === payload.userId ? { ...item, isOnline: Boolean(payload.online) } : item));
-        if (sortBy === "lastLoginAt" && sortOrder === "desc") {
+        if (loginStatusFilter === "online" || (sortBy === "lastLoginAt" && sortOrder === "desc")) {
           if (presenceRefreshTimer.current != null) window.clearTimeout(presenceRefreshTimer.current);
           presenceRefreshTimer.current = window.setTimeout(() => void loadUsers().catch(() => {}), 250);
         }
@@ -137,7 +137,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       unsubscribe();
       if (presenceRefreshTimer.current != null) window.clearTimeout(presenceRefreshTimer.current);
     };
-  }, [loadUsers, sortBy, sortOrder]);
+  }, [loadUsers, loginStatusFilter, sortBy, sortOrder]);
 
   const template = useMemo(() => gridTemplate(userColumns, visibleColumns), [visibleColumns]);
 
@@ -342,8 +342,9 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
             <span>搜索</span>
           </button>
         </div>
-        <select className="field h-10 sm:w-40" value={todayFilter} onChange={(event) => { setPage(1); setTodayFilter(event.target.value as TodayFilter); }}>
+        <select className="field h-10 sm:w-40" aria-label="登录状态筛选" value={loginStatusFilter} onChange={(event) => { setPage(1); setLoginStatusFilter(event.target.value as LoginStatusFilter); }}>
           <option value="all">全部登录状态</option>
+          <option value="online">当前在线</option>
           <option value="yes">今天已登录</option>
           <option value="no">今天未登录</option>
         </select>
