@@ -3811,6 +3811,12 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
         });
       }
       if (mysteryMode) {
+        await consumeDailyEntitlement(connection, {
+          userId: context.user.id,
+          role: context.user.role,
+          metric: "mystery_question",
+          eventKey: id
+        });
         const [[row]] = await connection.query<mysql.RowDataPacket[]>(
           `SELECT COUNT(*) + 1 AS question_count FROM online_soup_messages
            WHERE room_id = ? AND mystery_run_id = ? AND message_type = 'question'`,

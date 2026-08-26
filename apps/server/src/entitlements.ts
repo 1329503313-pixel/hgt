@@ -574,7 +574,7 @@ export function registerEntitlementRoutes(app: express.Express, dependencies: En
       currentEffectiveDate: current.effectiveDate,
       scheduled: scheduled?.plans ?? null,
       scheduledEffectiveDate: scheduledDate,
-      rules: { mysteryQuestionEnforced: false, autoGrantsSupportUnlimited: false }
+      rules: { mysteryQuestionEnforced: true, autoGrantsSupportUnlimited: false }
     });
   });
 
@@ -603,7 +603,7 @@ export function registerEntitlementRoutes(app: express.Express, dependencies: En
       tier: tier ?? "super_admin",
       plan: tier ? current.plans[tier] : null,
       effectiveDate: current.effectiveDate,
-      mysteryQuestionEnforced: false
+      mysteryQuestionEnforced: true
     });
   });
 }

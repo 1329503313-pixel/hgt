@@ -28,7 +28,7 @@ type EntitlementResponse = {
   currentEffectiveDate: string | null;
   scheduled: EntitlementPlans | null;
   scheduledEffectiveDate: string;
-  rules: { mysteryQuestionEnforced: false; autoGrantsSupportUnlimited: false };
+  rules: { mysteryQuestionEnforced: boolean; autoGrantsSupportUnlimited: boolean };
 };
 
 const FIELDS: Array<{
@@ -48,7 +48,7 @@ const FIELDS: Array<{
   { key: "dailyDrawLimit", label: "每日限制抽卡次数", unit: "抽", description: "单抽计 1 次，十连抽计 10 次。" },
   { key: "dailyAiQuestionLimit", label: "每日 AI 主持提问次数", unit: "次", description: "仅 AI 主持下的正式提问计数。" },
   { key: "dailyAiHintLimit", label: "每日 AI 提示次数", unit: "次", description: "与正式提问独立计数。" },
-  { key: "dailyMysteryQuestionLimit", label: "每日限制谜局提问次数", unit: "次", description: "当前仅保留配置与接口，暂不拦截业务。" },
+  { key: "dailyMysteryQuestionLimit", label: "每日限制谜局提问次数", unit: "次", description: "仅谜局房主提交的正式行动计数；讨论消息与原行动失败重试不重复计数。" },
   { key: "dailyGiftSendShellValueLimit", label: "每日可送出礼物价值", unit: "贝壳", description: "按礼物单价 × 数量计数，库存礼物同样计入价值。" },
   { key: "dailyGiftReceiveShellLimit", label: "每日通过礼物获取贝壳上限", unit: "贝壳", description: "达到上限后礼物仍成功，超出部分不发放。" },
   { key: "dailyCharmReceiveLimit", label: "每日可获取魅力数量", unit: "魅力", description: "达到上限后礼物仍成功，超出部分魅力为 0。" },
