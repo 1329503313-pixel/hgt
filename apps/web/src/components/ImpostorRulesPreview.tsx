@@ -4,9 +4,9 @@ import { createPortal } from "react-dom";
 import { registerAndroidBackHandler } from "../android/backStack";
 
 const RULE_IMAGES = [
-  "/impostor/game-guide-1.webp",
-  "/impostor/game-guide-2.webp",
   "/impostor/game-guide-3.webp",
+  "/impostor/game-guide-2.webp",
+  "/impostor/game-guide-1.webp",
 ] as const;
 
 export function ImpostorRulesPreview({ open, onClose }: { open: boolean; onClose: () => void }) {
