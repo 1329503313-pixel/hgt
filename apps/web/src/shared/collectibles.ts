@@ -22,6 +22,10 @@ export const COLLECTIBLE_RARITY_LABELS: Record<CollectibleRarity, string> = {
   limited: "限定", collaboration: "联动", legend: "传说", epic: "史诗"
 };
 
+export const COLLECTIBLE_EDITABLE_RARITY_LABELS = {
+  epic: "史诗", legend: "传说"
+} as const satisfies Partial<Record<CollectibleRarity, string>>;
+
 export const COLLECTIBLE_TYPE_LABELS: Record<CollectibleType, string> = {
   treasure: "珍宝", commemorative: "纪念", honor: "荣耀"
 };

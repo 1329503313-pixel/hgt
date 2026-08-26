@@ -942,12 +942,40 @@ body {
   flex: 0 0 auto;
 }
 
-/* 谁是伪人夜间主题只作用于房间环境背景，不改写任何子元素或语义色。 */
+/* 谁是伪人夜间：底层使用浅灰环境，聊天工作区切换为深灰，行动卡保留独立语义色。 */
 .online-soup-room-theme { transition: background-color 500ms ease; }
 
 body.impostor-night-theme,
 body.impostor-night-theme .online-soup-room-theme {
-  background-color: #1b1f24 !important;
+  background-color: #e5e7eb !important;
+}
+
+body.impostor-night-theme .impostor-night-chat {
+  border-color: #4b5563;
+  background-color: #374151;
+}
+
+body.impostor-night-theme .impostor-night-chat > div:first-child {
+  border-color: #4b5563;
+  background-color: #374151;
+}
+
+body.impostor-night-theme .impostor-night-chat > div:first-child h2 {
+  color: #f8fafc;
+}
+
+body.impostor-night-theme .impostor-night-chat > div:first-child p,
+body.impostor-night-theme .impostor-night-chat .room-system-message {
+  color: #cbd5e1;
+}
+
+body.impostor-night-theme .impostor-night-chat > div:nth-last-child(1) {
+  border-color: #4b5563;
+}
+
+body.impostor-night-theme .impostor-night-chat .room-message-input {
+  border-color: #64748b;
+  background-color: #f8fafc;
 }
 
 @media (max-width: 1023px) {
@@ -5631,6 +5659,56 @@ textarea {
 
 .online-soup-room-host-actions-list::-webkit-scrollbar {
   display: none;
+}
+
+.impostor-rules-scroller {
+  scrollbar-width: none;
+  touch-action: pan-x pinch-zoom;
+}
+
+.impostor-rules-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.impostor-rules-dots {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  transform: translateX(-50%);
+}
+
+.impostor-rules-dots button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+}
+
+.impostor-rules-dots button span {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.35);
+  transition: width 180ms ease, background 180ms ease;
+}
+
+.impostor-rules-dots button.is-active span {
+  width: 20px;
+  background: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .impostor-rules-dots button span {
+    transition: none;
+  }
 }
 
 .vip-icon { filter: drop-shadow(0 1px 1px rgb(120 53 15 / .32)); }

@@ -7,6 +7,7 @@ import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
 import { resolveRewardGift, type RewardGiftBindingKey } from "./rewardGiftBindings.js";
 import { rankingRewardNotificationSummary } from "./rankingRewardNotifications.js";
 import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES_SQL, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
+import { TIMED_RANKING_BADGES, type TimedRankingBadgeBoard } from "./timedRankingBadges.js";
 
 export type RankingRewardPeriod = "weekly" | "monthly";
 export type RankingRewardBoard = "achievement" | "level" | "collection" | "collectible" | "charm" | "generosity" | "draws";
@@ -111,6 +112,70 @@ export function rankPositiveValues(items: RankedValue[], limit = 10): Standing[]
       || a.userId.localeCompare(b.userId))
     .slice(0, limit)
     .map(({ userId, value }, index) => ({ userId, value, rank: index + 1 }));
+}
+
+export function monthlyTimedBadgeWinners(standings: Standings) {
+  return (Object.keys(TIMED_RANKING_BADGES) as TimedRankingBadgeBoard[]).flatMap((board) => {
+    const winner = standings[board][0];
+    return winner ? [{ board, badge: TIMED_RANKING_BADGES[board], winner }] : [];
+  });
+}
+
+async function replaceMonthlyTimedBadges(
+  connection: mysql.PoolConnection,
+  settlementId: string,
+  standings: Standings,
+  periodEnd: Date,
+  nextPeriodEnd: Date
+) {
+  const winners = monthlyTimedBadgeWinners(standings);
+  const badgeIds = Object.values(TIMED_RANKING_BADGES).map((badge) => badge.id);
+  const badgeKeys = badgeIds.map((badgeId) => `legendary:${badgeId}`);
+  const placeholders = badgeIds.map(() => "?").join(",");
+  const [activeRows] = await connection.query<mysql.RowDataPacket[]>(
+    `SELECT user_id, badge_id
+     FROM timed_ranking_badge_grants
+     WHERE badge_id IN (${placeholders}) AND expired_at IS NULL
+     ORDER BY badge_id, granted_at
+     FOR UPDATE`,
+    badgeIds
+  );
+  const changedUsers = new Set(activeRows.map((row) => String(row.user_id)));
+
+  await connection.query(
+    `UPDATE timed_ranking_badge_grants
+     SET expired_at = ?
+     WHERE badge_id IN (${placeholders}) AND expired_at IS NULL`,
+    [periodEnd, ...badgeIds]
+  );
+  await connection.query(
+    `DELETE FROM user_badge_unlocks WHERE badge_key IN (${badgeKeys.map(() => "?").join(",")})`,
+    badgeKeys
+  );
+  await connection.query(
+    `UPDATE users
+     SET equipped_badge_key = NULL, equipped_badge_icon_url = NULL
+     WHERE equipped_badge_key IN (${badgeKeys.map(() => "?").join(",")})`,
+    badgeKeys
+  );
+
+  for (const { board, badge, winner } of winners) {
+    const badgeKey = `legendary:${badge.id}`;
+    await connection.query(
+      `INSERT INTO timed_ranking_badge_grants
+        (id, settlement_id, board_type, badge_id, user_id, granted_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [nanoid(), settlementId, board, badge.id, winner.userId, periodEnd, nextPeriodEnd]
+    );
+    await connection.query(
+      `INSERT INTO user_badge_unlocks (user_id, badge_key, unlocked_at, surfaced_at)
+       VALUES (?, ?, ?, NULL)
+       ON DUPLICATE KEY UPDATE unlocked_at = VALUES(unlocked_at), surfaced_at = NULL`,
+      [winner.userId, badgeKey, periodEnd]
+    );
+    changedUsers.add(winner.userId);
+  }
+  return [...changedUsers];
 }
 
 async function rankingStandings(
@@ -423,6 +488,10 @@ async function settlePeriod(
       );
     }
 
+    const timedBadgeChangedUsers = period === "monthly"
+      ? await replaceMonthlyTimedBadges(connection, settlementId, standings, periodEnd, nextPeriodEnd)
+      : [];
+
     await connection.query(
       `UPDATE ranking_reward_settlements
        SET status = 'completed', completed_at = CURRENT_TIMESTAMP
@@ -434,7 +503,7 @@ async function settlePeriod(
       [nextPeriodEnd, period]
     );
     await connection.commit();
-    return userIds;
+    return [...new Set([...userIds, ...timedBadgeChangedUsers])];
   } catch (error) {
     await connection.rollback();
     throw error;

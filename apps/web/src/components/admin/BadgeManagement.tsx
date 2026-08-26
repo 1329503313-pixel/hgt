@@ -106,6 +106,7 @@ export function BadgeManagement() {
   }, [legendaryBadges, userDetail]);
   const activityBadges = legendaryBadges.filter((badge) => badge.badgeType === "activity");
   const limitedBadges = legendaryBadges.filter((badge) => badge.badgeType === "limited");
+  const timedBadges = legendaryBadges.filter((badge) => badge.badgeType === "timed");
   const activityBadgePagination = useAdminPagination(activityBadges.length);
   const limitedBadgePagination = useAdminPagination(limitedBadges.length);
   const visibleActivityBadges = paginateAdminItems(activityBadges, activityBadgePagination);
@@ -113,6 +114,7 @@ export function BadgeManagement() {
   const grantableLimitedBadges = grantableBadges.filter((badge) => badge.badgeType === "limited");
   const ownedActivityBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "activity");
   const ownedLimitedBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "limited");
+  const ownedTimedBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "timed");
   const ownedAchievementSpecialBadges = ownedLegendaryBadges.filter((badge) => badge.badgeType === "achievement");
 
   async function openUserAction(user: BadgeAdminUser, action: UserAction) {
@@ -255,8 +257,8 @@ export function BadgeManagement() {
                 {activityBadges.length > 0 && <AdminPagination {...activityBadgePagination} />}
               </div>
             </div>
-            <div>
-              <h3 className="mb-3 text-sm font-black text-ink">限定徽章</h3>
+              <div>
+                <h3 className="mb-3 text-sm font-black text-ink">限定徽章</h3>
               <div className="space-y-2">
                 {visibleLimitedBadges.map((badge) => (
                   <div key={badge.id} className="flex flex-col gap-4 rounded-xl border border-line p-4 sm:flex-row sm:items-center">
@@ -268,6 +270,11 @@ export function BadgeManagement() {
                 {limitedBadges.length === 0 && <p className="rounded-xl border border-dashed border-line py-8 text-center text-sm text-muted">暂无限定徽章</p>}
                 {limitedBadges.length > 0 && <AdminPagination {...limitedBadgePagination} />}
               </div>
+              {timedBadges.length > 0 && <div>
+                <h3 className="mb-3 text-sm font-black text-ink">限时成就徽章</h3>
+                <p className="mb-3 text-xs leading-5 text-muted">由 30 日排行榜结算自动换届发放，不支持后台手动发放或收回；到期后自动卸下并保留历史记录。</p>
+                <div className="space-y-3">{timedBadges.map((badge) => <div key={badge.id} className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3"><LegendaryBadgeIcon badge={badge} /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h4 className="font-black text-ink">{badge.name}</h4><span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-black text-amber-700">史诗 · 限时</span></div><p className="mt-1 text-sm text-muted">{badge.description}</p>{badge.requirement && <p className="mt-2 text-xs text-muted">获取条件：{badge.requirement}</p>}</div><span className="shrink-0 text-xs font-bold text-muted">月度榜自动发放</span></div>)}</div>
+              </div>}
             </div>
           </div>
         </section>
@@ -282,6 +289,7 @@ export function BadgeManagement() {
                 <div><h3 className="mb-3 text-sm font-black text-ink">成就徽章</h3><div className="grid grid-cols-3 gap-5 sm:grid-cols-5 md:grid-cols-6">{ownedSystemBadges.map((badge) => <SystemBadgeTile key={getBadgeKey(badge)} badge={badge} />)}{ownedAchievementSpecialBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}</div></div>
                 {ownedActivityBadges.length > 0 && <div><h3 className="mb-3 text-sm font-black text-ink">活动徽章</h3><div className="grid grid-cols-3 gap-5 sm:grid-cols-5 md:grid-cols-6">{ownedActivityBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}</div></div>}
                 {ownedLimitedBadges.length > 0 && <div><h3 className="mb-3 text-sm font-black text-ink">限定徽章</h3><div className="grid grid-cols-3 gap-5 sm:grid-cols-5 md:grid-cols-6">{ownedLimitedBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}</div></div>}
+                {ownedTimedBadges.length > 0 && <div><h3 className="mb-3 text-sm font-black text-ink">限时成就徽章</h3><div className="grid grid-cols-3 gap-5 sm:grid-cols-5 md:grid-cols-6">{ownedTimedBadges.map((badge) => <LegendaryBadgeTile key={badge.key} badge={badge} />)}</div></div>}
               </div>}
               {userAction === "view" && ownedSystemBadges.length + ownedLegendaryBadges.length === 0 && <p className="py-10 text-center text-sm text-muted">该用户尚未拥有徽章</p>}
               {userAction === "grant" && <div className="space-y-6">

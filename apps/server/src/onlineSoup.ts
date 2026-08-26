@@ -51,6 +51,9 @@ import {
 } from "./impostorGame.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
+type ImpostorMessageEvent =
+  | { kind: "night_action" | "clue" | "nomination" | "assassination" | "accusation"; gameNumber: number; day: number; attempt?: number }
+  | { kind: "settlement"; gameNumber: number; winner: "good" | "impostor" | "draw"; endReason: string; players: Array<{ userId: string; seat: number; nickname: string; role: "detective" | "civilian" | "impostor"; roleLabel: string }> };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
 type LobbyEventEmitter = (event: string, payload: unknown) => void;
 
@@ -691,6 +694,20 @@ async function systemMessage(roomId: string, roundId: string | null, content: st
   await db.query(
     "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, ?, 'system', ?)",
     [nanoid(), roomId, roundId, senderId, content]
+  );
+}
+
+async function impostorEventMessage(
+  roomId: string,
+  content: string,
+  event: ImpostorMessageEvent,
+  db: mysql.Pool | mysql.PoolConnection = pool,
+) {
+  await db.query(
+    `INSERT INTO online_soup_messages
+      (id, room_id, round_id, sender_id, message_type, content, impostor_game_number, impostor_event_json)
+     VALUES (?, ?, NULL, NULL, 'system', ?, ?, ?)`,
+    [nanoid(), roomId, content, event.gameNumber, JSON.stringify(event)],
   );
 }
 
@@ -1394,6 +1411,9 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderVipLevel: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).level,
     senderVipActive: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).active,
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
+    impostorGameNumber: row.impostor_game_number == null ? null : Number(row.impostor_game_number),
+    impostorSeat: row.impostor_seat == null ? null : Number(row.impostor_seat),
+    impostorEvent: recalledAt ? null : jsonObject<ImpostorMessageEvent>(row.impostor_event_json),
     type: String(row.message_type),
     content: recalledAt ? "" : aiHonors ? "本轮评选" : String(row.content),
     aiHonors,
@@ -1421,6 +1441,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
       sequence: String(row.reply_sequence),
       senderId: row.reply_sender_id ? String(row.reply_sender_id) : null,
       senderName: row.reply_sender_name ? String(row.reply_sender_name) : null,
+      impostorSeat: row.reply_impostor_seat == null ? null : Number(row.reply_impostor_seat),
       type: String(row.reply_message_type),
       content: replyRecalledAt ? "" : String(row.reply_content ?? ""),
       stickerId: row.reply_sticker_id ? String(row.reply_sticker_id) : null,
@@ -1451,6 +1472,7 @@ async function roomMessagePage(room: mysql.RowDataPacket, before?: string, limit
        ms.supplemental_bottoms AS message_supplemental_bottoms,
        reply.id AS reply_id, reply.message_sequence AS reply_sequence,
        reply.sender_id AS reply_sender_id, reply_user.nickname AS reply_sender_name,
+       reply.impostor_seat AS reply_impostor_seat,
        reply.message_type AS reply_message_type, reply.content AS reply_content,
        reply.sticker_id AS reply_sticker_id, reply.recalled_at AS reply_recalled_at
      FROM online_soup_messages m LEFT JOIN users u ON u.id = m.sender_id
@@ -1617,7 +1639,8 @@ async function writeImpostorTransitionMessages(
   const newlyReady = (after.readyUserIds ?? []).filter((userId) => !readyBefore.has(userId));
   const namesNeeded = newlyReady.length > 0
     || (before.phase !== "day_ready" && after.phase === "day_ready" && after.isolatedUserIds.length > 0)
-    || (before.phase !== "mission" && after.phase === "mission");
+    || (before.phase !== "mission" && after.phase === "mission")
+    || (before.phase !== "ended" && after.phase === "ended");
   let playerNames = new Map<string, string>();
   if (namesNeeded) {
     const playerIds = after.players.map((player) => player.userId);
@@ -1637,7 +1660,7 @@ async function writeImpostorTransitionMessages(
     }
   }
   for (const userId of newlyReady) {
-    await systemMessage(roomId, null, `${playerNames.get(userId) ?? `${seats.get(userId) ?? "?"}号`}玩家已准备`, connection);
+    await systemMessage(roomId, null, `${playerDescription(userId)}已准备`, connection);
   }
   if (after.publicClues.length > before.publicClues.length) {
     await systemMessage(roomId, null, "昨天有新的线索", connection);
@@ -1653,29 +1676,54 @@ async function writeImpostorTransitionMessages(
     await systemMessage(roomId, null, `本轮任务${result.result === "success" ? "成功" : "失败"}，当前比分：成功 ${after.successes} / 失败 ${after.failures}`, connection);
   }
   if (before.phase === "night" && after.phase === "clue") {
-    await systemMessage(roomId, null, "夜间行动结束，所有玩家留下线索", connection);
+    await impostorEventMessage(roomId, "夜间行动结束，所有玩家留下线索", {
+      kind: "clue", gameNumber: after.gameNumber, day: after.day,
+    }, connection);
   }
   if (before.phase === "day_ready" && after.phase === "day_vote") {
-    await systemMessage(roomId, null, `所有玩家已准备，开始投票选择今日参与任务成员，今日任务共需要${after.nomination?.required ?? after.players.length}人（第${after.gameNumber}局第${after.day}天）`, connection);
+    await impostorEventMessage(roomId, `所有玩家已准备，开始投票选择今日参与任务成员，今日任务共需要${after.nomination?.required ?? after.players.length}人（第${after.gameNumber}局第${after.day}天）`, {
+      kind: "nomination", gameNumber: after.gameNumber, day: after.day, attempt: after.nomination?.attempt ?? 1,
+    }, connection);
   } else if (before.phase === "day_vote" && after.phase === "day_vote" && (after.nomination?.attempt ?? 0) > (before.nomination?.attempt ?? 0)) {
-    await systemMessage(roomId, null, `任务人选出现平票，请进行第${after.nomination?.attempt ?? 2}次投票（第${after.gameNumber}局第${after.day}天）`, connection);
+    await impostorEventMessage(roomId, `任务人选出现平票，请进行第${after.nomination?.attempt ?? 2}次投票（第${after.gameNumber}局第${after.day}天）`, {
+      kind: "nomination", gameNumber: after.gameNumber, day: after.day, attempt: after.nomination?.attempt ?? 2,
+    }, connection);
   }
   if (before.phase !== "mission" && after.phase === "mission") {
     await systemMessage(roomId, null, `投票结束，今日参与任务成员为：${after.missionTeamUserIds.map(playerDescription).join("、")}`, connection);
   }
   if (before.phase !== "night" && after.phase === "night") {
-    await systemMessage(roomId, null, "天黑了，等待行动中", connection);
+    await impostorEventMessage(roomId, "天黑了，等待行动中", {
+      kind: "night_action", gameNumber: after.gameNumber, day: after.day,
+    }, connection);
   }
   if (before.phase !== "assassination" && after.phase === "assassination") {
-    await systemMessage(roomId, null, `伪人选择刺杀目标（第${after.gameNumber}局）`, connection);
+    await impostorEventMessage(roomId, `伪人选择刺杀目标（第${after.gameNumber}局）`, {
+      kind: "assassination", gameNumber: after.gameNumber, day: after.day,
+    }, connection);
   }
   if (before.phase !== "accusation" && after.phase === "accusation") {
-    await systemMessage(roomId, null, `所有玩家选择公投目标（第${after.gameNumber}局）`, connection);
+    await impostorEventMessage(roomId, `所有玩家选择公投目标（第${after.gameNumber}局）`, {
+      kind: "accusation", gameNumber: after.gameNumber, day: after.day, attempt: after.accusation?.attempt ?? 1,
+    }, connection);
   } else if (before.phase === "accusation" && after.phase === "accusation" && (after.accusation?.attempt ?? 0) > (before.accusation?.attempt ?? 0)) {
-    await systemMessage(roomId, null, `公投出现平票，所有玩家重新选择公投目标（第${after.gameNumber}局）`, connection);
+    await impostorEventMessage(roomId, `公投出现平票，所有玩家重新选择公投目标（第${after.gameNumber}局）`, {
+      kind: "accusation", gameNumber: after.gameNumber, day: after.day, attempt: after.accusation?.attempt ?? 2,
+    }, connection);
   }
   if (before.phase !== "ended" && after.phase === "ended") {
-    await systemMessage(roomId, null, `${after.winner === "good" ? "好人阵营" : after.winner === "impostor" ? "伪人阵营" : "本局无人"}获胜：${after.endReason ?? "对局结束"}`, connection);
+    const content = `${after.winner === "good" ? "好人阵营" : after.winner === "impostor" ? "伪人阵营" : "本局无人"}获胜：${after.endReason ?? "对局结束"}`;
+    await impostorEventMessage(roomId, content, {
+      kind: "settlement",
+      gameNumber: after.gameNumber,
+      winner: after.winner ?? "draw",
+      endReason: after.endReason ?? "对局结束",
+      players: after.players.map((player) => ({
+        ...player,
+        nickname: playerNames.get(player.userId) ?? "已离开玩家",
+        roleLabel: impostorRoleLabel(player.role),
+      })),
+    }, connection);
   }
 }
 
@@ -3296,7 +3344,9 @@ router.post("/rooms/:roomId/start", async (req, res) => {
         [context.room.id],
       );
       await systemMessage(context.room.id, null, `“谁是伪人”第 ${state.gameNumber} 局开始，身份已秘密发放`, connection);
-      await systemMessage(context.room.id, null, "天黑了，等待行动中", connection);
+      await impostorEventMessage(context.room.id, "天黑了，等待行动中", {
+        kind: "night_action", gameNumber: state.gameNumber, day: state.day,
+      }, connection);
       await connection.commit();
     } catch (error) {
       await connection.rollback().catch(() => {});
@@ -3778,14 +3828,26 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
       && context.user.id === context.room.host_id;
     const type = parsed.data.type === "discussion" && isHumanHost ? "host" : parsed.data.type;
     const content = messageContent;
+    let impostorGameNumber: number | null = null;
+    let impostorSeat: number | null = null;
+    if (isImpostorRoom(context.room)) {
+      const [[impostorRow]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT game_number, state_json FROM online_impostor_games WHERE room_id = ? ORDER BY game_number DESC LIMIT 1",
+        [context.room.id],
+      );
+      const impostorState = impostorRow ? parseImpostorState(impostorRow.state_json) : null;
+      const seat = impostorState?.players.find((player) => player.userId === context.user.id)?.seat;
+      impostorGameNumber = impostorRow ? Number(impostorRow.game_number) : null;
+      impostorSeat = seat ?? null;
+    }
     await connection.query(
       `INSERT INTO online_soup_messages
-       (id, room_id, round_id, mystery_run_id, sender_id, message_type, content, sticker_id, question_number, ai_status, mentions_json, reply_to_message_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, room_id, round_id, mystery_run_id, sender_id, message_type, content, sticker_id, question_number, ai_status, mentions_json, reply_to_message_id, impostor_game_number, impostor_seat)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, context.room.id, mysteryMode ? null : context.room.current_round_id, mysteryMode ? context.room.current_mystery_run_id : null,
         context.user.id, type, content, sticker?.id ?? null, questionNumber,
         parsed.data.type === "question" && (mysteryMode || String(context.room.host_mode ?? "human") === "ai") ? "pending" : "none",
-        mentions.length ? JSON.stringify(mentions) : null, parsed.data.replyToMessageId ?? null]
+        mentions.length ? JSON.stringify(mentions) : null, parsed.data.replyToMessageId ?? null, impostorGameNumber, impostorSeat]
     );
     activitySequence = await recordRoomActivity(context.room.id, parsed.data.type === "question" ? "progress" : "chat", context.user.id, id, connection);
     await connection.commit();

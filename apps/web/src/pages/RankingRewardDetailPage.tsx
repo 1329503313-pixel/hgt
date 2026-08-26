@@ -91,6 +91,21 @@ export default function RankingRewardDetailPage() {
                     {grant.reward.type === "gift" ? <Gift className="shrink-0 text-fuchsia-600" size={18} /> : <><Shell className="shrink-0 text-blue-600" size={18} /></>}
                     <span>{rewardText(grant)}</span>
                   </div>
+                  {grant.timedBadge && (
+                    <div className="mt-3 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                      <img className="h-12 w-12 shrink-0 rounded-xl object-cover" src={grant.timedBadge.iconUrl} alt="" />
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <strong className="text-sm text-ink">{grant.timedBadge.name}</strong>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-black text-amber-700">史诗 · 限时</span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted">{grant.timedBadge.description}</p>
+                        <p className="mt-1 text-xs font-bold text-amber-700">
+                          有效至 {new Date(grant.timedBadge.expiresAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>

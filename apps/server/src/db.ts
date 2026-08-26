@@ -5,9 +5,11 @@ import { nanoid } from "nanoid";
 import { config } from "./config.js";
 import { BANNER_MAX_BYTES, optimizeBannerImage, storedBannerImageBytes } from "./bannerImages.js";
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
+import { HIDDEN_COLLECTIBLE_BADGES } from "./hiddenCollectibleBadges.js";
 import { canonicalConversationUserIds } from "./conversations.js";
 import { generateInviteCode } from "./inviteCodes.js";
 import { MAX_EXPERIENCE } from "./levelSystem.js";
+import { TIMED_RANKING_BADGE_LIST } from "./timedRankingBadges.js";
 import {
   mergedRankingRewardNotificationReadState,
   rankingRewardNotificationSummary
@@ -1149,6 +1151,9 @@ export async function initDatabase() {
       target_message_id VARCHAR(64) NULL,
       mentions_json JSON NULL,
       reply_to_message_id VARCHAR(64) NULL,
+      impostor_game_number INT UNSIGNED NULL,
+      impostor_seat INT UNSIGNED NULL,
+      impostor_event_json JSON NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       recalled_at DATETIME NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1266,6 +1271,9 @@ export async function initDatabase() {
     "reply_to_message_id",
     "reply_to_message_id VARCHAR(64) NULL AFTER mentions_json"
   );
+  await ensureColumn("online_soup_messages", "impostor_game_number", "impostor_game_number INT UNSIGNED NULL AFTER reply_to_message_id");
+  await ensureColumn("online_soup_messages", "impostor_seat", "impostor_seat INT UNSIGNED NULL AFTER impostor_game_number");
+  await ensureColumn("online_soup_messages", "impostor_event_json", "impostor_event_json JSON NULL AFTER impostor_seat");
   await ensureIndex(
     "online_soup_messages",
     "idx_online_messages_room_sequence",
@@ -1614,7 +1622,7 @@ export async function initDatabase() {
       requirement VARCHAR(300) NULL,
       icon_url VARCHAR(255) NOT NULL,
       achievement_points INT NOT NULL DEFAULT 0,
-      badge_type ENUM('achievement','activity','limited') NOT NULL DEFAULT 'achievement',
+      badge_type ENUM('achievement','activity','limited','timed') NOT NULL DEFAULT 'achievement',
       tier ENUM('epic','legend') NOT NULL DEFAULT 'legend',
       activity_conditions JSON NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1622,7 +1630,16 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await ensureColumn("legendary_badges", "achievement_points", "achievement_points INT NOT NULL DEFAULT 0 AFTER icon_url");
-  await ensureColumn("legendary_badges", "badge_type", "badge_type ENUM('achievement','activity','limited') NOT NULL DEFAULT 'achievement' AFTER achievement_points");
+  await ensureColumn("legendary_badges", "badge_type", "badge_type ENUM('achievement','activity','limited','timed') NOT NULL DEFAULT 'achievement' AFTER achievement_points");
+  const [[legendaryBadgeTypeColumn]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'legendary_badges' AND COLUMN_NAME = 'badge_type'`
+  );
+  if (!String(legendaryBadgeTypeColumn?.COLUMN_TYPE ?? "").includes("'timed'")) {
+    await pool.query(
+      "ALTER TABLE legendary_badges MODIFY COLUMN badge_type ENUM('achievement','activity','limited','timed') NOT NULL DEFAULT 'achievement'"
+    );
+  }
   await ensureColumn("legendary_badges", "tier", "tier ENUM('epic','legend') NOT NULL DEFAULT 'legend' AFTER badge_type");
   await ensureColumn("legendary_badges", "activity_conditions", "activity_conditions JSON NULL AFTER tier");
   await seedLegendaryBadges();
@@ -1869,6 +1886,25 @@ export async function initDatabase() {
       CONSTRAINT fk_ranking_reward_grant_settlement FOREIGN KEY (settlement_id) REFERENCES ranking_reward_settlements(id) ON DELETE CASCADE,
       CONSTRAINT fk_ranking_reward_grant_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       CONSTRAINT fk_ranking_reward_grant_gift FOREIGN KEY (gift_id) REFERENCES gifts(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS timed_ranking_badge_grants (
+      id VARCHAR(64) PRIMARY KEY,
+      settlement_id VARCHAR(64) NOT NULL,
+      board_type VARCHAR(24) NOT NULL,
+      badge_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      granted_at DATETIME NOT NULL,
+      expires_at DATETIME NOT NULL,
+      expired_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_timed_ranking_badge_settlement_board (settlement_id, board_type),
+      INDEX idx_timed_ranking_badge_user_history (user_id, granted_at, id),
+      INDEX idx_timed_ranking_badge_active (badge_id, expired_at, expires_at),
+      CONSTRAINT fk_timed_ranking_badge_settlement FOREIGN KEY (settlement_id) REFERENCES ranking_reward_settlements(id) ON DELETE CASCADE,
+      CONSTRAINT fk_timed_ranking_badge_badge FOREIGN KEY (badge_id) REFERENCES legendary_badges(id) ON DELETE CASCADE,
+      CONSTRAINT fk_timed_ranking_badge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await migrateRankingRewardNotifications();
@@ -3390,6 +3426,30 @@ async function backfillHistoricalBadgeShellRewards() {
 }
 
 async function seedLegendaryBadges() {
+  for (const badge of HIDDEN_COLLECTIBLE_BADGES) {
+    await pool.query(
+      `INSERT INTO legendary_badges
+        (id, name, description, requirement, icon_url, achievement_points, badge_type, tier, activity_conditions)
+       VALUES (?, ?, ?, ?, ?, ?, 'achievement', 'legend', NULL)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement),
+         icon_url = VALUES(icon_url), achievement_points = VALUES(achievement_points),
+         badge_type = 'achievement', tier = 'legend', activity_conditions = NULL`,
+      [badge.id, badge.name, badge.description, badge.requirement, badge.iconUrl, badge.achievementPoints]
+    );
+  }
+  for (const badge of TIMED_RANKING_BADGE_LIST) {
+    await pool.query(
+      `INSERT INTO legendary_badges
+        (id, name, description, requirement, icon_url, achievement_points, badge_type, tier, activity_conditions)
+       VALUES (?, ?, ?, ?, ?, 0, 'timed', 'epic', NULL)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name), description = VALUES(description), requirement = VALUES(requirement),
+         icon_url = VALUES(icon_url), achievement_points = 0,
+         badge_type = 'timed', tier = 'epic', activity_conditions = NULL`,
+      [badge.id, badge.name, badge.description, badge.requirement, badge.iconUrl]
+    );
+  }
   await pool.query(
     `INSERT INTO legendary_badges (id, name, description, requirement, icon_url, achievement_points, badge_type, tier)
      VALUES (?, ?, ?, ?, ?, ?, 'limited', 'legend')

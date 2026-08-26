@@ -155,7 +155,7 @@ export type SpecialBadgeUnlock = {
   requirement: string | null;
   iconUrl: string;
   achievementPoints: number;
-  badgeType: "achievement" | "activity" | "limited";
+  badgeType: "achievement" | "activity" | "limited" | "timed";
   activityConditions: Array<{
     kind: "login" | "publish" | "like_given" | "comment_given" | "favorite_given" | "like_received" | "comment_received" | "favorite_received";
     startDate: string;

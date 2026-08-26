@@ -120,7 +120,7 @@ function beginDayVote(state: ImpostorGameState, now: Date): ImpostorGameState {
   const required = missionSize(next.day);
   if (candidates.length < required) throw new ImpostorGameRuleError("可执行任务人数不足");
   next.phase = "day_vote";
-  next.deadlineAt = deadline(now, 90);
+  next.deadlineAt = deadline(now, 60);
   next.nomination = { attempt: 1, lockedUserIds: [], candidateUserIds: candidates, required, ballots: {} };
   next.missionTeamUserIds = [];
   next.missionChoices = {};
@@ -362,7 +362,7 @@ function settleNomination(state: ImpostorGameState, now: Date): ImpostorGameStat
     required: remaining,
     ballots: {},
   };
-  next.deadlineAt = deadline(now, 90);
+  next.deadlineAt = deadline(now, 60);
   return next;
 }
 
@@ -405,7 +405,7 @@ function settleMission(state: ImpostorGameState, now: Date): ImpostorGameState {
   }
   if (next.failures >= 3) {
     next.phase = "accusation";
-    next.deadlineAt = deadline(now, 90);
+    next.deadlineAt = deadline(now, 60);
     next.accusation = { attempt: 1, candidateUserIds: playerIds(next), ballots: {} };
     return next;
   }
@@ -466,7 +466,7 @@ function settleAccusation(state: ImpostorGameState, now: Date): ImpostorGameStat
   }
   if (accusation.attempt >= 2) return endGame(next, "impostor", "第二次最终指认仍然平票");
   next.accusation = { attempt: 2, candidateUserIds: leaders, ballots: {} };
-  next.deadlineAt = deadline(now, 90);
+  next.deadlineAt = deadline(now, 60);
   return next;
 }
 

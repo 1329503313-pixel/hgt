@@ -80,6 +80,11 @@ import {
   systemBadgeKeysWithPrerequisites
 } from "./badgeRewards.js";
 import {
+  HIDDEN_COLLECTIBLE_BADGES,
+  HIDDEN_COLLECTIBLE_BADGE_KEYS,
+  hiddenCollectibleBadgeChanges
+} from "./hiddenCollectibleBadges.js";
+import {
   adjustShellBalance,
   awardBeginnerTask,
   bulkShellAdjustmentUserRoles,
@@ -1969,6 +1974,80 @@ async function syncActivityBadges(userId: string) {
   return earned;
 }
 
+async function syncHiddenCollectibleBadges(userId: string, notifyUnlocks = true) {
+  const collectibleNumbers = HIDDEN_COLLECTIBLE_BADGES.map((badge) => badge.collectibleNo);
+  const [collectibleRows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT collectible_no
+     FROM collectibles
+     WHERE owner_user_id = ? AND status = 'owned' AND deleted_at IS NULL
+       AND collectible_no IN (${collectibleNumbers.map(() => "?").join(", ")})`,
+    [userId, ...collectibleNumbers]
+  );
+  const ownedCollectibleNumbers = new Set(collectibleRows.map((row) => String(row.collectible_no)));
+  const [unlockRows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT badge_key FROM user_badge_unlocks
+     WHERE user_id = ? AND badge_key IN (${HIDDEN_COLLECTIBLE_BADGE_KEYS.map(() => "?").join(", ")})`,
+    [userId, ...HIDDEN_COLLECTIBLE_BADGE_KEYS]
+  );
+  const unlocked = new Set(unlockRows.map((row) => String(row.badge_key)));
+  const grantedKeys: string[] = [];
+  const revokedKeys: string[] = [];
+  const changes = hiddenCollectibleBadgeChanges(ownedCollectibleNumbers, unlocked);
+
+  for (const badge of changes.grant) {
+    const result = await grantBadge({
+      userId,
+      badgeKey: badge.key,
+      badgeName: badge.name,
+      achievementPoints: badge.achievementPoints,
+      rewardEligible: notifyUnlocks,
+      notification: notifyUnlocks ? {
+        type: "badge_unlock",
+        title: "获得隐藏成就徽章",
+        content: `恭喜你获得隐藏成就徽章「${badge.name}」`,
+        relatedId: badge.key,
+        actorId: userId
+      } : null
+    });
+    if (result.granted) grantedKeys.push(badge.key);
+  }
+
+  for (const badge of changes.revoke) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [deleteResult] = await connection.query<mysql.ResultSetHeader>(
+        `DELETE FROM user_badge_unlocks
+         WHERE user_id = ? AND badge_key = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM collectibles
+             WHERE owner_user_id = ? AND status = 'owned' AND deleted_at IS NULL AND collectible_no = ?
+           )`,
+        [userId, badge.key, userId, badge.collectibleNo]
+      );
+      if (deleteResult.affectedRows > 0) {
+        await connection.query(
+          `UPDATE users SET equipped_badge_key = NULL, equipped_badge_icon_url = NULL
+           WHERE id = ? AND equipped_badge_key = ?`,
+          [userId, badge.key]
+        );
+        revokedKeys.push(badge.key);
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  if (grantedKeys.length > 0 || revokedKeys.length > 0) {
+    emitUserEvent(userId, "badge_ownership_changed", { grantedKeys, revokedKeys });
+  }
+  return grantedKeys;
+}
+
 async function syncSystemBadgeUnlocks(userId: string, rewardEligible = true) {
   const stats = await getAchievementStats(userId);
   const earnedKeys = BADGE_THRESHOLDS
@@ -2004,6 +2083,8 @@ async function syncSystemBadgeUnlocks(userId: string, rewardEligible = true) {
     });
     if (result.granted) newKeys.push(key);
   }
+  const collectibleBadgeKeys = await syncHiddenCollectibleBadges(userId, rewardEligible);
+  newKeys.push(...collectibleBadgeKeys);
   return { stats, newKeys };
 }
 
@@ -2074,7 +2155,7 @@ async function getLegendaryBadgeUnlockDetails(userId: string, keys: string[]) {
     requirement: row.requirement ? String(row.requirement) : null,
     iconUrl: String(row.icon_url),
     achievementPoints: Number(row.achievement_points ?? 0),
-    badgeType: String(row.badge_type ?? "achievement") as "achievement" | "activity" | "limited",
+    badgeType: String(row.badge_type ?? "achievement") as "achievement" | "activity" | "limited" | "timed",
     activityConditions: badgeActivityConditions(row.activity_conditions),
     unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
     tier: specialBadgeTier(row.tier)
@@ -4352,6 +4433,25 @@ app.get("/api/me/badge-collection", async (req, res) => {
      ORDER BY ubu.unlocked_at DESC`,
     [user.id]
   );
+  const [timedRows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT lb.id, lb.name, lb.description, lb.requirement, lb.icon_url, lb.achievement_points,
+       lb.badge_type, lb.tier, latest.granted_at, latest.expires_at, latest.expired_at,
+       CASE WHEN ubu.user_id IS NOT NULL THEN 1 ELSE 0 END AS is_active
+     FROM legendary_badges lb
+     LEFT JOIN timed_ranking_badge_grants latest
+       ON latest.id = (
+         SELECT grants.id
+         FROM timed_ranking_badge_grants grants
+         WHERE grants.badge_id = lb.id AND grants.user_id = ?
+         ORDER BY grants.granted_at DESC, grants.id DESC
+         LIMIT 1
+       )
+     LEFT JOIN user_badge_unlocks ubu
+       ON ubu.user_id = ? AND ubu.badge_key = CONCAT('legendary:', lb.id)
+     WHERE lb.badge_type = 'timed'
+     ORDER BY lb.created_at ASC`,
+    [user.id, user.id]
+  );
   const [[freshUser]] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT equipped_badge_key, equipped_badge_icon_url FROM users WHERE id = ? LIMIT 1",
     [user.id]
@@ -4375,6 +4475,23 @@ app.get("/api/me/badge-collection", async (req, res) => {
       activityConditions: badgeActivityConditions(row.activity_conditions),
       unlockedAt: row.unlocked_at ? new Date(row.unlocked_at).toISOString() : null,
       tier: specialBadgeTier(row.tier)
+    })),
+    timedBadges: timedRows.map((row) => ({
+      id: String(row.id),
+      key: `legendary:${row.id}`,
+      name: String(row.name),
+      description: String(row.description),
+      requirement: row.requirement ? String(row.requirement) : null,
+      iconUrl: String(row.icon_url),
+      achievementPoints: 0,
+      badgeType: "timed" as const,
+      activityConditions: [],
+      unlockedAt: row.granted_at ? new Date(row.granted_at).toISOString() : null,
+      grantedAt: row.granted_at ? new Date(row.granted_at).toISOString() : null,
+      expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+      expiredAt: row.expired_at ? new Date(row.expired_at).toISOString() : null,
+      isActive: Boolean(row.is_active),
+      tier: "epic" as const
     })),
     equippedBadge: equippedBadge(freshUser?.equipped_badge_key, freshUser?.equipped_badge_icon_url)
   });
@@ -6079,13 +6196,23 @@ app.get("/api/ranking-rewards/:settlementId", async (req, res) => {
        grants.actual_experience_reward, grants.actual_shell_reward,
        grants.gift_name_snapshot, grants.gift_quantity,
        COALESCE(inventory.overflow_quantity, 0) AS overflow_quantity,
-       COALESCE(inventory.overflow_shell, 0) AS overflow_shell
+       COALESCE(inventory.overflow_shell, 0) AS overflow_shell,
+       timed_badges.badge_id AS timed_badge_id,
+       timed_badges.expires_at AS timed_badge_expires_at,
+       legendary_badges.name AS timed_badge_name,
+       legendary_badges.description AS timed_badge_description,
+       legendary_badges.icon_url AS timed_badge_icon_url
      FROM ranking_reward_settlements settlements
      INNER JOIN ranking_reward_grants grants ON grants.settlement_id = settlements.id
      LEFT JOIN gift_inventory_transactions inventory
        ON inventory.related_type = 'ranking_reward'
       AND inventory.related_id = grants.id
       AND inventory.transaction_type = 'grant'
+     LEFT JOIN timed_ranking_badge_grants timed_badges
+       ON timed_badges.settlement_id = grants.settlement_id
+      AND timed_badges.board_type = grants.board_type
+      AND timed_badges.user_id = grants.user_id
+     LEFT JOIN legendary_badges ON legendary_badges.id = timed_badges.badge_id
      WHERE settlements.id = ? AND grants.user_id = ?
      ORDER BY FIELD(grants.board_type, 'achievement', 'level', 'collection', 'collectible', 'charm', 'generosity', 'draws')`,
     [req.params.settlementId, user.id]
@@ -6109,6 +6236,13 @@ app.get("/api/ranking-rewards/:settlementId", async (req, res) => {
           boardLabel: RANKING_REWARD_BOARD_LABELS[board] ?? board,
           rank: Number(row.rank_position),
           metricValue: Number(row.metric_value ?? 0),
+          timedBadge: row.timed_badge_id ? {
+            id: String(row.timed_badge_id),
+            name: String(row.timed_badge_name),
+            description: String(row.timed_badge_description),
+            iconUrl: String(row.timed_badge_icon_url),
+            expiresAt: new Date(row.timed_badge_expires_at).toISOString()
+          } : null,
           reward: row.gift_name_snapshot
             ? {
                 type: "gift",
@@ -7549,7 +7683,7 @@ app.use("/api/online-soup", async (req, _res, next) => {
 }, onlineSoupRouter);
 
 registerDigitalAssetRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, onBadgeProgress: (userId) => queueSystemBadgeSync([userId]) });
-registerCollectibleRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, emitUserEvent, emitUnreadChanged, broadcastEvent: broadcastUserEvent });
+registerCollectibleRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage, emitUserEvent, emitUnreadChanged, broadcastEvent: broadcastUserEvent, onBadgeProgress: (userId) => queueSystemBadgeSync([userId]) });
 registerStickerStoreRoutes(app, { requireAuth, requireAdmin, sendError, sendStoredImage });
 registerBannerRoutes(app, { requireAdmin, sendError });
 registerBackgroundMusicRoutes(app, { requireAuth, requireAdmin, sendError });
@@ -7770,7 +7904,10 @@ const settleRankingRewards = () => {
         rankingsCache.clear();
         queueSystemBadgeSync(userIds);
       }
-      userIds.forEach((userId) => emitUnreadChanged(userId, "ranking_reward"));
+      userIds.forEach((userId) => {
+        emitUnreadChanged(userId, "ranking_reward");
+        emitUserEvent(userId, "badge_ownership_changed", { source: "ranking_reward_settlement" });
+      });
     })
     .catch((error) => console.error("Ranking reward settlement failed:", error));
 };
@@ -7778,7 +7915,7 @@ settleRankingRewards();
 const rankingRewardSettlementTimer = setInterval(settleRankingRewards, 60_000);
 rankingRewardSettlementTimer.unref();
 startCircleRedPacketScheduler({ pool, onPublished: notifyCircleRedPacketPublished });
-startCollectibleAuctionScheduler({ emitUserEvent, emitUnreadChanged, broadcastEvent: broadcastUserEvent });
+startCollectibleAuctionScheduler({ emitUserEvent, emitUnreadChanged, broadcastEvent: broadcastUserEvent, onBadgeProgress: (userId) => queueSystemBadgeSync([userId]) });
 }
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);

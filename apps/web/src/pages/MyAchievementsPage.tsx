@@ -1,12 +1,13 @@
-import { cloneElement, isValidElement, useState, useEffect, useRef } from "react";
+import { cloneElement, isValidElement, useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { PageTopBar } from "../components/PageTopBar";
 import { useNavigate } from "react-router-dom";
 import { MineBackButton } from "../components/MineBackButton";
 import { api, StatsResponse } from "../api";
-import { BadgeType, LegendaryBadge, LegendaryBadgeIcon, versionBadgeAssetUrl } from "../components/BadgeVisuals";
+import { BadgeType, LegendaryBadge, LegendaryBadgeIcon, TimedRankingBadge, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 import { resolveBadgeOwnership } from "../shared/badgeOwnership";
+import { subscribeServerEvent } from "../shared/serverEvents";
 
 // ============================================================
 // 类型定义
@@ -48,6 +49,9 @@ export interface BadgeDef {
   progressCurrent: number;
   progressTarget: number;
   earned: boolean;
+  timedStatus?: "active" | "expired" | "locked";
+  expiresAt?: string | null;
+  expiredAt?: string | null;
 }
 
 interface DisplayBadge {
@@ -319,6 +323,7 @@ function getAllTiers(badges: BadgeDef[], series: string): BadgeDef[] {
 }
 
 function getProgressText(badge: BadgeDef): string {
+  if (badge.timedStatus === "expired") return "已失效";
   if (badge.earned) return "已完成";
   return `${badge.progressCurrent}/${badge.progressTarget}`;
 }
@@ -329,6 +334,18 @@ function formatBadgeDate(value: string) {
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatBadgeDateTime(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   }).format(new Date(value));
 }
 
@@ -363,6 +380,35 @@ function legendaryToDisplayBadge(badge: LegendaryBadge): DisplayBadge {
     achievementPoints: def.achievementPoints,
     earned: true,
     highestEarnedIndex: 1,
+    currentIndex: 1,
+  };
+}
+
+function timedToBadgeDef(badge: TimedRankingBadge): BadgeDef {
+  const active = badge.isActive;
+  return {
+    ...legendaryToBadgeDef(badge),
+    unlockedAt: badge.grantedAt,
+    progressCurrent: badge.grantedAt ? 1 : 0,
+    earned: active,
+    timedStatus: active ? "active" : badge.grantedAt ? "expired" : "locked",
+    expiresAt: badge.expiresAt,
+    expiredAt: badge.expiredAt,
+  };
+}
+
+function timedToDisplayBadge(badge: TimedRankingBadge): DisplayBadge {
+  const def = timedToBadgeDef(badge);
+  return {
+    series: def.series,
+    label: def.label,
+    tier: def.tier,
+    tierLabel: TIER_LABEL[def.tier],
+    icon: def.icon,
+    colors: TIER_COLORS_EARNED[def.tier],
+    achievementPoints: 0,
+    earned: badge.isActive,
+    highestEarnedIndex: badge.grantedAt ? 1 : 0,
     currentIndex: 1,
   };
 }
@@ -632,6 +678,21 @@ function BadgeDetail({
               获得日期：{formatBadgeDate(def.unlockedAt)}
             </p>
           )}
+          {def.timedStatus === "expired" && def.unlockedAt && (
+            <p className="mt-1 text-xs font-semibold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7),0_0_8px_rgba(0,0,0,0.4)]">
+              曾于 {formatBadgeDateTime(def.unlockedAt)} 获得
+            </p>
+          )}
+          {def.timedStatus === "active" && def.expiresAt && (
+            <p className="mt-1 text-xs font-semibold text-amber-200 [text-shadow:0_1px_3px_rgba(0,0,0,0.7)]">
+              有效至：{formatBadgeDateTime(def.expiresAt)}（下一次30日榜结算）
+            </p>
+          )}
+          {def.timedStatus === "expired" && (def.expiredAt || def.expiresAt) && (
+            <p className="mt-1 text-xs font-semibold text-slate-200 [text-shadow:0_1px_3px_rgba(0,0,0,0.7)]">
+              已于 {formatBadgeDateTime(def.expiredAt ?? def.expiresAt ?? "")} 失效
+            </p>
+          )}
           {def.earned && (
             <p className="mt-1 text-xs font-semibold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7),0_0_8px_rgba(0,0,0,0.4)]">
               有{def.ownershipRate.toFixed(1)}%的用户拥有此勋章
@@ -698,25 +759,33 @@ export default function MyAchievementsPage() {
   const navigate = useNavigate();
   const [badges, setBadges] = useState<BadgeDef[]>(BADGES);
   const [legendaryBadges, setLegendaryBadges] = useState<LegendaryBadge[]>([]);
+  const [timedBadges, setTimedBadges] = useState<TimedRankingBadge[]>([]);
   const displayBadges = buildDisplayBadges(badges);
   const achievementSpecialBadges = legendaryBadges.filter((badge) => badge.badgeType === "achievement");
   const activityBadges = legendaryBadges.filter((badge) => badge.badgeType === "activity");
   const limitedBadges = legendaryBadges.filter((badge) => badge.badgeType === "limited");
-  const legendaryBadgeDefs = legendaryBadges.map(legendaryToBadgeDef);
-  const allBadgeDefs = [...badges, ...legendaryBadgeDefs];
+  const legendaryBadgeDefs = legendaryBadges.filter((badge) => badge.badgeType !== "timed").map(legendaryToBadgeDef);
+  const timedBadgeDefs = timedBadges.map(timedToBadgeDef);
+  const allBadgeDefs = [...badges, ...legendaryBadgeDefs, ...timedBadgeDefs];
   const totalAchievementPoints = badges.filter((badge) => badge.earned).reduce((sum, badge) => sum + badge.achievementPoints, 0)
     + legendaryBadges.reduce((sum, badge) => sum + badge.achievementPoints, 0);
 
-  useEffect(() => {
+  const loadBadges = useCallback(() => {
     Promise.all([
       api<StatsResponse>("/api/me/stats", { cacheTtlMs: 60_000 }),
-      api<{ badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; unlockDates: Record<string, string>; ownershipRates: Record<string, number> }>("/api/me/badge-collection")
+      api<{ badgeKeys: string[]; legendaryBadges: LegendaryBadge[]; timedBadges: TimedRankingBadge[]; unlockDates: Record<string, string>; ownershipRates: Record<string, number> }>("/api/me/badge-collection")
     ])
       .then(([stats, collection]) => {
         setBadges(buildBadgesFromStats(stats, collection.unlockDates, collection.ownershipRates, collection.badgeKeys));
         setLegendaryBadges(collection.legendaryBadges.map((badge) => ({ ...badge, ownershipRate: collection.ownershipRates[badge.key] ?? 0 })));
+        setTimedBadges((collection.timedBadges ?? []).map((badge) => ({ ...badge, ownershipRate: collection.ownershipRates[badge.key] ?? 0 })));
       }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadBadges();
+    return subscribeServerEvent("badge_ownership_changed", loadBadges);
+  }, [loadBadges]);
 
   const [state, setState] = useState<{
     phase: "measuring" | "flying" | "done" | "closing" | "returning";
@@ -805,6 +874,30 @@ export default function MyAchievementsPage() {
     });
   }
 
+  function renderTimedBadges() {
+    return timedBadges.map((badge) => {
+      const displayBadge = timedToDisplayBadge(badge);
+      const status = badge.isActive ? "有效" : badge.grantedAt ? "已失效" : "未获得";
+      const isThis = state && flippingSeries === displayBadge.series;
+      return (
+        <button
+          type="button"
+          key={badge.key}
+          className={`flex min-w-0 flex-col items-center gap-1.5 rounded-xl text-center transition-opacity duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${isThis ? "opacity-0" : "opacity-100"}`}
+          onClick={(event) => handleBadgeClick(displayBadge, event)}
+          aria-label={`检视限时成就徽章：${badge.name}，${status}`}
+        >
+          <span className={`relative block rounded-2xl ${badge.isActive ? "" : "grayscale opacity-55"}`}>
+            <LegendaryBadgeIcon badge={badge} />
+            <span className={`absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-black leading-none text-white shadow-sm ${badge.isActive ? "bg-emerald-600" : badge.grantedAt ? "bg-slate-600" : "bg-slate-400"}`}>{status}</span>
+          </span>
+          <span className={`mt-1 text-xs font-semibold leading-tight ${badge.isActive ? "text-ink" : "text-slate-500"}`}>{badge.name}</span>
+          <span className={`text-[11px] font-black ${badge.isActive ? "text-amber-600" : "text-slate-400"}`}>史诗 · 限时</span>
+        </button>
+      );
+    });
+  }
+
   return (
     <section className="space-y-3">
       <PageTopBar title="我的成就" />
@@ -879,6 +972,15 @@ export default function MyAchievementsPage() {
         <div className="px-4">
           <h2 className="mb-3 text-sm font-black text-ink">限定徽章</h2>
           <div className="grid grid-cols-4 gap-4">{renderSpecialBadges(limitedBadges)}</div>
+        </div>
+      )}
+
+      {timedBadges.length > 0 && (
+        <div className="px-4">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div><h2 className="text-sm font-black text-ink">限时成就徽章</h2><p className="mt-1 text-xs leading-5 text-muted">30日排行榜第一名持有，下一次月度结算时换届。</p></div>
+          </div>
+          <div className="grid grid-cols-4 gap-4">{renderTimedBadges()}</div>
         </div>
       )}
 

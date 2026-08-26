@@ -172,6 +172,13 @@ export type RankingRewardSettlementDetail = {
     boardLabel: string;
     rank: number;
     metricValue: number;
+    timedBadge: {
+      id: string;
+      name: string;
+      description: string;
+      iconUrl: string;
+      expiresAt: string;
+    } | null;
     reward:
       | { type: "currency"; experience: number; shell: number }
       | { type: "gift"; giftName: string; quantity: number; creditedQuantity: number; overflowQuantity: number; overflowShell: number };
@@ -605,6 +612,20 @@ export type OnlineSoupMessage = {
   senderVipLevel: VipLevel;
   senderVipActive: boolean;
   senderEquippedBadge: EquippedBadge | null;
+  impostorGameNumber: number | null;
+  impostorSeat: number | null;
+  impostorEvent: {
+    kind: "night_action" | "clue" | "nomination" | "assassination" | "accusation";
+    gameNumber: number;
+    day: number;
+    attempt?: number;
+  } | {
+    kind: "settlement";
+    gameNumber: number;
+    winner: "good" | "impostor" | "draw";
+    endReason: string;
+    players: Array<{ userId: string; seat: number; nickname: string; role: ImpostorRole; roleLabel: string }>;
+  } | null;
   type: "discussion" | "question" | "host" | "sticker" | "gift" | "clue" | "supplemental_surface" | "bottom" | "manual" | "system" | "ai_advice" | "ai_honor" | "mystery_narrative";
   content: string;
   aiHonors: OnlineSoupAiHonors | null;
@@ -629,6 +650,7 @@ export type OnlineSoupMessage = {
     sequence: string;
     senderId: string | null;
     senderName: string | null;
+    impostorSeat: number | null;
     type: "discussion" | "question" | "host" | "sticker";
     content: string;
     stickerId: string | null;

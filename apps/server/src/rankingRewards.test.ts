@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  monthlyTimedBadgeWinners,
   nextMonthlyRankingSettlement,
   nextRankingPeriodEnd,
   nextWeeklyRankingSettlement,
@@ -8,6 +9,7 @@ import {
   rankingPeriodStart,
   rankingRewardFor
 } from "./rankingRewards.js";
+import { TIMED_RANKING_BADGE_LIST } from "./timedRankingBadges.js";
 import {
   mergedRankingRewardNotificationReadState,
   rankingRewardNotificationSummary
@@ -89,4 +91,35 @@ test("同一次排行榜结算汇总为一条通知", () => {
   });
   assert.equal(mergedRankingRewardNotificationReadState([1, true, "1"]), true);
   assert.equal(mergedRankingRewardNotificationReadState([1, 0]), false);
+});
+
+test("30日榜第一名按七个榜单获得对应限时徽章", () => {
+  const standings = Object.fromEntries([
+    "achievement", "level", "collection", "collectible", "charm", "generosity", "draws"
+  ].map((board, index) => [board, [{ userId: `winner-${index}`, value: 100 - index, rank: 1 }]]));
+  const winners = monthlyTimedBadgeWinners(standings as unknown as Parameters<typeof monthlyTimedBadgeWinners>[0]);
+  assert.equal(winners.length, 7);
+  assert.deepEqual(winners.map(({ board, winner }) => [board, winner.userId]), [
+    ["achievement", "winner-0"],
+    ["level", "winner-1"],
+    ["collection", "winner-2"],
+    ["collectible", "winner-3"],
+    ["draws", "winner-6"],
+    ["charm", "winner-4"],
+    ["generosity", "winner-5"]
+  ]);
+  assert.ok(TIMED_RANKING_BADGE_LIST.every((badge) => badge.achievementPoints === 0 && badge.tier === "epic"));
+  assert.deepEqual(TIMED_RANKING_BADGE_LIST.map((badge) => badge.name), [
+    "荣誉载身", "独自升级", "JOKER", "收藏大师", "一发入魂", "魅力四射", "慷慨新贵"
+  ]);
+});
+
+test("没有正值入榜用户的榜单不发限时徽章", () => {
+  const standings = Object.fromEntries([
+    "achievement", "level", "collection", "collectible", "charm", "generosity", "draws"
+  ].map((board) => [board, []]));
+  assert.deepEqual(
+    monthlyTimedBadgeWinners(standings as unknown as Parameters<typeof monthlyTimedBadgeWinners>[0]),
+    []
+  );
 });

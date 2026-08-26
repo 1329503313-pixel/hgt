@@ -257,15 +257,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // 忽略格式异常的事件，兜底轮询仍会恢复状态。
       }
     });
+    const unsubscribeOwnership = subscribeServerEvent("badge_ownership_changed", () => {
+      void checkBadgeUnlocks(true);
+      void api<MeResponse>("/api/auth/me", { bypassCache: true, dedupe: false })
+        .then((data) => {
+          setUserState(data.user);
+          triggerRefresh();
+        })
+        .catch(() => undefined);
+    });
     const timer = window.setInterval(() => void checkBadgeUnlocks(), 5 * 60_000);
     const handleFocus = () => void checkBadgeUnlocks();
     window.addEventListener("focus", handleFocus);
     return () => {
       unsubscribe();
+      unsubscribeOwnership();
       window.clearInterval(timer);
       window.removeEventListener("focus", handleFocus);
     };
-  }, [user, checkBadgeUnlocks]);
+  }, [user, checkBadgeUnlocks, triggerRefresh]);
 
   const openAuth = useCallback(() => {
     setAuthError("");

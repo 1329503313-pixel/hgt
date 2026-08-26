@@ -71,6 +71,7 @@ test("白天不设倒计时，全部游戏者准备后才进入任务投票", ()
   state = submitImpostorReady(state, users.at(-1)!, now);
   assert.equal(state.phase, "day_vote");
   assert.equal(state.nomination?.required, 2);
+  assert.equal(state.deadlineAt, "2026-08-25T00:01:00.000Z");
 });
 
 test("任务人选截断位平票时只对平票候选重投", () => {
@@ -83,6 +84,7 @@ test("任务人选截断位平票时只对平票候选重投", () => {
   assert.deepEqual(state.nomination?.lockedUserIds, ["u1"]);
   assert.deepEqual(state.nomination?.candidateUserIds, ["u2", "u3"]);
   assert.equal(state.nomination?.required, 1);
+  assert.equal(state.deadlineAt, "2026-08-25T00:01:00.000Z");
   for (const userId of users) state = submitImpostorNomination(state, userId, ["u2"], now);
   assert.equal(state.phase, "mission");
   assert.deepEqual(state.missionTeamUserIds, ["u1", "u2"]);
@@ -217,6 +219,7 @@ test("三次成功进入刺杀，刺中侦探则伪人获胜", () => {
   state = reachMission(state);
   for (const userId of state.missionTeamUserIds) state = submitImpostorMissionChoice(state, userId, "protect", now);
   assert.equal(state.phase, "assassination");
+  assert.equal(state.deadlineAt, "2026-08-25T00:01:30.000Z");
   const impostor = state.players.find((player) => player.role === "impostor")!;
   const detective = state.players.find((player) => player.role === "detective")!;
   state = submitImpostorAssassination(state, impostor.userId, detective.userId);
@@ -232,12 +235,31 @@ test("最终指认第二次仍平票时伪人胜利", () => {
   state = submitImpostorAccusation(state, "u3", "u4", now);
   state = submitImpostorAccusation(state, "u4", "u3", now);
   assert.equal(state.accusation?.attempt, 2);
+  assert.equal(state.deadlineAt, "2026-08-25T00:01:00.000Z");
   state = submitImpostorAccusation(state, "u1", "u3", now);
   state = submitImpostorAccusation(state, "u2", "u4", now);
   state = submitImpostorAccusation(state, "u3", "u4", now);
   state = submitImpostorAccusation(state, "u4", "u3", now);
   assert.equal(state.winner, "impostor");
   assert.match(state.endReason ?? "", /第二次/);
+});
+
+test("投票超时未提交者按弃票结算", () => {
+  let state = firstNightResolved();
+  state = submitImpostorNomination(state, "u1", ["u1", "u2"], now);
+  state = submitImpostorNomination(state, "u2", ["u1", "u2"], now);
+  state.deadlineAt = new Date(now.getTime() - 1).toISOString();
+  state = advanceExpiredImpostorGame(state, now, fixedRandom);
+  assert.equal(state.phase, "mission");
+  assert.deepEqual(state.missionTeamUserIds, ["u1", "u2"]);
+
+  state = firstNightResolved();
+  state.phase = "accusation";
+  state.accusation = { attempt: 1, candidateUserIds: [...users], ballots: { u1: "u2", u2: "u2" } };
+  state.deadlineAt = new Date(now.getTime() - 1).toISOString();
+  state = advanceExpiredImpostorGame(state, now, fixedRandom);
+  assert.equal(state.phase, "ended");
+  assert.match(state.endReason ?? "", /指认/);
 });
 
 test("已经结算的对局不能被终止操作改写为平局", () => {

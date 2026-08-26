@@ -1,4 +1,4 @@
-export type BadgeType = "achievement" | "activity" | "limited";
+export type BadgeType = "achievement" | "activity" | "limited" | "timed";
 
 export type ActivityConditionKind =
   | "login"
@@ -21,7 +21,8 @@ export type ActivityBadgeCondition = {
 export const BADGE_TYPE_LABELS: Record<BadgeType, string> = {
   achievement: "成就徽章",
   activity: "活动徽章",
-  limited: "限定徽章"
+  limited: "限定徽章",
+  timed: "限时成就徽章"
 };
 
 export const ACTIVITY_CONDITION_LABELS: Record<ActivityConditionKind, string> = {
@@ -58,6 +59,14 @@ export type LegendaryBadge = {
   unlockedAt?: string | null;
   tier: "epic" | "legend";
   ownerCount?: number;
+};
+
+export type TimedRankingBadge = LegendaryBadge & {
+  badgeType: "timed";
+  grantedAt: string | null;
+  expiresAt: string | null;
+  expiredAt: string | null;
+  isActive: boolean;
 };
 
 export type EquippedBadgeVisual = {
