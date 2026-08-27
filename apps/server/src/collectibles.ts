@@ -105,9 +105,12 @@ async function recordValueEvent(connection: mysql.PoolConnection, row: mysql.Row
   );
 }
 
-async function insertNotification(connection: mysql.PoolConnection, userId: string, type: string, title: string, content: string, relatedId: string) {
+export async function insertNotification(connection: mysql.PoolConnection, userId: string, type: string, title: string, content: string, relatedId: string) {
   await connection.query(
-    "INSERT INTO notifications (id, user_id, type, title, content, related_id, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO notifications (id, user_id, type, title, content, related_id, actor_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       title=VALUES(title), content=VALUES(content), is_read=FALSE, created_at=CURRENT_TIMESTAMP`,
     [nanoid(), userId, type, title, content, relatedId, userId]
   );
 }

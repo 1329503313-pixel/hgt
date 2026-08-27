@@ -1,26 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
-import { AdminSidebar, AdminTopBar, AdminTab } from "../components/admin/AdminTopBar";
-import { UserManagement } from "../components/admin/UserManagement";
-import { SoupManagement } from "../components/admin/SoupManagement";
-import { EvaluationManagement } from "../components/admin/EvaluationManagement";
-import { ApprovalManagement } from "../components/admin/ApprovalManagement";
-import { AdminDashboard } from "../components/admin/AdminDashboard";
-import { BadgeManagement } from "../components/admin/BadgeManagement";
-import { NoticeManagement } from "../components/admin/NoticeManagement";
+import { AdminSidebar, AdminTopBar } from "../components/admin/AdminTopBar";
 import { CardSkeleton } from "../components/Skeletons";
-import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomManagement";
-import { AiHostAuditManagement } from "../components/admin/AiHostAuditManagement";
-import { CircleManagement } from "../components/admin/CircleManagement";
-import { StoreManagement } from "../components/admin/StoreManagement";
-import { CollectibleManagement } from "../components/admin/CollectibleManagement";
-import { BannerManagement } from "../components/admin/BannerManagement";
-import { FeedbackManagement } from "../components/admin/FeedbackManagement";
-import { GiftManagement } from "../components/admin/GiftManagement";
-import { VipManagement } from "../components/admin/VipManagement";
-import { EntitlementManagement } from "../components/admin/EntitlementManagement";
-import { MysteryManagement } from "../components/admin/MysteryManagement";
+import { adminRoutes } from "../components/admin/adminRoutes";
+import { adminRouteFromPathname, adminRoutePath, canAccessAdminRoute, defaultAdminTab } from "../components/admin/adminRouteManifest";
 import { canAccessAdmin, isSuperAdminRole } from "../shared/roles";
 import { api } from "../api";
 import { subscribeServerEvent } from "../shared/serverEvents";
@@ -28,7 +12,8 @@ import { subscribeServerEvent } from "../shared/serverEvents";
 export default function AdminPage() {
   const { user, loadingUser } = useApp();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<AdminTab>("data");
+  const location = useLocation();
+  const contentRef = useRef<HTMLElement>(null);
   const [moduleUnread, setModuleUnread] = useState({ approvals: false, feedback: false });
 
   const loadModuleUnread = useCallback(async () => {
@@ -43,8 +28,8 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (loadingUser) return;
-    if (!user || !canAccessAdmin(user.role)) { navigate("/"); return; }
-  }, [user, loadingUser]);
+    if (!user || !canAccessAdmin(user.role)) { navigate("/", { replace: true }); return; }
+  }, [user, loadingUser, navigate]);
 
   useEffect(() => {
     if (!user || !canAccessAdmin(user.role)) return;
@@ -77,43 +62,51 @@ export default function AdminPage() {
   }, [loadModuleUnread]);
 
   useEffect(() => {
-    if (activeTab !== "feedback") return;
+    if (!user || !canAccessAdmin(user.role) || adminRouteFromPathname(location.pathname)?.key !== "feedback") return;
     setModuleUnread((current) => ({ ...current, feedback: false }));
     void api("/api/admin/module-unread/feedback/read", { method: "PATCH" }).catch(() => {});
-  }, [activeTab]);
+  }, [location.pathname, user]);
+
+  useEffect(() => {
+    if (loadingUser || !user || !canAccessAdmin(user.role)) return;
+    contentRef.current?.focus({ preventScroll: true });
+  }, [loadingUser, location.pathname, user]);
 
   if (loadingUser) {
     return <main className="mx-auto max-w-7xl space-y-4 px-4 py-20"><CardSkeleton rows={4} /><CardSkeleton rows={6} /></main>;
   }
   if (!user || !canAccessAdmin(user.role)) return null;
   const isSuperAdmin = isSuperAdminRole(user.role);
+  const requestedRoute = adminRouteFromPathname(location.pathname);
+  const activeRoute = requestedRoute && canAccessAdminRoute(requestedRoute, user.role)
+    ? requestedRoute
+    : adminRoutes.find((route) => route.key === defaultAdminTab)!;
+  const routeContext = {
+    isSuperAdmin,
+    refreshModuleUnread: () => { void loadModuleUnread(); }
+  };
 
   return (
     <section className="min-h-screen bg-page">
       <AdminTopBar />
-      <AdminSidebar activeTab={activeTab} onTabChange={setActiveTab} role={user.role} unread={moduleUnread} />
-      <div className="ml-20 px-3 pb-8 pt-[81px] sm:ml-44 sm:px-4">
+      <AdminSidebar activeTab={activeRoute.key} onTabChange={(tab) => navigate(adminRoutePath(tab))} role={user.role} unread={moduleUnread} />
+      <main ref={contentRef} tabIndex={-1} aria-label={`${activeRoute.label}管理`} className="ml-20 px-3 pb-8 pt-[81px] outline-none sm:ml-44 sm:px-4">
         <div className="mx-auto max-w-7xl space-y-4">
-          {activeTab === "data" && <AdminDashboard />}
-          {activeTab === "banners" && isSuperAdmin && <BannerManagement />}
-          {activeTab === "users" && <UserManagement isSuperAdmin={isSuperAdmin} />}
-          {activeTab === "vip" && isSuperAdmin && <VipManagement />}
-          {activeTab === "entitlements" && isSuperAdmin && <EntitlementManagement />}
-          {activeTab === "soups" && <SoupManagement canDelete={isSuperAdmin} />}
-          {activeTab === "mysteries" && <MysteryManagement />}
-          {activeTab === "evaluations" && <EvaluationManagement />}
-          {activeTab === "gifts" && isSuperAdmin && <GiftManagement />}
-          {activeTab === "badges" && isSuperAdmin && <BadgeManagement />}
-          {activeTab === "approvals" && <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} onPendingChange={loadModuleUnread} />}
-          {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}
-          {activeTab === "ai-host" && isSuperAdmin && <AiHostAuditManagement />}
-          {activeTab === "circles" && isSuperAdmin && <CircleManagement />}
-          {activeTab === "collectibles" && isSuperAdmin && <CollectibleManagement />}
-          {activeTab === "assets" && isSuperAdmin && <StoreManagement />}
-          {activeTab === "notices" && <NoticeManagement />}
-          {activeTab === "feedback" && <FeedbackManagement />}
+          <Routes>
+            <Route index element={<Navigate to={adminRoutePath(defaultAdminTab)} replace />} />
+            {adminRoutes.map((route) => (
+              <Route
+                key={route.key}
+                path={route.path}
+                element={canAccessAdminRoute(route, user.role)
+                  ? route.render(routeContext)
+                  : <Navigate to={adminRoutePath(defaultAdminTab)} replace />}
+              />
+            ))}
+            <Route path="*" element={<Navigate to={adminRoutePath(defaultAdminTab)} replace />} />
+          </Routes>
         </div>
-      </div>
+      </main>
     </section>
   );
 }

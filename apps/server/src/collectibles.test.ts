@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectibleAuctionEndAfterBid, collectibleProbabilityWins, optimizeCollectibleImages } from "./collectibles.js";
+import { collectibleAuctionEndAfterBid, collectibleProbabilityWins, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
 import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
 
 test("收藏品排行榜按用户当前拥有且未删除的藏品价值总和统计", () => {
@@ -32,6 +32,24 @@ test("最后一分钟内出价后延长至出价时间后一整分钟", () => {
 test("最后一分钟以外的出价不改变结束时间", () => {
   const end = new Date("2026-08-21T10:02:00.000Z");
   assert.equal(collectibleAuctionEndAfterBid(end, new Date("2026-08-21T10:00:00.000Z")), end);
+});
+
+test("同一拍卖重复被超价时刷新既有通知而不阻断出价事务", async () => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const connection = {
+    query: async (sql: string, params: unknown[]) => {
+      calls.push({ sql, params });
+      return [];
+    }
+  };
+
+  await insertNotification(connection as never, "previous-user", "collectible_outbid", "藏品竞拍出价被超过", "100 贝壳已退回余额", "auction-1");
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /ON DUPLICATE KEY UPDATE/);
+  assert.match(calls[0].sql, /is_read=FALSE/);
+  assert.match(calls[0].sql, /created_at=CURRENT_TIMESTAMP/);
+  assert.deepEqual(calls[0].params.slice(1), ["previous-user", "collectible_outbid", "藏品竞拍出价被超过", "100 贝壳已退回余额", "auction-1", "previous-user"]);
 });
 
 test("本地未配置 OSS 时收藏品封面回退为优化后的 WebP data URL", async () => {

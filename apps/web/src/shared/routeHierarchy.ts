@@ -34,6 +34,6 @@ export function parentRoute(pathname: string) {
   if (/^\/users\/[^/]+$/.test(path)) return "/";
 
   if (/^\/soup\/[^/]+$/.test(path)) return "/";
-  if (path === "/admin") return "/";
+  if (/^\/admin(?:\/|$)/.test(path)) return "/";
   return "/";
 }

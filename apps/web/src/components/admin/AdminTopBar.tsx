@@ -1,52 +1,13 @@
 import {
   ArrowLeft,
-  Award,
-  Bot,
-  BarChart3,
-  Bell,
-  CircleEllipsis,
-  ClipboardCheck,
-  Images,
-  MessageSquare,
-  MessageSquareText,
-  BookOpenCheck,
-  PackageOpen,
-  Gift,
-  Crown,
-  Gem,
-  Radio,
-  RefreshCw,
-  Soup,
-  ShieldCheck,
-  Users
+  RefreshCw
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { UserRole } from "../../shared/types";
-import { isSuperAdminRole } from "../../shared/roles";
+import { adminRoutes } from "./adminRoutes";
+import { canAccessAdminRoute, type AdminTab } from "./adminRouteManifest";
 
-export type AdminTab = "data" | "banners" | "users" | "vip" | "entitlements" | "soups" | "mysteries" | "evaluations" | "gifts" | "badges" | "approvals" | "online-soup" | "ai-host" | "circles" | "collectibles" | "assets" | "notices" | "feedback";
-
-const tabs: { key: AdminTab; label: string; icon: React.ReactNode }[] = [
-  { key: "data", label: "数据", icon: <BarChart3 size={17} /> },
-  { key: "banners", label: "Banner", icon: <Images size={17} /> },
-  { key: "users", label: "用户", icon: <Users size={17} /> },
-  { key: "vip", label: "VIP", icon: <Crown size={17} /> },
-  { key: "entitlements", label: "权益", icon: <ShieldCheck size={17} /> },
-  { key: "soups", label: "汤品", icon: <Soup size={17} /> },
-  { key: "mysteries", label: "谜局", icon: <BookOpenCheck size={17} /> },
-  { key: "evaluations", label: "评价", icon: <MessageSquare size={17} /> },
-  { key: "gifts", label: "礼物", icon: <Gift size={17} /> },
-  { key: "badges", label: "徽章", icon: <Award size={17} /> },
-  { key: "approvals", label: "审批", icon: <ClipboardCheck size={17} /> },
-  { key: "online-soup", label: "大厅", icon: <Radio size={17} /> },
-  { key: "ai-host", label: "AI审计", icon: <Bot size={17} /> },
-  { key: "circles", label: "圈子", icon: <CircleEllipsis size={17} /> },
-  { key: "collectibles", label: "收藏品", icon: <Gem size={17} /> },
-  { key: "assets", label: "商城", icon: <PackageOpen size={17} /> },
-  { key: "notices", label: "通知", icon: <Bell size={17} /> },
-  { key: "feedback", label: "建议", icon: <MessageSquareText size={17} /> }
-];
-const backofficeTabs = new Set<AdminTab>(["data", "users", "soups", "mysteries", "evaluations", "approvals", "notices", "feedback"]);
+export type { AdminTab } from "./adminRouteManifest";
 
 export function AdminTopBar() {
   const navigate = useNavigate();
@@ -81,12 +42,14 @@ export function AdminSidebar({
   role: UserRole;
   unread?: Partial<Record<AdminTab, boolean>>;
 }) {
-  const visibleTabs = isSuperAdminRole(role) ? tabs : tabs.filter((tab) => backofficeTabs.has(tab.key));
+  const visibleTabs = adminRoutes.filter((route) => canAccessAdminRoute(route, role));
   return (
     <aside className="fixed inset-y-0 left-0 z-20 w-20 border-r border-line bg-white/95 pt-[65px] shadow-[8px_0_24px_rgba(17,24,39,0.04)] backdrop-blur sm:w-44">
       <nav className="h-full overflow-y-auto px-2 py-4 sm:px-3" aria-label="管理后台模块">
         <div className="space-y-1">
-          {visibleTabs.map((tab) => (
+          {visibleTabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
             <button
               key={tab.key}
               type="button"
@@ -98,10 +61,11 @@ export function AdminSidebar({
               onClick={() => onTabChange(tab.key)}
               aria-current={activeTab === tab.key ? "page" : undefined}
             >
-              <span className="shrink-0">{tab.icon}</span>
+              <Icon className="shrink-0" size={17} />
               <span className="inline-flex items-center gap-1.5">{tab.label}{unread?.[tab.key] && <span className="h-2 w-2 shrink-0 rounded-full bg-red-500 ring-2 ring-white" aria-label="有新消息" />}</span>
             </button>
-          ))}
+            );
+          })}
         </div>
       </nav>
     </aside>
