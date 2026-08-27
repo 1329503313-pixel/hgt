@@ -38,7 +38,7 @@ type UserColumn = "user" | "role" | "level" | "vipGrowth" | "createdAt" | "lastL
 type BulkShellPreview = { matchedCount: number; eligibleCount: number; skippedCount: number };
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
-  { key: "user", label: "用户", width: "minmax(190px, 1fr)" },
+  { key: "user", label: "用户", width: "190px" },
   { key: "role", label: "角色", width: "110px" },
   { key: "level", label: "等级 / 当前经验", width: "150px" },
   { key: "vipGrowth", label: "VIP成长值", width: "120px" },
@@ -373,7 +373,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1710px]">
+        <div className="w-max min-w-full">
           <div className="mb-2 grid items-center justify-items-center gap-2 px-3 text-center text-xs font-bold text-muted" style={{ gridTemplateColumns: template }}>
             {userColumns.filter((column) => visibleColumns.has(column.key)).map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
