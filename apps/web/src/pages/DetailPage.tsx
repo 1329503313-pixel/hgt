@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
-import { Bell, Download, Eye, Flame, Lock, Pencil, Shield, Star, ThumbsUp, MessageSquare, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
+import { Bell, Download, Eye, Flame, Lock, Pencil, Pin, PinOff, Shield, Star, ThumbsUp, MessageSquare, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
 import type { SoupDetail } from "../shared/types";
 import { api, SoupResponse, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -21,6 +21,7 @@ import { seoDescription, seoSite, setDocumentSeo } from "../shared/seo";
 import { canAccessAdmin } from "../shared/roles";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { EvaluationCard } from "../components/EvaluationCard";
+import { removeSessionCachePrefix } from "../shared/sessionCache";
 
 function CollapsibleSection({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -57,6 +58,7 @@ export default function DetailPage() {
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   const [likePending, setLikePending] = useState(false);
   const [favoritePending, setFavoritePending] = useState(false);
+  const [profilePinPending, setProfilePinPending] = useState(false);
 
   const radarRef = useRef<HTMLDivElement | null>(null);
   const backTarget = navigationOrigin?.soupShareReturnTo || navigationOrigin?.soupReturnTo || (onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : parentRoute(location.pathname));
@@ -138,6 +140,21 @@ export default function DetailPage() {
       showToast(error instanceof Error ? error.message : "点赞失败，请稍后重试");
     } finally {
       setLikePending(false);
+    }
+  }
+
+  async function toggleProfilePin() {
+    if (!soup || !soup.canPinToProfile || profilePinPending) return;
+    setProfilePinPending(true);
+    try {
+      const data = await api<{ isProfilePinned: boolean }>(`/api/soups/${soup.id}/profile-pin`, { method: "POST" });
+      setSoup((current) => current ? { ...current, isProfilePinned: data.isProfilePinned } : current);
+      removeSessionCachePrefix("hgt:user-profile:");
+      showToast(data.isProfilePinned ? "置顶成功" : "取消置顶成功");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "操作失败，请稍后重试");
+    } finally {
+      setProfilePinPending(false);
     }
   }
 
@@ -509,6 +526,7 @@ export default function DetailPage() {
             <h2 className="mt-1 font-black text-ink">作品管理</h2>
             <div className="mt-4 grid gap-2">
               <button className="btn btn-secondary whitespace-nowrap px-2" onClick={() => openSoupEditor(soup)}>编辑</button>
+              {soup.canPinToProfile && <button className="btn btn-secondary whitespace-nowrap px-2" disabled={profilePinPending} onClick={() => void toggleProfilePin()}>{soup.isProfilePinned ? <PinOff size={17} /> : <Pin size={17} />}{profilePinPending ? "处理中…" : soup.isProfilePinned ? "取消置顶" : "置顶"}</button>}
             </div>
           </div>
         )}
@@ -517,7 +535,8 @@ export default function DetailPage() {
       <div className="card mt-4 grid grid-cols-2 gap-3 p-3 lg:hidden" aria-label="作品操作">
         {soup.canViewFull && isReviewApproved && <button className="btn btn-primary" onClick={() => { if (!user) { openAuth(); return; } setRoomForm({ name: soup.title, type: "public", password: "", hostMode: "human" }); setShowRoomCreate(true); }}><DoorOpen size={18} />开房间</button>}
         <button className="btn btn-secondary" onClick={() => setShowShare(true)}><Share2 size={18} />分享</button>
-        {soup.canEdit && <button className="btn btn-secondary col-span-2" onClick={() => openSoupEditor(soup)}><Pencil size={18} />编辑</button>}
+        {soup.canEdit && <button className={`btn btn-secondary ${soup.canPinToProfile ? "" : "col-span-2"}`} onClick={() => openSoupEditor(soup)}><Pencil size={18} />编辑</button>}
+        {soup.canPinToProfile && <button className="btn btn-secondary" disabled={profilePinPending} onClick={() => void toggleProfilePin()}>{soup.isProfilePinned ? <PinOff size={18} /> : <Pin size={18} />}{profilePinPending ? "处理中…" : soup.isProfilePinned ? "取消置顶" : "置顶"}</button>}
       </div>
 
       {showShare && <SoupShareModal soup={soup} onClose={() => setShowShare(false)} />}

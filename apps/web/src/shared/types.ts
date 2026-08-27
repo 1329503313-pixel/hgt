@@ -83,6 +83,7 @@ export type SoupSummary = {
   reviewStatus: SoupReviewStatus;
   reviewReason: string | null;
   reviewVersion: number;
+  isProfilePinned: boolean;
   radar: RadarStats;
 };
 
@@ -129,6 +130,7 @@ export type SoupDetail = SoupSummary & {
   keyFactsCustomized: boolean;
   canViewFull: boolean;
   canEdit: boolean;
+  canPinToProfile: boolean;
   isFavorited: boolean;
   isLiked: boolean;
   pendingRequestId: string | null;

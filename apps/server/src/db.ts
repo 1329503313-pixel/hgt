@@ -495,6 +495,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "supplemental_bottoms", "supplemental_bottoms JSON NULL AFTER bottom");
   await ensureColumn("soups", "view_count", "view_count INT NOT NULL DEFAULT 0 AFTER is_bottom_public");
   await ensureColumn("soups", "enable_ai_game", "enable_ai_game BOOLEAN NOT NULL DEFAULT FALSE AFTER is_bottom_public");
+  await ensureColumn("soups", "profile_pinned_at", "profile_pinned_at DATETIME(6) NULL AFTER updated_at");
   await ensureColumn("soups", "is_sensitive", "is_sensitive BOOLEAN NOT NULL DEFAULT FALSE AFTER is_original");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("evaluations", "is_content_hidden", "is_content_hidden BOOLEAN NOT NULL DEFAULT FALSE AFTER content");
@@ -527,6 +528,7 @@ export async function initDatabase() {
   await ensureIndex("soups", "idx_soups_type_created", "type, created_at");
   await ensureIndex("soups", "idx_soups_home_visibility", "review_status, is_surface_public, created_at");
   await ensureIndex("soups", "idx_soups_creator_review", "creator_id, review_status, created_at");
+  await ensureIndex("soups", "idx_soups_creator_profile_pin", "creator_id, profile_pinned_at, created_at");
   await ensureIndex("evaluations", "idx_evaluations_created_at", "created_at");
   await ensureIndex("evaluations", "idx_evaluations_reviewer", "reviewer_id");
   await pool.query(`

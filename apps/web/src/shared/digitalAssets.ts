@@ -51,6 +51,7 @@ export type AssetPack = {
   dailyFreeDraws: number;
   freeDrawsRemaining: number;
   freeDrawsUnlimited?: boolean;
+  totalDrawCount?: number;
   saleStartAt: string | null;
   saleEndAt: string | null;
   enabled: boolean;

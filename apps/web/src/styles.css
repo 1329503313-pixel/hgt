@@ -3564,9 +3564,24 @@ textarea {
     margin-top: 0;
   }
 
-  .asset-pack-detail-layout > :first-child {
+  .asset-pack-detail-cover {
     position: sticky;
     top: 24px;
+    max-height: calc(100dvh - 112px);
+  }
+
+  .asset-pack-detail-cover-media {
+    height: min(24rem, calc(100dvh - 176px));
+    min-height: 12rem;
+  }
+
+  .asset-pack-detail-cover-media > img,
+  .asset-pack-detail-cover-media > video {
+    object-fit: contain;
+  }
+
+  .asset-pack-detail-content {
+    min-width: 0;
   }
 
   .asset-store-wallet {

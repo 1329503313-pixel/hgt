@@ -122,6 +122,7 @@ import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourc
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
 import { IMPOSTOR_MAX_PLAYERS } from "./impostorGame.js";
 import { cleanupExpiredAiCallLogs } from "./aiHostRepository.js";
+import { PROFILE_SOUP_ORDER_SQL, profilePinEvictionIds } from "./soupProfilePins.js";
 import { registerVipRoutes, syncExpiredVipRoles } from "./vip.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import {
@@ -1219,6 +1220,7 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     reviewStatus: String(row.review_status ?? "approved"),
     reviewReason: row.review_reason ? String(row.review_reason) : null,
     reviewVersion: Number(row.review_version ?? 1),
+    isProfilePinned: Boolean(row.profile_pinned_at),
     heatValue: Math.round((comprehensiveScore + 1) * (views + (likes + 1) * 15 + (favorites + 1) * 20 + (evaluations + 1) * 25) - 60),
     radar: {
       writing: num(row.avg_writing),
@@ -1237,7 +1239,8 @@ function soupSummaryColumns(alias = "s") {
     ${alias}.cover_thumbnail IS NOT NULL AS has_cover_thumbnail,
     ${alias}.is_original, ${alias}.creator_id, ${alias}.creator_name,
     ${alias}.is_surface_public, ${alias}.is_bottom_public, ${alias}.enable_ai_game,
-    ${alias}.view_count, ${alias}.created_at, ${alias}.review_status, ${alias}.review_reason, ${alias}.review_version`;
+    ${alias}.view_count, ${alias}.created_at, ${alias}.review_status, ${alias}.review_reason, ${alias}.review_version,
+    ${alias}.profile_pinned_at`;
 }
 
 function mapSoupDetail(row: mysql.RowDataPacket) {
@@ -2966,7 +2969,7 @@ app.get("/api/users/:id/profile", async (req, res) => {
        ${scoringEvaluationJoin("e", "s")}
        WHERE s.creator_id = ? AND s.review_status = 'approved' AND s.is_surface_public = TRUE
        GROUP BY s.id
-       ORDER BY s.created_at DESC, s.id DESC
+       ORDER BY ${PROFILE_SOUP_ORDER_SQL}
        LIMIT ? OFFSET ?`,
       [viewer.id, viewer.id, req.params.id, limit, offset]
     ) : Promise.resolve([[], []] as unknown as [mysql.RowDataPacket[], mysql.FieldPacket[]]);
@@ -5377,6 +5380,7 @@ app.get("/api/soups/:id", async (req, res) => {
       ])
     : [[], [], []];
   const canEdit = Boolean(user && (isSuperAdminRole(user.role) || user.id === soup.creator_id));
+  const canPinToProfile = Boolean(user && user.id === soup.creator_id);
 
   res.json({
     soup: {
@@ -5393,12 +5397,69 @@ app.get("/api/soups/:id", async (req, res) => {
       keyFactsCustomized: canEdit && (soup.key_facts_customized as number) === 1,
       canViewFull: full,
       canEdit,
+      canPinToProfile,
       isFavorited: favoriteRows.length > 0,
       isLiked: likeRows.length > 0,
       pendingRequestId: requestRows[0]?.id ?? null,
       evaluations: evalRows.map((row) => mapEvaluation(row, full, soup.creator_id))
     }
   });
+});
+
+app.post("/api/soups/:id/profile-pin", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query("SELECT id FROM users WHERE id = ? FOR UPDATE", [user.id]);
+    const [[soup]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id, creator_id, profile_pinned_at FROM soups WHERE id = ? LIMIT 1 FOR UPDATE",
+      [req.params.id]
+    );
+    if (!soup) {
+      await connection.rollback();
+      return sendError(res, 404, "海龟汤不存在");
+    }
+    if (String(soup.creator_id) !== user.id) {
+      await connection.rollback();
+      return sendError(res, 403, "仅作品上传者可以置顶该海龟汤");
+    }
+
+    if (soup.profile_pinned_at) {
+      await connection.query("UPDATE soups SET profile_pinned_at = NULL WHERE id = ?", [req.params.id]);
+      await connection.commit();
+      return res.json({ isProfilePinned: false, replacedSoupIds: [] });
+    }
+
+    const [pinnedSoups] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, profile_pinned_at, created_at
+       FROM soups
+       WHERE creator_id = ? AND profile_pinned_at IS NOT NULL
+       FOR UPDATE`,
+      [user.id]
+    );
+    const replacedSoupIds = profilePinEvictionIds(pinnedSoups.map((row) => ({
+      id: row.id,
+      profile_pinned_at: row.profile_pinned_at,
+      created_at: row.created_at,
+    })));
+    if (replacedSoupIds.length > 0) {
+      await connection.query(
+        `UPDATE soups SET profile_pinned_at = NULL WHERE creator_id = ? AND id IN (${replacedSoupIds.map(() => "?").join(",")})`,
+        [user.id, ...replacedSoupIds]
+      );
+    }
+    await connection.query("UPDATE soups SET profile_pinned_at = CURRENT_TIMESTAMP(6) WHERE id = ?", [req.params.id]);
+    await connection.commit();
+    return res.json({ isProfilePinned: true, replacedSoupIds });
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 });
 
 app.post("/api/soups/:id/like", async (req, res) => {
