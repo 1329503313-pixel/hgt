@@ -330,6 +330,11 @@ export function SoupCoverGrid({
             alt={`${soup.title} 封面`}
             loading="lazy"
           />
+          {soup.isProfilePinned && (
+            <span className="absolute left-2 top-2 rounded-md bg-slate-950/80 px-2 py-1 text-[11px] font-bold text-white shadow-sm ring-1 ring-white/20 backdrop-blur-sm">
+              置顶
+            </span>
+          )}
           <span className="absolute inset-x-0 bottom-0 bg-white/85 px-2 py-1.5 text-ink">
             <span className="flex min-w-0 items-center gap-1.5">
               <span className="min-w-0 flex-1 truncate text-xs font-bold">{soup.title}</span>
@@ -337,7 +342,7 @@ export function SoupCoverGrid({
             </span>
           </span>
           {soup.reviewStatus !== "approved" && (
-            <span className={`absolute left-2 top-2 rounded-md px-2 py-1 text-[11px] font-bold ${soup.reviewStatus === "pending" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
+            <span className={`absolute right-2 top-2 rounded-md px-2 py-1 text-[11px] font-bold ${soup.reviewStatus === "pending" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
               {soup.reviewStatus === "pending" ? "审核中" : "审核未通过"}
             </span>
           )}

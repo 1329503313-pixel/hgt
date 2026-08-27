@@ -150,6 +150,8 @@ export default function DetailPage() {
       const data = await api<{ isProfilePinned: boolean }>(`/api/soups/${soup.id}/profile-pin`, { method: "POST" });
       setSoup((current) => current ? { ...current, isProfilePinned: data.isProfilePinned } : current);
       removeSessionCachePrefix("hgt:user-profile:");
+      removeSessionCachePrefix("hgt:mine:list:v2:");
+      removeSessionCachePrefix("hgt:mine:legacy-list:");
       showToast(data.isProfilePinned ? "置顶成功" : "取消置顶成功");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "操作失败，请稍后重试");

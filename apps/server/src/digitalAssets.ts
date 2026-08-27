@@ -1009,8 +1009,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       dailyEntitlementStatus(user.id, user.role, "extra_free_draw", new Date(), String(pack.id)),
       collectiblesForPack(String(pack.id)),
       pool.query<mysql.RowDataPacket[]>(
-        "SELECT COALESCE(SUM(draw_count), 0) AS total_draw_count FROM asset_draw_count_events WHERE pack_id = ?",
-        [pack.id]
+        "SELECT COALESCE(SUM(draw_count), 0) AS total_draw_count FROM asset_draw_count_events WHERE user_id = ? AND pack_id = ?",
+        [user.id, pack.id]
       ).then(([rows]) => rows)
     ]);
     const pity = pityRows[0];

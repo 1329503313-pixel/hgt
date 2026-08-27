@@ -2779,7 +2779,7 @@ app.get("/api/me/soups", async (req, res) => {
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.creator_id = ?
     GROUP BY s.id
-    ORDER BY s.created_at DESC, s.id DESC
+    ORDER BY ${PROFILE_SOUP_ORDER_SQL}
     LIMIT ? OFFSET ?
     `,
     [user.id, limit, offset]
