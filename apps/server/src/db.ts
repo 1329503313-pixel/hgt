@@ -1213,13 +1213,176 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rounds", "ai_hint_count", "ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_status");
   await ensureColumn("online_soup_rounds", "ai_soup_snapshot", "ai_soup_snapshot JSON NULL AFTER ai_hint_count");
   await ensureColumn("online_soup_rounds", "best_question_message_id", "best_question_message_id VARCHAR(64) NULL AFTER ai_soup_snapshot");
+  await ensureColumn("online_soup_rounds", "ai_fact_version_id", "ai_fact_version_id VARCHAR(64) NULL AFTER ai_hint_count");
+  await ensureColumn("online_soup_rounds", "ai_phase", "ai_phase ENUM('PREPARING','PLAYING','READY_TO_SOLVE','SOLVING','COMPLETED','CANCELLED') NOT NULL DEFAULT 'PREPARING' AFTER ai_fact_version_id");
   await ensureColumn("online_soup_messages", "ai_status", "ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none' AFTER answer");
   await ensureColumn("online_soup_messages", "ai_preliminary_answer", "ai_preliminary_answer ENUM('yes','no','both','unknown','irrelevant') NULL AFTER answer");
+  await ensureColumn("online_soup_messages", "ai_decision_id", "ai_decision_id VARCHAR(64) NULL AFTER ai_preliminary_answer");
   await ensureColumn("online_soup_messages", "ai_error", "ai_error VARCHAR(255) NULL AFTER ai_status");
   await ensureColumn("online_soup_messages", "ai_progress_delta", "ai_progress_delta INT UNSIGNED NULL AFTER ai_error");
   await ensureColumn("online_soup_messages", "ai_progress_after", "ai_progress_after INT UNSIGNED NULL AFTER ai_progress_delta");
   await ensureColumn("online_soup_messages", "ai_feedback", "ai_feedback VARCHAR(255) NULL AFTER ai_progress_after");
   await ensureColumn("online_soup_messages", "ai_scoring_degraded", "ai_scoring_degraded TINYINT(1) NOT NULL DEFAULT 0 AFTER ai_feedback");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_soup_fact_versions (
+      id VARCHAR(64) PRIMARY KEY,
+      soup_id VARCHAR(64) NOT NULL,
+      source_hash CHAR(64) NOT NULL,
+      source_key_facts JSON NOT NULL,
+      status ENUM('active','superseded','invalid') NOT NULL DEFAULT 'active',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_ai_fact_version_source (soup_id, source_hash),
+      INDEX idx_ai_fact_version_soup_time (soup_id, created_at),
+      CONSTRAINT fk_ai_fact_version_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_soup_facts (
+      version_id VARCHAR(64) NOT NULL,
+      fact_id VARCHAR(16) NOT NULL,
+      source_key_id INT NOT NULL,
+      content TEXT NOT NULL,
+      weight INT UNSIGNED NOT NULL,
+      is_core TINYINT(1) NOT NULL DEFAULT 0,
+      is_must_have TINYINT(1) NOT NULL DEFAULT 0,
+      aliases_json JSON NOT NULL,
+      discovery_condition TEXT NOT NULL,
+      hints_json JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (version_id, fact_id),
+      CONSTRAINT fk_ai_fact_version FOREIGN KEY (version_id) REFERENCES ai_soup_fact_versions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_ai_decisions (
+      id VARCHAR(64) PRIMARY KEY,
+      question_message_id VARCHAR(64) NOT NULL,
+      round_id VARCHAR(64) NOT NULL,
+      normalized_question_hash CHAR(64) NOT NULL,
+      context_hash CHAR(64) NOT NULL,
+      status ENUM('queued','fast_answering','adjudicating','verifying','committing','completed','failed','cancelled') NOT NULL DEFAULT 'queued',
+      lease_token VARCHAR(64) NULL,
+      lease_expires_at DATETIME NULL,
+      preliminary_answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      final_answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      confidence DECIMAL(5,4) NULL,
+      contains_unsupported_assumption TINYINT(1) NOT NULL DEFAULT 0,
+      injection_detected TINYINT(1) NOT NULL DEFAULT 0,
+      matched_facts_json JSON NULL,
+      verifier_status ENUM('not_required','pending','accepted','rejected','failed') NOT NULL DEFAULT 'not_required',
+      verifier_issues_json JSON NULL,
+      attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+      error_kind VARCHAR(40) NULL,
+      error_message VARCHAR(255) NULL,
+      started_at DATETIME NULL,
+      completed_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_ai_decision_question (question_message_id),
+      INDEX idx_ai_decision_cache (round_id, normalized_question_hash, context_hash, status),
+      INDEX idx_ai_decision_lease (status, lease_expires_at),
+      CONSTRAINT fk_ai_decision_question FOREIGN KEY (question_message_id) REFERENCES online_soup_messages(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ai_decision_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_soup_round_fact_states (
+      round_id VARCHAR(64) NOT NULL,
+      fact_version_id VARCHAR(64) NOT NULL,
+      fact_id VARCHAR(16) NOT NULL,
+      state ENUM('UNSEEN','TOUCHED','DISCOVERED') NOT NULL DEFAULT 'UNSEEN',
+      first_touched_by VARCHAR(64) NULL,
+      first_touched_question_id VARCHAR(64) NULL,
+      first_touched_at DATETIME NULL,
+      first_discovered_by VARCHAR(64) NULL,
+      first_discovered_question_id VARCHAR(64) NULL,
+      first_discovered_at DATETIME NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (round_id, fact_id),
+      INDEX idx_round_fact_version (fact_version_id, fact_id),
+      CONSTRAINT fk_round_fact_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE CASCADE,
+      CONSTRAINT fk_round_fact_definition FOREIGN KEY (fact_version_id, fact_id) REFERENCES ai_soup_facts(version_id, fact_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_round_fact_touched_user FOREIGN KEY (first_touched_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_round_fact_discovered_user FOREIGN KEY (first_discovered_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_round_fact_touched_question FOREIGN KEY (first_touched_question_id) REFERENCES online_soup_messages(id) ON DELETE SET NULL,
+      CONSTRAINT fk_round_fact_discovered_question FOREIGN KEY (first_discovered_question_id) REFERENCES online_soup_messages(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_call_logs (
+      id VARCHAR(64) PRIMARY KEY,
+      decision_id VARCHAR(64) NULL,
+      call_type ENUM('fast_answer','adjudication','verification','fact_compilation','hint_compilation','regression') NOT NULL,
+      provider VARCHAR(30) NOT NULL,
+      model VARCHAR(80) NOT NULL,
+      request_json JSON NOT NULL,
+      response_json JSON NULL,
+      started_at DATETIME NOT NULL,
+      duration_ms INT UNSIGNED NOT NULL,
+      success TINYINT(1) NOT NULL,
+      prompt_tokens INT UNSIGNED NULL,
+      completion_tokens INT UNSIGNED NULL,
+      total_tokens INT UNSIGNED NULL,
+      error_kind VARCHAR(40) NULL,
+      error_message VARCHAR(255) NULL,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ai_call_decision_time (decision_id, created_at),
+      INDEX idx_ai_call_error_time (success, created_at),
+      INDEX idx_ai_call_expiry (expires_at),
+      CONSTRAINT fk_ai_call_decision FOREIGN KEY (decision_id) REFERENCES online_soup_ai_decisions(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_decision_corrections (
+      id VARCHAR(64) PRIMARY KEY,
+      decision_id VARCHAR(64) NOT NULL,
+      operator_user_id VARCHAR(64) NOT NULL,
+      corrected_answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      corrected_fact_states_json JSON NULL,
+      reason VARCHAR(500) NOT NULL,
+      applied_to_live_round TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ai_correction_decision_time (decision_id, created_at),
+      CONSTRAINT fk_ai_correction_decision FOREIGN KEY (decision_id) REFERENCES online_soup_ai_decisions(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ai_correction_operator FOREIGN KEY (operator_user_id) REFERENCES users(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_regression_cases (
+      id VARCHAR(64) PRIMARY KEY,
+      soup_id VARCHAR(64) NOT NULL,
+      name VARCHAR(120) NOT NULL,
+      question TEXT NOT NULL,
+      recent_context_json JSON NULL,
+      expected_answer ENUM('yes','no','both','unknown','irrelevant') NOT NULL,
+      expected_fact_ids_json JSON NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 1,
+      created_by VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_ai_regression_soup_enabled (soup_id, enabled),
+      CONSTRAINT fk_ai_regression_soup FOREIGN KEY (soup_id) REFERENCES soups(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ai_regression_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_regression_runs (
+      id VARCHAR(64) PRIMARY KEY,
+      case_id VARCHAR(64) NOT NULL,
+      model VARCHAR(80) NOT NULL,
+      actual_answer ENUM('yes','no','both','unknown','irrelevant') NULL,
+      actual_fact_ids_json JSON NULL,
+      passed TINYINT(1) NOT NULL DEFAULT 0,
+      error_message VARCHAR(500) NULL,
+      duration_ms INT UNSIGNED NOT NULL DEFAULT 0,
+      run_by VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ai_regression_run_case_time (case_id, created_at),
+      CONSTRAINT fk_ai_regression_run_case FOREIGN KEY (case_id) REFERENCES ai_regression_cases(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ai_regression_run_user FOREIGN KEY (run_by) REFERENCES users(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
   await ensureColumn(
     "online_soup_rounds",
     "published_surface_indices",

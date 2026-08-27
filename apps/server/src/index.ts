@@ -121,6 +121,7 @@ import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.j
 import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
 import { IMPOSTOR_MAX_PLAYERS } from "./impostorGame.js";
+import { cleanupExpiredAiCallLogs } from "./aiHostRepository.js";
 import { registerVipRoutes, syncExpiredVipRoles } from "./vip.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import {
@@ -7876,6 +7877,11 @@ const aiKeyFactBackfillTimer = setInterval(() => {
   void fillMissingAiKeyFacts().catch((error) => console.error("AI key fact backfill failed:", error));
 }, AI_KEY_FACT_BACKFILL_INTERVAL_MS);
 aiKeyFactBackfillTimer.unref();
+void cleanupExpiredAiCallLogs().catch((error) => console.error("AI call audit cleanup failed:", error));
+const aiCallAuditCleanupTimer = setInterval(() => {
+  void cleanupExpiredAiCallLogs().catch((error) => console.error("AI call audit cleanup failed:", error));
+}, 60 * 60_000);
+aiCallAuditCleanupTimer.unref();
 const onlineSoupSeatCleanupTimer = setInterval(() => {
   void (async () => {
     await cleanupOnlineSoupStaleSeats();

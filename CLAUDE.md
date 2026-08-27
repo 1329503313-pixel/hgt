@@ -146,6 +146,10 @@ npm run check                 # TypeScript 类型检查
 - `POST /:soupId/hint` — 请求方向性提示
 - `GET /:soupId/status` — 查看当前进度和存档
 
+AI 主持的结构化判定协议、事实追踪、状态机、失败语义、审计和回归机制统一见：
+
+- `docs/AI主持架构.md`
+
 ## 认证模型
 
 - JWT 存储在 httpOnly cookie (`hgt_token`)，secure=false (HTTP)

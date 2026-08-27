@@ -11,6 +11,7 @@ import { BadgeManagement } from "../components/admin/BadgeManagement";
 import { NoticeManagement } from "../components/admin/NoticeManagement";
 import { CardSkeleton } from "../components/Skeletons";
 import { OnlineSoupRoomManagement } from "../components/admin/OnlineSoupRoomManagement";
+import { AiHostAuditManagement } from "../components/admin/AiHostAuditManagement";
 import { CircleManagement } from "../components/admin/CircleManagement";
 import { StoreManagement } from "../components/admin/StoreManagement";
 import { CollectibleManagement } from "../components/admin/CollectibleManagement";
@@ -105,6 +106,7 @@ export default function AdminPage() {
           {activeTab === "badges" && isSuperAdmin && <BadgeManagement />}
           {activeTab === "approvals" && <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} onPendingChange={loadModuleUnread} />}
           {activeTab === "online-soup" && isSuperAdmin && <OnlineSoupRoomManagement />}
+          {activeTab === "ai-host" && isSuperAdmin && <AiHostAuditManagement />}
           {activeTab === "circles" && isSuperAdmin && <CircleManagement />}
           {activeTab === "collectibles" && isSuperAdmin && <CollectibleManagement />}
           {activeTab === "assets" && isSuperAdmin && <StoreManagement />}

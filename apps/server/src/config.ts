@@ -55,6 +55,11 @@ export const config = {
   mysteryAdjudicatorModel: process.env.MYSTERY_ADJUDICATOR_MODEL ?? "deepseek-v4-pro",
   mysteryFastAdjudicatorModel: process.env.MYSTERY_FAST_ADJUDICATOR_MODEL ?? "deepseek-v4-flash",
   mysteryNarratorModel: process.env.MYSTERY_NARRATOR_MODEL ?? "deepseek-v4-flash",
+  ark: {
+    apiKey: readSecret("ARK_API_KEY", "ARK_API_KEY_FILE"),
+    baseUrl: (process.env.ARK_BASE_URL ?? "https://ark.cn-beijing.volces.com/api/plan/v3").replace(/\/$/, ""),
+    model: process.env.ARK_MODEL ?? "ark-code-latest",
+  },
   emailVerificationSecret:
     readSecret("EMAIL_VERIFICATION_SECRET", "EMAIL_VERIFICATION_SECRET_FILE")
     || process.env.JWT_SECRET

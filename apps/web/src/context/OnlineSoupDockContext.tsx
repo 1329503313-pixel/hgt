@@ -291,6 +291,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
         <MiniMessageList
           messages={session.snapshot.messages}
           contentType={session.snapshot.room.contentType}
+          currentAiProgress={session.snapshot.room.aiProgress}
           currentUserId={user?.id ?? ""}
           mutedUserIds={mutedUserIds}
           onRecall={recallMessage}
@@ -328,19 +329,19 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   </OnlineSoupDockContext.Provider>;
 }
 
-function MiniMessageList({ messages, contentType, currentUserId, mutedUserIds, onRecall, onCopy, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; contentType: OnlineSoupSnapshot["room"]["contentType"]; currentUserId: string; mutedUserIds: ReadonlySet<string>; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
+function MiniMessageList({ messages, contentType, currentAiProgress, currentUserId, mutedUserIds, onRecall, onCopy, showAnswerChangeNotices, onLocate }: { messages: OnlineSoupMessage[]; contentType: OnlineSoupSnapshot["room"]["contentType"]; currentAiProgress: number | null; currentUserId: string; mutedUserIds: ReadonlySet<string>; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; showAnswerChangeNotices: boolean; onLocate: (messageId: string) => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: "end" }); }, [messages]);
   const visibleMessages = messages.filter((message) => showAnswerChangeNotices || !message.targetMessageId).slice(-60);
   return <div className="online-soup-mini-messages">
     {giftTimelineEntries(visibleMessages).map((entry) => entry.kind === "gift_bundle"
       ? <GiftMessageBundle key={entry.key} gifts={entry.gifts} align={entry.gifts[0]?.sender.id === currentUserId ? "right" : "left"} />
-      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} clueLabel={contentType === "impostor" ? "身份线索" : "主持人线索"} currentUserId={currentUserId} muted={Boolean(entry.message.senderId && mutedUserIds.has(entry.message.senderId))} onRecall={onRecall} onCopy={onCopy} onLocate={onLocate} />)}
+      : <MiniMessage key={`${entry.message.id}-${entry.message.updatedAt}`} message={entry.message} clueLabel={contentType === "impostor" ? "身份线索" : "主持人线索"} currentAiProgress={currentAiProgress} currentUserId={currentUserId} muted={Boolean(entry.message.senderId && mutedUserIds.has(entry.message.senderId))} onRecall={onRecall} onCopy={onCopy} onLocate={onLocate} />)}
     <div ref={bottomRef} />
   </div>;
 }
 
-function MiniMessage({ message, clueLabel, currentUserId, muted, onRecall, onCopy, onLocate }: { message: OnlineSoupMessage; clueLabel: string; currentUserId: string; muted: boolean; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
+function MiniMessage({ message, clueLabel, currentAiProgress, currentUserId, muted, onRecall, onCopy, onLocate }: { message: OnlineSoupMessage; clueLabel: string; currentAiProgress: number | null; currentUserId: string; muted: boolean; onRecall: (message: OnlineSoupMessage) => void; onCopy: (message: OnlineSoupMessage) => void; onLocate: (messageId: string) => void }) {
   const mine = message.senderId === currentUserId;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={message.senderName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
@@ -378,10 +379,9 @@ function MiniMessage({ message, clueLabel, currentUserId, muted, onRecall, onCop
       ]}>
         <div className="online-soup-mini-bubble"><p>{message.type === "sticker" ? "[表情包]" : message.content}</p></div>
       </MessageActionMenu>
-      {question && <small role={message.aiStatus === "failed" ? "alert" : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "status" : undefined}>{message.answer ? `${onlineSoupAnswerPrefix(message.aiStatus)}${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}` : message.aiStatus === "failed" ? "AI 回复失败，请到完整房间重新请求" : message.aiStatus === "pending" && message.aiQueuePosition && message.aiQueuePosition > 1 ? `AI 队列第 ${message.aiQueuePosition} 位` : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "AI 正在结合汤底与上下文判断" : message.aiStatus === "cancelled" ? "本轮已结束，提问已取消" : "等待主持人回复"}</small>}
+      {question && <small role={message.aiStatus === "failed" ? "alert" : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "status" : undefined}>{message.answer ? `${onlineSoupAnswerPrefix(message.aiStatus)}${message.answer === "yes" ? "是" : message.answer === "no" ? "不是" : message.answer === "both" ? "是也不是" : message.answer === "unknown" ? "不知道" : "不重要"}${message.aiStatus === "scoring" ? " · 正在核对本次发现" : message.aiStatus === "failed" ? " · 进度核对失败，请到完整房间重新核对" : ""}` : message.aiStatus === "failed" ? "AI 回复失败，请到完整房间重新请求" : message.aiStatus === "pending" && message.aiQueuePosition && message.aiQueuePosition > 1 ? `AI 队列第 ${message.aiQueuePosition} 位` : ["pending", "answering", "scoring"].includes(message.aiStatus) ? "AI 正在结合汤底与上下文判断" : message.aiStatus === "cancelled" ? "本轮已结束，提问已取消" : "等待主持人回复"}</small>}
       {question && message.isBestQuestion && <small className="font-black text-amber-600">最佳提问</small>}
-      {question && Boolean(message.aiProgressDelta) && message.aiProgressAfter != null && <small>— 进度+{message.aiProgressDelta}，该题完成后进度：{message.aiProgressAfter}% —</small>}
-      {question && message.aiStatus === "completed" && message.aiFeedback && <small>{message.aiFeedback}</small>}
+      {question && Boolean(message.aiProgressDelta) && (currentAiProgress ?? message.aiProgressAfter) != null && <small>— 进度+{message.aiProgressDelta}，当前进度：{currentAiProgress ?? message.aiProgressAfter}% —</small>}
       <time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
     </div>
   </article>;

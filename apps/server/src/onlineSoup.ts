@@ -15,7 +15,7 @@ import { recordUserBehavior } from "./behaviorAnalytics.js";
 import { buildAnswerChangeNotice, buildBestQuestionChangeNotice, onlineSoupAnswerValues, type OnlineSoupAnswerValue } from "./onlineSoupAnswerChange.js";
 import { canViewOnlineSoupHostMaterials, finalizeOnlineSoupRoundPanelPage, ONLINE_SOUP_AI_FINISH_VOTE_PROGRESS, onlineSoupAiFinishDecision, onlineSoupAiProgressChange, onlineSoupAiProgressEvents, requiredOnlineSoupFinishVotes } from "./onlineSoupRoundPanel.js";
 import { selectOnlineSoupHostSuccessor, type OnlineSoupHostCandidate } from "./onlineSoupHostSuccession.js";
-import { AiServiceError, canRequestRoomAiHint, loadAiSoupRoundSnapshot, runRoomAiHint, runRoomAiTurn, splitKeyFactsForSoup, type RoomAiGameState } from "./game.js";
+import { AiServiceError, canRequestRoomAiHint, ensureAiSoupKeyFacts, loadAiSoupRoundSnapshot, prepareRoomAiFacts, runAiRegressionCase, runRoomAiFastAnswer, runRoomAiHint, runRoomAiTurn, splitKeyFactsForSoup, type RoomAiGameState } from "./game.js";
 import { parseAiSoupRoundSnapshot, type AiSoupRoundSnapshot } from "./aiSoupRoundSnapshot.js";
 import { canCommitOnlineSoupAiQuestion } from "./onlineSoupAiState.js";
 import { renderProgressiveHint, roomAiProgressFeedback, roomAiQuestionRisks, shouldPublishRoomAiStallHint } from "./gameLogic.js";
@@ -49,6 +49,16 @@ import {
   type ImpostorGameState,
   type ImpostorNightAction,
 } from "./impostorGame.js";
+import { aiAnswerFromLegacy, aiContextHash, aiQuestionHash, aiAnswerToLegacy, type AiAdjudication } from "./aiHostProtocol.js";
+import {
+  claimAiDecision,
+  ensureAiDecision,
+  persistFactTransitions,
+  resetAiDecisionForRetry,
+  reusableAiDecision,
+  savePreliminaryAiDecision,
+  updateAiDecision,
+} from "./aiHostRepository.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type ImpostorMessageEvent =
@@ -443,7 +453,7 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
       if (!impostorRoom && String(room.status) === "playing" && room.current_round_id) {
         endedRoundId = String(room.current_round_id);
         await connection.query(
-          "UPDATE online_soup_rounds SET status = 'ended', ended_at = NOW() WHERE id = ? AND status = 'playing'",
+          "UPDATE online_soup_rounds SET status = 'ended', ai_phase = 'CANCELLED', ended_at = NOW() WHERE id = ? AND status = 'playing'",
           [endedRoundId]
         );
         await settleOnlineSoupRound(connection, endedRoundId);
@@ -833,7 +843,7 @@ async function completeAiRound(
   }
   await db.query(
     `UPDATE online_soup_rounds
-     SET status = 'ended', ai_status = 'completed', published_surface_indices = ?,
+     SET status = 'ended', ai_status = 'completed', ai_phase = 'COMPLETED', published_surface_indices = ?,
        published_bottom_indices = ?, ended_at = NOW()
      WHERE id = ?`,
     [
@@ -845,6 +855,10 @@ async function completeAiRound(
   await db.query("UPDATE online_soup_rooms SET status = 'ended' WHERE id = ?", [roomId]);
   await db.query(
     "UPDATE online_soup_messages SET answer = NULL, ai_preliminary_answer = NULL, ai_status = 'cancelled', ai_error = NULL WHERE round_id = ? AND ai_status IN ('pending','answering','scoring')",
+    [roundId],
+  );
+  await db.query(
+    "UPDATE online_soup_ai_decisions SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, completed_at = NOW() WHERE round_id = ? AND status NOT IN ('completed','failed','cancelled')",
     [roundId],
   );
   await db.query(
@@ -964,15 +978,22 @@ async function failAiQuestion(messageId: string, error: unknown) {
     : "AI 主持暂时不可用，请稍后重新请求";
   console.error("Online soup AI question failed", { messageId, error: internalMessage });
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT room_id, round_id FROM online_soup_messages WHERE id = ? LIMIT 1",
+    "SELECT room_id, round_id, ai_decision_id FROM online_soup_messages WHERE id = ? LIMIT 1",
     [messageId],
   );
   const [updated] = await pool.query<mysql.ResultSetHeader>(
     `UPDATE online_soup_messages
-     SET answer = NULL, ai_status = 'failed', ai_error = ?
+     SET answer = NULL, ai_preliminary_answer = NULL, ai_status = 'failed', ai_error = ?
      WHERE id = ? AND recalled_at IS NULL AND ai_status IN ('pending','answering','scoring')`,
     [publicMessage.slice(0, 255), messageId],
   );
+  if (rows[0]?.ai_decision_id) {
+    await updateAiDecision(String(rows[0].ai_decision_id), {
+      status: "failed",
+      errorKind: error instanceof AiServiceError ? "ai_service" : "unexpected",
+      errorMessage: publicMessage.slice(0, 255),
+    });
+  }
   if (updated.affectedRows === 1 && rows[0]?.round_id) {
     await pool.query(
       "UPDATE online_soup_rounds SET ai_status = 'failed' WHERE id = ? AND status = 'playing'",
@@ -1019,22 +1040,98 @@ async function processRoomAiQuestions(roomId: string) {
       await pool.query("UPDATE online_soup_rounds SET ai_status = 'processing' WHERE id = ?", [pending.round_id]);
       const risks = roomAiQuestionRisks(String(pending.content));
       try {
-        const aiState = roomAiState(pending);
+        let publishedAnswer = pending.answer ? String(pending.answer) : null;
+        const complexQuestion = risks.length > 0;
+        let aiState = roomAiState(pending);
         if (pending.ai_soup_snapshot && !aiState.soupSnapshot) {
           throw new AiServiceError(503, "本轮 AI 数据校验失败，请联系房主重新开局", false);
         }
-        await pool.query(
-          "UPDATE online_soup_messages SET answer = NULL, ai_preliminary_answer = NULL, ai_status = 'scoring', ai_error = NULL, ai_scoring_degraded = 0 WHERE id = ? AND recalled_at IS NULL AND ai_status IN ('pending','answering','scoring')",
-          [pending.id],
-        );
-        void notifyRoom(roomId, "answer_changed", {
-          messageId: String(pending.id), answer: null, aiPreliminaryAnswer: null, aiStatus: "scoring", aiError: null,
+        aiState = await prepareRoomAiFacts(String(pending.soup_id), String(pending.round_id), aiState);
+        const questionHash = aiQuestionHash(String(pending.content));
+        const contextHash = risks.includes("ambiguous_reference")
+          ? aiContextHash(
+            aiState.messages.filter((message) => message.role === "assistant").map((message) => message.content),
+            aiState.runtimeFacts ?? [],
+          )
+          : aiContextHash([], []);
+        const decisionId = await ensureAiDecision({
+          questionMessageId: String(pending.id),
+          roundId: String(pending.round_id),
+          normalizedQuestionHash: questionHash,
+          contextHash,
         });
-        const turn = await runRoomAiTurn(
-          String(pending.soup_id),
-          String(pending.content),
-          aiState,
-        );
+        const leaseToken = await claimAiDecision(decisionId, "adjudicating");
+        if (!leaseToken) {
+          setTimeout(() => void processRoomAiQuestions(roomId), 5_000).unref();
+          break;
+        }
+        const reusable = await reusableAiDecision(String(pending.round_id), questionHash, contextHash, decisionId);
+        const cachedAnswer = reusable ? aiAnswerFromLegacy(reusable.finalAnswer) : null;
+        const cachedAdjudication: AiAdjudication | null = reusable && cachedAnswer ? {
+          answer: cachedAnswer,
+          confidence: reusable.confidence,
+          matchedFacts: reusable.matchedFacts as AiAdjudication["matchedFacts"],
+          containsUnsupportedAssumption: reusable.unsupported,
+          injectionDetected: reusable.injection,
+        } : null;
+        let concurrentReview: Promise<
+          { ok: true; turn: Awaited<ReturnType<typeof runRoomAiTurn>> }
+          | { ok: false; error: unknown }
+        > | null = null;
+        if (!publishedAnswer && !complexQuestion && !cachedAdjudication) {
+          await pool.query("UPDATE online_soup_messages SET ai_status = 'answering', ai_error = NULL WHERE id = ?", [pending.id]);
+          void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "answering" });
+          // 快速五态回答与完整进度复核互不依赖，并行启动可避免两次模型耗时串行叠加。
+          // 完整复核仍独立判断最终回答和事实匹配，快速结果不会锁死准确性。
+          let resolvePreliminaryAnswer: (answer: string | null) => void = () => undefined;
+          const preliminaryAnswerPromise = new Promise<string | null>((resolve) => {
+            resolvePreliminaryAnswer = resolve;
+          });
+          concurrentReview = runRoomAiTurn(
+            String(pending.soup_id),
+            String(pending.content),
+            aiState,
+            { decisionId, cachedAdjudication, preliminaryAnswerPromise },
+          ).then(
+            (turn) => ({ ok: true as const, turn }),
+            (error: unknown) => ({ ok: false as const, error }),
+          );
+          try {
+            const fast = await runRoomAiFastAnswer(String(pending.soup_id), String(pending.content), aiState, { decisionId });
+            const fastAnswer = aiAnswerMap[fast.answer];
+            if (fastAnswer) {
+              const [updated] = await pool.query<mysql.ResultSetHeader>(
+                "UPDATE online_soup_messages SET answer = NULL, ai_preliminary_answer = ?, ai_status = 'scoring', ai_error = NULL WHERE id = ? AND ai_status = 'answering'",
+                [fastAnswer, pending.id],
+              );
+              if (updated.affectedRows === 1) {
+                publishedAnswer = fastAnswer;
+                await savePreliminaryAiDecision(decisionId, fastAnswer);
+                void notifyRoom(roomId, "answer_changed", {
+                  messageId: String(pending.id), answer: fastAnswer, aiStatus: "scoring", aiError: null,
+                });
+              }
+            }
+          } catch (error) {
+            console.warn("Fast AI answer unavailable; falling back to full review:", error instanceof Error ? error.message : error);
+          } finally {
+            resolvePreliminaryAnswer(publishedAnswer);
+          }
+        }
+        if (!publishedAnswer) {
+          await pool.query("UPDATE online_soup_messages SET ai_status = 'scoring', ai_error = NULL WHERE id = ? AND ai_status IN ('pending','answering')", [pending.id]);
+          void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "scoring" });
+        }
+        const review = concurrentReview
+          ? await concurrentReview
+          : { ok: true as const, turn: await runRoomAiTurn(
+              String(pending.soup_id),
+              String(pending.content),
+              aiState,
+              { preliminaryAnswer: publishedAnswer ? Object.entries(aiAnswerMap).find(([, value]) => value === publishedAnswer)?.[0] : null, decisionId, cachedAdjudication },
+            ) };
+        if (!review.ok) throw review.error;
+        const turn = review.turn;
         const answer = aiAnswerMap[turn.answer];
         const progressChange = onlineSoupAiProgressChange(pending.ai_progress, turn.progress);
         if (!answer) throw new Error("AI 返回了不支持的主持回答");
@@ -1061,11 +1158,13 @@ async function processRoomAiQuestions(roomId: string) {
           await connection.query(
             `UPDATE online_soup_rounds SET ai_messages = ?, ai_revealed_keys = ?, ai_revealed_atoms = ?,
                ai_revealed_supplements = ?, ai_progress = ?, ai_version = ai_version + 1,
-               ai_status = ?, published_surface_indices = ? WHERE id = ?`,
+               ai_status = ?, ai_phase = ?, published_surface_indices = ? WHERE id = ?`,
             [JSON.stringify(turn.messages), JSON.stringify(turn.revealedKeys), JSON.stringify(turn.revealedAtomicFactIds),
               JSON.stringify(turn.revealedSupplements), progressChange.after, "idle",
+              progressChange.after >= 80 ? "READY_TO_SOLVE" : "PLAYING",
               JSON.stringify(turn.revealedSupplements.surfaces), pending.round_id]
           );
+          await persistFactTransitions(connection, String(pending.round_id), turn.factTransitions, String(pending.sender_id), String(pending.id));
           const baseFeedback = turn.scoringDegraded
             ? { kind: "off_track" as const, text: "最终判断已完成，本题进度核对暂未计分" }
             : roomAiProgressFeedback(
@@ -1079,7 +1178,7 @@ async function processRoomAiQuestions(roomId: string) {
             text: baseFeedback.text,
           };
           const [messageUpdate] = await connection.query<mysql.ResultSetHeader>(
-            "UPDATE online_soup_messages SET answer = ?, ai_status = 'completed', ai_error = NULL, ai_progress_delta = ?, ai_progress_after = ?, ai_feedback = ?, ai_scoring_degraded = ? WHERE id = ? AND recalled_at IS NULL",
+            "UPDATE online_soup_messages SET answer = ?, ai_preliminary_answer = NULL, ai_status = 'completed', ai_error = NULL, ai_progress_delta = ?, ai_progress_after = ?, ai_feedback = ?, ai_scoring_degraded = ? WHERE id = ? AND recalled_at IS NULL",
             [answer, progressChange.delta || null, progressChange.after, feedback.text, turn.scoringDegraded ? 1 : 0, pending.id]
           );
           if (messageUpdate.affectedRows !== 1) throw new Error("AI 提问状态已变化，终审结果未提交");
@@ -1091,6 +1190,16 @@ async function processRoomAiQuestions(roomId: string) {
             );
             supplementalSurfaces = jsonList<string>(soup?.supplemental_surfaces);
           }
+          await updateAiDecision(decisionId, {
+            status: "completed",
+            finalAnswer: aiAnswerToLegacy[turn.internalAnswer],
+            confidence: turn.confidence,
+            unsupported: turn.containsUnsupportedAssumption,
+            injection: turn.injectionDetected,
+            matchedFacts: turn.matchedFactDecisions,
+            verifierStatus: turn.verifierStatus,
+            verifierIssues: turn.verifierIssues,
+          }, connection);
           for (const index of turn.newlyRevealedSurfaceIndices) {
             const content = supplementalSurfaces?.[index];
             if (content) await connection.query(
@@ -1426,9 +1535,13 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     ),
     contentIndex: row.content_index == null ? null : Number(row.content_index),
     questionNumber: row.question_number == null ? null : Number(row.question_number),
-    answer: row.answer ? String(row.answer) : null,
+    answer: row.answer
+      ? String(row.answer)
+      : row.ai_status === "scoring" && row.ai_preliminary_answer
+        ? String(row.ai_preliminary_answer)
+        : null,
     isBestQuestion: Boolean(room.best_question_message_id && String(room.best_question_message_id) === String(row.id)),
-    aiPreliminaryAnswer: null,
+    aiPreliminaryAnswer: row.ai_preliminary_answer ? String(row.ai_preliminary_answer) : null,
     aiStatus: String(row.ai_status ?? "none"),
     aiError: row.ai_error ? String(row.ai_error) : null,
     aiProgressDelta: row.ai_progress_delta == null ? null : Number(row.ai_progress_delta),
@@ -2543,9 +2656,13 @@ router.get("/rooms/:roomId/progress", async (req, res) => {
         sequence: String(row.message_sequence),
         number: Number(row.question_number ?? 0),
         content: String(row.content),
-        answer: row.answer ? String(row.answer) : null,
+        answer: row.answer
+          ? String(row.answer)
+          : row.ai_status === "scoring" && row.ai_preliminary_answer
+            ? String(row.ai_preliminary_answer)
+            : null,
         isBestQuestion: Boolean(context.room.best_question_message_id && String(context.room.best_question_message_id) === String(row.id)),
-        aiPreliminaryAnswer: null,
+        aiPreliminaryAnswer: row.ai_preliminary_answer ? String(row.ai_preliminary_answer) : null,
         aiStatus: String(row.ai_status ?? "none"),
         aiError: row.ai_error ? String(row.ai_error) : null,
         aiProgressDelta: row.ai_progress_delta == null ? null : Number(row.ai_progress_delta),
@@ -2594,23 +2711,8 @@ router.post("/rooms/:roomId/ai-hint", async (req, res) => {
     if (!round || round.round_status !== "playing" || round.host_mode !== "ai") return fail(res, 409, "本轮状态已发生变化");
     const aiState = roomAiState(round);
     if (round.ai_soup_snapshot && !aiState.soupSnapshot) return fail(res, 503, "本轮 AI 数据校验失败，请联系房主重新开局");
-    const entitlementConnection = await pool.getConnection();
-    try {
-      await entitlementConnection.beginTransaction();
-      await consumeDailyEntitlement(entitlementConnection, {
-        userId: context.user.id,
-        role: context.user.role,
-        metric: "ai_hint",
-        eventKey: `${round.id}:hint:${Number(round.ai_hint_count ?? 0) + 1}`
-      });
-      await entitlementConnection.commit();
-    } catch (error) {
-      await entitlementConnection.rollback();
-      throw error;
-    } finally {
-      entitlementConnection.release();
-    }
-    const turn = await runRoomAiHint(String(round.soup_id), aiState);
+    const hintState = await prepareRoomAiFacts(String(round.soup_id), String(round.id), aiState);
+    const turn = await runRoomAiHint(String(round.soup_id), hintState);
     const clueId = nanoid();
     const connection = await pool.getConnection();
     try {
@@ -2694,7 +2796,7 @@ router.post("/rooms/:roomId/questions/:messageId/retry-ai", async (req, res) => 
   }
   if (String(context.room.host_mode ?? "human") !== "ai") return fail(res, 409, "当前不是 AI 主持模式");
   const [[question]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.sender_id, m.answer, m.ai_status, m.round_id, m.recalled_at, r.status AS round_status
+    `SELECT m.sender_id, m.answer, m.ai_decision_id, m.ai_status, m.round_id, m.recalled_at, r.status AS round_status
      FROM online_soup_messages m
      JOIN online_soup_rounds r ON r.id = m.round_id
      WHERE m.id = ? AND m.room_id = ? AND m.message_type = 'question' LIMIT 1`,
@@ -2717,6 +2819,7 @@ router.post("/rooms/:roomId/questions/:messageId/retry-ai", async (req, res) => 
     [req.params.messageId],
   );
   if (updated.affectedRows !== 1) return fail(res, 409, "该问题状态已更新");
+  if (question.ai_decision_id) await resetAiDecisionForRetry(String(question.ai_decision_id));
   await pool.query(
     "UPDATE online_soup_rounds SET ai_status = 'idle' WHERE id = ? AND status = 'playing'",
     [question.round_id],
@@ -3463,8 +3566,8 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       }
       roundId = String(room.current_round_id);
       const [roundResult] = await connection.query<mysql.ResultSetHeader>(
-        "UPDATE online_soup_rounds SET status = 'playing', host_mode = ?, ai_soup_snapshot = ?, started_at = NOW() WHERE id = ? AND status = 'preparing'",
-        [hostMode, aiSoupSnapshot ? JSON.stringify(aiSoupSnapshot) : null, roundId]
+        "UPDATE online_soup_rounds SET status = 'playing', host_mode = ?, ai_soup_snapshot = ?, ai_phase = IF(? = 'ai', 'PLAYING', 'PREPARING'), started_at = NOW() WHERE id = ? AND status = 'preparing'",
+        [hostMode, aiSoupSnapshot ? JSON.stringify(aiSoupSnapshot) : null, hostMode, roundId]
       );
       if (roundResult.affectedRows !== 1) {
         await connection.rollback();
@@ -4341,7 +4444,7 @@ router.post("/rooms/:roomId/end-round", async (req, res) => {
     }
     roundId = String(room.current_round_id);
     const [roundResult] = await connection.query<mysql.ResultSetHeader>(
-      "UPDATE online_soup_rounds SET status = 'ended', ended_at = NOW() WHERE id = ? AND status = 'playing'",
+      "UPDATE online_soup_rounds SET status = 'ended', ai_phase = 'CANCELLED', ended_at = NOW() WHERE id = ? AND status = 'playing'",
       [roundId]
     );
     if (roundResult.affectedRows !== 1) {
@@ -4419,6 +4522,343 @@ router.get("/admin/rooms", async (req, res) => {
     total: Number(totalRow?.total ?? 0),
     rooms: rows.map((row) => ({ ...lobbyRoom(row), hostUsername: String(row.host_username) }))
   });
+});
+
+router.get("/admin/ai/regression-cases", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT cases.*, soups.title AS soup_title,
+       runs.id AS last_run_id, runs.actual_answer AS last_actual_answer, runs.passed AS last_passed,
+       runs.error_message AS last_error_message, runs.duration_ms AS last_duration_ms, runs.created_at AS last_run_at
+     FROM ai_regression_cases cases
+     JOIN soups ON soups.id = cases.soup_id
+     LEFT JOIN ai_regression_runs runs ON runs.id = (
+       SELECT recent.id FROM ai_regression_runs recent WHERE recent.case_id = cases.id
+       ORDER BY recent.created_at DESC, recent.id DESC LIMIT 1
+     )
+     ORDER BY cases.updated_at DESC LIMIT 200`,
+  );
+  res.json({ cases: rows.map((row) => ({
+    id: String(row.id), soupId: String(row.soup_id), soupTitle: String(row.soup_title), name: String(row.name),
+    question: String(row.question), recentContext: jsonList(row.recent_context_json), expectedAnswer: String(row.expected_answer),
+    expectedFactIds: jsonList<string>(row.expected_fact_ids_json), enabled: Boolean(row.enabled),
+    lastRun: row.last_run_id ? {
+      id: String(row.last_run_id), actualAnswer: row.last_actual_answer ? String(row.last_actual_answer) : null,
+      passed: Boolean(row.last_passed), errorMessage: row.last_error_message ? String(row.last_error_message) : null,
+      durationMs: Number(row.last_duration_ms), createdAt: iso(row.last_run_at),
+    } : null,
+  })) });
+});
+
+router.post("/admin/ai/regression-cases", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
+  const parsed = z.object({
+    soupId: z.string().min(1).max(64),
+    name: z.string().trim().min(2).max(120),
+    question: z.string().trim().min(1).max(2000),
+    recentContext: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(2000) }).strict()).max(20).default([]),
+    expectedAnswer: z.enum(answerValues),
+    expectedFactIds: z.array(z.string().regex(/^F\d{2,}$/)).max(30).default([]),
+  }).strict().safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "回归样本不正确");
+  const [[soup]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM soups WHERE id = ? LIMIT 1", [parsed.data.soupId]);
+  if (!soup) return fail(res, 404, "海龟汤不存在");
+  const id = nanoid();
+  await pool.query(
+    `INSERT INTO ai_regression_cases
+      (id, soup_id, name, question, recent_context_json, expected_answer, expected_fact_ids_json, created_by)
+     VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, CAST(? AS JSON), ?)`,
+    [id, parsed.data.soupId, parsed.data.name, parsed.data.question, JSON.stringify(parsed.data.recentContext),
+      parsed.data.expectedAnswer, JSON.stringify([...new Set(parsed.data.expectedFactIds)].sort()), user.id],
+  );
+  res.status(201).json({ id });
+});
+
+router.patch("/admin/ai/regression-cases/:caseId", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
+  const parsed = z.object({ enabled: z.boolean() }).strict().safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "启用状态不正确");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "UPDATE ai_regression_cases SET enabled = ? WHERE id = ?",
+    [parsed.data.enabled ? 1 : 0, req.params.caseId],
+  );
+  if (result.affectedRows !== 1) return fail(res, 404, "回归样本不存在");
+  res.json({ ok: true });
+});
+
+router.post("/admin/ai/regression-cases/run", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
+  const parsed = z.object({ caseIds: z.array(z.string().min(1).max(64)).max(20).optional() }).strict().safeParse(req.body ?? {});
+  if (!parsed.success) return fail(res, 400, "回归执行参数不正确");
+  const params: string[] = [];
+  let filter = "WHERE enabled = 1";
+  if (parsed.data.caseIds?.length) {
+    filter += ` AND id IN (${parsed.data.caseIds.map(() => "?").join(",")})`;
+    params.push(...parsed.data.caseIds);
+  }
+  const [cases] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, soup_id, question, recent_context_json, expected_answer, expected_fact_ids_json
+     FROM ai_regression_cases ${filter} ORDER BY updated_at ASC LIMIT 20`,
+    params,
+  );
+  const results: Array<{ caseId: string; passed: boolean; errorMessage: string | null }> = [];
+  for (const regressionCase of cases) {
+    const startedAt = Date.now();
+    let actualAnswer: string | null = null;
+    let actualFactIds: string[] = [];
+    let errorMessage: string | null = null;
+    try {
+      const result = await runAiRegressionCase({
+        soupId: String(regressionCase.soup_id), question: String(regressionCase.question),
+        recentContext: jsonList(regressionCase.recent_context_json),
+      });
+      actualAnswer = result.answer;
+      actualFactIds = [...result.factIds].sort();
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message.slice(0, 500) : "AI 回归执行失败";
+    }
+    const expectedFactIds = jsonList<string>(regressionCase.expected_fact_ids_json).sort();
+    const passed = !errorMessage && actualAnswer === String(regressionCase.expected_answer)
+      && JSON.stringify(actualFactIds) === JSON.stringify(expectedFactIds);
+    await pool.query(
+      `INSERT INTO ai_regression_runs
+        (id, case_id, model, actual_answer, actual_fact_ids_json, passed, error_message, duration_ms, run_by)
+       VALUES (?, ?, 'deepseek-v4-flash', ?, CAST(? AS JSON), ?, ?, ?, ?)`,
+      [nanoid(), regressionCase.id, actualAnswer, JSON.stringify(actualFactIds), passed ? 1 : 0,
+        errorMessage, Date.now() - startedAt, user.id],
+    );
+    results.push({ caseId: String(regressionCase.id), passed: Boolean(passed), errorMessage });
+  }
+  res.json({ total: results.length, passed: results.filter((item) => item.passed).length, results });
+});
+
+router.get("/admin/ai/decisions", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
+  const parsed = z.object({
+    status: z.enum(["all", "queued", "fast_answering", "adjudicating", "verifying", "committing", "completed", "failed", "cancelled"]).default("all"),
+    q: z.string().trim().max(100).default(""),
+    limit: z.coerce.number().int().min(1).max(100).default(30),
+    offset: z.coerce.number().int().min(0).default(0),
+  }).safeParse(req.query);
+  if (!parsed.success) return fail(res, 400, "AI 审计筛选条件不正确");
+  const where: string[] = [];
+  const params: Array<string | number> = [];
+  if (parsed.data.status !== "all") { where.push("decisions.status = ?"); params.push(parsed.data.status); }
+  if (parsed.data.q) {
+    where.push("(messages.content LIKE ? OR soups.title LIKE ? OR users.nickname LIKE ?)");
+    const like = `%${parsed.data.q}%`;
+    params.push(like, like, like);
+  }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const [[totalRow], rows] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM online_soup_ai_decisions decisions
+       JOIN online_soup_messages messages ON messages.id = decisions.question_message_id
+       JOIN online_soup_rounds rounds ON rounds.id = decisions.round_id
+       JOIN soups ON soups.id = rounds.soup_id
+       LEFT JOIN users ON users.id = messages.sender_id ${clause}`,
+      params,
+    ).then(([items]) => items),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT decisions.id, decisions.status, decisions.preliminary_answer, decisions.final_answer,
+         decisions.confidence, decisions.verifier_status, decisions.error_kind, decisions.error_message,
+         decisions.attempt_count, decisions.created_at, decisions.completed_at,
+         messages.id AS message_id, messages.content AS question, messages.question_number,
+         messages.ai_progress_delta, messages.ai_progress_after,
+         users.nickname AS player_name, soups.id AS soup_id, soups.title AS soup_title,
+         rounds.id AS round_id, rounds.room_id
+       FROM online_soup_ai_decisions decisions
+       JOIN online_soup_messages messages ON messages.id = decisions.question_message_id
+       JOIN online_soup_rounds rounds ON rounds.id = decisions.round_id
+       JOIN soups ON soups.id = rounds.soup_id
+       LEFT JOIN users ON users.id = messages.sender_id ${clause}
+       ORDER BY decisions.created_at DESC LIMIT ? OFFSET ?`,
+      [...params, parsed.data.limit, parsed.data.offset],
+    ).then(([items]) => items),
+  ]);
+  res.json({
+    total: Number(totalRow?.total ?? 0),
+    decisions: rows.map((row) => ({
+      id: String(row.id), status: String(row.status), preliminaryAnswer: row.preliminary_answer ? String(row.preliminary_answer) : null,
+      finalAnswer: row.final_answer ? String(row.final_answer) : null, confidence: row.confidence == null ? null : Number(row.confidence),
+      verifierStatus: String(row.verifier_status), errorKind: row.error_kind ? String(row.error_kind) : null,
+      errorMessage: row.error_message ? String(row.error_message) : null, attemptCount: Number(row.attempt_count),
+      question: String(row.question), questionNumber: Number(row.question_number ?? 0), messageId: String(row.message_id),
+      progressDelta: row.ai_progress_delta == null ? null : Number(row.ai_progress_delta),
+      progressAfter: row.ai_progress_after == null ? null : Number(row.ai_progress_after),
+      playerName: row.player_name ? String(row.player_name) : "未知用户", soupId: String(row.soup_id), soupTitle: String(row.soup_title),
+      roundId: String(row.round_id), roomId: String(row.room_id), createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
+    })),
+  });
+});
+
+router.get("/admin/ai/decisions/:decisionId", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
+  const [[decision]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT decisions.*, messages.content AS question, messages.answer AS public_answer,
+       messages.ai_progress_delta, messages.ai_progress_after, messages.sender_id,
+       users.nickname AS player_name, rounds.soup_id, rounds.room_id, rounds.status AS round_status,
+       rounds.ai_progress, soups.title AS soup_title
+     FROM online_soup_ai_decisions decisions
+     JOIN online_soup_messages messages ON messages.id = decisions.question_message_id
+     JOIN online_soup_rounds rounds ON rounds.id = decisions.round_id
+     JOIN soups ON soups.id = rounds.soup_id
+     LEFT JOIN users ON users.id = messages.sender_id
+     WHERE decisions.id = ? LIMIT 1`,
+    [req.params.decisionId],
+  );
+  if (!decision) return fail(res, 404, "未找到 AI 判定记录");
+  const [calls, facts, corrections] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT id, call_type, provider, model, request_json, response_json, started_at, duration_ms,
+         success, prompt_tokens, completion_tokens, total_tokens, error_kind, error_message
+       FROM ai_call_logs WHERE decision_id = ? ORDER BY started_at ASC`,
+      [decision.id],
+    ).then(([items]) => items),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT facts.fact_id, facts.content, facts.weight, facts.is_core, facts.is_must_have,
+         states.state, states.first_touched_by, states.first_touched_question_id,
+         states.first_discovered_by, states.first_discovered_question_id
+       FROM online_soup_round_fact_states states
+       JOIN ai_soup_facts facts ON facts.version_id = states.fact_version_id AND facts.fact_id = states.fact_id
+       WHERE states.round_id = ? ORDER BY facts.fact_id`,
+      [decision.round_id],
+    ).then(([items]) => items),
+    pool.query<mysql.RowDataPacket[]>(
+      `SELECT corrections.*, users.nickname AS operator_name
+       FROM ai_decision_corrections corrections JOIN users ON users.id = corrections.operator_user_id
+       WHERE corrections.decision_id = ? ORDER BY corrections.created_at DESC`,
+      [decision.id],
+    ).then(([items]) => items),
+  ]);
+  res.json({
+    decision: {
+      id: String(decision.id), status: String(decision.status), question: String(decision.question),
+      publicAnswer: decision.public_answer ? String(decision.public_answer) : null,
+      preliminaryAnswer: decision.preliminary_answer ? String(decision.preliminary_answer) : null,
+      finalAnswer: decision.final_answer ? String(decision.final_answer) : null,
+      confidence: decision.confidence == null ? null : Number(decision.confidence),
+      unsupported: Boolean(decision.contains_unsupported_assumption), injectionDetected: Boolean(decision.injection_detected),
+      matchedFacts: typeof decision.matched_facts_json === "string" ? JSON.parse(decision.matched_facts_json) : decision.matched_facts_json ?? [],
+      verifierStatus: String(decision.verifier_status),
+      verifierIssues: jsonList<string>(decision.verifier_issues_json),
+      errorKind: decision.error_kind ? String(decision.error_kind) : null,
+      errorMessage: decision.error_message ? String(decision.error_message) : null,
+      progressDelta: decision.ai_progress_delta == null ? null : Number(decision.ai_progress_delta),
+      progressAfter: decision.ai_progress_after == null ? null : Number(decision.ai_progress_after),
+      playerName: decision.player_name ? String(decision.player_name) : "未知用户",
+      soupId: String(decision.soup_id), soupTitle: String(decision.soup_title), roomId: String(decision.room_id),
+      roundId: String(decision.round_id), roundStatus: String(decision.round_status), roundProgress: Number(decision.ai_progress),
+    },
+    calls: calls.map((call) => ({
+      id: String(call.id), callType: String(call.call_type), provider: String(call.provider), model: String(call.model),
+      request: typeof call.request_json === "string" ? JSON.parse(call.request_json) : call.request_json,
+      response: typeof call.response_json === "string" ? JSON.parse(call.response_json) : call.response_json,
+      startedAt: iso(call.started_at), durationMs: Number(call.duration_ms), success: Boolean(call.success),
+      promptTokens: call.prompt_tokens == null ? null : Number(call.prompt_tokens), completionTokens: call.completion_tokens == null ? null : Number(call.completion_tokens),
+      totalTokens: call.total_tokens == null ? null : Number(call.total_tokens), errorKind: call.error_kind ? String(call.error_kind) : null,
+      errorMessage: call.error_message ? String(call.error_message) : null,
+    })),
+    facts: facts.map((fact) => ({
+      id: String(fact.fact_id), content: String(fact.content), weight: Number(fact.weight), core: Boolean(fact.is_core),
+      mustHave: Boolean(fact.is_must_have), state: String(fact.state), firstTouchedBy: fact.first_touched_by ? String(fact.first_touched_by) : null,
+      firstTouchedQuestionId: fact.first_touched_question_id ? String(fact.first_touched_question_id) : null,
+      firstDiscoveredBy: fact.first_discovered_by ? String(fact.first_discovered_by) : null,
+      firstDiscoveredQuestionId: fact.first_discovered_question_id ? String(fact.first_discovered_question_id) : null,
+    })),
+    corrections: corrections.map((correction) => ({
+      id: String(correction.id), correctedAnswer: correction.corrected_answer ? String(correction.corrected_answer) : null,
+      correctedFactStates: jsonList(correction.corrected_fact_states_json), reason: String(correction.reason),
+      appliedToLiveRound: Boolean(correction.applied_to_live_round), operatorName: String(correction.operator_name), createdAt: iso(correction.created_at),
+    })),
+  });
+});
+
+router.post("/admin/ai/decisions/:decisionId/corrections", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
+  const parsed = z.object({
+    answer: z.enum(answerValues).nullable().optional(),
+    factStates: z.array(z.object({ factId: z.string().regex(/^F\d{2,}$/), state: z.enum(["UNSEEN", "TOUCHED", "DISCOVERED"]) }).strict()).max(30).default([]),
+    reason: z.string().trim().min(2).max(500),
+  }).refine((value) => value.answer !== undefined || value.factStates.length > 0, "请至少纠正答案或一个事实状态").safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "纠错内容不正确");
+  const connection = await pool.getConnection();
+  let roomId: string | null = null;
+  let roundId: string | null = null;
+  let applied = false;
+  try {
+    await connection.beginTransaction();
+    const [[decision]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT decisions.question_message_id, decisions.round_id, rounds.room_id, rounds.status AS round_status
+       FROM online_soup_ai_decisions decisions JOIN online_soup_rounds rounds ON rounds.id = decisions.round_id
+       WHERE decisions.id = ? FOR UPDATE`,
+      [req.params.decisionId],
+    );
+    if (!decision) { await connection.rollback(); return fail(res, 404, "未找到 AI 判定记录"); }
+    roomId = String(decision.room_id);
+    roundId = String(decision.round_id);
+    applied = decision.round_status === "playing";
+    if (applied) {
+      if (parsed.data.answer !== undefined) {
+        await connection.query(
+          "UPDATE online_soup_messages SET answer = ?, ai_preliminary_answer = NULL WHERE id = ? AND ai_status = 'completed'",
+          [parsed.data.answer, decision.question_message_id],
+        );
+        await connection.query("UPDATE online_soup_ai_decisions SET final_answer = ? WHERE id = ?", [parsed.data.answer, req.params.decisionId]);
+      }
+      for (const fact of parsed.data.factStates) {
+        const [updated] = await connection.query<mysql.ResultSetHeader>(
+          "UPDATE online_soup_round_fact_states SET state = ? WHERE round_id = ? AND fact_id = ?",
+          [fact.state, roundId, fact.factId],
+        );
+        if (updated.affectedRows !== 1) throw new Error(`事实 ${fact.factId} 不存在`);
+      }
+      const [[progressRow]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT COALESCE(SUM(CASE WHEN states.state = 'DISCOVERED' THEN facts.weight ELSE 0 END), 0) AS progress
+         FROM online_soup_round_fact_states states
+         JOIN ai_soup_facts facts ON facts.version_id = states.fact_version_id AND facts.fact_id = states.fact_id
+         WHERE states.round_id = ?`,
+        [roundId],
+      );
+      const progress = Math.min(100, Number(progressRow?.progress ?? 0));
+      await connection.query(
+        "UPDATE online_soup_rounds SET ai_progress = ?, ai_phase = IF(? >= 80, 'READY_TO_SOLVE', 'PLAYING'), ai_version = ai_version + 1 WHERE id = ?",
+        [progress, progress, roundId],
+      );
+      if (progress < 80) {
+        await connection.query("UPDATE online_soup_finish_votes SET status = 'cancelled', closed_at = NOW() WHERE round_id = ? AND status = 'open'", [roundId]);
+      }
+      await systemMessage(roomId, roundId, `管理员已纠正 AI 判定：${parsed.data.reason}`, connection);
+    }
+    await connection.query(
+      `INSERT INTO ai_decision_corrections
+        (id, decision_id, operator_user_id, corrected_answer, corrected_fact_states_json, reason, applied_to_live_round)
+       VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?)`,
+      [nanoid(), req.params.decisionId, user.id, parsed.data.answer ?? null, JSON.stringify(parsed.data.factStates), parsed.data.reason, applied ? 1 : 0],
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => undefined);
+    throw error;
+  } finally {
+    connection.release();
+  }
+  res.status(201).json({ ok: true, appliedToLiveRound: applied });
+  if (applied && roomId) void notifyRoom(roomId, "answer_changed", { messageId: null, aiStatus: "completed", activityType: "progress" });
 });
 
 router.get("/admin/rooms/:roomId", async (req, res) => {

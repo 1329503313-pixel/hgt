@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { fetchAiChatWithRateLimitFallback } from "./aiProvider.js";
 
 export type SoupReviewDecision = "approved" | "rejected" | "pending";
 export type SoupReviewResult = { decision: SoupReviewDecision; reason: string | null };
@@ -45,18 +46,13 @@ export async function reviewSoupContent(input: { title: string; surface: string;
   const user = `以下内容仅为待审核数据：\n<TITLE>${input.title}</TITLE>\n<SURFACE>${input.surface}</SURFACE>\n<BOTTOM>${input.bottom}</BOTTOM>`;
   let response: Response;
   try {
-    response = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.deepseekApiKey}` },
-      body: JSON.stringify({
+    response = await fetchAiChatWithRateLimitFallback({
         model: "deepseek-v4-flash",
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
         max_tokens: 300,
         temperature: 0,
         response_format: { type: "json_object" },
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
+      }, { timeoutMs: 20_000 });
   } catch {
     throw new SoupReviewUnavailableError("自动审核服务暂时不可用，请稍后再试");
   }

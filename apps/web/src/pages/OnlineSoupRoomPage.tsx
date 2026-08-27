@@ -2211,9 +2211,6 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, senderMu
             — 进度+{message.aiProgressDelta}，该题完成后进度：{message.aiProgressAfter}% —
           </div>
         )}
-        {question && message.aiStatus === "completed" && message.aiFeedback && (
-          <div className={`mt-1.5 max-w-full rounded-lg px-2.5 py-1.5 text-xs font-bold ${message.aiProgressDelta ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"} ${mine ? "text-right" : "text-left"}`} role="status">{message.aiFeedback}</div>
-        )}
         <time className="mt-1 select-none px-1 text-[10px] text-muted [-webkit-touch-callout:none]">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
       </div>
     </div>

@@ -21,7 +21,6 @@ import {
   normalizeAtomicFacts,
   normalizeFactMatches,
   normalizeHintDimension,
-  normalizeOrdinaryGameAnswer,
   canRequestRoomAiHint,
   trimRoomAiHistory,
   renderProgressiveHint,
@@ -35,9 +34,46 @@ import {
 } from "./gameLogic.js";
 
 import { config } from "./config.js";
+import {
+  AI_ADJUDICATION_JSON_SCHEMA,
+  AI_FAST_ANSWER_JSON_SCHEMA,
+  AI_VERIFIER_JSON_SCHEMA,
+  aiAdjudicationSchema,
+  aiAnswerFromChinese,
+  aiAnswerFromLegacy,
+  aiAnswerToChinese,
+  aiAnswerToLegacy,
+  aiContextHash,
+  aiFastAnswerSchema,
+  aiQuestionHash,
+  aiVerifierSchema,
+  applyFactAdjudication,
+  compileRuntimeFacts,
+  detectPromptInjection,
+  shouldVerifyAdjudication,
+  resolveRepeatedVerifierRejection,
+  validateAdjudicationFactIds,
+  type AiAdjudication,
+  type AiRoundFact,
+} from "./aiHostProtocol.js";
+import { adjudicationPrompt, fastAnswerPrompt, verifierPrompt, type AiCaseContext } from "./aiHostPrompts.js";
+import { AiProviderError, DeepSeekResponsesGateway, fetchAiChatWithRateLimitFallback } from "./aiProvider.js";
+import { ensureRoundAiFacts, recordAiCallAudit } from "./aiHostRepository.js";
 
 const DEEPSEEK_API_KEY = config.deepseekApiKey;
-const DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions";
+const DEEPSEEK_URL = `${config.deepseekBaseUrl.replace(/\/$/, "")}/chat/completions`;
+const structuredAiGateway = new DeepSeekResponsesGateway({
+  auditSink: recordAiCallAudit,
+  fallback: config.ark.apiKey
+    ? {
+        provider: "volcengine",
+        apiKey: config.ark.apiKey,
+        model: config.ark.model,
+        endpoint: `${config.ark.baseUrl}/responses`,
+        protocol: "responses",
+      }
+    : undefined,
+});
 
 const gameRouter = Router();
 let badgeProgressListener: ((userId: string) => void) | null = null;
@@ -345,6 +381,14 @@ export class AiServiceError extends Error {
   }
 }
 
+function toAiServiceError(error: unknown): AiServiceError {
+  if (error instanceof AiServiceError) return error;
+  if (error instanceof AiProviderError) {
+    return new AiServiceError(error.statusCode === 503 ? 503 : 502, error.message);
+  }
+  return new AiServiceError(502, "AI 服务返回异常，请重试");
+}
+
 function sendAiServiceError(res: any, error: unknown) {
   if (error instanceof AiServiceError) return res.status(error.status).json({ error: error.message });
   console.error("Unexpected AI service error:", error);
@@ -531,6 +575,45 @@ async function callDeepSeek(
   throw lastError ?? new AiServiceError(502, "AI 服务返回异常，请稍后重试");
 }
 
+export async function runRoomAiFastAnswer(
+  soupId: string,
+  question: string,
+  state: RoomAiGameState,
+  options: { decisionId?: string | null } = {},
+) {
+  const soupData = await getSoupGameData(soupId);
+  if (!soupData) throw new AiServiceError(503, "海龟汤不存在");
+  if (!soupData.enableAiGame || soupData.reviewStatus !== "approved") {
+    throw new AiServiceError(503, "该海龟汤暂不可由 AI 主持");
+  }
+  const recentConversation = compactRoomAiHistory(state.messages);
+  const prompt = fastAnswerPrompt({
+    surface: soupData.surface,
+    bottom: soupData.bottom,
+    manual: soupData.manual,
+    publishedSupplements: state.revealedSupplements.surfaces.map((index) => soupData.supplementalSurfaces[index]).filter(Boolean),
+    recentConversation,
+    question,
+  });
+  try {
+    const result = await structuredAiGateway.callStructured({
+      callType: "fast_answer",
+      schemaName: "hgt_fast_answer",
+      schema: AI_FAST_ANSWER_JSON_SCHEMA,
+      example: { answer: "YES", confidence: 0.95, injectionDetected: false },
+      validator: aiFastAnswerSchema,
+      instructions: prompt.instructions,
+      input: prompt.input,
+      decisionId: options.decisionId,
+      timeoutMs: 12_000,
+      attempts: 1,
+    });
+    return { answer: aiAnswerToChinese[result.answer], confidence: result.confidence, risks: roomAiQuestionRisks(question) };
+  } catch (error) {
+    throw toAiServiceError(error);
+  }
+}
+
 async function selectSafeHintDimension(
   soupData: GameSoupData,
   savedAtomicFactIds: number[],
@@ -568,10 +651,7 @@ ${recentQuestions || "无"}
 
   let response: globalThis.Response;
   try {
-    response = await fetch(DEEPSEEK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({
+    response = await fetchAiChatWithRateLimitFallback({
         model: "deepseek-v4-flash",
         messages: [{ role: "user", content: prompt }],
         // V4 默认启用思考模式。这个分类请求只需要一个很短的 JSON；若保持默认，
@@ -580,9 +660,7 @@ ${recentQuestions || "无"}
         response_format: { type: "json_object" },
         max_tokens: 500,
         temperature: 0,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
+      }, { timeoutMs: 20_000 });
   } catch (error) {
     console.error("Hint dimension request failed:", error instanceof Error ? error.message : error);
     return fallbackDimension;
@@ -690,12 +768,34 @@ export type RoomAiGameState = {
   progress: number;
   hintCount?: number;
   soupSnapshot?: AiSoupRoundSnapshot | null;
+  runtimeFacts?: AiRoundFact[];
 };
+
+export async function prepareRoomAiFacts(soupId: string, roundId: string, state: RoomAiGameState) {
+  let soupData = await getSoupGameData(soupId);
+  if (!soupData) throw new AiServiceError(503, "海龟汤不存在");
+  soupData = await ensureSoupKeyFacts(soupId, soupData);
+  if (soupData.keyFacts.length === 0) throw new AiServiceError(503, "该海龟汤的 AI 关键事实尚未就绪");
+  const snapshot = await ensureRoundAiFacts({
+    roundId,
+    soupId,
+    keyFacts: soupData.keyFacts,
+    atomicFacts: soupData.atomicFacts,
+    legacyRevealedAtomicFactIds: state.revealedAtomicFactIds,
+  });
+  return { ...state, runtimeFacts: snapshot.facts };
+}
 
 export async function runRoomAiTurn(
   soupId: string,
   question: string,
   state: RoomAiGameState,
+  options: {
+    preliminaryAnswer?: string | null;
+    preliminaryAnswerPromise?: Promise<string | null>;
+    decisionId?: string | null;
+    cachedAdjudication?: AiAdjudication | null;
+  } = {},
 ) {
   let soupData = state.soupSnapshot
     ? soupDataFromRoundSnapshot(state.soupSnapshot)
@@ -705,23 +805,90 @@ export async function runRoomAiTurn(
   if (!soupData.enableAiGame || soupData.reviewStatus !== "approved" || soupData.keyFacts.length === 0) {
     throw new AiServiceError(503, "该海龟汤暂不可由 AI 主持");
   }
-  const systemPrompt = buildSystemPrompt(
-    soupData.surface, soupData.bottom, soupData.manual,
-    soupData.supplementalSurfaces, soupData.supplementalBottoms,
-    state.revealedSupplements.surfaces, state.revealedSupplements.bottoms,
-    soupData.keyFacts, soupData.atomicFacts, state.revealedAtomicFactIds
-  );
-  const progressAwareSystemPrompt = `${systemPrompt}
-
-【服务端当前进度】
-当前累计进度为 ${Math.max(0, Math.min(100, Math.round(state.progress)))}%。补充汤面只能提出揭示建议，最终是否发布由服务端校验。`;
-  // 持久化事实状态承载长期记忆；模型只读取最近五轮的压缩对话。
-  const history = [...compactRoomAiHistory(state.messages), { role: "user" as const, content: question }];
-  const result = await callDeepSeek(progressAwareSystemPrompt, history, { maxTokens: 900, temperature: 0 });
-  const turn = normalizeTurnResult(
-    result, soupData, state.revealedAtomicFactIds,
-    state.revealedSupplements, state.progress
-  );
+  const recentConversation = compactRoomAiHistory(state.messages);
+  const history = [...recentConversation, { role: "user" as const, content: question }];
+  const runtimeFacts = state.runtimeFacts?.length
+    ? state.runtimeFacts
+    : compileRuntimeFacts(soupData.keyFacts, soupData.atomicFacts).map((fact, index) => ({
+      ...fact,
+      state: state.revealedAtomicFactIds.includes(index + 1) ? "DISCOVERED" as const : "UNSEEN" as const,
+    }));
+  const context: AiCaseContext = {
+    surface: soupData.surface,
+    bottom: soupData.bottom,
+    manual: soupData.manual,
+    publishedSupplements: state.revealedSupplements.surfaces.map((index) => soupData.supplementalSurfaces[index]).filter(Boolean),
+    facts: runtimeFacts,
+    recentConversation,
+    question,
+  };
+  let adjudication: AiAdjudication;
+  let verifierStatus: "not_required" | "accepted" | "rejected" = "not_required";
+  let verifierIssues: string[] = [];
+  try {
+    adjudication = options.cachedAdjudication
+      ? validateAdjudicationFactIds(options.cachedAdjudication, context.facts)
+      : await requestAdjudication(context, options.decisionId ?? null);
+    let applied = applyFactAdjudication(runtimeFacts, adjudication);
+    if (!options.cachedAdjudication && shouldVerifyAdjudication(adjudication, runtimeFacts, applied.progress, state.progress)) {
+      const verification = await requestVerification(context, adjudication, options.decisionId ?? null);
+      if (verification.verdict === "REJECT") {
+        verifierIssues = [...verification.issueCodes];
+        adjudication = await requestAdjudication(context, options.decisionId ?? null, verification.issueCodes);
+        applied = applyFactAdjudication(runtimeFacts, adjudication);
+        const secondVerification = await requestVerification(context, adjudication, options.decisionId ?? null);
+        if (secondVerification.verdict !== "ACCEPT") {
+          verifierIssues = [...new Set([...verification.issueCodes, ...secondVerification.issueCodes])];
+          const preliminaryValue = options.preliminaryAnswer
+            ?? await options.preliminaryAnswerPromise
+            ?? null;
+          const preliminaryInternal = aiAnswerFromChinese(preliminaryValue) ?? aiAnswerFromLegacy(preliminaryValue);
+          adjudication = resolveRepeatedVerifierRejection(adjudication, preliminaryInternal);
+          applied = applyFactAdjudication(runtimeFacts, adjudication);
+          verifierStatus = "rejected";
+        } else {
+          verifierStatus = "accepted";
+        }
+      } else {
+        verifierStatus = "accepted";
+      }
+    }
+  } catch (error) {
+    throw toAiServiceError(error);
+  }
+  const applied = applyFactAdjudication(runtimeFacts, adjudication);
+  const revealedAtomicFactIds = applied.facts
+    .filter((fact) => fact.state === "DISCOVERED")
+    .map((fact) => Number(fact.id.slice(1)))
+    .filter(Number.isInteger);
+  const revealedKeys = completedProgressKeyIds(revealedAtomicFactIds, soupData.atomicFacts);
+  const previousRevealed = new Set(state.revealedAtomicFactIds);
+  const factMatches: FactMatch[] = adjudication.matchedFacts.map((match) => ({
+    factId: Number(match.factId.slice(1)),
+    grade: match.proposedState === "DISCOVERED" && match.discoveryStrength >= 0.90 ? "DIRECT"
+      : match.matchStrength >= 0.65 ? "WEAK" : "NONE",
+  }));
+  const nextSurfaceIndex = applied.progress >= 30 && applied.progress < 80
+    ? soupData.supplementalSurfaces.findIndex((_value, index) => !state.revealedSupplements.surfaces.includes(index))
+    : -1;
+  const revealedSupplements = mergeSupplements(state.revealedSupplements, {
+    surfaces: nextSurfaceIndex >= 0 ? [nextSurfaceIndex] : [],
+    bottoms: [],
+  });
+  const turn = {
+    answer: aiAnswerToChinese[adjudication.answer],
+    scoringDegraded: false,
+    evidenceFactIds: factMatches.map((match) => match.factId),
+    factMatches,
+    progress: Math.max(state.progress, applied.progress),
+    revealedKeys,
+    newlyRevealedKeys: revealedKeys.filter((id) => !state.revealedKeys.includes(id)),
+    revealedAtomicFactIds,
+    newlyRevealedAtomicFactIds: revealedAtomicFactIds.filter((id) => !previousRevealed.has(id)),
+    revealedSupplements,
+    completed: false,
+    status: gameSessionStatus(Math.max(state.progress, applied.progress), false),
+  };
   return {
     answer: turn.answer,
     scoringDegraded: turn.scoringDegraded,
@@ -734,8 +901,93 @@ export async function runRoomAiTurn(
     revealedSupplements: turn.revealedSupplements,
     newlyRevealedSurfaceIndices: turn.revealedSupplements.surfaces.filter((index) => !state.revealedSupplements.surfaces.includes(index)),
     newlyRevealedBottomIndices: turn.revealedSupplements.bottoms.filter((index) => !state.revealedSupplements.bottoms.includes(index)),
-    messages: [...history, { role: "assistant" as const, content: serializeAssistantTurn(turn) }]
+    messages: [...history, { role: "assistant" as const, content: serializeAssistantTurn(turn) }],
+    runtimeFacts: applied.facts,
+    factTransitions: applied.transitions,
+    confidence: adjudication.confidence,
+    containsUnsupportedAssumption: adjudication.containsUnsupportedAssumption,
+    injectionDetected: adjudication.injectionDetected,
+    internalAnswer: adjudication.answer,
+    matchedFactDecisions: adjudication.matchedFacts,
+    verifierStatus,
+    verifierIssues,
   };
+}
+
+async function requestAdjudication(
+  context: AiCaseContext,
+  decisionId: string | null,
+  previousIssues: readonly string[] = [],
+  callType: "adjudication" | "regression" = "adjudication",
+) {
+  const prompt = adjudicationPrompt(context, previousIssues);
+  const result = await structuredAiGateway.callStructured({
+    callType,
+    schemaName: "hgt_host_adjudication",
+    schema: AI_ADJUDICATION_JSON_SCHEMA,
+    example: {
+      answer: "YES",
+      confidence: 0.95,
+      matchedFacts: [{ factId: "F01", matchStrength: 0.95, discoveryStrength: 0.9, proposedState: "DISCOVERED" }],
+      containsUnsupportedAssumption: false,
+      injectionDetected: false,
+    },
+    validator: aiAdjudicationSchema,
+    instructions: prompt.instructions,
+    input: prompt.input,
+    decisionId,
+    timeoutMs: 30_000,
+    attempts: 3,
+  });
+  const validated = validateAdjudicationFactIds(result, context.facts);
+  return { ...validated, injectionDetected: detectPromptInjection(context.question) };
+}
+
+export async function runAiRegressionCase(input: {
+  soupId: string;
+  question: string;
+  recentContext?: Array<{ role: "user" | "assistant"; content: string }>;
+}) {
+  let soupData = await getSoupGameData(input.soupId);
+  if (!soupData) throw new AiServiceError(503, "海龟汤不存在");
+  soupData = await ensureSoupKeyFacts(input.soupId, soupData);
+  if (soupData.keyFacts.length === 0) throw new AiServiceError(503, "该海龟汤的 AI 关键事实尚未就绪");
+  const facts = compileRuntimeFacts(soupData.keyFacts, soupData.atomicFacts).map((fact) => ({
+    ...fact,
+    state: "UNSEEN" as const,
+  }));
+  const context: AiCaseContext = {
+    surface: soupData.surface,
+    bottom: soupData.bottom,
+    manual: soupData.manual,
+    publishedSupplements: [],
+    facts,
+    recentConversation: compactRoomAiHistory(input.recentContext ?? []),
+    question: input.question,
+  };
+  const adjudication = await requestAdjudication(context, null, [], "regression");
+  const applied = applyFactAdjudication(facts, adjudication);
+  return {
+    answer: aiAnswerToLegacy[adjudication.answer],
+    factIds: applied.facts.filter((fact) => fact.state === "DISCOVERED").map((fact) => fact.id),
+    confidence: adjudication.confidence,
+  };
+}
+
+async function requestVerification(context: AiCaseContext, adjudication: AiAdjudication, decisionId: string | null) {
+  const prompt = verifierPrompt(context, adjudication);
+  return structuredAiGateway.callStructured({
+    callType: "verification",
+    schemaName: "hgt_host_verification",
+    schema: AI_VERIFIER_JSON_SCHEMA,
+    example: { verdict: "ACCEPT", issueCodes: [] },
+    validator: aiVerifierSchema,
+    instructions: prompt.instructions,
+    input: prompt.input,
+    decisionId,
+    timeoutMs: 20_000,
+    attempts: 1,
+  });
 }
 
 export { canRequestRoomAiHint };
@@ -755,9 +1007,13 @@ export async function runRoomAiHint(soupId: string, state: RoomAiGameState) {
 
   const history = trimRoomAiHistory(state.messages);
   const fallbackDimension = HINT_DIMENSIONS[(state.hintCount ?? 0) % HINT_DIMENSIONS.length] ?? "因果关系";
-  const dimension = await selectSafeHintDimension(soupData, state.revealedAtomicFactIds, history, fallbackDimension);
+  const targetFact = state.runtimeFacts
+    ?.filter((fact) => fact.state !== "DISCOVERED")
+    .sort((a, b) => Number(b.mustHave) - Number(a.mustHave) || Number(b.core) - Number(a.core) || b.weight - a.weight)[0];
+  const hintLevel = Math.max(1, Math.min(3, (state.hintCount ?? 0) + 1));
+  const dimension = targetFact ? null : await selectSafeHintDimension(soupData, state.revealedAtomicFactIds, history, fallbackDimension);
   const turn = createHintTurn(
-    renderProgressiveHint(dimension, (state.hintCount ?? 0) + 1), soupData, state.revealedAtomicFactIds,
+    targetFact?.hints[hintLevel - 1] || renderProgressiveHint(dimension ?? "因果关系", hintLevel), soupData, state.revealedAtomicFactIds,
     state.revealedSupplements, state.progress
   );
   return {
@@ -1014,7 +1270,7 @@ async function performSplitKeyFactsForSoup(soupId: string): Promise<void> {
     // 未由作者配置时，先生成玩家前台仍可编辑的“进度关键点”。
     if (!progressCacheValid) {
       if (!DEEPSEEK_API_KEY) return;
-      const prompt = `你是一个海龟汤分析专家。请仔细阅读以下汤底，将完整真相整理成 N 个进度关键点（4-10 个）。
+      const prompt = `你是一个海龟汤分析专家。请仔细阅读以下汤底，将完整真相整理成 N 个进度关键点（5-15 个）。
 
 每个进度关键点是玩家还原故事时必须掌握的一组核心信息：
   例如——凶手是谁、动机是什么、手法是什么、关键道具、人物关系、时间线、反转点、隐藏信息等
@@ -1047,10 +1303,7 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
 
 注意：content 字段必须是中文。`;
 
-      const resp = await fetch(DEEPSEEK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
-        body: JSON.stringify({
+      const resp = await fetchAiChatWithRateLimitFallback({
           model: "deepseek-v4-flash",
           messages: [
             { role: "system", content: "你是海龟汤进度关键点生成器。严格按要求输出 JSON。" },
@@ -1060,9 +1313,7 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
           response_format: { type: "json_object" },
           max_tokens: 3000,
           temperature: 0.3,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
+        }, { timeoutMs: 30_000 });
       if (!resp.ok) {
         console.error("Progress key fact analysis API error:", resp.status);
         return;
@@ -1116,18 +1367,13 @@ ${soupData.keyFacts.map((fact) => `[K${fact.id}] ${fact.content}`).join("\n")}
 
 只输出 JSON 数组：[{"keyId":1,"content":"凶手是父亲"}]`;
       try {
-        const response = await fetch(DEEPSEEK_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
-          body: JSON.stringify({
+        const response = await fetchAiChatWithRateLimitFallback({
             model: "deepseek-v4-flash",
             messages: [{ role: "user", content: atomPrompt }],
             thinking: { type: "disabled" },
             max_tokens: 3000,
             temperature: 0.2,
-          }),
-          signal: AbortSignal.timeout(30_000),
-        });
+          }, { timeoutMs: 30_000 });
         if (response.ok) {
           const data = await response.json() as { choices?: { message?: { content?: string } }[] };
           rawAtomicFacts = repairArrayJson(data.choices?.[0]?.message?.content ?? "") ?? [];
@@ -1302,18 +1548,22 @@ gameRouter.post("/:soupId/ask", aiRateLimiter, async (req, res) => {
   const history = messages.filter(m => m.role !== "system").map(m => ({
     role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content
   }));
-  history.push({ role: "user", content: parsed.data.question });
-
-  let result: TurnResult;
+  let turn: Awaited<ReturnType<typeof runRoomAiTurn>> & { completed: boolean; status: AiGameSessionStatus };
   try {
-    result = await callDeepSeek(systemPrompt, history);
+    const adjudicated = await runRoomAiTurn(req.params.soupId, parsed.data.question, {
+      messages: history,
+      revealedKeys: completedProgressKeyIds(savedAtomicFactIds, soupData.atomicFacts),
+      revealedAtomicFactIds: savedAtomicFactIds,
+      revealedSupplements: savedSupp,
+      progress: existingProgress,
+    });
+    const completed = adjudicated.progress >= 100;
+    turn = { ...adjudicated, completed, status: gameSessionStatus(adjudicated.progress, completed) };
   } catch (error) {
     return sendAiServiceError(res, error);
   }
 
-  const turn = normalizeTurnResult(result, soupData, savedAtomicFactIds, savedSupp, existingProgress);
-
-  const newMessages = trimConversationMessages([...messages, { role: "user", content: parsed.data.question }, { role: "assistant", content: serializeAssistantTurn(turn) }]);
+  const newMessages = trimConversationMessages(turn.messages);
   const fullMessages = [{ role: "system", content: systemPrompt }, ...newMessages];
 
   const connection = await pool.getConnection();
@@ -1347,7 +1597,12 @@ gameRouter.post("/:soupId/ask", aiRateLimiter, async (req, res) => {
         [session.id, user.id, req.params.soupId]
       );
     }
-    await recordKeyHits(user.id, req.params.soupId, turn.newlyRevealedKeys, connection);
+    await recordKeyHits(
+      user.id,
+      req.params.soupId,
+      turn.revealedKeys.filter((id) => !completedProgressKeyIds(savedAtomicFactIds, soupData.atomicFacts).includes(id)),
+      connection,
+    );
     await connection.commit();
   } catch (error) {
     await connection.rollback();

@@ -26,7 +26,7 @@ export function parseGeneratedKeyFactsResponse(raw: string): GeneratedKeyFact[] 
     if (!Number.isInteger(id) || seen.has(id) || !Number.isFinite(weight) || weight <= 0 || !content) return [];
     seen.add(id);
     return [{ id, content, weight }];
-  }).slice(0, 10);
+  }).slice(0, 15);
   if (facts.length === 0) return [];
 
   const remaining = 100 - facts.length;
