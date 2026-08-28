@@ -6,9 +6,9 @@ import {
   DEFAULT_ENTITLEMENT_PLANS,
   entitlementPlanSchema,
   entitlementPlanForUserState,
+  entitlementConfigurationEffectiveDate,
   entitlementTierForRole,
   entitlementTierForUserState,
-  nextBeijingEntitlementDate,
   scopedEntitlementUsageMetric
 } from "./entitlements.js";
 import { MAX_EXPERIENCE } from "./levelSystem.js";
@@ -75,13 +75,13 @@ test("默认配置兼容既有发布规则且不会自动发放资产", () => {
   assert.equal(DEFAULT_ENTITLEMENT_PLANS.user.dailyExtraFreeDraws, 0);
 });
 
-test("权益自然日按北京时间切换", () => {
+test("权益保存按北京时间当日立即生效", () => {
   const beforeMidnight = new Date("2026-08-16T15:59:59.000Z");
   const midnight = new Date("2026-08-16T16:00:00.000Z");
   assert.equal(beijingEntitlementDate(beforeMidnight), "2026-08-16");
-  assert.equal(nextBeijingEntitlementDate(beforeMidnight), "2026-08-17");
+  assert.equal(entitlementConfigurationEffectiveDate(beforeMidnight), "2026-08-16");
   assert.equal(beijingEntitlementDate(midnight), "2026-08-17");
-  assert.equal(nextBeijingEntitlementDate(midnight), "2026-08-18");
+  assert.equal(entitlementConfigurationEffectiveDate(midnight), "2026-08-17");
 });
 
 test("每日权益补发按未处理目标差额真实增加贝壳和经验", () => {

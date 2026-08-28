@@ -14,6 +14,7 @@ import {
   renderSafeHint,
   roomAiQuestionRisks,
   roomAiProgressFeedback,
+  selectNextHintKeyFact,
   shouldPublishRoomAiStallHint,
   toPublicGameMessages,
   trimRoomAiHistory,
@@ -149,4 +150,35 @@ test("房间 AI 提示仅在有效推理进度内开放", () => {
   assert.equal(canRequestRoomAiHint(99), true);
   assert.equal(canRequestRoomAiHint(100), false);
   assert.equal(canRequestRoomAiHint(Number.NaN), false);
+});
+
+test("房间提示按关键点序号选择未命中且当前循环未提示的内容", () => {
+  const keyFacts = [
+    { id: 3, content: "第三点", weight: 30, hintContent: "提示三" },
+    { id: 1, content: "第一点", weight: 40, hintContent: "提示一" },
+    { id: 2, content: "第二点", weight: 30, hintContent: "提示二" },
+  ];
+  assert.deepEqual(selectNextHintKeyFact(keyFacts, [], []), {
+    keyFact: keyFacts[1],
+    hintedKeyIds: [1],
+  });
+  assert.deepEqual(selectNextHintKeyFact(keyFacts, [2], [1]), {
+    keyFact: keyFacts[0],
+    hintedKeyIds: [1, 3],
+  });
+});
+
+test("未命中关键点全部提示过后按序重新开始下一循环", () => {
+  const keyFacts = [
+    { id: 1, content: "第一点", weight: 50, hintContent: "提示一" },
+    { id: 2, content: "第二点", weight: 50, hintContent: "提示二" },
+  ];
+  assert.deepEqual(selectNextHintKeyFact(keyFacts, [], [1, 2]), {
+    keyFact: keyFacts[0],
+    hintedKeyIds: [1],
+  });
+  assert.deepEqual(selectNextHintKeyFact(keyFacts, [1], [1, 2]), {
+    keyFact: keyFacts[1],
+    hintedKeyIds: [2],
+  });
 });

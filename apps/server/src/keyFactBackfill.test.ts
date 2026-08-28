@@ -8,8 +8,10 @@ test("关键点补齐任务固定每小时执行", () => {
 
 test("关键点补齐任务去重并处理全部缺失作品", async () => {
   const generated: string[] = [];
+  let querySql = "";
   const db = {
-    async query() {
+    async query(sql: string) {
+      querySql = sql;
       return [[{ id: "soup-1" }, { id: "soup-2" }, { id: "soup-1" }], []];
     },
   } as any;
@@ -20,4 +22,6 @@ test("关键点补齐任务去重并处理全部缺失作品", async () => {
 
   assert.equal(count, 2);
   assert.deepEqual(generated.sort(), ["soup-1", "soup-2"]);
+  assert.match(querySql, /hintContent/);
+  assert.match(querySql, /JSON_TABLE/);
 });

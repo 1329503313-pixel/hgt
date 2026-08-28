@@ -11,7 +11,7 @@ const validSnapshot = {
   manual: "主持手册",
   supplementalSurfaces: ["补充汤面"],
   supplementalBottoms: ["补充汤底"],
-  keyFacts: [{ id: 1, content: "关键事实", weight: 100 }],
+  keyFacts: [{ id: 1, content: "关键事实", weight: 100, hintContent: "留意关键关系" }],
   atomicFacts: [{ id: 1, keyId: 1, content: "原子事实", weight: 100 }],
   contentHash: "hash",
 };

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightLeft, ArrowUp, Award, Ban, Bot, BookOpen, BookOpenCheck, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, MessageCircleQuestion, Minimize2, Music, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Star, Users, VenetianMask, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowRightLeft, ArrowUp, Award, Ban, Bot, BookOpen, BookOpenCheck, Check, ChevronDown, ChevronUp, Clapperboard, Crown, Eye, Lightbulb, ListChecks, LoaderCircle, LogOut, Menu, MessageCircle, MessageCircleQuestion, Minimize2, Music, Play, Plus, RefreshCw, Reply, Send, Smile, Sparkles, Soup, Star, UserCog, Users, VenetianMask, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Modal } from "../components/Modal";
@@ -63,10 +63,12 @@ type MaterialPublishTarget = {
   title: string;
   content: string;
   endsRound: boolean;
+  resolveQuestionLimit?: boolean;
   honors?: { mvpUserId: string; bestQuestionMessageId: string };
 };
 type HumanHonorSelection = {
-  bottomIndex: number;
+  bottomIndex: number | null;
+  resolveQuestionLimit: boolean;
   step: "mvp" | "question";
   questions: ProgressQuestion[];
   mvpUserId: string;
@@ -182,8 +184,7 @@ export default function OnlineSoupRoomPage() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [soupExpanded, setSoupExpanded] = useState(true);
   const [soupTab, setSoupTab] = useState<"surface" | "bottom" | "manual">("surface");
-  const [hostPanelGroup, setHostPanelGroup] = useState<"materials" | "round">("materials");
-  const [hostRoundTab, setHostRoundTab] = useState<"clues" | "progress">("clues");
+  const [hostPanelTab, setHostPanelTab] = useState<"materials" | "clues" | "progress">("materials");
   const [viewerPanelTab, setViewerPanelTab] = useState<"surface" | "clues" | "progress">("surface");
   const [mysteryPanelTab, setMysteryPanelTab] = useState<"mystery" | "clues">("mystery");
   const [membersOpen, setMembersOpen] = useState(false);
@@ -201,6 +202,14 @@ export default function OnlineSoupRoomPage() {
   const [materialPublishing, setMaterialPublishing] = useState(false);
   const [honorSelection, setHonorSelection] = useState<HumanHonorSelection | null>(null);
   const [preparingHonorBottomIndex, setPreparingHonorBottomIndex] = useState<number | null>(null);
+  const [preparingQuestionLimitHonors, setPreparingQuestionLimitHonors] = useState(false);
+  const [startConfigOpen, setStartConfigOpen] = useState(false);
+  const [startLimitMode, setStartLimitMode] = useState<"unlimited" | "limited">("unlimited");
+  const [startLimitInput, setStartLimitInput] = useState("");
+  const [startLimitError, setStartLimitError] = useState("");
+  const [startSaving, setStartSaving] = useState(false);
+  const [questionLimitResolutionOpen, setQuestionLimitResolutionOpen] = useState(false);
+  const [questionLimitResolving, setQuestionLimitResolving] = useState(false);
   const [bestQuestionSavingId, setBestQuestionSavingId] = useState("");
   const [changingHostMode, setChangingHostMode] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
@@ -261,6 +270,8 @@ export default function OnlineSoupRoomPage() {
   const roundCluesRef = useRef<RoundClue[]>([]);
   const highlightTimerRef = useRef<number | null>(null);
   const locatedRequestRef = useRef("");
+  const honorQuestionListRef = useRef<HTMLDivElement>(null);
+  const selectedHonorQuestionRef = useRef<HTMLLabelElement>(null);
   const leavingRoomRef = useRef(false);
   const hostMenuDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
   const suppressHostMenuClickRef = useRef(false);
@@ -590,6 +601,7 @@ export default function OnlineSoupRoomPage() {
     }
     if (reason === "message" || reason === "clue") {
       if (reason === "message" && payload.activityType === "progress") void loadProgress(true);
+      if (reason === "message" && payload.activityType === "progress") void loadState();
       if (reason === "clue") void loadClues(true);
       void loadNewMessages();
       return;
@@ -608,6 +620,7 @@ export default function OnlineSoupRoomPage() {
       } : current);
       setReplyingTo((current) => current?.id === payload.messageId ? null : current);
       setProgressQuestions((current) => refreshProgressQueuePositions(current.filter((question) => question.id !== payload.messageId)));
+      void loadState();
       return;
     }
     if (reason === "answer_changed" && typeof payload.messageId === "string") {
@@ -650,6 +663,7 @@ export default function OnlineSoupRoomPage() {
       } : question)));
       if (payload.activityType === "progress") void loadProgress(true);
       if (payload.notificationCreated) void loadNewMessages();
+      void loadState();
       return;
     }
     if (reason === "best_question_changed") {
@@ -706,10 +720,10 @@ export default function OnlineSoupRoomPage() {
     }
   }, [latestMessageId, scrollToLatestMessage]);
   useEffect(() => {
-    const hostViewingProgress = snapshot?.me.isHost && hostPanelGroup === "round" && hostRoundTab === "progress";
+    const hostViewingProgress = snapshot?.me.isHost && hostPanelTab === "progress";
     const viewerViewingProgress = !snapshot?.me.isHost && viewerPanelTab === "progress";
     if (soupExpanded && (hostViewingProgress || viewerViewingProgress)) void loadProgress();
-  }, [hostPanelGroup, hostRoundTab, latestMessageId, loadProgress, snapshot?.me.isHost, snapshot?.room.currentRoundId, soupExpanded, viewerPanelTab]);
+  }, [hostPanelTab, latestMessageId, loadProgress, snapshot?.me.isHost, snapshot?.room.currentRoundId, soupExpanded, viewerPanelTab]);
   useEffect(() => {
     const clueContextId = snapshot?.room.contentType === "mystery"
       ? snapshot.room.mystery?.runId ?? null
@@ -734,7 +748,6 @@ export default function OnlineSoupRoomPage() {
     input.style.height = `${Math.max(minHeight, Math.min(input.scrollHeight, maxHeight))}px`;
     input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [content]);
-
   const isHost = snapshot?.me.isHost ?? false;
   const mysteryMode = snapshot?.room.contentType === "mystery";
   const impostorMode = snapshot?.room.contentType === "impostor";
@@ -744,7 +757,13 @@ export default function OnlineSoupRoomPage() {
   const currentMemberMuted = isActiveMute(snapshot?.members.find((member) => member.id === user?.id)?.mutedUntil);
   const canParticipate = Boolean(snapshot && snapshot.me.role !== "spectator" && snapshot.room.status !== "closed");
   const canDiscuss = canParticipate && !currentMemberMuted;
-  const canQuestion = Boolean(snapshot && !impostorMode && snapshot.room.status === "playing" && (mysteryMode ? isHost : snapshot.me.role === "player"));
+  const questionLimitExhausted = Boolean(
+    snapshot
+    && snapshot.room.contentType === "soup"
+    && snapshot.room.questionLimit !== null
+    && snapshot.room.remainingQuestionCount === 0
+  );
+  const canQuestion = Boolean(snapshot && !impostorMode && !questionLimitExhausted && snapshot.room.status === "playing" && (mysteryMode ? isHost : snapshot.me.role === "player"));
   const impostorSeatByUserId = useMemo(() => new Map(snapshot?.room.impostorGame?.playerSeats.map((seat) => [seat.userId, seat.seat]) ?? []), [snapshot?.room.impostorGame?.playerSeats]);
   const impostorMemberName = useCallback((member: OnlineSoupSnapshot["members"][number]) => {
     const seat = impostorMode ? impostorSeatByUserId.get(member.id) : null;
@@ -762,6 +781,10 @@ export default function OnlineSoupRoomPage() {
   useEffect(() => {
     if (!canQuestion && mode === "question") setMode("discussion");
   }, [canQuestion, mode]);
+  useEffect(() => {
+    const shouldOpen = Boolean(canHumanHost && snapshot?.room.questionLimitResolutionRequired);
+    setQuestionLimitResolutionOpen(shouldOpen);
+  }, [canHumanHost, snapshot?.room.currentRoundId, snapshot?.room.questionLimitResolutionRequired]);
   useEffect(() => {
     document.body.classList.toggle("impostor-night-theme", impostorNightMode);
     return () => document.body.classList.remove("impostor-night-theme");
@@ -781,9 +804,8 @@ export default function OnlineSoupRoomPage() {
     setShowMusicMuteGuide(true);
   }, [roomId, snapshot?.room.backgroundMusic?.id, snapshot?.room.backgroundMusic?.startedAt]);
   useEffect(() => {
-    setHostPanelGroup("materials");
+    setHostPanelTab("materials");
     setSoupTab("surface");
-    setHostRoundTab("clues");
     setMysteryPanelTab("mystery");
   }, [snapshot?.room.currentRoundId, snapshot?.room.mystery?.id, snapshot?.room.soup?.id]);
 
@@ -867,7 +889,7 @@ export default function OnlineSoupRoomPage() {
       setReplyingTo(null);
       isNearMessagesBottom.current = true;
       setShowScrollToLatest(false);
-      if (mode === "question" && !mysteryMode) await Promise.all([loadNewMessages(), loadProgress(true)]);
+      if (mode === "question" && !mysteryMode) await Promise.all([loadState(), loadNewMessages(), loadProgress(true)]);
       else await loadNewMessages();
     } catch (error) { showToast(error instanceof Error ? error.message : "发送失败"); }
     finally { setSending(false); }
@@ -978,12 +1000,14 @@ export default function OnlineSoupRoomPage() {
   async function answer(message: OnlineSoupMessage, answerValue: OnlineSoupAnswer) {
     const nextAnswer = message.answer === answerValue ? null : answerValue;
     try {
-      await api(`/api/online-soup/rooms/${roomId}/questions/${message.id}/answer`, { method: "PATCH", body: { answer: nextAnswer } });
+      const result = await api<{ questionLimitResolutionRequired: boolean }>(`/api/online-soup/rooms/${roomId}/questions/${message.id}/answer`, { method: "PATCH", body: { answer: nextAnswer } });
       setSnapshot((current) => current ? {
         ...current,
+        room: { ...current.room, questionLimitResolutionRequired: result.questionLimitResolutionRequired },
         messages: current.messages.map((item) => item.id === message.id ? { ...item, answer: nextAnswer } : item)
       } : current);
       setProgressQuestions((current) => current.map((question) => question.id === message.id ? { ...question, answer: nextAnswer } : question));
+      await loadState();
     } catch (error) { showToast(error instanceof Error ? error.message : "回答失败"); }
   }
 
@@ -1025,6 +1049,7 @@ export default function OnlineSoupRoomPage() {
       } : current);
       setReplyingTo((current) => current?.id === result.messageId ? null : current);
       setProgressQuestions((current) => current.filter((question) => question.id !== result.messageId));
+      await loadState();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "撤回失败");
     }
@@ -1080,6 +1105,43 @@ export default function OnlineSoupRoomPage() {
       // hostAction 已展示服务端错误。
     } finally {
       setImpostorLobbyActionSaving(false);
+    }
+  }
+
+  function requestStartGame(mobile = false) {
+    if (mobile) setHostActionsOpen(false);
+    if (canHumanHost && snapshot?.room.contentType === "soup") {
+      setStartLimitMode("unlimited");
+      setStartLimitInput("");
+      setStartLimitError("");
+      setStartConfigOpen(true);
+      return;
+    }
+    void hostAction("start");
+  }
+
+  async function startConfiguredGame() {
+    if (startSaving) return;
+    let questionLimit: number | null = null;
+    if (startLimitMode === "limited") {
+      if (!/^[1-9]\d*$/.test(startLimitInput)) {
+        setStartLimitError("请输入正整数");
+        return;
+      }
+      questionLimit = Number(startLimitInput);
+      if (!Number.isSafeInteger(questionLimit) || questionLimit > 4_294_967_295) {
+        setStartLimitError("次数不能超过 4294967295");
+        return;
+      }
+    }
+    setStartSaving(true);
+    try {
+      await hostAction("start", { questionLimit });
+      setStartConfigOpen(false);
+    } catch {
+      // hostAction 已展示服务端错误。
+    } finally {
+      setStartSaving(false);
     }
   }
 
@@ -1149,9 +1211,11 @@ export default function OnlineSoupRoomPage() {
     if (!materialPublishTarget || materialPublishing) return;
     setMaterialPublishing(true);
     try {
-      const published = materialPublishTarget.kind === "surface"
-        ? await publishSurface(materialPublishTarget.index)
-        : await publishBottom(materialPublishTarget.index, materialPublishTarget.honors);
+      const published = materialPublishTarget.resolveQuestionLimit
+        ? await resolveQuestionLimit("completed", materialPublishTarget.honors)
+        : materialPublishTarget.kind === "surface"
+          ? await publishSurface(materialPublishTarget.index)
+          : await publishBottom(materialPublishTarget.index, materialPublishTarget.honors);
       if (published) {
         if (materialPublishTarget.endsRound) showToast("汤底、主持人手册和本轮高光已发布");
         setMaterialPublishTarget(null);
@@ -1181,45 +1245,85 @@ export default function OnlineSoupRoomPage() {
 
     setPreparingHonorBottomIndex(bottomIndex);
     try {
-      let after = "";
-      let hasMore = true;
-      const questions: ProgressQuestion[] = [];
-      const expectedRoundId = snapshot.room.currentRoundId;
-      while (hasMore) {
-        const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
-        const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false });
-        if (page.roundId !== expectedRoundId) throw new Error("本轮状态已变化，请重新选择汤底");
-        questions.push(...page.questions);
-        hasMore = page.hasMore;
-        if (!page.nextCursor) break;
-        after = page.nextCursor;
-      }
-      const questionerIds = new Set(questions.map((question) => question.sender.id).filter(Boolean));
-      if (questionerIds.size === 0) {
-        showToast("本轮暂无提问玩家，无法进行 MVP 结算");
-        return;
-      }
-      if (!questions.some((question) => question.answer)) {
-        showToast("本轮暂无已回答提问，请先完成至少一次回答");
-        return;
-      }
-      setProgressQuestions(questions);
-      progressLoadedRoundId.current = expectedRoundId;
-      setPublishOpen(false);
-      setHonorSelection({
-        bottomIndex,
-        step: "mvp",
-        questions,
-        mvpUserId: "",
-        bestQuestionMessageId: questions.some((question) => question.id === snapshot.room.bestQuestionMessageId && question.answer)
-          ? snapshot.room.bestQuestionMessageId ?? ""
-          : "",
-        submitting: false,
-      });
+      await prepareHumanHonorSelection(bottomIndex, false);
     } catch (error) {
       showToast(error instanceof Error ? error.message : "评选候选加载失败");
     } finally {
       setPreparingHonorBottomIndex(null);
+    }
+  }
+
+  async function loadAllProgressQuestions(expectedRoundId: string | null) {
+    let after = "";
+    let hasMore = true;
+    const questions: ProgressQuestion[] = [];
+    while (hasMore) {
+      const query = after ? `?after=${encodeURIComponent(after)}&limit=100` : "?limit=100";
+      const page = await api<ProgressPage>(`/api/online-soup/rooms/${roomId}/progress${query}`, { bypassCache: true, dedupe: false });
+      if (page.roundId !== expectedRoundId) throw new Error("本轮状态已变化，请重新操作");
+      questions.push(...page.questions);
+      hasMore = page.hasMore;
+      if (!page.nextCursor) break;
+      after = page.nextCursor;
+    }
+    return questions;
+  }
+
+  async function prepareHumanHonorSelection(bottomIndex: number | null, resolveQuestionLimit: boolean) {
+    const expectedRoundId = snapshot?.room.currentRoundId ?? null;
+    const questions = await loadAllProgressQuestions(expectedRoundId);
+    const questionerIds = new Set(questions.map((question) => question.sender.id).filter(Boolean));
+    if (questionerIds.size === 0) throw new Error("本轮暂无提问玩家，无法进行 MVP 结算");
+    if (!questions.some((question) => question.answer)) throw new Error("本轮暂无已回答提问，请先完成至少一次回答");
+    setProgressQuestions(questions);
+    progressLoadedRoundId.current = expectedRoundId;
+    setPublishOpen(false);
+    setQuestionLimitResolutionOpen(false);
+    setHonorSelection({
+      bottomIndex,
+      resolveQuestionLimit,
+      step: "mvp",
+      questions,
+      mvpUserId: "",
+      bestQuestionMessageId: questions.some((question) => question.id === snapshot?.room.bestQuestionMessageId && question.answer)
+        ? snapshot?.room.bestQuestionMessageId ?? ""
+        : "",
+      submitting: false,
+    });
+  }
+
+  async function prepareQuestionLimitCompletion() {
+    if (preparingQuestionLimitHonors) return;
+    setPreparingQuestionLimitHonors(true);
+    try {
+      await prepareHumanHonorSelection(null, true);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "评选候选加载失败");
+    } finally {
+      setPreparingQuestionLimitHonors(false);
+    }
+  }
+
+  async function resolveQuestionLimit(outcome: "completed" | "failed", honors?: { mvpUserId: string; bestQuestionMessageId: string }) {
+    if (outcome === "completed" && !honors) return false;
+    try {
+      await hostAction("resolve-question-limit", { outcome, ...honors });
+      setQuestionLimitResolutionOpen(false);
+      setHonorSelection(null);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function failQuestionLimitRound() {
+    if (questionLimitResolving) return;
+    setQuestionLimitResolving(true);
+    try {
+      const resolved = await resolveQuestionLimit("failed");
+      if (resolved) showToast("本轮挑战失败，已结束本轮");
+    } finally {
+      setQuestionLimitResolving(false);
     }
   }
 
@@ -1234,6 +1338,22 @@ export default function OnlineSoupRoomPage() {
     const soup = snapshot?.room.soup;
     if (!soup) return showToast("当前海龟汤状态已变化，请重新操作");
     const bottomIndex = honorSelection.bottomIndex;
+    if (honorSelection.resolveQuestionLimit) {
+      setMaterialPublishTarget({
+        kind: "bottom",
+        index: -1,
+        title: "全部汤底",
+        content: "将发布主汤底、全部补充汤底、主持人手册和本轮高光。",
+        endsRound: true,
+        resolveQuestionLimit: true,
+        honors: {
+          mvpUserId: honorSelection.mvpUserId,
+          bestQuestionMessageId: honorSelection.bestQuestionMessageId,
+        },
+      });
+      return;
+    }
+    if (bottomIndex == null) return showToast("当前海龟汤状态已变化，请重新操作");
     const bottomContent = bottomIndex === 0 ? soup.bottom ?? "" : soup.supplementalBottoms?.[bottomIndex - 1] ?? "";
     setMaterialPublishTarget({
       kind: "bottom",
@@ -1252,15 +1372,24 @@ export default function OnlineSoupRoomPage() {
     navigate(`/online-soup/rooms/${roomId}/select-soup?contentType=${mysteryMode ? "mystery" : "soup"}`);
   }
 
-  function openMemberProfile(userId: string) {
-    const member = snapshot?.members.find((item) => item.id === userId);
-    if (isHost && userId !== user?.id && member) {
-      setMembersOpen(false);
-      setManagedMemberId(userId);
-      setMemberManagementAction(null);
+  async function openMemberChat(userId: string) {
+    if (userId === user?.id) {
+      navigate("/mine");
       return;
     }
-    navigate(`/users/${userId}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } });
+    try {
+      const conversation = await api<{ id: string }>("/api/conversations", { method: "POST", body: { userId } });
+      setMembersOpen(false);
+      navigate(`/messages/chat/${conversation.id}`, { state: { onlineSoupRoomId: roomId } });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "私聊打开失败");
+    }
+  }
+
+  function openMemberManagement(userId: string) {
+    setMembersOpen(false);
+    setManagedMemberId(userId);
+    setMemberManagementAction(null);
   }
 
   async function manageMember(action: "kick" | "transfer" | "mute" | "unmute", durationMinutes?: 1 | 5) {
@@ -1445,7 +1574,7 @@ export default function OnlineSoupRoomPage() {
   const assistantPanelTab = isHost
     ? mysteryMode
       ? mysteryPanelTab === "clues" ? "clues" : null
-      : hostPanelGroup === "round" ? hostRoundTab : null
+      : hostPanelTab === "materials" ? null : hostPanelTab
     : mysteryMode
       ? mysteryPanelTab === "clues" ? "clues" : null
       : viewerPanelTab === "surface" ? null : viewerPanelTab;
@@ -1492,6 +1621,17 @@ export default function OnlineSoupRoomPage() {
       };
     };
   }, [assistantListIdentity, assistantPanelTab, assistantRoundId, soupExpanded]);
+  useLayoutEffect(() => {
+    if (honorSelection?.step !== "question" || !honorSelection.bestQuestionMessageId) return;
+    const container = honorQuestionListRef.current;
+    const selected = selectedHonorQuestionRef.current;
+    if (!container || !selected) return;
+    const top = selected.offsetTop;
+    const bottom = top + selected.offsetHeight;
+    if (top < container.scrollTop || bottom > container.scrollTop + container.clientHeight) {
+      selected.scrollIntoView({ block: "nearest" });
+    }
+  }, [honorSelection?.bestQuestionMessageId, honorSelection?.step]);
 
   if (loading || !snapshot) return <div className="min-h-screen bg-page p-4 pt-24">
     {!entryPasswordOpen && !entryError && <div className="mx-auto h-48 max-w-5xl animate-pulse rounded-2xl bg-slate-200" />}
@@ -1568,7 +1708,7 @@ export default function OnlineSoupRoomPage() {
     {isHost && <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />}
   </> : <>
     {snapshot.room.status === "preparing" && !snapshot.room.soup && !snapshot.room.mystery && <FloatingAction tone="primary" label="选择内容" onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
-    {snapshot.room.status !== "playing" && (snapshot.room.soup || snapshot.room.mystery) && <FloatingAction tone="primary" label="开始游戏" onClick={() => { if (mobile) setHostActionsOpen(false); void hostAction("start"); }} />}
+    {snapshot.room.status !== "playing" && (snapshot.room.soup || snapshot.room.mystery) && <FloatingAction tone="primary" label="开始游戏" onClick={() => requestStartGame(mobile)} />}
     {snapshot.room.status === "preparing" && (snapshot.room.soup || snapshot.room.mystery) && <FloatingAction label={mysteryMode ? "更换谜局" : "更换海龟汤"} onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
     {snapshot.room.status === "playing" && <>
       {canHumanHost && <>
@@ -1666,37 +1806,31 @@ export default function OnlineSoupRoomPage() {
                 >
                   <span className="min-w-0 flex-1 truncate text-xs font-black text-ink">{snapshot.room.soup?.title ?? "尚未选择海龟汤"}</span>
                   <Soup className="shrink-0 text-primary" size={16} />
-                </button> : isHost ? <span className="min-w-0 flex-1 truncate text-xs font-black text-ink">{snapshot.room.soup?.title ?? "尚未选择海龟汤"}</span> : <button
-                  className={`min-w-0 flex-1 truncate rounded-md px-1.5 py-1 text-left text-xs font-black transition ${viewerPanelTab === "surface" ? "bg-blue-50 text-primary" : "text-ink hover:bg-slate-50"}`}
-                  onClick={() => { setViewerPanelTab("surface"); setSoupExpanded(true); }}
-                  aria-pressed={viewerPanelTab === "surface"}
-                  aria-label={`查看汤面：${snapshot.room.soup?.title ?? "尚未选择海龟汤"}`}
-                >{snapshot.room.soup?.title ?? "尚未选择海龟汤"}</button>}
-                {isHost && snapshot.room.soup && <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5" aria-label="主持人信息分组">
+                </button> : <span className="min-w-0 flex-1 truncate text-xs font-black text-ink">{snapshot.room.soup?.title ?? "尚未选择海龟汤"}</span>}
+                {isHost && snapshot.room.soup && <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5" role="tablist" aria-label="主持人信息页签">
                   {([
-                    ["materials", "资料"],
-                    ["round", "本轮"]
-                  ] as const).map(([value, label]) => <button key={value} className={`rounded-md px-2.5 py-1 text-[11px] font-black transition ${hostPanelGroup === value ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setHostPanelGroup(value); setSoupExpanded(true); }} aria-pressed={hostPanelGroup === value}>{label}</button>)}
+                    ["materials", "汤面"],
+                    ["clues", "线索"],
+                    ["progress", "进度"]
+                  ] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={hostPanelTab === value} className={`rounded-md px-2 py-1 text-[11px] font-black transition ${hostPanelTab === value ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setHostPanelTab(value); setSoupExpanded(true); if (value === "clues") void loadClues(); }}>{label}</button>)}
                 </div>}
-                {!isHost && <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5" aria-label="汤面辅助视图">
-                  <button className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("clues"); setSoupExpanded(true); void loadClues(); }} aria-pressed={viewerPanelTab === "clues"}><Lightbulb size={13} />线索</button>
-                  <button className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("progress"); setSoupExpanded(true); }} aria-pressed={viewerPanelTab === "progress"}><ListChecks size={13} />进度</button>
+                {!isHost && <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5" role="tablist" aria-label="汤面辅助视图">
+                  <button type="button" role="tab" aria-selected={viewerPanelTab === "surface"} className={`rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "surface" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("surface"); setSoupExpanded(true); }}>汤面</button>
+                  <button type="button" role="tab" aria-selected={viewerPanelTab === "clues"} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("clues"); setSoupExpanded(true); void loadClues(); }}><Lightbulb size={13} />线索</button>
+                  <button type="button" role="tab" aria-selected={viewerPanelTab === "progress"} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("progress"); setSoupExpanded(true); }}><ListChecks size={13} />进度</button>
                 </div>}
                 <button className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink active:scale-95" onClick={() => setSoupExpanded((expanded) => !expanded)} aria-label={soupExpanded ? "收起汤面卡片" : "展开汤面卡片"} title={soupExpanded ? "收起" : "展开"}>{soupExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
               </div>
-              {isHost && snapshot.room.soup && <div className={`mt-2 grid gap-1 rounded-lg bg-slate-100 p-1 ${hostPanelGroup === "materials" ? "grid-cols-3" : "grid-cols-2"}`} aria-label={hostPanelGroup === "materials" ? "主持人资料页签" : "主持人本轮页签"}>
-                {hostPanelGroup === "materials" ? canHumanHost ? ([
+              {isHost && snapshot.room.soup && hostPanelTab === "materials" && <div className="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1" aria-label="主持人资料页签">
+                {canHumanHost ? ([
                   ["surface", "汤面"],
                   ["bottom", "汤底"],
                   ["manual", "手册"]
-                ] as const).map(([value, label]) => <button key={value} className={`rounded-md px-2 py-1.5 text-[11px] font-black transition ${soupTab === value ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setSoupTab(value); setSoupExpanded(true); }} aria-pressed={soupTab === value}>{label}</button>) : <button className="col-span-3 rounded-md bg-white px-2 py-1.5 text-[11px] font-black text-primary shadow-sm" onClick={() => { setSoupTab("surface"); setSoupExpanded(true); }} aria-pressed="true">汤面</button> : <>
-                  <button className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-black transition ${hostRoundTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setHostRoundTab("clues"); setSoupExpanded(true); void loadClues(); }} aria-pressed={hostRoundTab === "clues"}><Lightbulb size={13} />线索{roundClues.length > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[10px] leading-4 text-amber-800">{roundClues.length > 99 ? "99+" : roundClues.length}</span>}</button>
-                  <button className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-black transition ${hostRoundTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setHostRoundTab("progress"); setSoupExpanded(true); }} aria-pressed={hostRoundTab === "progress"}><ListChecks size={13} />进度{unansweredProgressCount > 0 && <span className="rounded-full bg-blue-100 px-1.5 text-[10px] leading-4 text-primary">{unansweredProgressCount > 99 ? "99+" : unansweredProgressCount}</span>}</button>
-                </>}
+                ] as const).map(([value, label]) => <button key={value} className={`rounded-md px-2 py-1.5 text-[11px] font-black transition ${soupTab === value ? "bg-white text-primary shadow-sm" : "text-muted hover:text-ink"}`} onClick={() => { setSoupTab(value); setSoupExpanded(true); }} aria-pressed={soupTab === value}>{label}</button>) : <button className="col-span-3 rounded-md bg-white px-2 py-1.5 text-[11px] font-black text-primary shadow-sm" onClick={() => { setSoupTab("surface"); setSoupExpanded(true); }} aria-pressed="true">汤面</button>}
               </div>}
             </div>
             {soupExpanded && snapshot.room.soup && <div ref={assistantPanelTab ? assistantScrollRef : undefined} className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-line p-4" onScroll={assistantPanelTab ? updateAssistantScrollPosition : undefined}>
-              {((isHost && hostPanelGroup === "materials" && (soupTab === "surface" || !canHumanHost)) || (!isHost && viewerPanelTab === "surface")) && <>
+              {((isHost && hostPanelTab === "materials" && (soupTab === "surface" || !canHumanHost)) || (!isHost && viewerPanelTab === "surface")) && <>
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-muted">{snapshot.room.soup.type}</span>
                   {aiHosted && snapshot.room.currentRoundId && <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -1740,8 +1874,8 @@ export default function OnlineSoupRoomPage() {
               </>}
               {assistantPanelTab && showAssistantScrollToLatest && <div className="pointer-events-none sticky top-0 z-20 flex h-0 justify-end"><button type="button" className="pointer-events-auto grid h-9 w-9 place-items-center rounded-full border border-blue-200 bg-white text-primary shadow-[0_6px_18px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 active:translate-y-0 active:scale-95" onClick={scrollAssistantToLatest} aria-label="回到最新线索或进度" title="回到最新"><ArrowUp size={19} strokeWidth={2.5} /></button></div>}
               {assistantPanelTab === "clues" && (cluesLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstClueMessages.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstClueMessages.map((message, index) => <article key={message.id} className="cursor-pointer rounded-xl border border-amber-200 bg-amber-50 p-3 transition hover:border-amber-400 hover:shadow-sm active:scale-[0.99]" onClick={() => void locateRoomMessage(message.id)}><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-amber-800">线索 {roundClues.length - index}</span><time className="text-[11px] text-muted">{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">主持人尚未发布线索</p>)}
-              {assistantPanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <ProgressQuestionCard key={question.id} question={question} canRetry={Boolean(snapshot.me.isHost || question.sender.id === user?.id)} retrying={retryingAiMessageId === question.id} onRetry={() => void retryAiQuestion(question)} onLocate={() => void locateRoomMessage(question.id)} onOpenUser={openMemberProfile} />)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
-              {canHumanHost && hostPanelGroup === "materials" && soupTab === "bottom" && <>
+              {assistantPanelTab === "progress" && (progressLoading ? <div className="space-y-2">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : newestFirstProgressQuestions.length > 0 ? <div className="room-assistant-cards space-y-2">{newestFirstProgressQuestions.map((question) => <ProgressQuestionCard key={question.id} question={question} canRetry={Boolean(snapshot.me.isHost || question.sender.id === user?.id)} retrying={retryingAiMessageId === question.id} onRetry={() => void retryAiQuestion(question)} onLocate={() => void locateRoomMessage(question.id)} onOpenUser={(userId) => void openMemberChat(userId)} />)}</div> : <p className="rounded-xl bg-slate-50 py-10 text-center text-sm text-muted">本轮还没有正式提问</p>)}
+              {canHumanHost && hostPanelTab === "materials" && soupTab === "bottom" && <>
                 {snapshot.room.soup.bottom && <section className="rounded-xl bg-amber-50 p-3">
                   <h3 className="text-sm font-black text-amber-800">主汤底{snapshot.room.soup.publishedBottomIndices?.includes(0) ? " · 已发布" : ""}</h3>
                   <div className="content-block mt-2 text-sm leading-7" dangerouslySetInnerHTML={{ __html: sanitizeHtml(snapshot.room.soup.bottom) }} />
@@ -1751,7 +1885,7 @@ export default function OnlineSoupRoomPage() {
                   <div className="content-block mt-2 text-sm leading-7" dangerouslySetInnerHTML={{ __html: sanitizeHtml(bottom) }} />
                 </section>)}
               </>}
-              {canHumanHost && hostPanelGroup === "materials" && soupTab === "manual" && (snapshot.room.soup.manual
+              {canHumanHost && hostPanelTab === "materials" && soupTab === "manual" && (snapshot.room.soup.manual
                 ? <div className="content-block rounded-xl bg-violet-50 p-3 text-sm leading-7 text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(snapshot.room.soup.manual) }} />
                 : <p className="py-8 text-center text-sm text-muted">暂无主持人手册</p>)}
             </div>}
@@ -1760,7 +1894,7 @@ export default function OnlineSoupRoomPage() {
         </aside>
 
         <section className="online-soup-room-member-rail hidden min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:flex lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
-          {snapshot.members.map((member) => { const canManage = isHost && member.id !== user?.id; const muted = isActiveMute(member.mutedUntil); const displayName = impostorMemberName(member); return <MentionableAvatarButton key={member.id} canMention={member.id !== user?.id && Boolean(canDiscuss)} onMention={() => requestMention(member.id, member.nickname)} onOpen={() => openMemberProfile(member.id)} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.isRoomHost ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} ariaLabel={canManage ? `管理成员${displayName}${muted ? "，已禁言" : ""}，长按@他` : `查看${displayName}的主页${muted ? "，已禁言" : ""}，长按@他`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.isRoomHost && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}{muted && <MutedAvatarIndicator size="sm" />}</MentionableAvatarButton>; })}
+          {snapshot.members.map((member) => { const muted = isActiveMute(member.mutedUntil); const displayName = impostorMemberName(member); const isSelf = member.id === user?.id; return <MentionableAvatarButton key={member.id} canMention={!isSelf && Boolean(canDiscuss)} onMention={() => requestMention(member.id, member.nickname)} onOpen={() => void openMemberChat(member.id)} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.isRoomHost ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} ariaLabel={`${isSelf ? "打开个人中心" : `与${displayName}私聊`}${muted ? "，已禁言" : ""}${isSelf ? "" : "，长按@他"}`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.isRoomHost && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}{muted && <MutedAvatarIndicator size="sm" />}</MentionableAvatarButton>; })}
           <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
         </section>
 
@@ -1793,7 +1927,7 @@ export default function OnlineSoupRoomPage() {
                   key={message.id}
                   className={`scroll-mt-24 rounded-2xl transition duration-500 ${highlightedMessageId === message.id ? "bg-violet-100/80 ring-2 ring-violet-400 ring-offset-4" : ""}`}
                 >
-                  <MessageItem message={message} currentUserId={user?.id ?? ""} senderMuted={isActiveMute(snapshot.members.find((member) => member.id === message.senderId)?.mutedUntil)} isHost={canHumanHost} mysteryMode={mysteryMode} impostorMode={impostorMode} canRetryAi={!mysteryMode && snapshot.me.isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onToggleBestQuestion={toggleBestQuestion} bestQuestionSaving={bestQuestionSavingId === message.id} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onCopy={async (copyText) => { try { await copyTextToClipboard(copyText); showToast("消息已复制"); } catch { showToast("复制失败，请稍后重试"); } }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={openMemberProfile} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
+                  <MessageItem message={message} currentUserId={user?.id ?? ""} senderMuted={isActiveMute(snapshot.members.find((member) => member.id === message.senderId)?.mutedUntil)} isHost={canHumanHost} mysteryMode={mysteryMode} impostorMode={impostorMode} remainingQuestionCount={snapshot.room.remainingQuestionCount} canRetryAi={!mysteryMode && snapshot.me.isHost} canReply={Boolean(canDiscuss)} onAnswer={answer} onToggleBestQuestion={toggleBestQuestion} bestQuestionSaving={bestQuestionSavingId === message.id} onRetryAi={retryAiQuestion} retryingAi={retryingAiMessageId === message.id} onRecall={recallMessage} onReply={(item) => { setReplyingTo(item); setStickersOpen(false); }} onCopy={async (copyText) => { try { await copyTextToClipboard(copyText); showToast("消息已复制"); } catch { showToast("复制失败，请稍后重试"); } }} onMention={requestMention} onLocate={locateRoomMessage} soupId={message.type === "bottom" && message.allBottomsPublished ? message.soupId : null} stickers={stickersById} onOpenUser={(userId) => void openMemberChat(userId)} onOpenSoup={(id) => navigate(`/soup/${id}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } })} />
                   {message.impostorEvent?.kind === "settlement" && <ImpostorSettlementCard event={message.impostorEvent} />}
                   {message.id === activeImpostorInlineEventMessageId && <ImpostorChatActionCard roomId={roomId} game={snapshot.room.impostorGame} members={snapshot.members} currentUserId={user?.id ?? ""} onChanged={() => Promise.all([loadState(), loadNewMessages()]).then(() => undefined)} showToast={showToast} />}
                 </div>;
@@ -1827,13 +1961,13 @@ export default function OnlineSoupRoomPage() {
                   onClick={() => {
                     setShowQuestionModeGuide(false);
                     if (!canQuestion) {
-                      showToast(mysteryMode ? "谜局开始后，只有房主可以切换为正式行动" : "游戏开始后才可以切换为正式提问");
+                      showToast(questionLimitExhausted ? "本轮提问次数已用尽，请等待主持人完成回答" : mysteryMode ? "谜局开始后，只有房主可以切换为正式行动" : "游戏开始后才可以切换为正式提问");
                       return;
                     }
                     setMode((current) => current === "discussion" ? "question" : "discussion");
                   }}
                   aria-label={`当前为${mode === "question" ? mysteryMode ? "行动" : "提问" : "讨论"}模式，点击切换`}
-                  title={canQuestion ? mysteryMode ? "点击切换讨论/行动" : "点击切换讨论/提问" : "游戏开始后可以切换"}
+                  title={canQuestion ? mysteryMode ? "点击切换讨论/行动" : "点击切换讨论/提问" : questionLimitExhausted ? "本轮提问次数已用尽" : "游戏开始后可以切换"}
                 >
                   <span className="text-xs font-black leading-5">{mode === "question" ? mysteryMode ? "行动" : "提问" : "讨论"}</span>
                   <ArrowRightLeft size={14} className="shrink-0 transition-transform duration-200 group-hover:rotate-180" />
@@ -1888,7 +2022,7 @@ export default function OnlineSoupRoomPage() {
           <button className="btn btn-secondary w-full" onClick={() => setManagedMemberId(null)}>取消</button>
         </>}
       </div></Modal>}
-      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2><p className="text-xs font-bold text-muted">{impostorMode ? "游戏者" : "主持人和玩家"} {(groupedMembers.host ? 1 : 0) + groupedMembers.players.length}/{snapshot.room.participantCapacity} 人</p>{groupedMembers.host && <MemberRow member={groupedMembers.host} displayName={impostorMemberName(groupedMembers.host)} onOpenUser={openMemberProfile} canManage={false} />}<div><p className="mb-2 text-xs font-bold text-muted">{impostorMode ? "游戏者" : "玩家"} {groupedMembers.players.length}/{snapshot.room.playerCapacity}</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} displayName={impostorMemberName(member)} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} displayName={impostorMemberName(member)} onOpenUser={openMemberProfile} canManage={isHost && member.id !== user?.id} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => { setMembersOpen(false); requestRoomExit(); }}><LogOut size={16} /> 房间退出选项</button></div></Modal>}
+      {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2><p className="text-xs font-bold text-muted">{impostorMode ? "游戏者" : "主持人和玩家"} {(groupedMembers.host ? 1 : 0) + groupedMembers.players.length}/{snapshot.room.participantCapacity} 人</p>{groupedMembers.host && <MemberRow member={groupedMembers.host} displayName={impostorMemberName(groupedMembers.host)} onOpenChat={(memberId) => void openMemberChat(memberId)} />}<div><p className="mb-2 text-xs font-bold text-muted">{impostorMode ? "游戏者" : "玩家"} {groupedMembers.players.length}/{snapshot.room.playerCapacity}</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} displayName={impostorMemberName(member)} onOpenChat={(memberId) => void openMemberChat(memberId)} onManage={isHost && member.id !== user?.id ? openMemberManagement : undefined} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} displayName={impostorMemberName(member)} onOpenChat={(memberId) => void openMemberChat(memberId)} onManage={isHost && member.id !== user?.id ? openMemberManagement : undefined} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => { setMembersOpen(false); requestRoomExit(); }}><LogOut size={16} /> 房间退出选项</button></div></Modal>}
       {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
       {backgroundMusicOpen && <Modal onClose={() => { if (backgroundMusicSavingId === null) setBackgroundMusicOpen(false); }}><div className="space-y-4">
         <div><h2 className="flex items-center gap-2 text-xl font-black text-ink"><Music size={20} className="text-primary" />背景音乐</h2><p className="mt-1 text-sm leading-6 text-muted">选择后全房间按同一进度循环播放。每位成员可通过顶部喇叭单独静音。</p></div>
@@ -1915,13 +2049,26 @@ export default function OnlineSoupRoomPage() {
       </div></Modal>}
       {exitChoiceOpen && <Modal onClose={() => setExitChoiceOpen(false)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">离开完整房间</h2><p className="mt-2 text-sm leading-6 text-muted">收起后会继续保持在线，并在桌面右下角接收聊天、线索和进度。</p></div><button className="btn btn-primary !hidden w-full lg:!flex" onClick={minimizeCurrentRoom}><Minimize2 size={17} />收起到右下角</button><button className="btn w-full bg-red-50 text-red-600 hover:bg-red-100" onClick={() => { setExitChoiceOpen(false); setConfirmAction("leave"); }}><LogOut size={17} />{isHost ? "退出房间" : "退出并释放席位"}</button><button className="btn btn-secondary w-full" onClick={() => setExitChoiceOpen(false)}>取消</button></div></Modal>}
       {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "end-round" ? "确认关闭本轮？" : confirmAction === "close" ? "确认解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "end-round" ? "关闭后将结束本轮推理，但不会解散房间，也不会自动发布尚未公布的汤底。" : confirmAction === "close" ? "解散后所有成员都会退出，此操作无法撤销。" : impostorMode && snapshot.room.status === "playing" && snapshot.me.role === "player" ? "你是本局游戏者，退出会立即终止本局并按平局结算；你的房间席位随后释放。" : isHost ? snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的游戏会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "end-round") void endRound(); else if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{confirmAction === "end-round" ? "关闭本轮" : confirmAction === "close" ? "确认解散" : "确认退出"}</button></div></div></Modal>}
+      {startConfigOpen && <Modal onClose={() => { if (!startSaving) setStartConfigOpen(false); }} hideClose={startSaving}>
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void startConfiguredGame(); }}>
+          <div><h2 className="text-xl font-black text-ink">开始游戏</h2><p className="mt-1 text-sm leading-6 text-muted">设置这一局所有玩家合计可提出的正式问题次数。</p></div>
+          <fieldset className="space-y-2"><legend className="mb-2 text-sm font-black text-ink">限制提问次数</legend>
+            <label className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 transition ${startLimitMode === "unlimited" ? "border-primary bg-blue-50" : "border-line bg-white hover:border-blue-300"}`}><input type="radio" name="question-limit-mode" checked={startLimitMode === "unlimited"} disabled={startSaving} onChange={() => { setStartLimitMode("unlimited"); setStartLimitError(""); }} /><span className="font-bold text-ink">不限制</span></label>
+            <label className={`block rounded-xl border px-3 py-3 transition ${startLimitMode === "limited" ? "border-primary bg-blue-50" : "border-line bg-white hover:border-blue-300"}`}><span className="flex min-h-7 cursor-pointer items-center gap-3"><input type="radio" name="question-limit-mode" checked={startLimitMode === "limited"} disabled={startSaving} onChange={() => setStartLimitMode("limited")} /><span className="font-bold text-ink">限制次数</span></span>{startLimitMode === "limited" && <><input autoFocus className={`field mt-3 w-full text-base ${startLimitError ? "border-red-400" : ""}`} inputMode="numeric" autoComplete="off" value={startLimitInput} disabled={startSaving} aria-invalid={Boolean(startLimitError)} aria-describedby={startLimitError ? "question-limit-error" : undefined} onChange={(event) => { setStartLimitInput(event.target.value.replace(/\D/g, "")); setStartLimitError(""); }} onBlur={() => { if (startLimitInput && !/^[1-9]\d*$/.test(startLimitInput)) setStartLimitError("请输入正整数"); }} placeholder="例如：20" />{startLimitError && <p id="question-limit-error" className="mt-1.5 text-xs font-bold text-red-600" role="alert">{startLimitError}</p>}</>}</label>
+          </fieldset>
+          <div className="grid grid-cols-2 gap-2"><button type="button" className="btn btn-secondary min-h-11" disabled={startSaving} onClick={() => setStartConfigOpen(false)}>取消</button><button type="submit" className="btn btn-primary min-h-11" disabled={startSaving}>{startSaving ? <><LoaderCircle size={16} className="animate-spin" />开始中…</> : <><Play size={16} />开始游戏</>}</button></div>
+        </form>
+      </Modal>}
+      {questionLimitResolutionOpen && !honorSelection && !materialPublishTarget && <Modal onClose={() => undefined} hideClose>
+        <div className="space-y-4 text-center"><div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-violet-100 text-violet-700"><MessageCircleQuestion size={28} /></div><div><h2 className="text-xl font-black text-ink">本轮提问次数已用尽</h2><p className="mt-2 text-sm leading-6 text-muted">所有有效提问均已回答，请选择本轮结果。通关将继续评选 MVP 和最佳提问，并发布全部汤底。</p></div><div className="grid gap-2 sm:grid-cols-2"><button type="button" className="btn min-h-11 bg-red-50 text-red-700 hover:bg-red-100" disabled={questionLimitResolving || preparingQuestionLimitHonors} onClick={() => void failQuestionLimitRound()}>{questionLimitResolving ? <LoaderCircle size={16} className="animate-spin" /> : <X size={16} />}失败并结束本轮</button><button type="button" className="btn btn-primary min-h-11" disabled={questionLimitResolving || preparingQuestionLimitHonors} onClick={() => void prepareQuestionLimitCompletion()}>{preparingQuestionLimitHonors ? <LoaderCircle size={16} className="animate-spin" /> : <Check size={16} />}通关并发布全部汤底</button></div></div>
+      </Modal>}
       {clueOpen && <Modal onClose={closeClueModal} hideClose={clueSaving}><div className="space-y-4">
         <div><h2 className="text-xl font-black text-ink">{mysteryMode ? "记录线索" : "发布主持人线索"}</h2><p className="mt-1 text-sm leading-6 text-muted">{mysteryMode ? "线索会保存到当前谜局存档，继续游戏时仍可查看。" : "线索发布后，房间内所有成员都能看到。"}</p></div>
         <label className="block"><span className="mb-2 block text-sm font-black text-ink">线索内容</span><textarea autoFocus className="field min-h-36 w-full resize-y text-base leading-6" maxLength={2000} value={clue} disabled={clueSaving} onChange={(event) => setClue(event.target.value)} placeholder={mysteryMode ? "输入需要记录的线索…" : "输入给所有玩家看的线索…"} /></label>
         <div className="flex items-center justify-between gap-3"><span className="text-xs tabular-nums text-muted">{clue.length}/2000</span><div className="grid min-w-[220px] grid-cols-2 gap-2"><button type="button" className="btn btn-secondary min-h-11" disabled={clueSaving} onClick={closeClueModal}>取消</button><button type="button" className="btn btn-primary min-h-11" disabled={clueSaving || !clue.trim()} onClick={() => void publishClue()}>{clueSaving ? <LoaderCircle size={16} className="animate-spin" /> : <Lightbulb size={16} />}{clueSaving ? "保存中…" : mysteryMode ? "保存" : "发布"}</button></div></div>
       </div></Modal>}
       {surfacePublishOpen && <Modal onClose={() => setSurfacePublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">发布补充汤面</h2><p className="mt-1 text-sm text-muted">选择一条尚未发布的补充汤面。</p></div><div className="space-y-2">{unpublishedSurfaces.map(({ content: surface, index }) => <button key={index} className="w-full rounded-xl border border-blue-200 bg-blue-50 p-3 text-left transition hover:border-blue-400" onClick={() => setMaterialPublishTarget({ kind: "surface", index, title: `补充汤面 ${index + 1}`, content: surface, endsRound: false })}><span className="text-sm font-black text-blue-800">补充汤面 {index + 1}</span><span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{surface.replace(/<[^>]*>/g, "")}</span></button>)}</div><button className="btn btn-secondary w-full" onClick={() => setSurfacePublishOpen(false)}>取消</button></div></Modal>}
-      {honorSelection && !materialPublishTarget && <Modal onClose={() => { if (!honorSelection.submitting) setHonorSelection(null); }} hideClose={honorSelection.submitting}>
+      {honorSelection && !materialPublishTarget && <Modal onClose={() => { if (!honorSelection.submitting) { if (honorSelection.resolveQuestionLimit) setQuestionLimitResolutionOpen(true); setHonorSelection(null); } }} hideClose={honorSelection.submitting}>
         <div className="space-y-4">
           <div>
             <div className="mb-3 flex items-center gap-2" aria-label={`评选步骤 ${honorSelection.step === "mvp" ? "1" : "2"}/2`}>
@@ -1943,11 +2090,11 @@ export default function OnlineSoupRoomPage() {
                 <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${selected ? "border-primary bg-primary text-white" : "border-slate-300 text-transparent"}`} aria-hidden="true"><Check size={14} /></span>
               </label>;
             })}
-          </div> : <div className="max-h-[52dvh] space-y-2 overflow-y-auto overscroll-contain pr-1" role="radiogroup" aria-label="本场最佳提问候选">
+          </div> : <div ref={honorQuestionListRef} className="max-h-[52dvh] space-y-2 overflow-y-auto overscroll-contain pr-1" role="radiogroup" aria-label="本场最佳提问候选">
             {honorSelection.questions.map((question) => {
               const selectable = Boolean(question.answer);
               const selected = honorSelection.bestQuestionMessageId === question.id;
-              return <label key={question.id} className={`block rounded-2xl border p-3 transition focus-within:ring-2 focus-within:ring-violet-500 focus-within:ring-offset-2 ${!selectable ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-70" : selected ? "cursor-pointer border-violet-500 bg-violet-50 ring-2 ring-violet-100" : "cursor-pointer border-line bg-white hover:border-violet-300"}`}>
+              return <label ref={selected ? selectedHonorQuestionRef : undefined} key={question.id} className={`block rounded-2xl border p-3 transition focus-within:ring-2 focus-within:ring-violet-500 focus-within:ring-offset-2 ${!selectable ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-70" : selected ? "cursor-pointer border-violet-500 bg-violet-50 ring-2 ring-violet-100" : "cursor-pointer border-line bg-white hover:border-violet-300"}`}>
                 <input className="sr-only" type="radio" name="human-honor-question" value={question.id} disabled={!selectable} checked={selected} onChange={() => setHonorSelection((current) => current ? { ...current, bestQuestionMessageId: question.id } : current)} />
                 <span className="flex items-center gap-2">
                   <HonorCandidateAvatar avatar={question.sender.avatar} nickname={question.sender.nickname} small />
@@ -1960,17 +2107,17 @@ export default function OnlineSoupRoomPage() {
           </div>}
 
           <div className="grid grid-cols-2 gap-2">
-            <button type="button" className="btn btn-secondary min-h-11" disabled={honorSelection.submitting} onClick={() => honorSelection.step === "question" ? setHonorSelection((current) => current ? { ...current, step: "mvp" } : current) : setHonorSelection(null)}>{honorSelection.step === "question" ? "上一步" : "取消"}</button>
+            <button type="button" className="btn btn-secondary min-h-11" disabled={honorSelection.submitting} onClick={() => honorSelection.step === "question" ? setHonorSelection((current) => current ? { ...current, step: "mvp" } : current) : setHonorSelection((current) => { if (current?.resolveQuestionLimit) setQuestionLimitResolutionOpen(true); return null; })}>{honorSelection.step === "question" ? "上一步" : "取消"}</button>
             <button type="button" className="btn btn-primary min-h-11" disabled={honorSelection.submitting || (honorSelection.step === "mvp" ? !honorSelection.mvpUserId : !honorSelection.bestQuestionMessageId)} onClick={() => void confirmHumanHonors()}>{honorSelection.step === "mvp" ? "确定" : "确认评选"}</button>
           </div>
         </div>
       </Modal>}
       {publishOpen && snapshot.room.soup && <Modal onClose={() => setPublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">选择要发布的汤底</h2><p className="mt-1 text-sm leading-6 text-muted">汤底可以按任意顺序发布。发布最后一条汤底前，需要先评选本场 MVP 和最佳提问；完成后将一并发布主持人手册和本轮高光。</p></div><div className="space-y-2">{[snapshot.room.soup.bottom ?? "", ...(snapshot.room.soup.supplementalBottoms ?? [])].map((bottom, index) => { const published = snapshot.room.soup?.publishedBottomIndices?.includes(index) ?? false; const preparing = preparingHonorBottomIndex === index; return <button key={index} className={`w-full rounded-xl border p-3 text-left transition ${published ? "border-slate-200 bg-slate-50 text-muted" : "border-amber-200 bg-amber-50 hover:border-amber-400"}`} disabled={published || preparingHonorBottomIndex != null} onClick={() => void prepareBottomPublish(index)}><span className="flex items-center gap-2 text-sm font-black">{preparing && <LoaderCircle size={15} className="animate-spin" />}{index === 0 ? "主汤底" : `补充汤底 ${index}`}{published ? " · 已发布" : ""}</span><span className="mt-1 block line-clamp-2 text-xs leading-5">{bottom.replace(/<[^>]*>/g, "")}</span></button>; })}</div><button className="btn btn-secondary w-full" disabled={preparingHonorBottomIndex != null} onClick={() => setPublishOpen(false)}>取消</button></div></Modal>}
-      {materialPublishTarget && <Modal onClose={() => { if (!materialPublishing) setMaterialPublishTarget(null); }} hideClose={materialPublishing}><div className="space-y-4">
+      {materialPublishTarget && <Modal onClose={() => { if (!materialPublishing) { if (materialPublishTarget.resolveQuestionLimit) setQuestionLimitResolutionOpen(true); setMaterialPublishTarget(null); } }} hideClose={materialPublishing}><div className="space-y-4">
         <div className="text-center"><h2 className="text-xl font-black text-ink">确认发布{materialPublishTarget.title}？</h2><p className="mt-2 text-sm leading-6 text-muted">发布后房间内所有成员将立即看到该内容，无法撤回。</p></div>
         <div className={`rounded-xl border p-3 ${materialPublishTarget.kind === "surface" ? "border-blue-200 bg-blue-50" : "border-amber-200 bg-amber-50"}`}><p className="text-xs font-black text-muted">即将发布</p><p className="mt-1 font-black text-ink">{materialPublishTarget.title}</p><p className="mt-2 line-clamp-3 text-sm leading-6 text-muted">{materialPublishTarget.content.replace(/<[^>]*>/g, "")}</p></div>
-        {materialPublishTarget.endsRound && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-bold leading-6 text-red-700">这是最后一条尚未发布的汤底。确认后本轮将结束，并自动发布主持人手册和本轮高光。</p>}
-        <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={materialPublishing} onClick={() => setMaterialPublishTarget(null)}>取消</button><button className="btn btn-primary" disabled={materialPublishing} onClick={() => void confirmMaterialPublish()}>{materialPublishing ? <><LoaderCircle size={16} className="animate-spin" />发布中…</> : "确认发布"}</button></div>
+        {materialPublishTarget.endsRound && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-bold leading-6 text-red-700">{materialPublishTarget.resolveQuestionLimit ? "确认后将发布全部汤底、主持人手册和本轮高光，并结束本轮。" : "这是最后一条尚未发布的汤底。确认后本轮将结束，并自动发布主持人手册和本轮高光。"}</p>}
+        <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={materialPublishing} onClick={() => { if (materialPublishTarget.resolveQuestionLimit) setQuestionLimitResolutionOpen(true); setMaterialPublishTarget(null); }}>取消</button><button className="btn btn-primary" disabled={materialPublishing} onClick={() => void confirmMaterialPublish()}>{materialPublishing ? <><LoaderCircle size={16} className="animate-spin" />发布中…</> : "确认发布"}</button></div>
       </div></Modal>}
       <ImpostorRulesPreview open={impostorRulesOpen} onClose={() => setImpostorRulesOpen(false)} />
     </div>
@@ -1985,9 +2132,9 @@ function HonorCandidateAvatar({ avatar, nickname, small = false }: { avatar: str
     : <span className={`grid ${size} shrink-0 place-items-center rounded-full bg-blue-100 font-black text-primary`} aria-label={`${nickname}头像`}>{nickname.slice(0, 1)}</span>;
 }
 
-function MemberRow({ member, displayName, onOpenUser, canManage }: { member: OnlineSoupSnapshot["members"][number]; displayName: string; onOpenUser: (id: string) => void; canManage: boolean }) {
+function MemberRow({ member, displayName, onOpenChat, onManage }: { member: OnlineSoupSnapshot["members"][number]; displayName: string; onOpenChat: (id: string) => void; onManage?: (id: string) => void }) {
   const muted = isActiveMute(member.mutedUntil);
-  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="relative shrink-0 rounded-full transition active:scale-95" onClick={() => onOpenUser(member.id)} aria-label={`${canManage ? `管理成员${displayName}` : `查看${displayName}的主页`}${muted ? "，已禁言" : ""}`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}{muted && <MutedAvatarIndicator size="sm" />}</button><div className="min-w-0 flex-1"><VipIdentity nickname={displayName} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></div>{member.isRoomHost && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 房主</span>}{muted && <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600"><VolumeX size={12} />禁言中</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}</div>;
+  return <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-2.5"><button className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full transition active:scale-95" onClick={() => onOpenChat(member.id)} aria-label={`${onManage ? `与${displayName}私聊` : `打开${displayName}的会话`}${muted ? "，已禁言" : ""}`}>{member.avatar ? <img className="h-9 w-9 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 font-black text-primary">{member.nickname.slice(0, 1)}</span>}{muted && <MutedAvatarIndicator size="sm" />}</button><div className="min-w-0 flex-1"><VipIdentity nickname={displayName} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></div>{member.isRoomHost && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700"><Crown size={12} /> 房主</span>}{muted && <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600"><VolumeX size={12} />禁言中</span>}{member.role === "spectator" && <span className="text-xs text-muted">旁观</span>}{onManage && <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted transition hover:border-blue-200 hover:text-primary" onClick={() => onManage(member.id)} aria-label={`管理${displayName}`} title="管理成员"><UserCog size={18} /></button>}</div>;
 }
 
 function ProgressQuestionCard({
@@ -2086,7 +2233,7 @@ function FloatingAction({ label, onClick, tone = "default", disabled = false }: 
   return <button disabled={disabled} className={`group relative grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-full border px-1 text-center text-[12px] font-black leading-[1.25] ring-1 ring-white/80 transition duration-200 hover:-translate-y-1 hover:scale-[1.03] active:translate-y-0 active:scale-95 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:scale-100 ${tones[tone]}`} onClick={onClick} aria-label={label} title={label}><span className="pointer-events-none absolute inset-1 rounded-full border border-white/80" /><span className="pointer-events-none absolute inset-0 grid place-items-center opacity-[0.12] transition duration-200 group-hover:scale-110 group-hover:opacity-[0.18]">{icon}</span><span className="relative drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]">{lines.map((line) => <span className="block" key={line}>{line}</span>)}</span></button>;
 }
 
-const MessageItem = memo(function MessageItem({ message, currentUserId, senderMuted, isHost, mysteryMode, impostorMode, canRetryAi, canReply, onAnswer, onToggleBestQuestion, bestQuestionSaving, onRetryAi, retryingAi, onRecall, onReply, onCopy, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; senderMuted: boolean; isHost: boolean; mysteryMode: boolean; impostorMode: boolean; canRetryAi: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onToggleBestQuestion: (message: OnlineSoupMessage) => void; bestQuestionSaving: boolean; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onCopy: (copyText: string) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
+const MessageItem = memo(function MessageItem({ message, currentUserId, senderMuted, isHost, mysteryMode, impostorMode, remainingQuestionCount, canRetryAi, canReply, onAnswer, onToggleBestQuestion, bestQuestionSaving, onRetryAi, retryingAi, onRecall, onReply, onCopy, onMention, onLocate, soupId, stickers, onOpenUser, onOpenSoup }: { message: OnlineSoupMessage; currentUserId: string; senderMuted: boolean; isHost: boolean; mysteryMode: boolean; impostorMode: boolean; remainingQuestionCount: number | null; canRetryAi: boolean; canReply: boolean; onAnswer: (message: OnlineSoupMessage, answer: OnlineSoupAnswer) => void; onToggleBestQuestion: (message: OnlineSoupMessage) => void; bestQuestionSaving: boolean; onRetryAi: (message: OnlineSoupMessage) => void; retryingAi: boolean; onRecall: (message: OnlineSoupMessage) => void; onReply: (message: OnlineSoupMessage) => void; onCopy: (copyText: string) => void; onMention: (userId: string, nickname: string) => void; onLocate: (messageId: string) => Promise<boolean>; soupId: string | null; stickers: ReadonlyMap<string, StickerAsset>; onOpenUser: (id: string) => void; onOpenSoup: (id: string) => void }) {
   const mine = message.senderId === currentUserId;
   const senderDisplayName = `${impostorMode && message.impostorSeat ? `${message.impostorSeat}号 ` : ""}${message.senderName ?? "未知用户"}`;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={senderDisplayName} />;
@@ -2199,6 +2346,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, senderMu
             ) : (
               <p className="text-xs font-bold text-violet-500">等待主持人回复</p>
             )}
+            {!mysteryMode && remainingQuestionCount !== null && <p className={`mt-2 text-xs font-black text-violet-700 ${mine ? "text-right" : "text-left"}`}>剩余提问次数：{remainingQuestionCount}</p>}
           </div>
         )}
         {question && message.isBestQuestion && !isHost && (
@@ -2220,6 +2368,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, senderMu
   && previous.currentUserId === next.currentUserId
   && previous.isHost === next.isHost
   && previous.mysteryMode === next.mysteryMode
+  && previous.remainingQuestionCount === next.remainingQuestionCount
   && previous.canRetryAi === next.canRetryAi
   && previous.retryingAi === next.retryingAi
   && previous.bestQuestionSaving === next.bestQuestionSaving

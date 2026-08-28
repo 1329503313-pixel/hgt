@@ -7,7 +7,7 @@ import { pool } from "./db.js";
 import { awardShellTask } from "./shellCurrency.js";
 import { canEnableAiGameRole, canViewAllSoupContentRole, type UserRole } from "./roles.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
-import { parseGeneratedKeyFactsResponse } from "./keyFactGeneration.js";
+import { parseGeneratedKeyFactHintsResponse, parseGeneratedKeyFactsResponse } from "./keyFactGeneration.js";
 import { inspectAiHostResponse } from "./aiHostResponse.js";
 import { type AiSoupRoundSnapshot } from "./aiSoupRoundSnapshot.js";
 import { selectAllowedSupplementSurfaceIndices } from "./onlineSoupAiState.js";
@@ -25,6 +25,7 @@ import {
   trimRoomAiHistory,
   renderProgressiveHint,
   roomAiQuestionRisks,
+  selectNextHintKeyFact,
   toPublicGameMessages,
   type AiGameSessionStatus,
   type AtomicFact,
@@ -96,9 +97,10 @@ function normalizeKeyFacts(value: unknown): KeyFact[] {
     const id = Number(fact?.id);
     const weight = Number(fact?.weight);
     const content = typeof fact?.content === "string" ? fact.content.trim() : "";
+    const hintContent = typeof fact?.hintContent === "string" ? fact.hintContent.trim().slice(0, 50) : "";
     if (!Number.isInteger(id) || seen.has(id) || !Number.isFinite(weight) || weight <= 0 || !content) return [];
     seen.add(id);
-    return [{ id, content, weight }];
+    return [{ id, content, weight, hintContent }];
   });
 }
 
@@ -728,7 +730,8 @@ export async function loadAiSoupRoundSnapshot(soupId: string): Promise<AiSoupRou
   let soupData = await getSoupGameData(soupId);
   if (!soupData) return null;
   soupData = await ensureSoupKeyFacts(soupId, soupData);
-  if (!soupData.enableAiGame || soupData.reviewStatus !== "approved" || soupData.keyFacts.length === 0) {
+  if (!soupData.enableAiGame || soupData.reviewStatus !== "approved" || soupData.keyFacts.length === 0
+    || soupData.keyFacts.some((fact) => !fact.hintContent)) {
     return null;
   }
   return {
@@ -747,7 +750,7 @@ export async function loadAiSoupRoundSnapshot(soupId: string): Promise<AiSoupRou
 }
 
 async function ensureSoupKeyFacts(soupId: string, soupData: GameSoupData): Promise<GameSoupData> {
-  if (soupData.keyFacts.length > 0 && soupData.atomicFactsReady) return soupData;
+  if (soupData.keyFacts.length > 0 && soupData.atomicFactsReady && soupData.keyFacts.every((fact) => fact.hintContent)) return soupData;
   await splitKeyFactsForSoup(soupId);
   return (await getSoupGameData(soupId)) ?? soupData;
 }
@@ -767,6 +770,7 @@ export type RoomAiGameState = {
   revealedSupplements: { surfaces: number[]; bottoms: number[] };
   progress: number;
   hintCount?: number;
+  hintedKeyIds?: number[];
   soupSnapshot?: AiSoupRoundSnapshot | null;
   runtimeFacts?: AiRoundFact[];
 };
@@ -1005,15 +1009,14 @@ export async function runRoomAiHint(soupId: string, state: RoomAiGameState) {
     throw new Error("推理进度达到 20% 后才能获取提示");
   }
 
-  const history = trimRoomAiHistory(state.messages);
-  const fallbackDimension = HINT_DIMENSIONS[(state.hintCount ?? 0) % HINT_DIMENSIONS.length] ?? "因果关系";
-  const targetFact = state.runtimeFacts
-    ?.filter((fact) => fact.state !== "DISCOVERED")
-    .sort((a, b) => Number(b.mustHave) - Number(a.mustHave) || Number(b.core) - Number(a.core) || b.weight - a.weight)[0];
-  const hintLevel = Math.max(1, Math.min(3, (state.hintCount ?? 0) + 1));
-  const dimension = targetFact ? null : await selectSafeHintDimension(soupData, state.revealedAtomicFactIds, history, fallbackDimension);
+  const selection = selectNextHintKeyFact(
+    soupData.keyFacts,
+    state.revealedKeys,
+    state.hintedKeyIds ?? [],
+  );
+  if (!selection) throw new AiServiceError(503, "当前没有可用的未命中关键点提示");
   const turn = createHintTurn(
-    targetFact?.hints[hintLevel - 1] || renderProgressiveHint(dimension ?? "因果关系", hintLevel), soupData, state.revealedAtomicFactIds,
+    selection.keyFact.hintContent, soupData, state.revealedAtomicFactIds,
     state.revealedSupplements, state.progress
   );
   return {
@@ -1022,6 +1025,7 @@ export async function runRoomAiHint(soupId: string, state: RoomAiGameState) {
     revealedKeys: turn.revealedKeys,
     revealedAtomicFactIds: turn.revealedAtomicFactIds,
     revealedSupplements: turn.revealedSupplements,
+    hintedKeyIds: selection.hintedKeyIds,
     messages: [
       ...state.messages,
     ]
@@ -1299,9 +1303,9 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
 ---
 
 请直接输出 JSON 对象，不要任何代码块标记或额外文字：
-{"keyFacts":[{"id":1,"content":"凶手是父亲","weight":20},{"id":2,"content":"动机是复仇","weight":18}]}
+{"keyFacts":[{"id":1,"content":"凶手是父亲","weight":20,"hintContent":"留意受害者与家人的关系"},{"id":2,"content":"动机是复仇","weight":18,"hintContent":"从事件发生前的恩怨入手"}]}
 
-注意：content 字段必须是中文。`;
+注意：content 和 hintContent 字段必须是中文；hintContent 是不直接泄露答案的方向性提示，最多 50 个字。`;
 
       const resp = await fetchAiChatWithRateLimitFallback({
           model: "deepseek-v4-flash",
@@ -1321,7 +1325,7 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
       const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
       const raw = data.choices?.[0]?.message?.content ?? "";
       const generatedKeyFacts = parseGeneratedKeyFactsResponse(raw);
-      if (generatedKeyFacts.length === 0) {
+      if (generatedKeyFacts.length === 0 || generatedKeyFacts.some((fact) => !fact.hintContent)) {
         console.error("Progress key fact analysis returned invalid data (length %d)", raw.length);
         return;
       }
@@ -1337,6 +1341,60 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
     }
 
     if (soupData.keyFacts.length === 0) return;
+
+    if (soupData.keyFacts.some((fact) => !fact.hintContent)) {
+      if (!DEEPSEEK_API_KEY) return;
+      const missingFacts = soupData.keyFacts.filter((fact) => !fact.hintContent);
+      const hintPrompt = `你是海龟汤提示内容生成器。请为下列缺少提示内容的进度关键点逐项生成一条中文方向性提示。
+
+要求：
+- 提示要引导玩家接近对应关键点，但不能直接说出关键点答案
+- 每条最多 50 个字
+- 必须保留输入中的 id，不得遗漏或新增 id
+
+汤面：${soupData.surface}
+汤底：${soupData.bottom}
+主持人手册：${soupData.manual || "无"}
+
+缺少提示内容的关键点：
+${missingFacts.map((fact) => `[${fact.id}] ${fact.content}`).join("\n")}
+
+只输出 JSON 对象：{"keyFacts":[{"id":1,"hintContent":"留意人物之间被忽略的关系"}]}`;
+      const response = await fetchAiChatWithRateLimitFallback({
+        model: "deepseek-v4-flash",
+        messages: [
+          { role: "system", content: "你是海龟汤关键点提示生成器。严格按要求输出 JSON。" },
+          { role: "user", content: hintPrompt },
+        ],
+        thinking: { type: "disabled" },
+        response_format: { type: "json_object" },
+        max_tokens: 2000,
+        temperature: 0.3,
+      }, { timeoutMs: 30_000 });
+      if (!response.ok) {
+        console.error("Key fact hint backfill API error:", response.status);
+        return;
+      }
+      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      const generatedHints = parseGeneratedKeyFactHintsResponse(data.choices?.[0]?.message?.content ?? "");
+      const hintById = new Map(generatedHints.map((hint) => [hint.id, hint.hintContent]));
+      if (missingFacts.some((fact) => !hintById.has(fact.id))) {
+        console.error("Key fact hint backfill returned incomplete data");
+        return;
+      }
+      const previousKeyFacts = JSON.stringify(soupData.keyFacts);
+      const keyFactsWithHints = soupData.keyFacts.map((fact) => ({
+        ...fact,
+        hintContent: fact.hintContent || hintById.get(fact.id) || "",
+      }));
+      await pool.query(
+        `UPDATE soups SET key_facts = ?, key_fact_atoms = NULL, key_fact_atoms_hash = NULL
+         WHERE id = ? AND key_facts = CAST(? AS JSON)`,
+        [JSON.stringify(keyFactsWithHints), soupId, previousKeyFacts],
+      );
+      soupData = (await getSoupGameData(soupId)) ?? soupData;
+      if (soupData.keyFacts.some((fact) => !fact.hintContent)) return;
+    }
 
     const [latestRows] = await pool.query<mysql.RowDataPacket[]>(
       "SELECT key_facts_customized, key_fact_atoms, key_fact_atoms_hash FROM soups WHERE id = ? LIMIT 1",

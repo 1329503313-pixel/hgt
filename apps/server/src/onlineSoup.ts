@@ -32,6 +32,10 @@ import { mysteryClueContentSchema, nextMysteryClueNumber } from "./mystery/clues
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import { ONLINE_SOUP_MUTE_DURATIONS, onlineSoupMuteRemainingMinutes } from "./onlineSoupMute.js";
 import {
+  ONLINE_SOUP_QUESTION_LIMIT_MAX,
+  onlineSoupQuestionLimitState
+} from "./onlineSoupQuestionLimit.js";
+import {
   IMPOSTOR_MAX_PLAYERS,
   IMPOSTOR_MIN_PLAYERS,
   ImpostorGameRuleError,
@@ -257,6 +261,13 @@ async function roomById(id: string, db: mysql.Pool | mysql.PoolConnection = pool
        s.host_manual AS soup_manual, s.enable_ai_game AS soup_enable_ai_game,
        soup_creator.role AS soup_creator_role,
        cr.published_surface_indices, cr.published_bottom_indices, cr.ai_progress, cr.ai_hint_count,
+       cr.question_limit,
+       (SELECT COUNT(*) FROM online_soup_messages limit_messages
+         WHERE limit_messages.round_id = cr.id AND limit_messages.message_type = 'question'
+           AND limit_messages.recalled_at IS NULL) AS active_question_count,
+       (SELECT COUNT(*) FROM online_soup_messages unanswered_messages
+         WHERE unanswered_messages.round_id = cr.id AND unanswered_messages.message_type = 'question'
+           AND unanswered_messages.recalled_at IS NULL AND unanswered_messages.answer IS NULL) AS unanswered_question_count,
        cr.best_question_message_id,
        cr.ai_soup_snapshot,
        COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title,
@@ -945,6 +956,7 @@ function roomAiState(round: mysql.RowDataPacket): RoomAiGameState {
       : { surfaces: [], bottoms: [] },
     progress: Number(round.ai_progress ?? 0),
     hintCount: Number(round.ai_hint_count ?? 0),
+    hintedKeyIds: jsonList<number>(round.ai_hinted_key_ids),
     soupSnapshot: parseAiSoupRoundSnapshot(round.ai_soup_snapshot),
   };
 }
@@ -1955,6 +1967,11 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   const supplementalSurfaces = roundSoupSnapshot?.supplementalSurfaces
     ?? jsonList<string>(room.soup_supplemental_surfaces);
   const publishedSurfaceIndices = jsonList<number>(room.published_surface_indices);
+  const questionLimit = onlineSoupQuestionLimitState(
+    room.question_limit,
+    room.active_question_count,
+    room.unanswered_question_count
+  );
   const visibleSupplementalSurfaces = publishedSurfaceIndices
     .filter((index) => supplementalSurfaces[index])
     .map((index) => ({ index, content: supplementalSurfaces[index] }));
@@ -1972,6 +1989,12 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
       playerCapacity: playerCapacityForRoom(room),
       participantCapacity: participantCapacityForRoom(room),
       currentRoundId: room.current_round_id ? String(room.current_round_id) : null,
+      questionLimit: String(room.host_mode ?? "human") === "human" ? questionLimit.limit : null,
+      questionCount: questionLimit.used,
+      remainingQuestionCount: String(room.host_mode ?? "human") === "human" ? questionLimit.remaining : null,
+      questionLimitResolutionRequired: String(room.host_mode ?? "human") === "human"
+        && String(room.status) === "playing"
+        && questionLimit.resolutionRequired,
       bestQuestionMessageId: room.best_question_message_id ? String(room.best_question_message_id) : null,
       backgroundMusic: room.current_background_music_id && room.background_music_audio_ref ? {
         id: String(room.current_background_music_id),
@@ -2703,7 +2726,7 @@ router.post("/rooms/:roomId/ai-hint", async (req, res) => {
     if (!roomLock) return fail(res, 409, "AI 正在回答问题，请稍后请求提示");
     const [[round]] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT id, soup_id, status AS round_status, host_mode, ai_messages, ai_revealed_keys,
-         ai_revealed_atoms, ai_revealed_supplements, ai_progress, ai_version, ai_hint_count,
+         ai_revealed_atoms, ai_revealed_supplements, ai_progress, ai_version, ai_hint_count, ai_hinted_key_ids,
          ai_soup_snapshot
        FROM online_soup_rounds WHERE id = ? LIMIT 1`,
       [context.room.current_round_id]
@@ -2728,9 +2751,9 @@ router.post("/rooms/:roomId/ai-hint", async (req, res) => {
       await connection.query(
         `UPDATE online_soup_rounds SET ai_messages = ?, ai_revealed_keys = ?, ai_revealed_atoms = ?,
            ai_revealed_supplements = ?, ai_progress = ?, ai_version = ai_version + 1,
-           ai_hint_count = ai_hint_count + 1 WHERE id = ?`,
+           ai_hint_count = ai_hint_count + 1, ai_hinted_key_ids = ? WHERE id = ?`,
         [JSON.stringify(turn.messages), JSON.stringify(turn.revealedKeys), JSON.stringify(turn.revealedAtomicFactIds),
-          JSON.stringify(turn.revealedSupplements), turn.progress, round.id]
+          JSON.stringify(turn.revealedSupplements), turn.progress, JSON.stringify(turn.hintedKeyIds), round.id]
       );
       await connection.query(
         "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, NULL, 'clue', ?)",
@@ -3370,7 +3393,7 @@ router.post("/rooms/:roomId/select-soup", async (req, res) => {
     if (context.room.status === "preparing" && context.room.current_round_id) {
       roundId = String(context.room.current_round_id);
       await connection.query(
-        "UPDATE online_soup_rounds SET soup_id = ?, host_mode = ?, ai_messages = NULL, ai_revealed_keys = NULL, ai_revealed_atoms = NULL, ai_revealed_supplements = NULL, ai_progress = 0, ai_version = 0, ai_status = 'idle', ai_hint_count = 0, ai_soup_snapshot = NULL WHERE id = ? AND status = 'preparing'",
+        "UPDATE online_soup_rounds SET soup_id = ?, host_mode = ?, ai_messages = NULL, ai_revealed_keys = NULL, ai_revealed_atoms = NULL, ai_revealed_supplements = NULL, ai_progress = 0, ai_version = 0, ai_status = 'idle', ai_hint_count = 0, ai_hinted_key_ids = NULL, ai_soup_snapshot = NULL WHERE id = ? AND status = 'preparing'",
         [parsed.data.soupId, String(context.room.host_mode ?? "human"), roundId]
       );
     } else {
@@ -3530,6 +3553,10 @@ router.post("/rooms/:roomId/start", async (req, res) => {
     void notifyRoom(context.room.id, "round_started", { activitySequence, activityType: "progress", contentType: "mystery" });
     return;
   }
+  const startOptions = z.object({
+    questionLimit: z.number().int().positive().max(ONLINE_SOUP_QUESTION_LIMIT_MAX).nullable().optional().default(null)
+  }).safeParse(req.body ?? {});
+  if (!startOptions.success) return fail(res, 400, "限制提问次数只能填写正整数，或选择不限制");
   let aiSoupSnapshot: AiSoupRoundSnapshot | null = null;
   if (String(context.room.host_mode ?? "human") === "ai" && context.room.current_soup_id) {
     // 开局冻结完整真相和事实模型；作品后续编辑只影响下一轮。
@@ -3554,6 +3581,7 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       return fail(res, 409, "当前房间无法开始新一轮");
     }
     const hostMode = String(room.host_mode ?? "human");
+    const questionLimit = hostMode === "human" ? startOptions.data.questionLimit : null;
     if (hostMode === "ai" && (!aiSoupSnapshot || aiSoupSnapshot.soupId !== String(room.current_soup_id))) {
       await connection.rollback();
       return fail(res, 409, "房间配置已更新，请重新开始本轮");
@@ -3566,8 +3594,8 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       }
       roundId = String(room.current_round_id);
       const [roundResult] = await connection.query<mysql.ResultSetHeader>(
-        "UPDATE online_soup_rounds SET status = 'playing', host_mode = ?, ai_soup_snapshot = ?, ai_phase = IF(? = 'ai', 'PLAYING', 'PREPARING'), started_at = NOW() WHERE id = ? AND status = 'preparing'",
-        [hostMode, aiSoupSnapshot ? JSON.stringify(aiSoupSnapshot) : null, hostMode, roundId]
+        "UPDATE online_soup_rounds SET status = 'playing', host_mode = ?, question_limit = ?, ai_soup_snapshot = ?, ai_phase = IF(? = 'ai', 'PLAYING', 'PREPARING'), started_at = NOW() WHERE id = ? AND status = 'preparing'",
+        [hostMode, questionLimit, aiSoupSnapshot ? JSON.stringify(aiSoupSnapshot) : null, hostMode, roundId]
       );
       if (roundResult.affectedRows !== 1) {
         await connection.rollback();
@@ -3581,9 +3609,9 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       roundId = nanoid();
       await connection.query(
         `INSERT INTO online_soup_rounds
-           (id, room_id, soup_id, round_number, status, host_mode, ai_soup_snapshot, started_at)
-         VALUES (?, ?, ?, ?, 'playing', ?, ?, NOW())`,
-        [roundId, context.room.id, room.current_soup_id, numberRow.next_number, hostMode,
+           (id, room_id, soup_id, round_number, status, host_mode, question_limit, ai_soup_snapshot, started_at)
+         VALUES (?, ?, ?, ?, 'playing', ?, ?, ?, NOW())`,
+        [roundId, context.room.id, room.current_soup_id, numberRow.next_number, hostMode, questionLimit,
           aiSoupSnapshot ? JSON.stringify(aiSoupSnapshot) : null]
       );
     }
@@ -3905,6 +3933,27 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
       }
     }
     if (parsed.data.type === "question") {
+      if (!mysteryMode) {
+        const [[round]] = await connection.query<mysql.RowDataPacket[]>(
+          "SELECT question_limit FROM online_soup_rounds WHERE id = ? AND status = 'playing' LIMIT 1 FOR UPDATE",
+          [context.room.current_round_id]
+        );
+        if (!round) {
+          await connection.rollback();
+          return fail(res, 409, "当前游戏状态已经变化，请刷新房间后重试", "GAME_STATE_CHANGED");
+        }
+        if (round.question_limit != null) {
+          const [[usage]] = await connection.query<mysql.RowDataPacket[]>(
+            `SELECT COUNT(*) AS used FROM online_soup_messages
+             WHERE round_id = ? AND message_type = 'question' AND recalled_at IS NULL`,
+            [context.room.current_round_id]
+          );
+          if (Number(usage.used ?? 0) >= Number(round.question_limit)) {
+            await connection.rollback();
+            return fail(res, 409, "本轮提问次数已用尽，请等待主持人完成回答", "ROUND_QUESTION_LIMIT_REACHED");
+          }
+        }
+      }
       if (!mysteryMode && String(context.room.host_mode ?? "human") === "ai") {
         await consumeDailyEntitlement(connection, {
           userId: context.user.id,
@@ -3976,6 +4025,17 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
   let clearedBestQuestion = false;
   try {
     await connection.beginTransaction();
+    const [[messageProbe]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT round_id, message_type FROM online_soup_messages
+       WHERE id = ? AND room_id = ? LIMIT 1`,
+      [req.params.messageId, context.room.id]
+    );
+    if (messageProbe?.round_id && String(messageProbe.message_type) === "question") {
+      await connection.query(
+        "SELECT id FROM online_soup_rounds WHERE id = ? LIMIT 1 FOR UPDATE",
+        [messageProbe.round_id]
+      );
+    }
     const [[message]] = await connection.query<mysql.RowDataPacket[]>(
       `SELECT id, sender_id, message_type, round_id, mystery_run_id, answer, ai_status, recalled_at,
          created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE) AS within_window
@@ -4082,19 +4142,29 @@ router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
   const context = await requireHumanHost(req, res);
   if (!context) return;
   if (String(context.room.content_type ?? "soup") === "mystery") return fail(res, 409, "谜局行动由世界裁决器处理，房主不能直接设置结果");
+  if (context.room.status !== "playing" || !context.room.current_round_id) return fail(res, 409, "当前没有进行中的推理");
   const parsed = z.object({ answer: z.enum(answerValues).nullable() }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "回答类型不正确");
   const connection = await pool.getConnection();
   let notificationCreated = false;
   let activitySequence = "0";
+  let questionLimitResolutionRequired = false;
   try {
     await connection.beginTransaction();
+    const [[activeRound]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM online_soup_rounds WHERE id = ? AND status = 'playing' LIMIT 1 FOR UPDATE",
+      [context.room.current_round_id]
+    );
+    if (!activeRound) {
+      await connection.rollback();
+      return fail(res, 409, "当前没有进行中的推理");
+    }
     const [[question]] = await connection.query<mysql.RowDataPacket[]>(
       `SELECT id, round_id, question_number, answer
        FROM online_soup_messages
-       WHERE id = ? AND room_id = ? AND message_type = 'question' AND recalled_at IS NULL
+       WHERE id = ? AND room_id = ? AND round_id = ? AND message_type = 'question' AND recalled_at IS NULL
        LIMIT 1 FOR UPDATE`,
-      [req.params.messageId, context.room.id]
+      [req.params.messageId, context.room.id, context.room.current_round_id]
     );
     if (!question) {
       await connection.rollback();
@@ -4115,6 +4185,25 @@ router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
       );
       notificationCreated = true;
     }
+    const [[limitUsage]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT rounds.question_limit,
+         COUNT(messages.id) AS used,
+         SUM(messages.id IS NOT NULL AND messages.answer IS NULL) AS unanswered
+       FROM online_soup_rounds rounds
+       LEFT JOIN online_soup_messages messages
+         ON messages.round_id = rounds.id
+        AND messages.message_type = 'question'
+        AND messages.recalled_at IS NULL
+       WHERE rounds.id = ? AND rounds.status = 'playing'
+       GROUP BY rounds.id, rounds.question_limit
+       LIMIT 1`,
+      [context.room.current_round_id]
+    );
+    questionLimitResolutionRequired = onlineSoupQuestionLimitState(
+      limitUsage?.question_limit,
+      limitUsage?.used,
+      limitUsage?.unanswered
+    ).resolutionRequired;
     activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, req.params.messageId, connection);
     await connection.commit();
   } catch (error) {
@@ -4123,11 +4212,12 @@ router.patch("/rooms/:roomId/questions/:messageId/answer", async (req, res) => {
   } finally {
     connection.release();
   }
-  res.json({ ok: true, notificationCreated });
+  res.json({ ok: true, notificationCreated, questionLimitResolutionRequired });
   void notifyRoom(context.room.id, "answer_changed", {
     messageId: req.params.messageId,
     answer: parsed.data.answer,
     notificationCreated,
+    questionLimitResolutionRequired,
     activitySequence,
     activityType: "progress"
   });
@@ -4417,6 +4507,158 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
   if (completedRound) recordUserBehavior("complete_online_round");
   const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, `bottom:${parsed.data.bottomIndex}`);
   res.json({ ok: true, ended }); void notifyRoom(context.room.id, ended ? "round_ended" : "bottom_published", { activitySequence, activityType: "progress" });
+});
+
+router.post("/rooms/:roomId/resolve-question-limit", async (req, res) => {
+  const context = await requireHumanHost(req, res);
+  if (!context) return;
+  if (String(context.room.content_type ?? "soup") !== "soup") return fail(res, 409, "当前房间不支持提问次数结算");
+  const parsed = z.discriminatedUnion("outcome", [
+    z.object({ outcome: z.literal("failed") }),
+    z.object({
+      outcome: z.literal("completed"),
+      mvpUserId: z.string().trim().min(1),
+      bestQuestionMessageId: z.string().trim().min(1)
+    })
+  ]).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "请选择本轮结算结果");
+
+  const connection = await pool.getConnection();
+  let completedRound = false;
+  let roundId = "";
+  try {
+    await connection.beginTransaction();
+    const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT host_id, host_mode, content_type, status, current_round_id, current_soup_id
+       FROM online_soup_rooms WHERE id = ? AND status <> 'closed' LIMIT 1 FOR UPDATE`,
+      [context.room.id]
+    );
+    if (!room || String(room.host_id) !== context.user.id || String(room.host_mode) !== "human"
+      || String(room.content_type) !== "soup" || String(room.status) !== "playing" || !room.current_round_id) {
+      await connection.rollback();
+      return fail(res, 409, "当前回合状态已变化，请刷新后重试");
+    }
+    roundId = String(room.current_round_id);
+    const [[round]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT question_limit, published_bottom_indices
+       FROM online_soup_rounds WHERE id = ? AND status = 'playing' LIMIT 1 FOR UPDATE`,
+      [roundId]
+    );
+    const [[usage]] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS used, SUM(answer IS NULL) AS unanswered
+       FROM online_soup_messages
+       WHERE round_id = ? AND message_type = 'question' AND recalled_at IS NULL`,
+      [roundId]
+    );
+    if (!round || !onlineSoupQuestionLimitState(round.question_limit, usage.used, usage.unanswered).resolutionRequired) {
+      await connection.rollback();
+      return fail(res, 409, "提问次数尚未用尽，或仍有提问等待回答");
+    }
+
+    if (parsed.data.outcome === "failed") {
+      await connection.query(
+        "UPDATE online_soup_rounds SET status = 'ended', ended_at = NOW() WHERE id = ? AND status = 'playing'",
+        [roundId]
+      );
+      await connection.query("UPDATE online_soup_rooms SET status = 'ended' WHERE id = ?", [context.room.id]);
+      await systemMessage(context.room.id, roundId, "提问次数已用尽，主持人判定挑战失败，本轮结束", connection);
+    } else {
+      const [honorQuestions] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT m.id, m.message_sequence, m.question_number, m.sender_id, m.content, m.answer,
+           u.nickname, u.avatar IS NOT NULL AS has_avatar
+         FROM online_soup_messages m
+         JOIN users u ON u.id = m.sender_id
+         WHERE m.round_id = ? AND m.message_type = 'question' AND m.recalled_at IS NULL
+         ORDER BY m.message_sequence ASC`,
+        [roundId]
+      );
+      const humanHonors = selectOnlineSoupHumanHonors(honorQuestions.map((question) => ({
+        id: String(question.id),
+        sequence: String(question.message_sequence),
+        questionNumber: Number(question.question_number ?? 0),
+        senderId: String(question.sender_id),
+        senderNickname: String(question.nickname),
+        senderAvatar: question.has_avatar
+          ? `/api/media/users/${encodeURIComponent(String(question.sender_id))}/avatar`
+          : null,
+        content: String(question.content),
+        answer: String(question.answer ?? ""),
+        progressDelta: 0
+      })), {
+        mvpUserId: parsed.data.mvpUserId,
+        bestQuestionMessageId: parsed.data.bestQuestionMessageId
+      });
+      if (!humanHonors) {
+        await connection.rollback();
+        return fail(res, 400, "MVP 必须是本轮提问玩家，最佳提问必须存在且已回答");
+      }
+
+      const bottoms = [String(context.room.soup_bottom), ...jsonList<string>(context.room.soup_supplemental_bottoms)];
+      const published = new Set(jsonList<number>(round.published_bottom_indices));
+      for (let index = 0; index < bottoms.length; index += 1) {
+        if (published.has(index)) continue;
+        await connection.query(
+          `INSERT INTO online_soup_messages
+           (id, room_id, round_id, sender_id, message_type, content, content_index)
+           VALUES (?, ?, ?, ?, 'bottom', ?, ?)`,
+          [nanoid(), context.room.id, roundId, context.user.id, bottoms[index], index]
+        );
+      }
+      const allBottomIndices = bottoms.map((_, index) => index);
+      await connection.query(
+        `UPDATE online_soup_rounds
+         SET published_bottom_indices = ?, best_question_message_id = ?, status = 'ended', ended_at = NOW()
+         WHERE id = ? AND status = 'playing'`,
+        [JSON.stringify(allBottomIndices), parsed.data.bestQuestionMessageId, roundId]
+      );
+      await connection.query("UPDATE online_soup_rooms SET status = 'ended' WHERE id = ?", [context.room.id]);
+      await connection.query(
+        `INSERT IGNORE INTO online_soup_completions (round_id, user_id, soup_id)
+         SELECT ?, members.user_id, ? FROM online_soup_members members
+         WHERE members.room_id = ? AND members.is_active = 1 AND members.member_role = 'player'`,
+        [roundId, room.current_soup_id, context.room.id]
+      );
+      await connection.query(
+        `INSERT IGNORE INTO soup_access_grants (id, soup_id, user_id, granted_by)
+         SELECT CONCAT('online-', LEFT(SHA2(CONCAT(?, ':', members.user_id), 256), 57)), ?, members.user_id, ?
+         FROM online_soup_members members
+         WHERE members.room_id = ? AND members.is_active = 1 AND members.member_role = 'player'`,
+        [roundId, room.current_soup_id, context.user.id, context.room.id]
+      );
+      await systemMessage(context.room.id, roundId, "提问次数已用尽，主持人判定通关；所有汤底已发布，本轮游戏结束", connection);
+      if (context.room.soup_manual) {
+        await connection.query(
+          `INSERT INTO online_soup_messages
+           (id, room_id, round_id, sender_id, message_type, content)
+           VALUES (?, ?, ?, ?, 'manual', ?)`,
+          [nanoid(), context.room.id, roundId, context.user.id, String(context.room.soup_manual)]
+        );
+        await systemMessage(context.room.id, roundId, "主持人手册已自动发布", connection);
+      }
+      await connection.query(
+        `INSERT INTO online_soup_messages
+         (id, room_id, round_id, sender_id, message_type, content)
+         VALUES (?, ?, ?, NULL, 'ai_honor', ?)`,
+        [nanoid(), context.room.id, roundId, JSON.stringify(humanHonors)]
+      );
+    }
+    await connection.query(
+      "UPDATE online_soup_finish_votes SET status = 'cancelled', closed_at = NOW() WHERE round_id = ? AND status = 'open'",
+      [roundId]
+    );
+    const settlement = await settleOnlineSoupRound(connection, roundId);
+    completedRound = settlement.completed;
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  if (completedRound) recordUserBehavior("complete_online_round");
+  const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, roundId);
+  res.json({ ok: true, outcome: parsed.data.outcome });
+  void notifyRoom(context.room.id, "round_ended", { activitySequence, activityType: "progress" });
 });
 
 router.post("/rooms/:roomId/end-round", async (req, res) => {

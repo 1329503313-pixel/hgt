@@ -67,6 +67,10 @@ import {
   type RankingRewardBoard
 } from "./rankingRewards.js";
 import {
+  HOT_SOUP_RANKING_ELIGIBLE_CREATOR_ROLES_SQL,
+  USER_RANKING_ELIGIBLE_ROLES_SQL
+} from "./rankingEligibility.js";
+import {
   AUTH_COOKIE_NAME,
   LEGACY_AUTH_COOKIE_NAME,
   authTokenFromCookieHeader,
@@ -654,7 +658,8 @@ const soupSchema = z.preprocess(normalizeSoupAiConfigurationInput, z.object({
       z.object({
         id: z.number(),
         content: z.string().trim().min(1).max(200),
-        weight: z.number().int().min(1).max(99)
+        weight: z.number().int().min(1).max(99),
+        hintContent: z.string().trim().min(1).max(50)
       })
     )
     .max(20)
@@ -4642,7 +4647,9 @@ app.get("/api/rankings", async (req, res) => {
          SELECT soup_id, SUM(viewed_at >= ?) AS period_view_count
          FROM soup_views GROUP BY soup_id
        ) v ON v.soup_id = s.id
-       WHERE s.is_surface_public = TRUE AND s.review_status = 'approved' AND creator.role <> 'super_admin'
+       WHERE s.is_surface_public = TRUE
+         AND s.review_status = 'approved'
+         AND creator.role IN (${HOT_SOUP_RANKING_ELIGIBLE_CREATOR_ROLES_SQL})
        ORDER BY s.created_at ASC`,
       [cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
@@ -4654,7 +4661,7 @@ app.get("/api/rankings", async (req, res) => {
        FROM users u
        LEFT JOIN user_badge_unlocks ubu ON ubu.user_id = u.id
        LEFT JOIN legendary_badges lb ON ubu.badge_key = CONCAT('legendary:', lb.id)
-       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
+       WHERE u.role IN (${USER_RANKING_ELIGIBLE_ROLES_SQL})
        ORDER BY u.created_at ASC, ubu.unlocked_at ASC`
     );
 
@@ -4694,7 +4701,7 @@ app.get("/api/rankings", async (req, res) => {
          WHERE transaction_type = 'invite_shell_milestone_reward' AND created_at >= ?
          GROUP BY user_id
        ) invite_milestone_gain ON invite_milestone_gain.user_id = u.id
-       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
+       WHERE u.role IN (${USER_RANKING_ELIGIBLE_ROLES_SQL})
        ORDER BY u.created_at ASC, u.id ASC`,
       [cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0), cutoff ?? new Date(0)]
     );
@@ -4705,7 +4712,7 @@ app.get("/api/rankings", async (req, res) => {
          MAX(CASE WHEN gs.created_at >= ? THEN gs.created_at END) AS reached_at
        FROM users u
        LEFT JOIN gift_sends gs ON gs.recipient_id = u.id
-       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
+       WHERE u.role IN (${USER_RANKING_ELIGIBLE_ROLES_SQL})
        GROUP BY u.id, u.nickname, u.charm_value, u.created_at, has_avatar
        ORDER BY u.created_at ASC, u.id ASC`,
       [cutoff ?? new Date(0), cutoff ?? new Date(0)]
@@ -4717,7 +4724,7 @@ app.get("/api/rankings", async (req, res) => {
          MAX(CASE WHEN gs.created_at >= ? THEN gs.created_at END) AS reached_at
        FROM users u
        LEFT JOIN gift_sends gs ON gs.sender_id = u.id
-       WHERE u.role IN ('user', 'vip', 'backoffice_admin')
+       WHERE u.role IN (${USER_RANKING_ELIGIBLE_ROLES_SQL})
        GROUP BY u.id, u.nickname, u.generosity_value, u.created_at, has_avatar
        ORDER BY u.created_at ASC, u.id ASC`,
       [cutoff ?? new Date(0), cutoff ?? new Date(0)]

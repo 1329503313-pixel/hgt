@@ -87,6 +87,7 @@ export function soupValidationMessage(issues: SoupValidationIssue[]) {
       const position = rawIndex + 1;
       if (keyFactField === "content") return `AI 主持高级设置：第 ${position} 个关键点未填写`;
       if (keyFactField === "weight") return `AI 主持高级设置：第 ${position} 个关键点未填写有效进度值（1–99）`;
+      if (keyFactField === "hintContent") return `AI 主持高级设置：第 ${position} 个关键点提示内容需填写且不超过 50 个字`;
     }
     if (issue.message.includes("权重总和")) return "AI 主持高级设置：进度值总和必须为 100";
     if (issue.message.includes("至少保留 1 个")) return "AI 主持高级设置：手动管理关键点时至少保留 1 个关键点";

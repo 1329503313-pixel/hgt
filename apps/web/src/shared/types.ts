@@ -116,6 +116,7 @@ export type KeyFact = {
   id: number;
   content: string;
   weight: number;
+  hintContent: string;
 };
 
 export type SoupDetail = SoupSummary & {
@@ -690,6 +691,10 @@ export type OnlineSoupSnapshot = {
     playerCapacity: number;
     participantCapacity: number;
     currentRoundId: string | null;
+    questionLimit: number | null;
+    questionCount: number;
+    remainingQuestionCount: number | null;
+    questionLimitResolutionRequired: boolean;
     bestQuestionMessageId: string | null;
     backgroundMusic: OnlineSoupBackgroundMusic | null;
     soup: {

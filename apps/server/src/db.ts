@@ -954,6 +954,7 @@ export async function initDatabase() {
       host_mode ENUM('human','ai') NOT NULL DEFAULT 'human',
       status ENUM('preparing','playing','ended') NOT NULL DEFAULT 'preparing',
       question_count INT UNSIGNED NOT NULL DEFAULT 0,
+      question_limit INT UNSIGNED NULL,
       ai_messages JSON NULL,
       ai_revealed_keys JSON NULL,
       ai_revealed_atoms JSON NULL,
@@ -962,6 +963,7 @@ export async function initDatabase() {
       ai_version INT UNSIGNED NOT NULL DEFAULT 0,
       ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle',
       ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0,
+      ai_hinted_key_ids JSON NULL,
       ai_soup_snapshot JSON NULL,
       best_question_message_id VARCHAR(64) NULL,
       published_surface_indices JSON NULL,
@@ -1161,6 +1163,7 @@ export async function initDatabase() {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_online_message_sequence (message_sequence),
       INDEX idx_online_messages_room_time (room_id, created_at, id),
+      INDEX idx_online_messages_round_question_limit (round_id, message_type, recalled_at, answer),
       CONSTRAINT fk_online_message_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
       CONSTRAINT fk_online_message_round FOREIGN KEY (round_id) REFERENCES online_soup_rounds(id) ON DELETE SET NULL,
       CONSTRAINT fk_online_message_mystery_run FOREIGN KEY (mystery_run_id) REFERENCES mystery_runs(id) ON DELETE SET NULL,
@@ -1205,6 +1208,7 @@ export async function initDatabase() {
     "host_mode",
     "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER round_number"
   );
+  await ensureColumn("online_soup_rounds", "question_limit", "question_limit INT UNSIGNED NULL AFTER question_count");
   await ensureColumn("online_soup_rounds", "ai_messages", "ai_messages JSON NULL AFTER question_count");
   await ensureColumn("online_soup_rounds", "ai_revealed_keys", "ai_revealed_keys JSON NULL AFTER ai_messages");
   await ensureColumn("online_soup_rounds", "ai_revealed_atoms", "ai_revealed_atoms JSON NULL AFTER ai_revealed_keys");
@@ -1213,7 +1217,8 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rounds", "ai_version", "ai_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_progress");
   await ensureColumn("online_soup_rounds", "ai_status", "ai_status ENUM('idle','processing','completed','failed') NOT NULL DEFAULT 'idle' AFTER ai_version");
   await ensureColumn("online_soup_rounds", "ai_hint_count", "ai_hint_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER ai_status");
-  await ensureColumn("online_soup_rounds", "ai_soup_snapshot", "ai_soup_snapshot JSON NULL AFTER ai_hint_count");
+  await ensureColumn("online_soup_rounds", "ai_hinted_key_ids", "ai_hinted_key_ids JSON NULL AFTER ai_hint_count");
+  await ensureColumn("online_soup_rounds", "ai_soup_snapshot", "ai_soup_snapshot JSON NULL AFTER ai_hinted_key_ids");
   await ensureColumn("online_soup_rounds", "best_question_message_id", "best_question_message_id VARCHAR(64) NULL AFTER ai_soup_snapshot");
   await ensureColumn("online_soup_rounds", "ai_fact_version_id", "ai_fact_version_id VARCHAR(64) NULL AFTER ai_hint_count");
   await ensureColumn("online_soup_rounds", "ai_phase", "ai_phase ENUM('PREPARING','PLAYING','READY_TO_SOLVE','SOLVING','COMPLETED','CANCELLED') NOT NULL DEFAULT 'PREPARING' AFTER ai_fact_version_id");
@@ -1448,6 +1453,11 @@ export async function initDatabase() {
     "online_soup_messages",
     "idx_online_messages_round_type_sequence",
     "round_id, message_type, message_sequence"
+  );
+  await ensureIndex(
+    "online_soup_messages",
+    "idx_online_messages_round_question_limit",
+    "round_id, message_type, recalled_at, answer"
   );
   await ensureIndex(
     "online_soup_messages",

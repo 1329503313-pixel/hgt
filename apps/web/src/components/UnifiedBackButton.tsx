@@ -3,12 +3,14 @@ import { useNavigate } from "react-router-dom";
 
 export function UnifiedBackButton({
   to,
+  state,
   onClick,
   replace = true,
   compactOnMobile = false,
   className = ""
 }: {
   to?: string;
+  state?: Record<string, unknown>;
   onClick?: () => void;
   replace?: boolean;
   compactOnMobile?: boolean;
@@ -20,7 +22,7 @@ export function UnifiedBackButton({
     <button
       type="button"
       className={`unified-back-button ${compactOnMobile ? "unified-back-button-mobile-compact" : ""} ${className}`}
-      onClick={() => onClick ? onClick() : to && navigate(to, { replace })}
+      onClick={() => onClick ? onClick() : to && navigate(to, { replace, state })}
       aria-label="返回"
     >
       <ArrowLeft size={18} />

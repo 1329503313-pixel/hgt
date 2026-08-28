@@ -1,4 +1,4 @@
-export type GeneratedKeyFact = { id: number; content: string; weight: number };
+export type GeneratedKeyFact = { id: number; content: string; weight: number; hintContent: string };
 
 function candidateArray(raw: string): unknown {
   try {
@@ -23,9 +23,10 @@ export function parseGeneratedKeyFactsResponse(raw: string): GeneratedKeyFact[] 
     const id = Number(fact?.id);
     const weight = Number(fact?.weight);
     const content = typeof fact?.content === "string" ? fact.content.trim() : "";
+    const hintContent = typeof fact?.hintContent === "string" ? fact.hintContent.trim().slice(0, 50) : "";
     if (!Number.isInteger(id) || seen.has(id) || !Number.isFinite(weight) || weight <= 0 || !content) return [];
     seen.add(id);
-    return [{ id, content, weight }];
+    return [{ id, content, weight, hintContent }];
   }).slice(0, 15);
   if (facts.length === 0) return [];
 
@@ -42,4 +43,17 @@ export function parseGeneratedKeyFactsResponse(raw: string): GeneratedKeyFact[] 
     left -= 1;
   }
   return facts.map((fact, index) => ({ ...fact, weight: allocations[index].base }));
+}
+
+export function parseGeneratedKeyFactHintsResponse(raw: string): Array<{ id: number; hintContent: string }> {
+  const value = candidateArray(raw);
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  return value.flatMap((fact: any) => {
+    const id = Number(fact?.id);
+    const hintContent = typeof fact?.hintContent === "string" ? fact.hintContent.trim().slice(0, 50) : "";
+    if (!Number.isInteger(id) || seen.has(id) || !hintContent) return [];
+    seen.add(id);
+    return [{ id, hintContent }];
+  });
 }

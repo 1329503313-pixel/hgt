@@ -169,8 +169,8 @@ export function beijingEntitlementDate(now = new Date()) {
   }).format(now);
 }
 
-export function nextBeijingEntitlementDate(now = new Date()) {
-  return beijingEntitlementDate(new Date(now.getTime() + 24 * 60 * 60_000));
+export function entitlementConfigurationEffectiveDate(now = new Date()) {
+  return beijingEntitlementDate(now);
 }
 
 function parsePlan(value: unknown, fallback: EntitlementPlan) {
@@ -543,6 +543,11 @@ export async function runDailyEntitlementGrantSweep(now = new Date()) {
   }
 }
 
+export function refreshDailyEntitlementGrants(now = new Date()) {
+  lastGrantSweepDate = "";
+  return runDailyEntitlementGrantSweep(now);
+}
+
 export function startDailyEntitlementGrantScheduler() {
   const run = () => {
     const date = beijingEntitlementDate();
@@ -567,13 +572,10 @@ export function registerEntitlementRoutes(app: express.Express, dependencies: En
   app.get("/api/admin/entitlements", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     const current = await effectiveEntitlementPlans();
-    const scheduledDate = nextBeijingEntitlementDate();
-    const scheduled = await planVersionForDate(scheduledDate, true);
     res.json({
       current: current.plans,
       currentEffectiveDate: current.effectiveDate,
-      scheduled: scheduled?.plans ?? null,
-      scheduledEffectiveDate: scheduledDate,
+      effectiveImmediately: true,
       rules: { mysteryQuestionEnforced: true, autoGrantsSupportUnlimited: false }
     });
   });
@@ -584,14 +586,26 @@ export function registerEntitlementRoutes(app: express.Express, dependencies: En
     const parsed = z.object({ user: entitlementPlanSchema, vip: entitlementPlanSchema }).strict().safeParse(req.body);
     if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "权益配置不正确");
     if (parsed.data.user.dailyExtraFreeDraws !== 0) return sendError(res, 400, "VIP 每日额外免费抽卡次数不适用于普通用户");
-    const effectiveDate = nextBeijingEntitlementDate();
-    await pool.query(
-      `INSERT INTO entitlement_plan_versions (effective_date, user_config, vip_config, created_by)
-       VALUES (?, ?, ?, ?)`,
-      [effectiveDate, JSON.stringify(parsed.data.user), JSON.stringify(parsed.data.vip), admin.id]
-    );
+    const effectiveDate = entitlementConfigurationEffectiveDate();
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query("DELETE FROM entitlement_plan_versions WHERE effective_date >= ?", [effectiveDate]);
+      await connection.query(
+        `INSERT INTO entitlement_plan_versions (effective_date, user_config, vip_config, created_by)
+         VALUES (?, ?, ?, ?)`,
+        [effectiveDate, JSON.stringify(parsed.data.user), JSON.stringify(parsed.data.vip), admin.id]
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
     planCache = null;
-    res.json({ scheduled: parsed.data, scheduledEffectiveDate: effectiveDate });
+    res.json({ current: parsed.data, currentEffectiveDate: effectiveDate, effectiveImmediately: true });
+    void refreshDailyEntitlementGrants().catch((error) => console.error("Immediate entitlement grant refresh failed:", error));
   });
 
   app.get("/api/me/entitlements", async (req, res) => {

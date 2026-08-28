@@ -26,7 +26,9 @@ export default function UserProfilePage() {
   const onlineSoupOrigin = location.state as { onlineSoupRoomId?: string; onlineSoupMember?: boolean; circleId?: string; privateConversationId?: string } | null;
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   const circleId = onlineSoupOrigin?.circleId ?? "";
-  const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : circleId ? `/circles/${circleId}` : "/";
+  const privateConversationId = onlineSoupOrigin?.privateConversationId ?? "";
+  const backTarget = privateConversationId ? `/messages/chat/${privateConversationId}` : onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : circleId ? `/circles/${circleId}` : "/";
+  const backState = privateConversationId && onlineSoupRoomId ? { onlineSoupRoomId } : undefined;
   const [profile, setProfile] = useState<SocialProfile | null>(null);
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [soupTotal, setSoupTotal] = useState(0);
@@ -60,7 +62,7 @@ export default function UserProfilePage() {
     void loadProfile(cacheKey, 1).catch((error) => { if (!cached) showToast((error as Error).message); });
   }, [id, user?.id, loadingUser]);
 
-  if (!profile) return <section className="user-profile-page min-h-screen bg-page pt-[72px]"><PageTopBar title="用户主页" backTo={backTarget} /><div className="user-profile-content mx-auto max-w-3xl px-4 pt-3 lg:pt-0"><div className="user-profile-desktop-back mb-4 hidden lg:flex"><UnifiedBackButton to={backTarget} /></div><ProfileSkeleton /></div></section>;
+  if (!profile) return <section className="user-profile-page min-h-screen bg-page pt-[72px]"><PageTopBar title="用户主页" backTo={backTarget} backState={backState} /><div className="user-profile-content mx-auto max-w-3xl px-4 pt-3 lg:pt-0"><div className="user-profile-desktop-back mb-4 hidden lg:flex"><UnifiedBackButton to={backTarget} state={backState} /></div><ProfileSkeleton /></div></section>;
 
   async function toggleFollow() {
     try {
@@ -78,7 +80,7 @@ export default function UserProfilePage() {
   async function messageUser() {
     try {
       const data = await api<{ id: string }>("/api/conversations", { method: "POST", body: { userId: id } });
-      navigate(`/messages/chat/${data.id}`);
+      navigate(`/messages/chat/${data.id}`, { state: onlineSoupRoomId ? { onlineSoupRoomId } : undefined });
     } catch (error) { showToast((error as Error).message); }
   }
 
@@ -110,9 +112,9 @@ export default function UserProfilePage() {
 
   return (
     <section className="user-profile-page min-h-screen bg-page pt-[72px]">
-      <PageTopBar title="用户主页" backTo={backTarget} />
+      <PageTopBar title="用户主页" backTo={backTarget} backState={backState} />
       <div className="user-profile-content mx-auto max-w-3xl space-y-3 px-4 pb-10">
-        <div className="user-profile-desktop-back hidden lg:flex"><UnifiedBackButton to={backTarget} /></div>
+        <div className="user-profile-desktop-back hidden lg:flex"><UnifiedBackButton to={backTarget} state={backState} /></div>
         <ProfileHero key={`${profile.id}:${profile.profileBackgroundSourceUrl ?? "default"}`} className="user-profile-hero" profile={profile} collapsibleBackground={!profile.isSelf} inactiveNicknameClassName="text-white" onFollowing={() => navigate(`/users/${profile.id}/following`)} onFollowers={() => navigate(`/users/${profile.id}/followers`)} onCharm={!profile.isSelf ? () => setGiftOpen(true) : undefined} actions={!profile.isSelf ? (
           <div className="flex gap-2">
             <button type="button" className="grid h-11 w-11 place-items-center rounded-full border border-white/70 bg-white/20 text-white disabled:opacity-45" onClick={() => setGiftOpen(true)} disabled={!profile.isFollowing} aria-label={profile.isFollowing ? "送礼物" : "关注后可送礼物"} title={profile.isFollowing ? "送礼物" : "关注后可送礼物"}><Gift size={19} /></button>

@@ -9,7 +9,7 @@ import { canAccessAdmin } from "../shared/roles";
 import { useDismissibleDetails } from "../shared/useDismissibleDetails";
 import { VipName, VipIcon } from "./VipVisuals";
 
-export function PageTopBar({ title, titleContent, titleTo = "/", titleState, backTo, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; titleState?: Record<string, unknown>; backTo?: string; rightAction?: React.ReactNode }) {
+export function PageTopBar({ title, titleContent, titleTo = "/", titleState, backTo, backState, rightAction }: { title: string; titleContent?: React.ReactNode; titleTo?: string; titleState?: Record<string, unknown>; backTo?: string; backState?: Record<string, unknown>; rightAction?: React.ReactNode }) {
   const { user } = useApp();
   const navigate = useNavigate();
   const unread = useMessageUnread(user?.id, Boolean(user && !backTo));
@@ -26,7 +26,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", titleState, bac
               <UserMenuDropdown user={user} />
               {rightAction}
               {backTo ? (
-                <UnifiedBackButton to={backTo} compactOnMobile />
+                <UnifiedBackButton to={backTo} state={backState} compactOnMobile />
               ) : (
                 <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate("/messages")} aria-label="消息">
                   <Bell size={20} />

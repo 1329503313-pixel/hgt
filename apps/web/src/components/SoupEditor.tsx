@@ -109,12 +109,12 @@ export function SoupEditor() {
   // 高级设置：关键点增/删/改
   function addKeyFact() {
     const nextId = Math.max(0, ...value.keyFacts.map((k) => k.id)) + 1;
-    patch({ keyFacts: [...value.keyFacts, { id: nextId, content: "", weight: 10 }], keyFactsCustomized: true });
+    patch({ keyFacts: [...value.keyFacts, { id: nextId, content: "", weight: 10, hintContent: "" }], keyFactsCustomized: true });
   }
   function removeKeyFact(id: number) {
     patch({ keyFacts: value.keyFacts.filter((k) => k.id !== id), keyFactsCustomized: true });
   }
-  function updateKeyFact(id: number, field: "content" | "weight", val: string | number) {
+  function updateKeyFact(id: number, field: "content" | "weight" | "hintContent", val: string | number) {
     patch({
       keyFacts: value.keyFacts.map((k) => (k.id === id ? { ...k, [field]: val } : k)),
       keyFactsCustomized: true
@@ -130,6 +130,9 @@ export function SoupEditor() {
   const invalidKeyFactWeightIndex = value.keyFacts.findIndex(
     (keyFact) => !Number.isInteger(keyFact.weight) || keyFact.weight < 1 || keyFact.weight > 99
   );
+  const invalidKeyFactHintIndex = value.keyFacts.findIndex(
+    (keyFact) => !(keyFact.hintContent ?? "").trim() || (keyFact.hintContent ?? "").trim().length > 50
+  );
   const aiAdvancedSettingsError = !value.enableAiGame || !value.keyFactsCustomized
     ? ""
     : value.keyFacts.length === 0
@@ -138,6 +141,8 @@ export function SoupEditor() {
     ? `AI 主持高级设置：第 ${emptyKeyFactIndex + 1} 个关键点未填写`
     : invalidKeyFactWeightIndex >= 0
       ? `AI 主持高级设置：第 ${invalidKeyFactWeightIndex + 1} 个关键点未填写有效进度值（1–99）`
+      : invalidKeyFactHintIndex >= 0
+        ? `AI 主持高级设置：第 ${invalidKeyFactHintIndex + 1} 个关键点提示内容需填写且不超过 50 个字`
       : !keyFactsWeightValid
         ? `AI 主持高级设置：进度值总和必须为 100，当前为 ${keyFactsTotalWeight}`
         : "";
@@ -148,7 +153,7 @@ export function SoupEditor() {
     try {
       await api(`/api/soups/${editingSoupId}/reanalyze-keyfacts`, { method: "POST" });
       patch({ keyFacts: [], keyFactsCustomized: false });
-      showToast("关键点已清除，稍后刷新查看重新生成结果");
+      showToast("关键点和提示内容已清除，稍后刷新查看重新生成结果");
       setReanalyzeConfirmOpen(false);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "操作失败");
@@ -464,6 +469,23 @@ export function SoupEditor() {
                       />
                     </div>
                     <div>
+                      <label className="text-[11px] font-bold text-muted">提示内容</label>
+                      <p className="text-[10px] text-muted">玩家请求 AI 提示时展示，请勿直接写出答案</p>
+                      <div className="relative mt-1">
+                        <textarea
+                          className={`field min-h-20 w-full pb-7 text-base sm:text-sm ${!(kf.hintContent ?? "").trim() ? "border-red-400" : ""}`}
+                          placeholder="如：留意人物之间被忽略的关系"
+                          maxLength={50}
+                          value={kf.hintContent ?? ""}
+                          aria-invalid={!(kf.hintContent ?? "").trim()}
+                          onChange={(e) => updateKeyFact(kf.id, "hintContent", e.target.value)}
+                        />
+                        <span className="pointer-events-none absolute bottom-2 right-3 text-xs text-muted">
+                          {(kf.hintContent ?? "").length}/50
+                        </span>
+                      </div>
+                    </div>
+                    <div>
                       <label className="text-[11px] font-bold text-muted">进度值</label>
                       <p className="text-[10px] text-muted">请输入该关键点的进度值，总和应该为 100</p>
                       <input
@@ -487,7 +509,7 @@ export function SoupEditor() {
                   </div>
                   <button
                     type="button"
-                    className="shrink-0 grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-red-50 hover:text-danger"
+                    className="grid h-11 w-11 shrink-0 place-items-center rounded-md text-muted hover:bg-red-50 hover:text-danger"
                     onClick={() => removeKeyFact(kf.id)}
                     aria-label={`删除第 ${value.keyFacts.findIndex((item) => item.id === kf.id) + 1} 个关键点`}
                     title="删除关键点"
@@ -501,7 +523,7 @@ export function SoupEditor() {
                 <p className={`py-4 text-center text-sm ${value.keyFactsCustomized ? "font-bold text-danger" : "text-muted"}`}>
                   {value.keyFactsCustomized
                     ? "手动管理关键点时至少保留 1 个关键点，当前状态无法保存。"
-                    : "暂无自定义关键点，发布或开启 AI 主持后将由 AI 自动拆分。"}
+                    : "暂无自定义关键点，发布或开启 AI 主持后将由 AI 自动拆分关键点并填写提示内容。"}
                 </p>
               )}
 
@@ -541,7 +563,7 @@ export function SoupEditor() {
         <Modal onClose={() => setReanalyzeConfirmOpen(false)}>
           <div className="space-y-4 p-2">
             <p className="text-sm font-bold text-ink">是否清除已保存的关键点？</p>
-            <p className="text-xs text-muted">此操作只会清除手动编辑的关键点；服务端随后会按现有逻辑重新生成内部关键点。</p>
+            <p className="text-xs text-muted">此操作会清除手动编辑的关键点及其提示内容；服务端随后会重新自动生成。</p>
             <div className="flex gap-2">
               <button type="button" className="btn btn-secondary flex-1" onClick={() => setReanalyzeConfirmOpen(false)}>取消</button>
               <button type="button" className="btn btn-primary flex-1" onClick={handleReanalyze}>确认</button>

@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ChevronDown, Gift, Send, Smile, UserRound } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import type { PrivateMessageItem, PublicUser, StickerAsset, StickerSeries } from "../shared/types";
@@ -31,7 +31,11 @@ type SendMessageResponse = { id: string; createdAt: string; message?: PrivateMes
 export default function ChatPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, loadingUser, showToast } = useApp();
+  const navigationState = location.state as { onlineSoupRoomId?: string } | null;
+  const onlineSoupRoomId = navigationState?.onlineSoupRoomId ?? "";
+  const backTarget = onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : "/messages";
   const [chat, setChat] = useState<ChatResponse | null>(null);
   const [sending, setSending] = useState(false);
   const [stickerSeries, setStickerSeries] = useState<StickerSeries[]>([]);
@@ -243,7 +247,7 @@ export default function ChatPage() {
     });
   }, [id, user?.id]);
 
-  if (loadingUser || !chat) return <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5"><div className="lg:hidden"><PageTopBar title="私信" backTo="/messages" /></div><div className="mx-auto h-full max-w-3xl px-4 lg:max-w-[1180px] lg:rounded-[28px] lg:bg-white lg:p-6"><ListSkeleton rows={7} /></div></section>;
+  if (loadingUser || !chat) return <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5"><div className="lg:hidden"><PageTopBar title="私信" backTo={backTarget} /></div><div className="mx-auto h-full max-w-3xl px-4 lg:max-w-[1180px] lg:rounded-[28px] lg:bg-white lg:p-6"><ListSkeleton rows={7} /></div></section>;
 
   return (
     <section className="h-[100dvh] overflow-hidden bg-page pt-[72px] lg:p-5 lg:pt-5">
@@ -263,17 +267,17 @@ export default function ChatPage() {
           </span>
         )}
         titleTo={`/users/${chat.conversation.otherUser.id}`}
-        titleState={{ privateConversationId: id }}
-        backTo="/messages"
+        titleState={{ privateConversationId: id, ...(onlineSoupRoomId ? { onlineSoupRoomId, onlineSoupMember: true } : {}) }}
+        backTo={backTarget}
       /></div>
       <div className="mx-auto flex h-[calc(100dvh-72px)] max-w-3xl flex-col lg:h-full lg:max-w-[1180px] lg:overflow-hidden lg:rounded-[28px] lg:border lg:border-line lg:bg-white lg:shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
         <header className="hidden h-20 shrink-0 items-center justify-between border-b border-line px-6 lg:flex">
           <div className="flex min-w-0 items-center gap-4">
-            <button className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-slate-50 text-ink transition hover:border-blue-200 hover:bg-blue-50 hover:text-primary" onClick={() => navigate("/messages")} aria-label="返回消息中心"><ArrowLeft size={21} /></button>
+            <button className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-slate-50 text-ink transition hover:border-blue-200 hover:bg-blue-50 hover:text-primary" onClick={() => navigate(backTarget, { replace: true })} aria-label={onlineSoupRoomId ? "返回游戏房间" : "返回消息中心"}><ArrowLeft size={21} /></button>
             <span className="relative grid h-12 w-12 shrink-0 place-items-center"><span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-blue-100 font-black text-primary">{chat.conversation.otherUser.avatar ? <img className="h-full w-full object-cover" src={chat.conversation.otherUser.avatar} alt="" /> : chat.conversation.otherUser.nickname.slice(0, 1)}</span>{chat.conversation.otherUser.isOnline && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />}</span>
             <div className="min-w-0"><VipIdentity nickname={chat.conversation.otherUser.nickname} userLevel={chat.conversation.otherUser.level} vipLevel={chat.conversation.otherUser.vipLevel} vipActive={chat.conversation.otherUser.vipActive} equippedBadge={chat.conversation.otherUser.equippedBadge} className="text-xl font-black text-ink" /><p className={`mt-1 text-xs font-bold ${chat.conversation.otherUser.isOnline ? "text-emerald-600" : "text-muted"}`}>{chat.conversation.otherUser.isOnline ? "在线 · 消息实时送达" : "离线 · 上线后可查看消息"}</p></div>
           </div>
-          <button className="btn btn-secondary" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`, { state: { privateConversationId: id } })}><UserRound size={17} />查看主页</button>
+          <button className="btn btn-secondary" onClick={() => navigate(`/users/${chat.conversation.otherUser.id}`, { state: { privateConversationId: id, ...(onlineSoupRoomId ? { onlineSoupRoomId, onlineSoupMember: true } : {}) } })}><UserRound size={17} />查看主页</button>
         </header>
 
         <div className="min-h-0 flex flex-1 lg:grid lg:grid-cols-[minmax(0,1fr)_280px]">

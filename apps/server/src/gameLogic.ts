@@ -22,7 +22,30 @@ export type ProgressKeyFact = {
   id: number;
   content: string;
   weight: number;
+  hintContent?: string;
 };
+
+export function selectNextHintKeyFact(
+  keyFacts: readonly ProgressKeyFact[],
+  revealedKeyIds: readonly number[],
+  hintedKeyIds: readonly number[],
+): { keyFact: ProgressKeyFact & { hintContent: string }; hintedKeyIds: number[] } | null {
+  const revealed = new Set(revealedKeyIds);
+  const candidates = [...keyFacts]
+    .filter((fact): fact is ProgressKeyFact & { hintContent: string } => (
+      !revealed.has(fact.id) && typeof fact.hintContent === "string" && Boolean(fact.hintContent.trim())
+    ))
+    .sort((a, b) => a.id - b.id);
+  if (candidates.length === 0) return null;
+
+  const candidateIds = new Set(candidates.map((fact) => fact.id));
+  const usedInCycle = [...new Set(hintedKeyIds.filter((id) => candidateIds.has(id)))];
+  const next = candidates.find((fact) => !usedInCycle.includes(fact.id));
+  if (next) return { keyFact: next, hintedKeyIds: [...usedInCycle, next.id] };
+
+  const restarted = candidates[0];
+  return { keyFact: restarted, hintedKeyIds: [restarted.id] };
+}
 
 export type AtomicFact = {
   id: number;

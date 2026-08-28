@@ -86,6 +86,10 @@ test("海龟汤校验错误明确指出 AI 高级设置中的问题", () => {
     "AI 主持高级设置：第 2 个关键点未填写有效进度值（1–99）"
   );
   assert.equal(
+    soupValidationMessage([{ path: ["keyFacts", 2, "hintContent"], message: "Too small" }]),
+    "AI 主持高级设置：第 3 个关键点提示内容需填写且不超过 50 个字"
+  );
+  assert.equal(
     soupValidationMessage([{ path: ["keyFacts"], message: "进度关键点权重总和必须为 100" }]),
     "AI 主持高级设置：进度值总和必须为 100"
   );

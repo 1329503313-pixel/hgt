@@ -311,7 +311,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         isBottomPublic: soup.isBottomPublic,
         canConfigureAiGame: soup.canConfigureAiGame,
         enableAiGame: (soup as any).enableAiGame ?? false,
-        keyFacts: soup.keyFacts ?? [],
+        keyFacts: (soup.keyFacts ?? []).map((fact) => ({ ...fact, hintContent: fact.hintContent ?? "" })),
         keyFactsCustomized: soup.keyFactsCustomized ?? false
       });
     } else {

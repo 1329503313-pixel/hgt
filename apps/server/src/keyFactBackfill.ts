@@ -5,7 +5,7 @@ export const AI_KEY_FACT_BACKFILL_INTERVAL_MS = 60 * 60 * 1000;
 type Queryable = Pick<mysql.Pool, "query">;
 
 /**
- * 补齐所有已开启 AI 主持、但尚无进度关键点的作品。
+ * 补齐所有已开启 AI 主持、但尚无进度关键点或关键点提示内容的作品。
  * 不筛选审核状态，使待审核作品也能提前准备；生成器自身负责保护用户手动配置。
  */
 export async function backfillMissingAiKeyFacts(
@@ -19,7 +19,18 @@ export async function backfillMissingAiKeyFacts(
      JOIN users creator ON creator.id = s.creator_id
      WHERE s.enable_ai_game = 1
        AND creator.role IN ('super_admin','backoffice_admin','admin','vip')
-       AND (s.key_facts IS NULL OR JSON_LENGTH(s.key_facts) = 0)
+       AND (
+         s.key_facts IS NULL
+         OR JSON_LENGTH(s.key_facts) = 0
+         OR EXISTS (
+           SELECT 1
+           FROM JSON_TABLE(
+             COALESCE(s.key_facts, JSON_ARRAY()),
+             '$[*]' COLUMNS(hint_content VARCHAR(255) PATH '$.hintContent' NULL ON EMPTY)
+           ) AS key_fact
+           WHERE NULLIF(TRIM(key_fact.hint_content), '') IS NULL
+         )
+       )
      ORDER BY s.created_at ASC`,
   );
   const soupIds = [...new Set(rows.map((row) => String(row.id)).filter(Boolean))];

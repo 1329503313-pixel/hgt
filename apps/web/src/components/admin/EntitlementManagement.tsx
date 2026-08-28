@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, Infinity as InfinityIcon, Save, ShieldCheck } from "lucide-react";
+import { CircleCheck, Infinity as InfinityIcon, Save, ShieldCheck } from "lucide-react";
 import { api } from "../../api";
 import { useApp } from "../../context/AppContext";
 import { CardSkeleton } from "../Skeletons";
@@ -26,8 +26,7 @@ type EntitlementPlans = { user: EntitlementPlan; vip: EntitlementPlan };
 type EntitlementResponse = {
   current: EntitlementPlans;
   currentEffectiveDate: string | null;
-  scheduled: EntitlementPlans | null;
-  scheduledEffectiveDate: string;
+  effectiveImmediately: boolean;
   rules: { mysteryQuestionEnforced: boolean; autoGrantsSupportUnlimited: boolean };
 };
 
@@ -116,7 +115,7 @@ export function EntitlementManagement() {
     try {
       const next = await api<EntitlementResponse>("/api/admin/entitlements", { bypassCache: true, dedupe: false });
       setData(next);
-      setForm(structuredClone(next.scheduled ?? next.current));
+      setForm(structuredClone(next.current));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "权益配置加载失败");
     } finally {
@@ -126,7 +125,7 @@ export function EntitlementManagement() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const baseline = useMemo(() => data ? JSON.stringify(data.scheduled ?? data.current) : "", [data]);
+  const baseline = useMemo(() => data ? JSON.stringify(data.current) : "", [data]);
   const dirty = Boolean(form && JSON.stringify(form) !== baseline);
 
   function update(tier: "user" | "vip", key: PlanKey, value: number | null) {
@@ -139,7 +138,7 @@ export function EntitlementManagement() {
     setError("");
     try {
       await api("/api/admin/entitlements", { method: "PUT", body: form });
-      showToast(`权益配置已保存，将于 ${data.scheduledEffectiveDate} 00:00 生效`);
+      showToast("权益配置已保存并立即生效");
       await load();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "权益配置保存失败");
@@ -160,12 +159,12 @@ export function EntitlementManagement() {
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">后台管理员复用 VIP 权益；超级管理员不受每日限制，也不参与每日自动赠送。所有限额按北京时间自然日统计。</p>
           </div>
           <button type="button" className="btn btn-primary min-h-11 shrink-0 px-5" disabled={saving || !dirty} onClick={() => void save()}>
-            <Save size={17} />{saving ? "保存中…" : "保存次日配置"}
+            <Save size={17} />{saving ? "保存中…" : "保存并立即生效"}
           </button>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-line bg-slate-50 p-3"><p className="text-xs font-bold text-muted">当前配置生效日</p><p className="mt-1 font-black text-ink">{formatDate(data.currentEffectiveDate)}</p></div>
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-3"><p className="flex items-center gap-1 text-xs font-bold text-primary"><CalendarClock size={14} />下次生效时间</p><p className="mt-1 font-black text-ink">{data.scheduledEffectiveDate} 00:00</p><p className="mt-1 text-xs text-muted">保存后覆盖该日期待生效配置；当天已发生的数据不追扣。</p></div>
+          <div className="rounded-xl border border-line bg-slate-50 p-3"><p className="text-xs font-bold text-muted">当前配置版本日期</p><p className="mt-1 font-black text-ink">{formatDate(data.currentEffectiveDate)}</p></div>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-3"><p className="flex items-center gap-1 text-xs font-bold text-primary"><CircleCheck size={14} />生效规则</p><p className="mt-1 font-black text-ink">保存成功后立即生效</p><p className="mt-1 text-xs text-muted">新限额立即用于后续操作；当日已发生的数据不追扣。</p></div>
         </div>
         {error && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-600" role="alert">{error}</p>}
         {dirty && <p className="mt-3 text-sm font-bold text-amber-700">有尚未保存的修改。</p>}
@@ -186,7 +185,7 @@ export function EntitlementManagement() {
 
       <section className="card p-4 sm:p-5">
         <h2 className="font-black text-ink">固定身份能力</h2>
-        <p className="mt-1 text-sm text-muted">本期只读展示，不参与次日数值配置。</p>
+        <p className="mt-1 text-sm text-muted">本期只读展示，不参与权益数值配置。</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl border border-line p-3"><p className="font-bold text-ink">查看受限汤内容</p><p className="mt-1 text-sm text-muted">普通用户：否 · VIP / 后台管理员：是</p></div>
           <div className="rounded-xl border border-line p-3"><p className="font-bold text-ink">配置 AI 主持</p><p className="mt-1 text-sm text-muted">普通用户：否 · VIP / 后台管理员：是</p></div>

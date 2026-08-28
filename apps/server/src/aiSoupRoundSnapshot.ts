@@ -5,6 +5,7 @@ const progressKeyFactSchema = z.object({
   id: z.number().int().nonnegative(),
   content: z.string(),
   weight: z.number().nonnegative(),
+  hintContent: z.string().max(50).optional().default(""),
 }).strict();
 
 const atomicFactSchema = z.object({
