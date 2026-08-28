@@ -9,7 +9,7 @@ export const adminRouteManifest = [
   { key: "vip", path: "vip", label: "VIP", superAdminOnly: true },
   { key: "entitlements", path: "entitlements", label: "权益", superAdminOnly: true },
   { key: "soups", path: "soups", label: "汤品", superAdminOnly: false },
-  { key: "mysteries", path: "mysteries", label: "谜局", superAdminOnly: false },
+  { key: "mysteries", path: "mysteries", label: "谜局", superAdminOnly: true },
   { key: "evaluations", path: "evaluations", label: "评价", superAdminOnly: false },
   { key: "gifts", path: "gifts", label: "礼物", superAdminOnly: true },
   { key: "badges", path: "badges", label: "徽章", superAdminOnly: true },
