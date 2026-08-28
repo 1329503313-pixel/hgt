@@ -14,6 +14,7 @@ import {
   accountPasswordError,
   accountUsernameError
 } from "../shared/accountRules";
+import { registrationErrorMessage } from "../shared/registrationErrors";
 
 export function AuthModal() {
   const { authMode, closeAuth, switchAuthMode, authError, setAuthError, setUser, triggerRefresh } = useApp();
@@ -51,7 +52,9 @@ export function AuthModal() {
       closeAuth();
       triggerRefresh();
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "登录失败，请检查账号和密码");
+      setAuthError(authMode === "register"
+        ? registrationErrorMessage(error)
+        : error instanceof Error ? error.message : "登录失败，请检查账号和密码");
     } finally {
       setSubmitting(false);
     }

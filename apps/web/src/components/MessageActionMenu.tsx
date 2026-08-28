@@ -3,18 +3,21 @@ import { createPortal } from "react-dom";
 
 export const MESSAGE_RECALL_WINDOW_MS = 2 * 60_000;
 
-export function canRecallMessage(createdAt: string, recalledAt?: string | null) {
+export function canRecallMessage(createdAt: string, recalledAt?: string | null, now = Date.now()) {
   const createdTime = new Date(createdAt).getTime();
-  const age = Date.now() - createdTime;
-  return !recalledAt && Number.isFinite(createdTime) && age >= 0 && age <= MESSAGE_RECALL_WINDOW_MS;
+  return !recalledAt && Number.isFinite(createdTime) && now <= createdTime + MESSAGE_RECALL_WINDOW_MS;
 }
 
-type MessageAction = {
+export type MessageAction = {
   label: string;
   tone?: "default" | "danger";
   availableUntil?: number;
   onSelect: () => void;
 };
+
+export function availableMessageActions(actions: MessageAction[], now = Date.now()) {
+  return actions.filter((action) => action.availableUntil == null || now <= action.availableUntil);
+}
 
 export function MessageActionMenu({
   actions,
@@ -39,7 +42,7 @@ export function MessageActionMenu({
   }
 
   function open(x: number, y: number) {
-    const available = actions.filter((action) => action.availableUntil == null || Date.now() <= action.availableUntil);
+    const available = availableMessageActions(actions, Date.now());
     if (!available.length) return;
     const horizontalInset = Math.min(
       Math.max(72, available.length * 32),

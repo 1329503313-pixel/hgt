@@ -30,6 +30,7 @@ import { getSticker, initializeStickerCatalog, registerStickerStoreRoutes, stick
 import { isAdminRelatedNickname } from "./nickname.js";
 import { accountBioSchema, accountNicknameSchema, accountPasswordSchema, accountUsernameSchema } from "./accountRules.js";
 import { generateInviteCode, INVITE_CODE_PATTERN, normalizeInviteCode } from "./inviteCodes.js";
+import { REGISTRATION_ERRORS, registrationAvailabilityError } from "./registrationErrors.js";
 import {
   runDailyInviteShellSettlement,
   setInviteRewardProgressListener,
@@ -761,8 +762,8 @@ function feedbackPayload(row: mysql.RowDataPacket, includeScreenshot = false) {
   };
 }
 
-function sendError(res: express.Response, status: number, message: string) {
-  return res.status(status).json({ error: message });
+function sendError(res: express.Response, status: number, message: string, code?: string) {
+  return res.status(status).json({ error: message, ...(code ? { code } : {}) });
 }
 
 function avatarUrl(userId: unknown, stored: unknown, hasAvatar = false) {
@@ -2294,9 +2295,29 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   const { username, password, nickname } = parsed.data;
   const invitationCode = normalizeInviteCode(parsed.data.invitationCode);
   if (invitationCode && !INVITE_CODE_PATTERN.test(invitationCode)) {
-    return sendError(res, 400, "邀请码应为 5 位数字或大写字母");
+    const error = REGISTRATION_ERRORS.invitationCodeFormatInvalid;
+    return sendError(res, error.status, error.message, error.code);
   }
   if (isAdminRelatedNickname(nickname)) return sendError(res, 400, "该昵称为管理员专用，请更换昵称");
+  const [[availability]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT
+       EXISTS(SELECT 1 FROM users WHERE username = ? LIMIT 1) AS username_exists,
+       EXISTS(SELECT 1 FROM users WHERE nickname = ? LIMIT 1) AS nickname_exists,
+       CASE
+         WHEN ? = '' THEN 1
+         ELSE EXISTS(SELECT 1 FROM users WHERE invite_code = ? LIMIT 1)
+       END AS invitation_code_exists`,
+    [username, nickname, invitationCode, invitationCode]
+  );
+  const availabilityError = registrationAvailabilityError({
+    usernameExists: Number(availability?.username_exists ?? 0) === 1,
+    nicknameExists: Number(availability?.nickname_exists ?? 0) === 1,
+    invitationCodeProvided: Boolean(invitationCode),
+    invitationCodeExists: Number(availability?.invitation_code_exists ?? 0) === 1
+  });
+  if (availabilityError) {
+    return sendError(res, availabilityError.status, availabilityError.message, availabilityError.code);
+  }
   const id = nanoid();
   const hash = await bcrypt.hash(password, 10);
   const connection = await pool.getConnection();
@@ -2308,7 +2329,8 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     );
     if (existingAccounts.length) {
       await connection.rollback();
-      return sendError(res, 409, "账号已存在，请更换账号");
+      const error = REGISTRATION_ERRORS.usernameTaken;
+      return sendError(res, error.status, error.message, error.code);
     }
     const [existingNicknames] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT id FROM users WHERE nickname = ? LIMIT 1 FOR UPDATE",
@@ -2316,7 +2338,8 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     );
     if (existingNicknames.length) {
       await connection.rollback();
-      return sendError(res, 409, "昵称已被使用，请更换昵称");
+      const error = REGISTRATION_ERRORS.nicknameTaken;
+      return sendError(res, error.status, error.message, error.code);
     }
     let inviterId: string | null = null;
     if (invitationCode) {
@@ -2326,7 +2349,8 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
       );
       if (!inviter) {
         await connection.rollback();
-        return sendError(res, 400, "邀请码不存在，请检查后重试");
+        const error = REGISTRATION_ERRORS.invitationCodeInvalid;
+        return sendError(res, error.status, error.message, error.code);
       }
       inviterId = String(inviter.id);
     }
@@ -2363,7 +2387,8 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   } catch (error) {
     await connection.rollback();
     if ((error as { code?: string }).code === "ER_DUP_ENTRY") {
-      return sendError(res, 409, "账号已存在，请更换账号");
+      const registrationError = REGISTRATION_ERRORS.usernameTaken;
+      return sendError(res, registrationError.status, registrationError.message, registrationError.code);
     }
     if (["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT"].includes((error as { code?: string }).code ?? "")) {
       return sendError(res, 409, "账号或昵称刚被占用，请更换后重试");
