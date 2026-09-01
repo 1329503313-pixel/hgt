@@ -126,7 +126,7 @@ export default function UserProfilePage() {
         <div className="user-profile-gifts"><RecentGiftsSection userId={profile.id} refreshKey={giftRefreshKey} onError={showToast} onSendGift={!profile.isSelf ? () => setGiftOpen(true) : undefined} canSendGift={profile.isFollowing} /></div>
         <div className="user-profile-soups overflow-hidden rounded-2xl bg-white shadow-soft">
           <div className="border-b border-line px-4 py-3 text-sm font-black text-ink">发布 {soupTotal}</div>
-          <SoupCoverGrid soups={soups} emptyHint="还没有公开作品" className="lg:grid-cols-4 lg:gap-4 lg:p-4" />
+          <SoupCoverGrid soups={soups} emptyHint="还没有公开作品" className="lg:grid-cols-4 lg:gap-4 lg:p-4" showProfilePins />
           <ContentPagination page={soupPage} pageSize={pageSize} total={soupTotal} loading={soupsLoading} ariaLabel={`${profile.nickname}发布的海龟汤分页`} onPageChange={changeSoupPage} />
         </div>
       </div>

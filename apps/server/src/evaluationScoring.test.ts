@@ -4,7 +4,8 @@ import {
   evaluationCountsTowardScore,
   MIN_SCORING_EXPERIENCE,
   MIN_SCORING_LEVEL,
-  scoringEvaluationJoin
+  scoringEvaluationJoin,
+  scoringSoupHeatExpression
 } from "./evaluationScoring.js";
 
 test("上传者评价始终不计入作品评分", () => {
@@ -22,4 +23,11 @@ test("评分聚合 SQL 同时排除上传者和低等级用户", () => {
   const sql = scoringEvaluationJoin("e", "s");
   assert.match(sql, /e\.reviewer_id <> s\.creator_id/);
   assert.match(sql, /scoring_reviewer\.experience >= 350/);
+});
+
+test("热力值排序与列表展示复用相同的有效评分口径", () => {
+  const expression = scoringSoupHeatExpression("s");
+  assert.match(expression, /heat_score_eval\.reviewer_id <> s\.creator_id/);
+  assert.match(expression, /heat_count_eval\.reviewer_id <> s\.creator_id/);
+  assert.equal((expression.match(new RegExp(`experience >= ${MIN_SCORING_EXPERIENCE}`, "g")) ?? []).length, 2);
 });

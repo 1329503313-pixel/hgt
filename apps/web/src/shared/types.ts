@@ -615,6 +615,7 @@ export type OnlineSoupMessage = {
   senderVipLevel: VipLevel;
   senderVipActive: boolean;
   senderEquippedBadge: EquippedBadge | null;
+  entryCollectible: { name: string; rarity: "epic" | "legend" } | null;
   impostorGameNumber: number | null;
   impostorSeat: number | null;
   impostorEvent: {
@@ -697,6 +698,7 @@ export type OnlineSoupSnapshot = {
     remainingQuestionCount: number | null;
     questionLimitResolutionRequired: boolean;
     bestQuestionMessageId: string | null;
+    coverBackgroundEnabled: boolean;
     backgroundMusic: OnlineSoupBackgroundMusic | null;
     soup: {
       id: string;

@@ -307,12 +307,14 @@ export function SoupCoverGrid({
   soups,
   emptyHint,
   className = "",
-  returnTo
+  returnTo,
+  showProfilePins = false,
 }: {
   soups: SoupSummary[];
   emptyHint: string;
   className?: string;
   returnTo?: string;
+  showProfilePins?: boolean;
 }) {
   const navigate = useNavigate();
   if (!soups.length) return <div className="py-16 text-center text-sm text-muted">{emptyHint}</div>;
@@ -330,7 +332,7 @@ export function SoupCoverGrid({
             alt={`${soup.title} 封面`}
             loading="lazy"
           />
-          {soup.isProfilePinned && (
+          {showProfilePins && soup.isProfilePinned && (
             <span className="absolute left-2 top-2 rounded-md bg-slate-950/80 px-2 py-1 text-[11px] font-bold text-white shadow-sm ring-1 ring-white/20 backdrop-blur-sm">
               置顶
             </span>

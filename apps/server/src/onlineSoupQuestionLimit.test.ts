@@ -42,6 +42,6 @@ test("每条正式提问保存各自发送成功后的剩余次数快照", () =>
 });
 
 test("真人主持开局时明确提示本局提问次数规则", () => {
-  assert.equal(onlineSoupQuestionLimitStartNotice(null), "本局游戏不限次数");
-  assert.equal(onlineSoupQuestionLimitStartNotice(40), "本局游戏限40次");
+  assert.equal(onlineSoupQuestionLimitStartNotice(null), "游戏开始，本局游戏不限次数");
+  assert.equal(onlineSoupQuestionLimitStartNotice(40), "游戏开始，本局游戏限40次");
 });

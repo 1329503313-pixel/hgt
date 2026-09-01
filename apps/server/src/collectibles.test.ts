@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectibleAuctionEndAfterBid, collectibleProbabilityDetails, collectibleProbabilityWins, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
+import { collectibleAuctionEndAfterBid, collectibleProbabilityDetails, collectibleProbabilityWins, equipFirstOwnedCollectible, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
 import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
 
 test("收藏品排行榜按用户当前拥有且未删除的藏品价值总和统计", () => {
@@ -57,6 +57,37 @@ test("最后一分钟内出价后延长至出价时间后一整分钟", () => {
 test("最后一分钟以外的出价不改变结束时间", () => {
   const end = new Date("2026-08-21T10:02:00.000Z");
   assert.equal(collectibleAuctionEndAfterBid(end, new Date("2026-08-21T10:00:00.000Z")), end);
+});
+
+test("用户获得第一件收藏品时自动携带", async () => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const connection = {
+    query: async (sql: string, params: unknown[]) => {
+      calls.push({ sql, params });
+      if (sql.includes("COUNT(*) AS owned_count")) return [[{ owned_count: 1 }]];
+      return [{ affectedRows: 1 }];
+    }
+  };
+
+  assert.equal(await equipFirstOwnedCollectible(connection as never, "user-1", "collectible-1"), true);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].sql, /equipped_collectible_id = \?/);
+  assert.match(calls[1].sql, /equipped_collectible_id IS NULL/);
+  assert.deepEqual(calls[1].params, ["collectible-1", "user-1"]);
+});
+
+test("用户已有收藏品时新获得的收藏品不会自动替换携带状态", async () => {
+  let updateAttempted = false;
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.includes("COUNT(*) AS owned_count")) return [[{ owned_count: 2 }]];
+      updateAttempted = true;
+      return [{ affectedRows: 1 }];
+    }
+  };
+
+  assert.equal(await equipFirstOwnedCollectible(connection as never, "user-1", "collectible-2"), false);
+  assert.equal(updateAttempted, false);
 });
 
 test("同一拍卖重复被超价时刷新既有通知而不阻断出价事务", async () => {

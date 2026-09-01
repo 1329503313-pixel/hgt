@@ -99,6 +99,8 @@ export function AssetCardVisual({
   packType,
   selected = false,
   onClick,
+  disabled = false,
+  ariaPressed,
   ariaLabel,
   className = ""
 }: {
@@ -113,6 +115,8 @@ export function AssetCardVisual({
   packType?: AssetPackType;
   selected?: boolean;
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
+  disabled?: boolean;
+  ariaPressed?: boolean;
   ariaLabel?: string;
   className?: string;
 }) {
@@ -177,6 +181,8 @@ export function AssetCardVisual({
       onTouchStart={warmHighDetail}
       onPointerLeave={animated ? reset : undefined}
       onClick={onClick}
+      disabled={disabled}
+      aria-pressed={ariaPressed}
       style={needsVisibilityEffects ? ({
         "--legend-effect-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s`
       } as React.CSSProperties) : undefined}

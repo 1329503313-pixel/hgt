@@ -34,3 +34,26 @@ export function scoringEvaluationJoin(evaluationAlias: string, soupAlias: string
   return `LEFT JOIN evaluations ${evaluation} ON ${evaluation}.soup_id = ${soup}.id
     AND ${scoringEvaluationPredicate(evaluation, soup)}`;
 }
+
+export function scoringSoupHeatExpression(soupAlias: string) {
+  const soup = sqlAlias(soupAlias);
+  return `ROUND(
+    (COALESCE((
+      SELECT AVG(heat_score_eval.total)
+      FROM evaluations heat_score_eval
+      WHERE heat_score_eval.soup_id = ${soup}.id
+        AND ${scoringEvaluationPredicate("heat_score_eval", soup)}
+    ), 0) + 1)
+    * (
+      ${soup}.view_count
+      + ((SELECT COUNT(*) FROM soup_likes heat_like WHERE heat_like.soup_id = ${soup}.id) + 1) * 15
+      + ((SELECT COUNT(*) FROM soup_favorites heat_favorite WHERE heat_favorite.soup_id = ${soup}.id) + 1) * 20
+      + ((
+        SELECT COUNT(*)
+        FROM evaluations heat_count_eval
+        WHERE heat_count_eval.soup_id = ${soup}.id
+          AND ${scoringEvaluationPredicate("heat_count_eval", soup)}
+      ) + 1) * 25
+    ) - 60
+  )`;
+}

@@ -5288,6 +5288,9 @@ textarea {
   will-change: auto !important;
 }
 .asset-card-selected .asset-card-frame { outline: 3px solid #2563eb; outline-offset: 3px; }
+.asset-card[aria-pressed="true"] .asset-card-frame { outline-color: #f59e0b; }
+.asset-card[aria-pressed]:focus-visible .asset-card-frame { outline: 3px solid #2563eb; outline-offset: 3px; }
+.asset-card[aria-pressed]:active .asset-card-frame { transform: scale(0.98); }
 .asset-card-locked { filter: grayscale(1); opacity: 0.52; }
 
 .asset-card-number,
@@ -5481,6 +5484,28 @@ textarea {
   user-select: none;
 }
 .asset-card-new-burst-delayed { animation: asset-card-new-burst-delayed 680ms cubic-bezier(.16,1.35,.3,1) both; }
+.asset-card-up-burst {
+  position: absolute;
+  z-index: 30;
+  right: 0;
+  top: 0;
+  display: grid;
+  width: clamp(36px, 10vw, 50px);
+  aspect-ratio: 1;
+  place-items: center;
+  transform: translate(42%, -42%) rotate(8deg);
+  clip-path: polygon(50% 0%,60% 21%,75% 7%,78% 29%,98% 23%,84% 42%,100% 50%,80% 58%,95% 74%,73% 72%,73% 96%,57% 78%,48% 100%,42% 78%,22% 94%,27% 71%,3% 76%,19% 57%,0% 48%,22% 42%,5% 25%,28% 29%,27% 6%,43% 22%);
+  background: conic-gradient(from 10deg, #f97316, #facc15, #22d3ee, #8b5cf6, #ec4899, #f97316);
+  color: white;
+  font-size: clamp(11px, 3vw, 15px);
+  font-weight: 1000;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-shadow: 0 1px 2px rgb(15 23 42 / 0.75);
+  filter: drop-shadow(0 2px 2px rgb(15 23 42 / 0.35));
+  pointer-events: none;
+  user-select: none;
+}
 
 @keyframes asset-card-metal-flow { to { background-position: 0 0, 320% 50%; } }
 @keyframes asset-card-rarity-flow { to { background-position: 260% 50%; } }

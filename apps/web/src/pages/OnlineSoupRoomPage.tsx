@@ -223,6 +223,7 @@ export default function OnlineSoupRoomPage() {
   const [backgroundMusicTracks, setBackgroundMusicTracks] = useState<OnlineSoupBackgroundMusic[]>([]);
   const [backgroundMusicLoading, setBackgroundMusicLoading] = useState(false);
   const [backgroundMusicSavingId, setBackgroundMusicSavingId] = useState<string | null>(null);
+  const [coverBackgroundSaving, setCoverBackgroundSaving] = useState(false);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const [showAssistantScrollToLatest, setShowAssistantScrollToLatest] = useState(false);
   const [showQuestionModeGuide, setShowQuestionModeGuide] = useState(false);
@@ -1253,6 +1254,21 @@ export default function OnlineSoupRoomPage() {
     }
   }
 
+  async function toggleCoverBackground(mobile = false) {
+    if (coverBackgroundSaving || !snapshot) return;
+    if (mobile) setHostActionsOpen(false);
+    const enabled = !snapshot.room.coverBackgroundEnabled;
+    setCoverBackgroundSaving(true);
+    try {
+      await hostAction("cover-background", { enabled });
+      showToast(enabled ? "背景已开启" : "背景已关闭");
+    } catch {
+      // hostAction 已展示错误。
+    } finally {
+      setCoverBackgroundSaving(false);
+    }
+  }
+
   async function loadAllProgressQuestions(expectedRoundId: string | null) {
     let after = "";
     let hasMore = true;
@@ -1717,6 +1733,7 @@ export default function OnlineSoupRoomPage() {
     {!mysteryMode && snapshot.room.status !== "playing" && !aiHosted && snapshot.room.soup?.enableAiGame && <FloatingAction label="AI主持" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("ai"); }} />}
     {snapshot.room.status === "ended" && <FloatingAction tone="primary" label={mysteryMode ? "更换谜局" : "更换海龟汤"} onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
     {mysteryMode && snapshot.room.status === "playing" && <FloatingAction tone="amber" label="记录线索" onClick={() => { if (mobile) setHostActionsOpen(false); setClue(""); setClueOpen(true); }} />}
+    {snapshot.room.contentType === "soup" && <FloatingAction label={snapshot.room.coverBackgroundEnabled ? "关闭背景" : "开启背景"} disabled={coverBackgroundSaving} onClick={() => void toggleCoverBackground(mobile)} />}
     <FloatingAction tone="primary" label="背景音乐" onClick={() => { if (mobile) setHostActionsOpen(false); void openBackgroundMusic(); }} />
     <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />
   </>;
@@ -1902,7 +1919,7 @@ export default function OnlineSoupRoomPage() {
         <section className={`card relative flex min-h-0 flex-col overflow-hidden lg:order-2 ${impostorNightMode ? "impostor-night-chat" : ""}`}>
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">{impostorMode ? "游戏者自由讨论；旁观者保持只读" : mysteryMode ? "讨论、房主行动和故事回应会实时同步" : "讨论、正式提问、主持人回复和线索会实时同步"}</p></div>
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            {snapshot.room.contentType === "soup" && snapshot.room.soup?.coverImage && <img
+            {snapshot.room.contentType === "soup" && snapshot.room.coverBackgroundEnabled && snapshot.room.soup?.coverImage && <img
               src={snapshot.room.soup.coverImage}
               alt=""
               aria-hidden="true"
@@ -1949,14 +1966,27 @@ export default function OnlineSoupRoomPage() {
               <ChevronDown size={24} strokeWidth={2.5} />
             </button>}
           </div>
-          {canDiscuss && <div className="relative shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
-            {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-40 border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><VipIdentity nickname={impostorMemberName(member)} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></span></button>)}</div></div>}
+          {canDiscuss && <div className="relative z-[60] shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
+            {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-[65] border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><VipIdentity nickname={impostorMemberName(member)} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></span></button>)}</div></div>}
             {replyingTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-2"><Reply size={16} className="shrink-0 text-primary" /><p className="min-w-0 flex-1 truncate text-xs text-muted"><span className="font-bold text-primary">回复 {replyingTo.senderName ?? "已注销用户"}：</span>{onlineMessagePreview(replyingTo)}</p><button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-white hover:text-ink" onClick={() => setReplyingTo(null)} aria-label="取消回复"><X size={16} /></button></div>}
             <div className="flex items-end gap-1">
               {!impostorMode && (mysteryMode ? isHost : snapshot.me.role === "player") && <div className="relative shrink-0">
-                {showQuestionModeGuide && <div className="question-mode-guide absolute bottom-[calc(100%+14px)] left-0 z-50 w-56 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
+                {showQuestionModeGuide && <div className="question-mode-guide absolute bottom-[calc(100%+14px)] left-0 z-[70] w-56 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
                   {mysteryMode ? "房主可点击此处切换为正式行动" : "如需要提问，请点击此按钮变更为提问"}
-                  <button type="button" className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full text-slate-300 transition hover:bg-white/10 hover:text-white" onClick={() => setShowQuestionModeGuide(false)} aria-label="关闭提问指引"><X size={14} /></button>
+                  <button
+                    type="button"
+                    className="pointer-events-auto absolute right-0 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full text-slate-300 transition-colors hover:bg-white/10 hover:text-white active:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setShowQuestionModeGuide(false);
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setShowQuestionModeGuide(false);
+                    }}
+                    aria-label="关闭提问指引"
+                  ><X size={16} /></button>
                   <span className="absolute -bottom-1.5 left-6 h-3 w-3 rotate-45 bg-slate-900" aria-hidden="true" />
                 </div>}
                 <button
@@ -2241,7 +2271,7 @@ const MessageItem = memo(function MessageItem({ message, currentUserId, senderMu
   const senderDisplayName = `${impostorMode && message.impostorSeat ? `${message.impostorSeat}号 ` : ""}${message.senderName ?? "未知用户"}`;
   if (message.recalledAt) return <RecalledMessageNotice mine={mine} senderName={senderDisplayName} />;
   if (message.type === "gift" && message.gift) return <div className={`flex ${mine ? "justify-end" : "justify-start"}`}><GiftMessageCard gift={message.gift} /></div>;
-  if (message.type === "system") return <div className="room-system-message py-1 text-center text-xs font-bold text-muted">— {message.senderId && message.content.endsWith("进入了房间") ? <><VipIdentity nickname={message.senderName ?? "用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} showUserLevel={false} className="mx-1 inline-flex" /><span>进入了房间</span></> : message.content} {message.targetMessageId && !isHost && <button type="button" className="ml-1 font-black text-primary underline-offset-2 hover:underline" onClick={() => void onLocate(message.targetMessageId!)} aria-label={`定位到${message.content.match(/#\d+/)?.[0] ?? "被变更回答的提问"}`}>【定位】</button>} —</div>;
+  if (message.type === "system") return <div className="room-system-message py-1 text-center text-xs font-bold text-muted">— {message.senderId && message.content.endsWith("进入了房间") ? <><VipIdentity nickname={message.senderName ?? "用户"} vipLevel={message.senderVipLevel} vipActive={message.senderVipActive} showUserLevel={false} className="mx-1 inline-flex" />{message.entryCollectible ? <><span>携带着</span><span className={`mx-1 font-black ${message.entryCollectible.rarity === "legend" ? "vip-name-rainbow" : "text-amber-700"}`}>{message.entryCollectible.name}</span><span>进入了房间</span></> : <span>进入了房间</span>}</> : message.content} {message.targetMessageId && !isHost && <button type="button" className="ml-1 font-black text-primary underline-offset-2 hover:underline" onClick={() => void onLocate(message.targetMessageId!)} aria-label={`定位到${message.content.match(/#\d+/)?.[0] ?? "被变更回答的提问"}`}>【定位】</button>} —</div>;
   if (message.type === "ai_honor" && message.aiHonors) return <OnlineSoupHonorCard honors={message.aiHonors} onOpenUser={onOpenUser} />;
   if (message.type === "ai_advice") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><Sparkles size={17} />AI 主持建议</div><ul className="mt-2 space-y-1.5 text-sm leading-6 text-slate-700">{message.content.split("\n").filter(Boolean).map((line) => <li key={line} className="flex gap-2"><span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /><span>{line}</span></li>)}</ul></article>;
   if (message.type === "mystery_narrative") return <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-white to-blue-50 p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-black text-blue-800"><BookOpen size={17} />故事回应</div><p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-ink">{message.content}</p></article>;

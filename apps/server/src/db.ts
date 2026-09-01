@@ -486,6 +486,29 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_shell_grants (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      operator_id VARCHAR(64) NOT NULL,
+      notification_id VARCHAR(64) NOT NULL,
+      transaction_id VARCHAR(64) NULL,
+      source_type ENUM('single','bulk') NOT NULL,
+      amount INT UNSIGNED NOT NULL,
+      expires_at DATETIME(3) NOT NULL,
+      claimed_at DATETIME(3) NULL,
+      expired_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_admin_shell_grants_user_pending (user_id, claimed_at, expired_at, expires_at),
+      INDEX idx_admin_shell_grants_expiry (claimed_at, expired_at, expires_at),
+      UNIQUE KEY uq_admin_shell_grant_notification (notification_id),
+      UNIQUE KEY uq_admin_shell_grant_transaction (transaction_id),
+      CONSTRAINT fk_admin_shell_grant_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_admin_shell_grant_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_admin_shell_grant_notification FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   await pool.query("ALTER TABLE soups MODIFY COLUMN title LONGTEXT NOT NULL");
   await ensureColumn("soups", "summary", "summary VARCHAR(40) NOT NULL DEFAULT '' AFTER type");
   await pool.query("ALTER TABLE soups MODIFY COLUMN summary VARCHAR(40) NOT NULL DEFAULT ''");
@@ -931,6 +954,7 @@ export async function initDatabase() {
       current_round_id VARCHAR(64) NULL,
       current_background_music_id VARCHAR(64) NULL,
       background_music_started_at DATETIME(3) NULL,
+      cover_background_enabled TINYINT(1) NOT NULL DEFAULT 1,
       last_action_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       host_last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       host_grace_started_at DATETIME NULL,
@@ -1141,6 +1165,8 @@ export async function initDatabase() {
       sender_id VARCHAR(64) NULL,
       message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor','mystery_narrative') NOT NULL,
       content TEXT NOT NULL,
+      entry_collectible_name VARCHAR(120) NULL,
+      entry_collectible_rarity ENUM('legend','epic') NULL,
       sticker_id VARCHAR(64) NULL,
       gift_send_id VARCHAR(64) NULL,
       content_index INT UNSIGNED NULL,
@@ -1204,6 +1230,7 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rooms", "current_mystery_run_id", "current_mystery_run_id VARCHAR(64) NULL AFTER current_mystery_id");
   await ensureColumn("online_soup_rooms", "current_background_music_id", "current_background_music_id VARCHAR(64) NULL AFTER current_round_id");
   await ensureColumn("online_soup_rooms", "background_music_started_at", "background_music_started_at DATETIME(3) NULL AFTER current_background_music_id");
+  await ensureColumn("online_soup_rooms", "cover_background_enabled", "cover_background_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER background_music_started_at");
   await ensureColumn(
     "online_soup_rounds",
     "host_mode",
@@ -1433,6 +1460,16 @@ export async function initDatabase() {
     "online_soup_messages",
     "content_index",
     "content_index INT UNSIGNED NULL AFTER content"
+  );
+  await ensureColumn(
+    "online_soup_messages",
+    "entry_collectible_name",
+    "entry_collectible_name VARCHAR(120) NULL AFTER content"
+  );
+  await ensureColumn(
+    "online_soup_messages",
+    "entry_collectible_rarity",
+    "entry_collectible_rarity ENUM('legend','epic') NULL AFTER entry_collectible_name"
   );
   await ensureColumn(
     "online_soup_messages",
@@ -2696,6 +2733,22 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_asset_pack_up_selections (
+      user_id VARCHAR(64) NOT NULL,
+      pack_id VARCHAR(64) NOT NULL,
+      up_card_id VARCHAR(64) NOT NULL,
+      epic_guaranteed TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, pack_id),
+      INDEX idx_asset_pack_up_card (up_card_id),
+      CONSTRAINT fk_asset_pack_up_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_asset_pack_up_pack FOREIGN KEY (pack_id) REFERENCES asset_packs(id) ON DELETE CASCADE,
+      CONSTRAINT fk_asset_pack_up_card FOREIGN KEY (up_card_id) REFERENCES asset_cards(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS asset_daily_free_usage (
       user_id VARCHAR(64) NOT NULL,
       pack_id VARCHAR(64) NOT NULL,
@@ -2806,6 +2859,50 @@ export async function initDatabase() {
       CONSTRAINT fk_collectible_transfer_operator FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("users", "equipped_collectible_id", "equipped_collectible_id VARCHAR(64) NULL AFTER equipped_badge_icon_url");
+  const COLLECTIBLE_EQUIPMENT_BACKFILL = "collectible-equipment-backfill-v1";
+  const [[collectibleEquipmentBackfill]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT migration_key FROM app_data_migrations WHERE migration_key = ? LIMIT 1",
+    [COLLECTIBLE_EQUIPMENT_BACKFILL]
+  );
+  if (!collectibleEquipmentBackfill) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query(`
+        UPDATE users target
+        JOIN (
+          SELECT owner_user_id, id
+          FROM (
+            SELECT c.owner_user_id, c.id,
+              ROW_NUMBER() OVER (
+                PARTITION BY c.owner_user_id
+                ORDER BY COALESCE((
+                  SELECT MAX(t.created_at)
+                  FROM collectible_transfers t
+                  WHERE t.collectible_id = c.id AND t.to_user_id = c.owner_user_id
+                ), c.created_at), CAST(c.collectible_no AS UNSIGNED), c.collectible_no, c.id
+              ) AS equipment_order
+            FROM collectibles c
+            WHERE c.owner_user_id IS NOT NULL AND c.status = 'owned' AND c.deleted_at IS NULL
+          ) ranked
+          WHERE equipment_order = 1
+        ) first_collectible ON first_collectible.owner_user_id = target.id
+        SET target.equipped_collectible_id = first_collectible.id
+        WHERE target.equipped_collectible_id IS NULL
+      `);
+      await connection.query(
+        "INSERT IGNORE INTO app_data_migrations (migration_key) VALUES (?)",
+        [COLLECTIBLE_EQUIPMENT_BACKFILL]
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS collectible_pack_bindings (
       collectible_id VARCHAR(64) PRIMARY KEY,

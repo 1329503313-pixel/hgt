@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PROFILE_SOUP_ORDER_SQL, PROFILE_SOUP_PIN_LIMIT, profilePinEvictionIds } from "./soupProfilePins.js";
+import { MY_SOUP_ORDER_SQL, PROFILE_SOUP_ORDER_SQL, PROFILE_SOUP_PIN_LIMIT, profilePinEvictionIds } from "./soupProfilePins.js";
 
 test("个人主页最多保留四个置顶作品并淘汰最早置顶项", () => {
   const pinnedSoups = [
@@ -34,4 +34,9 @@ test("个人主页先展示置顶作品且置顶组按发布时间倒序", () =>
     PROFILE_SOUP_ORDER_SQL,
     "s.profile_pinned_at IS NOT NULL DESC, s.created_at DESC, s.id DESC",
   );
+});
+
+test("我的作品及其他非主页列表不应用主页置顶排序", () => {
+  assert.equal(MY_SOUP_ORDER_SQL, "s.created_at DESC, s.id DESC");
+  assert.doesNotMatch(MY_SOUP_ORDER_SQL, /profile_pinned_at/);
 });

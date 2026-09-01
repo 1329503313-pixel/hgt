@@ -34,5 +34,5 @@ export function remainingQuestionCountAfterAcceptedQuestion(rawLimit: unknown, r
 
 export function onlineSoupQuestionLimitStartNotice(rawLimit: unknown) {
   const limit = onlineSoupQuestionLimitState(rawLimit, 0, 0).limit;
-  return limit === null ? "本局游戏不限次数" : `本局游戏限${limit}次`;
+  return limit === null ? "游戏开始，本局游戏不限次数" : `游戏开始，本局游戏限${limit}次`;
 }

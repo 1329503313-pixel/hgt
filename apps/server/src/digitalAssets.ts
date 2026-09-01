@@ -109,6 +109,7 @@ type PackType = "permanent" | "limited" | "collaboration";
 type PityScope = PackType;
 type PityType = "rare" | "epic" | "legend";
 type PityState = { rare_count: number; epic_count: number; legend_count: number };
+type EpicUpState = { cardId: string; guaranteed: boolean };
 
 const RARITY_RANK: Record<Rarity, number> = { normal: 0, rare: 1, epic: 2, legend: 3 };
 const RARITY_LABELS: Record<Rarity, string> = { normal: "普通", rare: "稀有", epic: "史诗", legend: "传说" };
@@ -383,7 +384,30 @@ function updatePity(current: PityState, drawn: Rarity) {
   };
 }
 
-function chooseWeighted(cards: mysql.RowDataPacket[], probabilities: Record<Rarity, number>, minimum: PityType | null) {
+function chooseEpicUpCard(
+  cards: mysql.RowDataPacket[],
+  upCardId: string,
+  guaranteed: boolean,
+  randomIndex: (maxExclusive: number) => number = randomInt
+) {
+  const upCard = cards.find((card) => String(card.id) === upCardId);
+  if (!upCard) throw new Error("ASSET_UP_CARD_INVALID");
+  const nonUpCards = cards.filter((card) => String(card.id) !== upCardId);
+  const hitUp = guaranteed || nonUpCards.length === 0 || randomIndex(2) === 0;
+  return {
+    card: hitUp ? upCard : nonUpCards[randomIndex(nonUpCards.length)],
+    hitUp,
+    guaranteedBefore: guaranteed,
+    guaranteedNext: !hitUp
+  };
+}
+
+function chooseWeighted(
+  cards: mysql.RowDataPacket[],
+  probabilities: Record<Rarity, number>,
+  minimum: PityType | null,
+  epicUp: EpicUpState | null = null
+) {
   const minRank = minimum ? RARITY_RANK[minimum] : 0;
   const eligibleRarities = (Object.keys(RARITY_RANK) as Rarity[]).filter((candidate) =>
     RARITY_RANK[candidate] >= minRank && cards.some((card) => rarity(card.rarity) === candidate)
@@ -400,9 +424,22 @@ function chooseWeighted(cards: mysql.RowDataPacket[], probabilities: Record<Rari
     }
   }
   const rarityCards = cards.filter((card) => rarity(card.rarity) === selectedRarity);
-  const card = rarityCards[randomInt(rarityCards.length)];
+  const epicUpResult = selectedRarity === "epic" && epicUp
+    ? chooseEpicUpCard(rarityCards, epicUp.cardId, epicUp.guaranteed)
+    : null;
+  const card = epicUpResult?.card ?? rarityCards[randomInt(rarityCards.length)];
   const rarityProbability = total > 0 ? probabilities[selectedRarity] / total : 1;
-  return { card, normalizedProbability: rarityProbability / rarityCards.length, originalProbability: probabilities[selectedRarity] / rarityCards.length };
+  const cardShare = epicUpResult
+    ? epicUpResult.guaranteedBefore || rarityCards.length === 1
+      ? 1
+      : epicUpResult.hitUp ? 0.5 : 0.5 / (rarityCards.length - 1)
+    : 1 / rarityCards.length;
+  return {
+    card,
+    normalizedProbability: rarityProbability * cardShare,
+    originalProbability: probabilities[selectedRarity] * cardShare,
+    epicUpResult
+  };
 }
 
 async function packConfiguration(
@@ -445,9 +482,19 @@ async function packConfiguration(
   return { cards, enabled, rarityProbabilities, probabilityTotal, hasRare, hasEpic, hasLegend, ready };
 }
 
-function actualCardProbability(configuration: Awaited<ReturnType<typeof packConfiguration>>, card: mysql.RowDataPacket) {
+function actualCardProbability(
+  configuration: Awaited<ReturnType<typeof packConfiguration>>,
+  card: mysql.RowDataPacket,
+  epicUp: EpicUpState | null = null
+) {
   const cardRarity = rarity(card.rarity);
   const count = configuration.enabled.filter((candidate) => rarity(candidate.rarity) === cardRarity).length;
+  if (cardRarity === "epic" && epicUp && count > 0) {
+    if (count === 1 || epicUp.guaranteed) {
+      return String(card.id) === epicUp.cardId ? configuration.rarityProbabilities.epic : 0;
+    }
+    return configuration.rarityProbabilities.epic * (String(card.id) === epicUp.cardId ? 0.5 : 0.5 / (count - 1));
+  }
   return count > 0 ? configuration.rarityProbabilities[cardRarity] / count : 0;
 }
 
@@ -460,8 +507,44 @@ function probabilityDisclosure(configuration: Awaited<ReturnType<typeof packConf
     const count = configuration.enabled.filter((card) => rarity(card.rarity) === candidate).length;
     const rarityProbability = configuration.rarityProbabilities[candidate];
     const actualProbability = count > 0 ? rarityProbability / count : 0;
+    if (candidate === "epic" && count > 0) {
+      return count === 1
+        ? `${RARITY_LABELS[candidate]}：${formatProbability(rarityProbability)}%（1张，唯一史诗卡为UP，史诗结果必定为该卡）`
+        : `${RARITY_LABELS[candidate]}：${formatProbability(rarityProbability)}%（${count}张，当前UP占史诗结果50%，其余${count - 1}张平分另外50%；抽到非UP后下一张史诗必出UP）`;
+    }
     return `${RARITY_LABELS[candidate]}：${formatProbability(rarityProbability)}%（${count}张，每张实际概率${formatProbability(actualProbability)}%）`;
   }).join("\n");
+}
+
+async function userPackEpicUpState(
+  userId: string,
+  packId: string,
+  configuration: Awaited<ReturnType<typeof packConfiguration>>,
+  connection: mysql.Pool | mysql.PoolConnection = pool,
+  lock = false
+): Promise<EpicUpState | null> {
+  const epicCards = configuration.enabled.filter((card) => rarity(card.rarity) === "epic");
+  const defaultCard = epicCards[0];
+  if (!defaultCard) return null;
+  const queryable = connection as mysql.PoolConnection;
+  await queryable.query(
+    `INSERT IGNORE INTO user_asset_pack_up_selections (user_id, pack_id, up_card_id, epic_guaranteed)
+     VALUES (?, ?, ?, 0)`,
+    [userId, packId, defaultCard.id]
+  );
+  const [[row]] = await queryable.query<mysql.RowDataPacket[]>(
+    `SELECT up_card_id, epic_guaranteed FROM user_asset_pack_up_selections
+     WHERE user_id = ? AND pack_id = ? LIMIT 1${lock ? " FOR UPDATE" : ""}`,
+    [userId, packId]
+  );
+  const selectedCard = epicCards.find((card) => String(card.id) === String(row?.up_card_id)) ?? defaultCard;
+  if (String(selectedCard.id) !== String(row?.up_card_id)) {
+    await queryable.query(
+      "UPDATE user_asset_pack_up_selections SET up_card_id = ? WHERE user_id = ? AND pack_id = ?",
+      [selectedCard.id, userId, packId]
+    );
+  }
+  return { cardId: String(selectedCard.id), guaranteed: bool(row?.epic_guaranteed) };
 }
 
 async function syncCardPacks(cardId: string, packIds: string[], connection: mysql.PoolConnection) {
@@ -580,6 +663,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
     if (packStatus(pack) !== "on_sale") throw new Error("ASSET_PACK_NOT_ON_SALE");
     const configuration = await packConfiguration(packId, connection);
     if (!configuration.ready) throw new Error("ASSET_PACK_CONFIGURATION_INVALID");
+    const epicUpState = await userPackEpicUpState(userId, packId, configuration, connection, true);
 
     const drawCount = mode === "ten" ? 10 : 1;
     const [[userRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT shell_balance, role FROM users WHERE id = ? FOR UPDATE", [userId]);
@@ -636,7 +720,8 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
       dailyFreeDraws: Number(pack.daily_free_draws),
       cards: configuration.enabled.map((card) => ({ cardId: card.id, rarity: card.rarity })),
       rarityProbabilities: configuration.rarityProbabilities,
-      pityLimits: PITY_LIMITS
+      pityLimits: PITY_LIMITS,
+      epicUpSelection: epicUpState
     });
     await connection.query(
       `INSERT INTO asset_draw_orders
@@ -687,7 +772,13 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
 
     for (let index = 1; index <= drawCount; index += 1) {
       const triggeredPity = pityTrigger(pityState);
-      const { card, normalizedProbability, originalProbability } = chooseWeighted(configuration.enabled, configuration.rarityProbabilities, triggeredPity);
+      const { card, normalizedProbability, originalProbability, epicUpResult } = chooseWeighted(
+        configuration.enabled,
+        configuration.rarityProbabilities,
+        triggeredPity,
+        epicUpState
+      );
+      if (epicUpState && epicUpResult) epicUpState.guaranteed = epicUpResult.guaranteedNext;
       const cardRarity = rarity(card.rarity);
       const [[owned]] = await connection.query<mysql.RowDataPacket[]>(
         "SELECT * FROM user_asset_cards WHERE user_id = ? AND card_id = ? FOR UPDATE",
@@ -746,7 +837,17 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
         [
           nanoid(), orderId, index, card.id, cardRarity, triggeredPity, starBefore, starAfter,
           firstObtained ? 1 : 0, starUpgraded ? 1 : 0, fullStarDuplicate ? 1 : 0, shellRefund,
-          JSON.stringify({ originalProbability, normalizedProbability, rarityProbability: configuration.rarityProbabilities[cardRarity], pityType: triggeredPity })
+          JSON.stringify({
+            originalProbability,
+            normalizedProbability,
+            rarityProbability: configuration.rarityProbabilities[cardRarity],
+            pityType: triggeredPity,
+            ...(epicUpResult ? {
+              upCardId: epicUpState?.cardId,
+              upHit: epicUpResult.hitUp,
+              upGuaranteed: epicUpResult.guaranteedBefore
+            } : {})
+          })
         ]
       );
       await awardCollectiblesForDraw(connection, userId, packId, orderId, index, completedDrawCountBeforeOrder + index - 1);
@@ -757,6 +858,13 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
        WHERE user_id = ? AND pack_type = ?`,
       [pityState.rare_count, pityState.epic_count, pityState.legend_count, userId, pityScope]
     );
+    if (epicUpState) {
+      await connection.query(
+        `UPDATE user_asset_pack_up_selections SET epic_guaranteed = ?
+         WHERE user_id = ? AND pack_id = ?`,
+        [epicUpState.guaranteed ? 1 : 0, userId, packId]
+      );
+    }
     if (collectionDelta > 0 || unlockedDelta > 0) {
       await connection.query(
         `UPDATE user_asset_summaries
@@ -876,6 +984,7 @@ function errorMessage(error: unknown) {
     ASSET_PACK_NOT_ON_SALE: "卡包当前不可抽取，请刷新商城",
     ASSET_PACK_CONFIGURATION_INVALID: "卡包配置不完整，暂时无法抽取",
     ASSET_PACK_PITY_CONFIGURATION_INVALID: "卡包缺少保底品质卡片",
+    ASSET_UP_CARD_INVALID: "请选择当前卡包中的史诗卡作为UP",
     ASSET_INSUFFICIENT_SHELLS: "贝壳余额不足",
     ASSET_USER_NOT_FOUND: "用户不存在",
     ASSET_REQUEST_ID_CONFLICT: "请求编号冲突，请重试",
@@ -1006,7 +1115,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
     const pityScope = pityScopeForPackType(pack.pack_type);
-    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus, collectibleRewards, drawCountRows] = await Promise.all([
+    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus, collectibleRewards, drawCountRows, epicUpState] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, pityScope]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
@@ -1016,7 +1125,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       pool.query<mysql.RowDataPacket[]>(
         "SELECT COALESCE(SUM(draw_count), 0) AS total_draw_count FROM asset_draw_count_events WHERE user_id = ? AND pack_id = ?",
         [user.id, pack.id]
-      ).then(([rows]) => rows)
+      ).then(([rows]) => rows),
+      userPackEpicUpState(user.id, String(pack.id), configuration)
     ]);
     const pity = pityRows[0];
     const usage = usageRows[0];
@@ -1035,6 +1145,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - Number(usage?.used_count ?? 0)) + (extraFreeStatus.remaining ?? 0),
         freeDrawsUnlimited: extraFreeStatus.remaining == null,
         totalDrawCount: Number(drawCountRows[0]?.total_draw_count ?? 0),
+        upCardId: epicUpState?.cardId ?? null,
+        epicUpGuaranteed: epicUpState?.guaranteed ?? false,
         pity: {
           rare: Number(pity?.rare_count ?? 0), epic: Number(pity?.epic_count ?? 0), legend: Number(pity?.legend_count ?? 0),
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend
@@ -1047,13 +1159,49 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           const starLevel = ownedStarLevels.get(String(card.id));
           return {
             ...cardPayload({ ...card, story: "" }, true),
-            actualProbability: actualCardProbability(configuration, card),
+            actualProbability: actualCardProbability(configuration, card, epicUpState),
             owned: starLevel != null,
             ...(starLevel == null ? {} : { starLevel })
           };
         })
       }
     });
+  });
+
+  app.post("/api/asset-store/packs/:id/up-card", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const parsed = z.object({ cardId: z.string().trim().min(1).max(64) }).safeParse(req.body);
+    if (!parsed.success) return sendError(res, 400, "UP卡牌请求无效");
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[pack]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT id, pack_type, enabled, sale_start_at, sale_end_at FROM asset_packs WHERE id = ? FOR UPDATE",
+        [req.params.id]
+      );
+      if (!pack) throw new Error("ASSET_PACK_NOT_FOUND");
+      if (packStatus(pack) !== "on_sale") throw new Error("ASSET_PACK_NOT_ON_SALE");
+      const configuration = await packConfiguration(req.params.id, connection);
+      const selectedCard = configuration.enabled.find((card) =>
+        String(card.id) === parsed.data.cardId && rarity(card.rarity) === "epic"
+      );
+      if (!selectedCard) throw new Error("ASSET_UP_CARD_INVALID");
+      const current = await userPackEpicUpState(user.id, req.params.id, configuration, connection, true);
+      if (!current) throw new Error("ASSET_UP_CARD_INVALID");
+      await connection.query(
+        "UPDATE user_asset_pack_up_selections SET up_card_id = ? WHERE user_id = ? AND pack_id = ?",
+        [selectedCard.id, user.id, req.params.id]
+      );
+      await connection.commit();
+      res.json({ upCardId: String(selectedCard.id), epicUpGuaranteed: current.guaranteed });
+    } catch (error) {
+      await connection.rollback();
+      const message = errorMessage(error);
+      return sendError(res, message.includes("不存在") ? 404 : 400, message);
+    } finally {
+      connection.release();
+    }
   });
 
   app.post("/api/asset-store/packs/:id/draw", async (req, res) => {
@@ -1868,5 +2016,6 @@ export const digitalAssetRules = {
   assetRankingVipIdentity,
   pityTrigger,
   pityScopeForPackType,
-  updatePity
+  updatePity,
+  chooseEpicUpCard
 };

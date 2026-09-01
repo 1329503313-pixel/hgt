@@ -35,6 +35,13 @@ export function bulkShellAdjustmentUserRoles(operation: "add" | "deduct"): reado
   return operation === "add" ? BULK_SHELL_GRANT_USER_ROLES : ["user"];
 }
 
+export function adminShellGrantExpiresAt(createdAt: Date, claimDays: number) {
+  if (!Number.isSafeInteger(claimDays) || claimDays <= 0) throw new Error("ADMIN_SHELL_CLAIM_DAYS_INVALID");
+  const expiresAt = new Date(createdAt.getTime() + claimDays * 24 * 60 * 60 * 1000);
+  if (!Number.isFinite(expiresAt.getTime())) throw new Error("ADMIN_SHELL_CLAIM_DAYS_INVALID");
+  return expiresAt;
+}
+
 export type ShellTaskType =
   | "daily_login"
   | "publish_soup"
@@ -644,6 +651,214 @@ export async function adjustShellBalance(userId: string, operatorId: string, ope
     await connection.commit();
     reportBadgeProgress(userId);
     return { balance: balanceAfter };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export type AdminShellGrantIssueResult = {
+  matchedCount: number;
+  issuedCount: number;
+  claimedCount: number;
+  pendingCount: number;
+  skippedCount: number;
+  issuedUserIds: string[];
+  claimedUserIds: string[];
+  expiresAt: string;
+  balances: Record<string, number>;
+};
+
+export async function issueAdminShellGrants(
+  userIds: string[],
+  operatorId: string,
+  amount: number,
+  claimDays: number,
+  immediateUserIds: ReadonlySet<string>,
+  sourceType: "single" | "bulk",
+): Promise<AdminShellGrantIssueResult> {
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error("SHELL_AMOUNT_INVALID");
+  const createdAt = new Date();
+  const expiresAt = adminShellGrantExpiresAt(createdAt, claimDays);
+  if (userIds.length === 0) return {
+    matchedCount: 0, issuedCount: 0, claimedCount: 0, pendingCount: 0, skippedCount: 0,
+    issuedUserIds: [], claimedUserIds: [], expiresAt: expiresAt.toISOString(), balances: {},
+  };
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const placeholders = userIds.map(() => "?").join(",");
+    const roles = bulkShellAdjustmentUserRoles("add");
+    const rolePlaceholders = roles.map(() => "?").join(",");
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, shell_balance FROM users
+       WHERE role IN (${rolePlaceholders}) AND id IN (${placeholders})
+       FOR UPDATE`,
+      [...roles, ...userIds],
+    );
+    const grants = rows.map((row) => {
+      const userId = String(row.id);
+      const immediate = immediateUserIds.has(userId);
+      const balance = Number(row.shell_balance ?? 0);
+      const balanceAfter = immediate ? balance + amount : balance;
+      if (!Number.isSafeInteger(balanceAfter) || balanceAfter > 4_294_967_295) throw new Error("SHELL_BALANCE_OVERFLOW");
+      return {
+        id: nanoid(), userId, notificationId: nanoid(), transactionId: immediate ? nanoid() : null,
+        immediate, balanceAfter,
+      };
+    });
+    const immediate = grants.filter((grant) => grant.immediate);
+    for (const grant of immediate) {
+      await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [grant.balanceAfter, grant.userId]);
+    }
+    if (grants.length > 0) {
+      await connection.query(
+        `INSERT INTO notifications (id, user_id, type, title, content, related_id, actor_id)
+         VALUES ${grants.map(() => "(?, ?, 'shell_adjustment', ?, ?, ?, ?)").join(",")}`,
+        grants.flatMap((grant) => [
+          grant.notificationId,
+          grant.userId,
+          grant.immediate ? "贝壳到账通知" : "贝壳待领取通知",
+          grant.immediate
+            ? `管理员向你发放了 ${amount} 贝壳，已立即到账，当前余额 ${grant.balanceAfter} 贝壳。`
+            : `管理员向你发放了 ${amount} 贝壳，请在 ${claimDays} 天内登录领取；超过领取时限后将自动过期。`,
+          grant.id,
+          operatorId,
+        ]),
+      );
+      await connection.query(
+        `INSERT INTO admin_shell_grants
+          (id, user_id, operator_id, notification_id, transaction_id, source_type, amount, expires_at, claimed_at)
+         VALUES ${grants.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(",")}`,
+        grants.flatMap((grant) => [
+          grant.id, grant.userId, operatorId, grant.notificationId, grant.transactionId,
+          sourceType, amount, expiresAt, grant.immediate ? createdAt : null,
+        ]),
+      );
+    }
+    if (immediate.length > 0) {
+      await connection.query(
+        `INSERT INTO shell_transactions
+          (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, operator_id)
+         VALUES ${immediate.map(() => "(?, ?, 'admin_add', ?, ?, 'admin_shell_grant', ?, '管理员发放（登录领取）', ?)").join(",")}`,
+        immediate.flatMap((grant) => [grant.transactionId, grant.userId, amount, grant.balanceAfter, grant.id, operatorId]),
+      );
+    }
+    await connection.commit();
+    reportBadgeProgress(immediate.map((grant) => grant.userId));
+    return {
+      matchedCount: rows.length,
+      issuedCount: grants.length,
+      claimedCount: immediate.length,
+      pendingCount: grants.length - immediate.length,
+      skippedCount: userIds.length - rows.length,
+      issuedUserIds: grants.map((grant) => grant.userId),
+      claimedUserIds: immediate.map((grant) => grant.userId),
+      expiresAt: expiresAt.toISOString(),
+      balances: Object.fromEntries(grants.map((grant) => [grant.userId, grant.balanceAfter])),
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function expireAdminShellGrants(userId?: string) {
+  const params: string[] = [];
+  const userClause = userId ? "AND grants.user_id = ?" : "";
+  if (userId) params.push(userId);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT grants.id, grants.user_id
+     FROM admin_shell_grants grants
+     WHERE grants.claimed_at IS NULL AND grants.expired_at IS NULL
+       AND grants.expires_at <= UTC_TIMESTAMP(3) ${userClause}`,
+    params,
+  );
+  if (rows.length === 0) return [] as string[];
+  const ids = rows.map((row) => String(row.id));
+  const placeholders = ids.map(() => "?").join(",");
+  await pool.query(
+    `UPDATE admin_shell_grants grants
+     INNER JOIN notifications notification ON notification.id = grants.notification_id
+     SET grants.expired_at = UTC_TIMESTAMP(3),
+         notification.title = '贝壳领取已过期',
+         notification.content = CONCAT('管理员发放的 ', grants.amount, ' 贝壳已超过领取时限，本次发放已过期。'),
+         notification.is_read = FALSE
+     WHERE grants.id IN (${placeholders})
+       AND grants.claimed_at IS NULL AND grants.expired_at IS NULL
+       AND grants.expires_at <= UTC_TIMESTAMP(3)`,
+    ids,
+  );
+  return [...new Set(rows.map((row) => String(row.user_id)))];
+}
+
+export async function claimAdminShellGrantsOnLogin(userId: string) {
+  const expiredGrantChanged = (await expireAdminShellGrants(userId)).includes(userId);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[user]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT shell_balance FROM users WHERE id = ? FOR UPDATE",
+      [userId],
+    );
+    if (!user) throw new Error("SHELL_USER_NOT_FOUND");
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      `SELECT id, notification_id, operator_id, amount
+       FROM admin_shell_grants
+       WHERE user_id = ? AND claimed_at IS NULL AND expired_at IS NULL
+         AND expires_at > UTC_TIMESTAMP(3)
+       ORDER BY created_at ASC, id ASC
+       FOR UPDATE`,
+      [userId],
+    );
+    if (rows.length === 0) {
+      await connection.commit();
+      return { claimedCount: 0, claimedAmount: 0, balance: Number(user.shell_balance ?? 0), expiredGrantChanged };
+    }
+    let balance = Number(user.shell_balance ?? 0);
+    const transactions = rows.map((row) => {
+      balance += Number(row.amount);
+      if (!Number.isSafeInteger(balance) || balance > 4_294_967_295) throw new Error("SHELL_BALANCE_OVERFLOW");
+      return {
+        id: nanoid(), grantId: String(row.id), notificationId: String(row.notification_id),
+        operatorId: String(row.operator_id), amount: Number(row.amount), balanceAfter: balance,
+      };
+    });
+    await connection.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balance, userId]);
+    await connection.query(
+      `INSERT INTO shell_transactions
+        (id, user_id, transaction_type, amount, balance_after, related_type, related_id, remark, operator_id)
+       VALUES ${transactions.map(() => "(?, ?, 'admin_add', ?, ?, 'admin_shell_grant', ?, '管理员发放（登录领取）', ?)").join(",")}`,
+      transactions.flatMap((item) => [item.id, userId, item.amount, item.balanceAfter, item.grantId, item.operatorId]),
+    );
+    for (const transaction of transactions) {
+      await connection.query(
+        "UPDATE admin_shell_grants SET claimed_at = UTC_TIMESTAMP(3), transaction_id = ? WHERE id = ? AND claimed_at IS NULL AND expired_at IS NULL",
+        [transaction.id, transaction.grantId],
+      );
+    }
+    for (const transaction of transactions) {
+      await connection.query(
+        `UPDATE notifications
+         SET title = '贝壳到账通知',
+             content = CONCAT('你已登录并领取管理员发放的 ', ?, ' 贝壳，当前余额 ', ?, ' 贝壳。'),
+             is_read = FALSE
+         WHERE id = ?`,
+        [transaction.amount, balance, transaction.notificationId],
+      );
+    }
+    await connection.commit();
+    reportBadgeProgress(userId);
+    return {
+      claimedCount: rows.length,
+      claimedAmount: rows.reduce((sum, row) => sum + Number(row.amount), 0),
+      balance,
+      expiredGrantChanged,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;

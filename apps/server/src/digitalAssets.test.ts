@@ -44,6 +44,40 @@ test("高品质卡同时重置覆盖的低品质保底", () => {
   assert.deepEqual(digitalAssetRules.updatePity(state, "legend"), { rare: 0, epic: 0, legend: 0 });
 });
 
+test("史诗UP按50%命中，歪后下一张史诗必定命中当前UP", () => {
+  const cards = [
+    { id: "epic-a" },
+    { id: "epic-b" },
+    { id: "epic-c" }
+  ] as never;
+  const hit = digitalAssetRules.chooseEpicUpCard(cards, "epic-a", false, () => 0);
+  assert.equal(hit.card.id, "epic-a");
+  assert.equal(hit.hitUp, true);
+  assert.equal(hit.guaranteedNext, false);
+
+  const randomValues = [1, 1];
+  const missed = digitalAssetRules.chooseEpicUpCard(cards, "epic-a", false, () => randomValues.shift() ?? 0);
+  assert.equal(missed.card.id, "epic-c");
+  assert.equal(missed.hitUp, false);
+  assert.equal(missed.guaranteedNext, true);
+
+  const guaranteedAfterSwitch = digitalAssetRules.chooseEpicUpCard(cards, "epic-b", missed.guaranteedNext, () => {
+    throw new Error("必出UP时不应再随机判定");
+  });
+  assert.equal(guaranteedAfterSwitch.card.id, "epic-b");
+  assert.equal(guaranteedAfterSwitch.hitUp, true);
+  assert.equal(guaranteedAfterSwitch.guaranteedNext, false);
+});
+
+test("卡包只有一张史诗卡时始终抽中该UP", () => {
+  const result = digitalAssetRules.chooseEpicUpCard([{ id: "only-epic" }] as never, "only-epic", false, () => {
+    throw new Error("单张史诗卡不应进行随机判定");
+  });
+  assert.equal(result.card.id, "only-epic");
+  assert.equal(result.hitUp, true);
+  assert.equal(result.guaranteedNext, false);
+});
+
 test("满星重复返还按品质固定", () => {
   assert.deepEqual(digitalAssetRules.fullStarRefunds, { normal: 0, rare: 1, epic: 2, legend: 5 });
 });

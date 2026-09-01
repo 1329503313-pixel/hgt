@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BEGINNER_TASKS,
   BULK_SHELL_GRANT_USER_ROLES,
+  adminShellGrantExpiresAt,
   beijingTaskDate,
   bulkShellAdjustmentUserRoles,
   calculateTaskReward,
@@ -13,6 +14,14 @@ import {
   SHELL_DAILY_LIMIT,
   SHELL_TASKS
 } from "./shellCurrency.js";
+
+test("后台贝壳发放领取时限按精确 N×24 小时计算", () => {
+  const issuedAt = new Date("2026-09-01T04:12:34.567Z");
+  assert.equal(adminShellGrantExpiresAt(issuedAt, 1).toISOString(), "2026-09-02T04:12:34.567Z");
+  assert.equal(adminShellGrantExpiresAt(issuedAt, 7).toISOString(), "2026-09-08T04:12:34.567Z");
+  assert.throws(() => adminShellGrantExpiresAt(issuedAt, 0), /ADMIN_SHELL_CLAIM_DAYS_INVALID/);
+  assert.throws(() => adminShellGrantExpiresAt(issuedAt, 1.5), /ADMIN_SHELL_CLAIM_DAYS_INVALID/);
+});
 import { calculateExperienceAdjustment, experienceProgress, LEVEL_THRESHOLDS, levelForExperience, MAX_EXPERIENCE } from "./levelSystem.js";
 import {
   calculateInviteMilestoneDelta,

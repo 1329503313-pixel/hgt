@@ -721,6 +721,35 @@ async function systemMessage(roomId: string, roundId: string | null, content: st
   );
 }
 
+async function roomEntrySystemMessage(
+  roomId: string,
+  roundId: string | null,
+  user: Pick<OnlineUser, "id" | "nickname">,
+  db: mysql.PoolConnection,
+) {
+  const [[collectible]] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT c.name, c.rarity
+     FROM users u
+     JOIN collectibles c ON c.id = u.equipped_collectible_id
+       AND c.owner_user_id = u.id
+       AND c.status = 'owned'
+       AND c.deleted_at IS NULL
+     WHERE u.id = ? AND c.rarity IN ('epic', 'legend')
+     LIMIT 1`,
+    [user.id]
+  );
+  await db.query(
+    `INSERT INTO online_soup_messages
+      (id, room_id, round_id, sender_id, message_type, content, entry_collectible_name, entry_collectible_rarity)
+     VALUES (?, ?, ?, ?, 'system', ?, ?, ?)`,
+    [
+      nanoid(), roomId, roundId, user.id, `${user.nickname} 进入了房间`,
+      collectible ? String(collectible.name) : null,
+      collectible ? String(collectible.rarity) : null,
+    ]
+  );
+}
+
 async function impostorEventMessage(
   roomId: string,
   content: string,
@@ -1535,6 +1564,10 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderVipLevel: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).level,
     senderVipActive: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).active,
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
+    entryCollectible: row.entry_collectible_name ? {
+      name: String(row.entry_collectible_name),
+      rarity: String(row.entry_collectible_rarity) as "epic" | "legend",
+    } : null,
     impostorGameNumber: row.impostor_game_number == null ? null : Number(row.impostor_game_number),
     impostorSeat: row.impostor_seat == null ? null : Number(row.impostor_seat),
     impostorEvent: recalledAt ? null : jsonObject<ImpostorMessageEvent>(row.impostor_event_json),
@@ -2000,6 +2033,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
         && String(room.status) === "playing"
         && questionLimit.resolutionRequired,
       bestQuestionMessageId: room.best_question_message_id ? String(room.best_question_message_id) : null,
+      coverBackgroundEnabled: Number(room.cover_background_enabled ?? 1) !== 0,
       backgroundMusic: room.current_background_music_id && room.background_music_audio_ref ? {
         id: String(room.current_background_music_id),
         name: String(room.background_music_name),
@@ -2255,7 +2289,7 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
        ON DUPLICATE KEY UPDATE member_role = VALUES(member_role), is_active = 1, joined_at = NOW(), last_seen_at = NOW(), left_at = NULL`,
       [room.id, user.id, role]
     );
-    await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection, user.id);
+    await roomEntrySystemMessage(String(room.id), room.current_round_id ? String(room.current_round_id) : null, user, connection);
     await connection.commit();
     recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role, joined: true });
@@ -2552,6 +2586,22 @@ router.post("/rooms/:roomId/background-music", async (req, res) => {
   void notifyRoom(context.room.id, "background_music_changed", { trackId: parsed.data.trackId });
 });
 
+router.post("/rooms/:roomId/cover-background", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  if (String(context.room.content_type ?? "soup") !== "soup") return fail(res, 409, "当前房间没有海龟汤封面背景");
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "背景开关状态不正确");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    `UPDATE online_soup_rooms SET cover_background_enabled = ?, last_action_at = NOW()
+     WHERE id = ? AND status <> 'closed'`,
+    [parsed.data.enabled ? 1 : 0, context.room.id],
+  );
+  if (result.affectedRows !== 1) return fail(res, 409, "房间已关闭");
+  res.json({ ok: true, enabled: parsed.data.enabled });
+  void notifyRoom(context.room.id, "cover_background_changed", { enabled: parsed.data.enabled });
+});
+
 router.post("/rooms/:roomId/join", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
@@ -2596,7 +2646,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
           ? (isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")
           : parsed.data.role]
       );
-      await systemMessage(room.id, room.current_round_id, `${user.nickname} 进入了房间`, connection, user.id);
+      await roomEntrySystemMessage(String(room.id), room.current_round_id ? String(room.current_round_id) : null, user, connection);
     }
     const role = existing?.member_role ?? (room.host_id === user.id
       ? (isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")

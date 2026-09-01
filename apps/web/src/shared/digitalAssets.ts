@@ -52,6 +52,8 @@ export type AssetPack = {
   freeDrawsRemaining: number;
   freeDrawsUnlimited?: boolean;
   totalDrawCount?: number;
+  upCardId?: string | null;
+  epicUpGuaranteed?: boolean;
   saleStartAt: string | null;
   saleEndAt: string | null;
   enabled: boolean;

@@ -63,8 +63,28 @@ function collectiblePayload(row: mysql.RowDataPacket) {
     status: String(row.status), statusLabel: statusLabels[row.status as keyof typeof statusLabels] ?? String(row.status),
     packBinding: row.pack_id ? { packId: String(row.pack_id), packName: String(row.pack_name ?? ""), probability: Number(row.draw_probability) } : null,
     auction: row.auction_id ? { id: String(row.auction_id), startingPrice: Number(row.starting_price), currentPrice: row.current_price == null ? null : Number(row.current_price), startsAt: iso(row.starts_at), endsAt: iso(row.ends_at) } : null,
-    acquiredAt: iso(row.acquired_at), followed: bool(row.followed), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at)
+    acquiredAt: iso(row.acquired_at), followed: bool(row.followed), isEquipped: bool(row.is_equipped), createdAt: iso(row.created_at), updatedAt: iso(row.updated_at)
   };
+}
+
+export async function equipFirstOwnedCollectible(
+  connection: mysql.PoolConnection,
+  userId: string,
+  collectibleId: string
+) {
+  const [[owned]] = await connection.query<mysql.RowDataPacket[]>(
+    `SELECT COUNT(*) AS owned_count
+     FROM collectibles
+     WHERE owner_user_id = ? AND status = 'owned' AND deleted_at IS NULL`,
+    [userId]
+  );
+  if (Number(owned?.owned_count ?? 0) !== 1) return false;
+  const [result] = await connection.query<mysql.ResultSetHeader>(
+    `UPDATE users SET equipped_collectible_id = ?
+     WHERE id = ? AND equipped_collectible_id IS NULL`,
+    [collectibleId, userId]
+  );
+  return result.affectedRows === 1;
 }
 
 export async function optimizeCollectibleImages(value: string, id: string, mediaStorageConfigured = ossConfigured()) {
@@ -181,7 +201,7 @@ export async function awardCollectiblesForDraw(connection: mysql.PoolConnection,
     `SELECT c.*, b.probability AS draw_probability FROM collectibles c
      INNER JOIN collectible_pack_bindings b ON b.collectible_id=c.id
      WHERE b.pack_id=? AND c.status='draw_linked' AND c.owner_user_id IS NULL AND c.deleted_at IS NULL
-     ORDER BY c.id FOR UPDATE`, [packId]
+     ORDER BY CAST(c.collectible_no AS UNSIGNED), c.collectible_no, c.id FOR UPDATE`, [packId]
   );
   const awarded: CollectibleAward[] = [];
   for (const row of rows) {
@@ -192,6 +212,7 @@ export async function awardCollectiblesForDraw(connection: mysql.PoolConnection,
     await connection.query("INSERT INTO collectible_draw_awards (id,collectible_id,order_id,draw_index,user_id,probability_snapshot) VALUES (?,?,?,?,?,?)", [nanoid(), row.id, orderId, drawIndex, userId, probability]);
     await connection.query("INSERT INTO collectible_transfers (id,collectible_id,to_user_id,transfer_type,related_type,related_id,collectible_snapshot) VALUES (?,?,?,'draw','asset_draw_order',?,?)", [nanoid(), row.id, userId, orderId, snapshot(row)]);
     await recordValueEvent(connection, row, userId, Number(row.collectible_value ?? 1), "draw", "asset_draw_order", orderId);
+    await equipFirstOwnedCollectible(connection, userId, String(row.id));
     awarded.push({ ...collectiblePayload({ ...row, owner_user_id: userId, status: "owned" }), drawIndex, probability });
   }
   return awarded;
@@ -287,15 +308,16 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
     res.json({ auction });
   });
   app.get("/api/collectibles/:id", async (req, res) => {
-    if (!(await deps.requireAuth(req, res))) return;
+    const user = await deps.requireAuth(req, res); if (!user) return;
     const [[row]] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT c.*,u.nickname AS owner_nickname,u.username AS owner_username,
+        (c.owner_user_id = ? AND u.equipped_collectible_id = c.id) AS is_equipped,
         (SELECT t.created_at FROM collectible_transfers t
          WHERE t.collectible_id=c.id AND t.to_user_id=c.owner_user_id
          ORDER BY t.created_at DESC,t.id DESC LIMIT 1) AS acquired_at
        FROM collectibles c LEFT JOIN users u ON u.id=c.owner_user_id
        WHERE c.id=? AND c.deleted_at IS NULL LIMIT 1`,
-      [req.params.id]
+      [user.id, req.params.id]
     );
     if (!row) return deps.sendError(res, 404, "收藏品不存在");
     res.json({ collectible: collectiblePayload(row) });
@@ -380,13 +402,56 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
 
   app.get("/api/me/collectibles", async (req, res) => {
     const user = await deps.requireAuth(req, res); if (!user) return;
-    const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT c.* FROM collectibles c WHERE c.owner_user_id=? AND c.deleted_at IS NULL ORDER BY c.collectible_no", [user.id]);
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT c.*, (u.equipped_collectible_id = c.id) AS is_equipped
+       FROM collectibles c JOIN users u ON u.id = c.owner_user_id
+       WHERE c.owner_user_id=? AND c.status='owned' AND c.deleted_at IS NULL
+       ORDER BY c.collectible_no`,
+      [user.id]
+    );
     res.json({ collectibles: rows.map(collectiblePayload) });
   });
   app.get("/api/me/collectibles/:id", async (req, res) => {
     const user = await deps.requireAuth(req, res); if (!user) return;
-    const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT c.* FROM collectibles c WHERE c.id=? AND c.owner_user_id=? AND c.deleted_at IS NULL", [req.params.id, user.id]);
+    const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT c.*, (u.equipped_collectible_id = c.id) AS is_equipped
+       FROM collectibles c JOIN users u ON u.id = c.owner_user_id
+       WHERE c.id=? AND c.owner_user_id=? AND c.status='owned' AND c.deleted_at IS NULL`,
+      [req.params.id, user.id]
+    );
     if (!row) return deps.sendError(res, 404, "收藏品不存在"); res.json({ collectible: collectiblePayload(row) });
+  });
+  app.post("/api/me/collectibles/:id/equipment", async (req, res) => {
+    const user = await deps.requireAuth(req, res); if (!user) return;
+    const parsed = z.object({ equipped: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) return deps.sendError(res, 400, "携带状态无效");
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[account]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT equipped_collectible_id FROM users WHERE id=? FOR UPDATE",
+        [user.id]
+      );
+      const [[item]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT id FROM collectibles
+         WHERE id=? AND owner_user_id=? AND status='owned' AND deleted_at IS NULL
+         FOR UPDATE`,
+        [req.params.id, user.id]
+      );
+      if (!account || !item) throw new Error("你当前未拥有该收藏品");
+      if (parsed.data.equipped) {
+        await connection.query("UPDATE users SET equipped_collectible_id=? WHERE id=?", [item.id, user.id]);
+      } else if (String(account.equipped_collectible_id ?? "") === String(item.id)) {
+        await connection.query("UPDATE users SET equipped_collectible_id=NULL WHERE id=?", [user.id]);
+      }
+      await connection.commit();
+      res.json({ equipped: parsed.data.equipped, equippedCollectibleId: parsed.data.equipped ? String(item.id) : null });
+    } catch (error) {
+      await connection.rollback();
+      deps.sendError(res, 409, error instanceof Error ? error.message : "更新携带状态失败");
+    } finally {
+      connection.release();
+    }
   });
 
   app.get("/api/admin/collectibles", async (req, res) => {
@@ -419,10 +484,10 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
   });
   app.post("/api/admin/collectibles/:id/grant", async (req,res)=>{
     const admin=await deps.requireAdmin(req,res); if(!admin)return; const userId=String(req.body?.userId??""); const connection=await pool.getConnection();
-    try{await connection.beginTransaction();const [[item]] = await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? FOR UPDATE",[req.params.id]);if(!item||item.status!=="unowned")throw new Error("只有无主收藏品可以赠送");const [[target]]=await connection.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id=?",[userId]);if(!target)throw new Error("用户不存在");await connection.query("UPDATE collectibles SET owner_user_id=?,status='owned' WHERE id=?",[userId,item.id]);await connection.query("INSERT INTO collectible_transfers (id,collectible_id,to_user_id,transfer_type,related_type,related_id,operator_id,collectible_snapshot) VALUES (?,?,?,'grant','admin',?,?,?)",[nanoid(),item.id,userId,admin.id,admin.id,snapshot(item)]);await recordValueEvent(connection,item,userId,Number(item.collectible_value??1),"grant","admin",admin.id);await insertNotification(connection,userId,"collectible_granted","获得收藏品",`你获得了收藏品“${item.name}”`,String(item.id));await connection.commit();deps.emitUnreadChanged(userId,"collectible_granted");deps.onBadgeProgress?.(userId);res.json({ok:true});}catch(e){await connection.rollback();deps.sendError(res,409,(e as Error).message);}finally{connection.release();}
+    try{await connection.beginTransaction();const [[item]] = await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? FOR UPDATE",[req.params.id]);if(!item||item.status!=="unowned")throw new Error("只有无主收藏品可以赠送");const [[target]]=await connection.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE id=?",[userId]);if(!target)throw new Error("用户不存在");await connection.query("UPDATE collectibles SET owner_user_id=?,status='owned' WHERE id=?",[userId,item.id]);await connection.query("INSERT INTO collectible_transfers (id,collectible_id,to_user_id,transfer_type,related_type,related_id,operator_id,collectible_snapshot) VALUES (?,?,?,'grant','admin',?,?,?)",[nanoid(),item.id,userId,admin.id,admin.id,snapshot(item)]);await recordValueEvent(connection,item,userId,Number(item.collectible_value??1),"grant","admin",admin.id);await equipFirstOwnedCollectible(connection,userId,String(item.id));await insertNotification(connection,userId,"collectible_granted","获得收藏品",`你获得了收藏品“${item.name}”`,String(item.id));await connection.commit();deps.emitUnreadChanged(userId,"collectible_granted");deps.onBadgeProgress?.(userId);res.json({ok:true});}catch(e){await connection.rollback();deps.sendError(res,409,(e as Error).message);}finally{connection.release();}
   });
   app.post("/api/admin/collectibles/:id/reclaim", async (req,res)=>{
-    const admin=await deps.requireAdmin(req,res);if(!admin)return;const connection=await pool.getConnection();try{await connection.beginTransaction();const [[item]]=await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? FOR UPDATE",[req.params.id]);if(!item||item.status!=="owned"||!item.owner_user_id)throw new Error("该收藏品当前没有主人");await connection.query("UPDATE collectibles SET owner_user_id=NULL,status='unowned' WHERE id=?",[item.id]);await connection.query("INSERT INTO collectible_transfers (id,collectible_id,from_user_id,transfer_type,related_type,related_id,operator_id,collectible_snapshot) VALUES (?,?,?,'reclaim','admin',?,?,?)",[nanoid(),item.id,item.owner_user_id,admin.id,admin.id,snapshot(item)]);await recordValueEvent(connection,item,String(item.owner_user_id),-Number(item.collectible_value??1),"reclaim","admin",admin.id);await insertNotification(connection,String(item.owner_user_id),"collectible_reclaimed","收藏品已收回",`收藏品“${item.name}”已由系统收回`,String(item.id));await connection.commit();deps.emitUnreadChanged(String(item.owner_user_id),"collectible_reclaimed");deps.onBadgeProgress?.(String(item.owner_user_id));res.json({ok:true});}catch(e){await connection.rollback();deps.sendError(res,409,(e as Error).message);}finally{connection.release();}
+    const admin=await deps.requireAdmin(req,res);if(!admin)return;const connection=await pool.getConnection();try{await connection.beginTransaction();const [[item]]=await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? FOR UPDATE",[req.params.id]);if(!item||item.status!=="owned"||!item.owner_user_id)throw new Error("该收藏品当前没有主人");await connection.query("UPDATE users SET equipped_collectible_id=NULL WHERE id=? AND equipped_collectible_id=?",[item.owner_user_id,item.id]);await connection.query("UPDATE collectibles SET owner_user_id=NULL,status='unowned' WHERE id=?",[item.id]);await connection.query("INSERT INTO collectible_transfers (id,collectible_id,from_user_id,transfer_type,related_type,related_id,operator_id,collectible_snapshot) VALUES (?,?,?,'reclaim','admin',?,?,?)",[nanoid(),item.id,item.owner_user_id,admin.id,admin.id,snapshot(item)]);await recordValueEvent(connection,item,String(item.owner_user_id),-Number(item.collectible_value??1),"reclaim","admin",admin.id);await insertNotification(connection,String(item.owner_user_id),"collectible_reclaimed","收藏品已收回",`收藏品“${item.name}”已由系统收回`,String(item.id));await connection.commit();deps.emitUnreadChanged(String(item.owner_user_id),"collectible_reclaimed");deps.onBadgeProgress?.(String(item.owner_user_id));res.json({ok:true});}catch(e){await connection.rollback();deps.sendError(res,409,(e as Error).message);}finally{connection.release();}
   });
   app.get("/api/admin/collectibles/:id/transfers",async(req,res)=>{if(!(await deps.requireAdmin(req,res)))return;const[rows]=await pool.query<mysql.RowDataPacket[]>(`SELECT t.*,fu.nickname from_nickname,tu.nickname to_nickname,op.nickname operator_nickname FROM collectible_transfers t LEFT JOIN users fu ON fu.id=t.from_user_id LEFT JOIN users tu ON tu.id=t.to_user_id LEFT JOIN users op ON op.id=t.operator_id WHERE t.collectible_id=? ORDER BY t.created_at DESC`,[req.params.id]);res.json({transfers:rows.map(r=>({id:String(r.id),from:r.from_user_id?String(r.from_nickname??r.from_user_id):"系统",to:r.to_user_id?String(r.to_nickname??r.to_user_id):"系统",type:String(r.transfer_type),operator:r.operator_nickname?String(r.operator_nickname):null,createdAt:iso(r.created_at)}))});});
   app.put("/api/admin/asset-packs/:id/collectibles", async (req, res) => {
@@ -490,7 +555,7 @@ export function startCollectibleAuctionScheduler(deps: Pick<Dependencies,"emitUs
     const [pending]=await pool.query<mysql.RowDataPacket[]>("SELECT id FROM collectible_auctions WHERE status='pending' AND starts_at<=UTC_TIMESTAMP() ORDER BY starts_at LIMIT 100");
     for(const row of pending){const connection=await pool.getConnection();try{await connection.beginTransaction();const [[a]]=await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectible_auctions WHERE id=? FOR UPDATE",[row.id]);if(!a||a.status!=="pending"||new Date(a.starts_at)>new Date()){await connection.rollback();continue;}await connection.query("UPDATE collectible_auctions SET status='active' WHERE id=?",[a.id]);await connection.query("UPDATE collectibles SET status='auction_active' WHERE id=?",[a.collectible_id]);const[followers]=await connection.query<mysql.RowDataPacket[]>("SELECT user_id FROM collectible_follows WHERE collectible_id=?",[a.collectible_id]);for(const f of followers)await insertNotification(connection,String(f.user_id),"collectible_auction_started","关注的藏品开始拍卖","你关注的藏品已经开始拍卖",String(a.id));await connection.commit();for(const f of followers)deps.emitUnreadChanged(String(f.user_id),"collectible_auction_started");deps.broadcastEvent("collectible_auction_changed",{auctionId:String(a.id),reason:"started"});}catch{await connection.rollback();}finally{connection.release();}}
     const[due]=await pool.query<mysql.RowDataPacket[]>("SELECT id FROM collectible_auctions WHERE status='active' AND ends_at<=UTC_TIMESTAMP() ORDER BY ends_at LIMIT 100");
-    for(const row of due){const connection=await pool.getConnection();let winner:string|null=null;try{await connection.beginTransaction();const [[a]]=await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectible_auctions WHERE id=? FOR UPDATE",[row.id]);if(!a||a.status!=="active"||new Date(a.ends_at)>new Date()){await connection.rollback();continue;}const [[item]]=await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? FOR UPDATE",[a.collectible_id]);winner=a.highest_bidder_id?String(a.highest_bidder_id):null;if(winner){await connection.query("UPDATE collectible_auctions SET status='sold',settled_at=CURRENT_TIMESTAMP WHERE id=?",[a.id]);await connection.query("UPDATE collectibles SET status='owned',owner_user_id=? WHERE id=?",[winner,item.id]);await connection.query("INSERT INTO collectible_transfers (id,collectible_id,to_user_id,transfer_type,related_type,related_id,collectible_snapshot) VALUES (?,?,?,'auction','collectible_auction',?,?)",[nanoid(),item.id,winner,a.id,snapshot(item)]);await recordValueEvent(connection,item,winner,Number(item.collectible_value??1),"auction","collectible_auction",String(a.id));await insertNotification(connection,winner,"collectible_auction_won","竞拍成功",`你以 ${a.current_price} 贝壳拍得“${item.name}”`,String(a.id));}else{await connection.query("UPDATE collectible_auctions SET status='unsold',settled_at=CURRENT_TIMESTAMP WHERE id=?",[a.id]);await connection.query("UPDATE collectibles SET status='unowned' WHERE id=?",[item.id]);}await connection.commit();if(winner){deps.emitUnreadChanged(winner,"collectible_auction_won");deps.onBadgeProgress?.(winner);}deps.broadcastEvent("collectible_auction_changed",{auctionId:String(a.id),reason:winner?"sold":"unsold"});}catch{await connection.rollback();}finally{connection.release();}}
+    for(const row of due){const connection=await pool.getConnection();let winner:string|null=null;try{await connection.beginTransaction();const [[a]]=await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectible_auctions WHERE id=? FOR UPDATE",[row.id]);if(!a||a.status!=="active"||new Date(a.ends_at)>new Date()){await connection.rollback();continue;}const [[item]]=await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? FOR UPDATE",[a.collectible_id]);winner=a.highest_bidder_id?String(a.highest_bidder_id):null;if(winner){await connection.query("UPDATE collectible_auctions SET status='sold',settled_at=CURRENT_TIMESTAMP WHERE id=?",[a.id]);await connection.query("UPDATE collectibles SET status='owned',owner_user_id=? WHERE id=?",[winner,item.id]);await connection.query("INSERT INTO collectible_transfers (id,collectible_id,to_user_id,transfer_type,related_type,related_id,collectible_snapshot) VALUES (?,?,?,'auction','collectible_auction',?,?)",[nanoid(),item.id,winner,a.id,snapshot(item)]);await recordValueEvent(connection,item,winner,Number(item.collectible_value??1),"auction","collectible_auction",String(a.id));await equipFirstOwnedCollectible(connection,winner,String(item.id));await insertNotification(connection,winner,"collectible_auction_won","竞拍成功",`你以 ${a.current_price} 贝壳拍得“${item.name}”`,String(a.id));}else{await connection.query("UPDATE collectible_auctions SET status='unsold',settled_at=CURRENT_TIMESTAMP WHERE id=?",[a.id]);await connection.query("UPDATE collectibles SET status='unowned' WHERE id=?",[item.id]);}await connection.commit();if(winner){deps.emitUnreadChanged(winner,"collectible_auction_won");deps.onBadgeProgress?.(winner);}deps.broadcastEvent("collectible_auction_changed",{auctionId:String(a.id),reason:winner?"sold":"unsold"});}catch{await connection.rollback();}finally{connection.release();}}
   }finally{running=false;}};
   void run();const timer=setInterval(()=>void run(),10_000);timer.unref();return()=>clearInterval(timer);
 }

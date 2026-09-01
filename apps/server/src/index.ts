@@ -52,7 +52,8 @@ import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistin
 import {
   evaluationCountsTowardScore,
   scoringEvaluationJoin,
-  scoringEvaluationPredicate
+  scoringEvaluationPredicate,
+  scoringSoupHeatExpression
 } from "./evaluationScoring.js";
 import { idempotentSoupId, isValidIdempotencyKey } from "./idempotency.js";
 import { runPostCommitTask } from "./postCommit.js";
@@ -94,6 +95,9 @@ import {
   awardBeginnerTask,
   bulkShellAdjustmentUserRoles,
   bulkAdjustShellBalances,
+  claimAdminShellGrantsOnLogin,
+  expireAdminShellGrants,
+  issueAdminShellGrants,
   awardShellTask,
   beijingTaskDate,
   isEligibleCircleTaskMessageType,
@@ -127,7 +131,7 @@ import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourc
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
 import { IMPOSTOR_MAX_PLAYERS } from "./impostorGame.js";
 import { cleanupExpiredAiCallLogs } from "./aiHostRepository.js";
-import { PROFILE_SOUP_ORDER_SQL, profilePinEvictionIds } from "./soupProfilePins.js";
+import { MY_SOUP_ORDER_SQL, PROFILE_SOUP_ORDER_SQL, profilePinEvictionIds } from "./soupProfilePins.js";
 import { registerVipRoutes, syncExpiredVipRoles } from "./vip.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import {
@@ -561,8 +565,16 @@ const activityConditionsSchema = z.array(activityConditionSchema).max(8);
 const bulkShellAdjustmentSchema = z.object({
   operation: z.enum(["add", "deduct"]),
   amount: z.number().int().positive().max(10_000_000),
+  claimDays: z.number().int().safe().positive().optional(),
   conditions: activityConditionsSchema
-}).refine((value) => value.conditions.length > 0, { message: "请至少设置一个用户条件", path: ["conditions"] });
+}).superRefine((value, context) => {
+  if (value.conditions.length === 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "请至少设置一个用户条件", path: ["conditions"] });
+  }
+  if (value.operation === "add" && value.claimDays == null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "请输入领取时限天数", path: ["claimDays"] });
+  }
+});
 type ActivityBadgeCondition = z.infer<typeof activityConditionSchema>;
 type ActivityConditionKind = ActivityBadgeCondition["kind"];
 
@@ -764,6 +776,22 @@ function feedbackPayload(row: mysql.RowDataPacket, includeScreenshot = false) {
 
 function sendError(res: express.Response, status: number, message: string, code?: string) {
   return res.status(status).json({ error: message, ...(code ? { code } : {}) });
+}
+
+async function reconcileAdminShellGrantsOnLogin(userId: string) {
+  const result = await claimAdminShellGrantsOnLogin(userId);
+  if (result.claimedCount > 0 || result.expiredGrantChanged) {
+    emitUnreadChanged(userId, result.claimedCount > 0 ? "admin_shell_grant_claimed" : "admin_shell_grant_expired");
+  }
+  if (result.claimedCount > 0) {
+    emitUserEvent(userId, "shell_balance_changed", {
+      balance: result.balance,
+      amount: result.claimedAmount,
+      source: "admin_shell_grant_claimed",
+      at: new Date().toISOString()
+    });
+  }
+  return result;
 }
 
 function avatarUrl(userId: unknown, stored: unknown, hasAvatar = false) {
@@ -2423,6 +2451,7 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   const ok = await bcrypt.compare(parsed.data.password, row.password);
   if (!ok) return sendError(res, 401, "账号或密码错误");
 
+  await reconcileAdminShellGrantsOnLogin(String(row.id));
   await recordLoginDay(String(row.id));
   await ensureDailyEntitlementGrantForUser(String(row.id));
   const [[refreshedRow]] = await pool.query<mysql.RowDataPacket[]>(
@@ -2542,6 +2571,7 @@ app.get("/api/auth/me", async (req, res) => {
   let user = await currentUser(req);
   if (user) queueLoginDayRecord(user.id);
   if (!user) return res.json({ user: null });
+  await reconcileAdminShellGrantsOnLogin(user.id);
   await ensureDailyEntitlementGrantForUser(user.id);
   currentUserCache.delete(`${user.id}:${user.tokenVersion}`);
   user = await currentUser(req);
@@ -2809,7 +2839,7 @@ app.get("/api/me/soups", async (req, res) => {
     LEFT JOIN users u ON u.id = s.creator_id
     WHERE s.creator_id = ?
     GROUP BY s.id
-    ORDER BY ${PROFILE_SOUP_ORDER_SQL}
+    ORDER BY ${MY_SOUP_ORDER_SQL}
     LIMIT ? OFFSET ?
     `,
     [user.id, limit, offset]
@@ -5113,15 +5143,7 @@ app.get("/api/soups", async (req, res) => {
   const randomSeed = String(req.query.seed ?? new Date().toISOString().slice(0, 10)).slice(0, 32);
   const featuredCases = featuredSoupIds.map((_, index) => `WHEN ? THEN ${index}`).join(" ");
   const featuredPlaceholders = featuredSoupIds.map(() => "?").join(", ");
-  const heatOrderExpression = `ROUND(
-    (COALESCE((SELECT AVG(heat_eval.total) FROM evaluations heat_eval WHERE heat_eval.soup_id = s.id), 0) + 1)
-    * (
-      s.view_count
-      + ((SELECT COUNT(*) FROM soup_likes heat_like WHERE heat_like.soup_id = s.id) + 1) * 15
-      + ((SELECT COUNT(*) FROM soup_favorites heat_favorite WHERE heat_favorite.soup_id = s.id) + 1) * 20
-      + ((SELECT COUNT(*) FROM evaluations heat_count WHERE heat_count.soup_id = s.id) + 1) * 25
-    ) - 60
-  )`;
+  const heatOrderExpression = scoringSoupHeatExpression("s");
   const orderClause = featuredSoupIds.length > 0
     ? `CASE s.id ${featuredCases} ELSE ${featuredSoupIds.length} END ASC,
        CASE WHEN s.id IN (${featuredPlaceholders}) THEN 0 ELSE CRC32(CONCAT(s.id, ?)) END ASC`
@@ -6360,6 +6382,8 @@ app.get("/api/ranking-rewards/:settlementId", async (req, res) => {
 app.get("/api/notifications", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  const expiredGrantUserIds = await expireAdminShellGrants(user.id);
+  if (expiredGrantUserIds.length > 0) emitUnreadChanged(user.id, "admin_shell_grant_expired");
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT n.*,
       CASE
@@ -7624,6 +7648,40 @@ app.post("/api/admin/users/bulk-shell-adjustments", async (req, res) => {
   const parsed = bulkShellAdjustmentSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "批量贝壳条件无效");
   const userIds = await usersMatchingActivityConditions(parsed.data.conditions, parsed.data.operation);
+  if (parsed.data.operation === "add") {
+    try {
+      const immediateUserIds = new Set(userIds.filter((userId) => isUserOnline(userId)));
+      const result = await issueAdminShellGrants(
+        userIds,
+        admin.id,
+        parsed.data.amount,
+        parsed.data.claimDays!,
+        immediateUserIds,
+        "bulk"
+      );
+      for (const userId of result.issuedUserIds) emitUnreadChanged(userId, "admin_shell_grant_issued");
+      for (const userId of result.claimedUserIds) {
+        emitUserEvent(userId, "shell_balance_changed", {
+          balance: result.balances[userId],
+          amount: parsed.data.amount,
+          source: "admin_shell_grant_immediate",
+          at: new Date().toISOString()
+        });
+      }
+      return res.json({
+        matchedCount: result.matchedCount,
+        adjustedCount: result.issuedCount,
+        skippedCount: result.skippedCount,
+        claimedCount: result.claimedCount,
+        pendingCount: result.pendingCount,
+        expiresAt: result.expiresAt
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "ADMIN_SHELL_CLAIM_DAYS_INVALID") return sendError(res, 400, "请输入有效的领取时限天数");
+      if (error instanceof Error && error.message === "SHELL_BALANCE_OVERFLOW") return sendError(res, 409, "发放后用户贝壳余额超出上限");
+      throw error;
+    }
+  }
   const result = await bulkAdjustShellBalances(userIds, admin.id, parsed.data.operation, parsed.data.amount);
   for (const userId of result.adjustedUserIds) emitUnreadChanged(userId, "shell_adjustment");
   res.json({ matchedCount: result.matchedCount, adjustedCount: result.adjustedCount, skippedCount: result.skippedCount });
@@ -7634,16 +7692,49 @@ app.post("/api/admin/users/:id/shell-adjustments", async (req, res) => {
   if (!admin) return;
   const parsed = z.object({
     operation: z.enum(["add", "deduct"]),
-    amount: z.number().int().positive().max(10_000_000)
+    amount: z.number().int().positive().max(10_000_000),
+    claimDays: z.number().int().safe().positive().optional()
+  }).superRefine((value, context) => {
+    if (value.operation === "add" && value.claimDays == null) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "请输入领取时限天数", path: ["claimDays"] });
+    }
   }).safeParse(req.body);
-  if (!parsed.success) return sendError(res, 400, "请输入有效的贝壳整数数量");
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "请输入有效的贝壳整数数量");
   try {
+    if (parsed.data.operation === "add") {
+      const immediateUserIds = isUserOnline(req.params.id) ? new Set([req.params.id]) : new Set<string>();
+      const result = await issueAdminShellGrants(
+        [req.params.id],
+        admin.id,
+        parsed.data.amount,
+        parsed.data.claimDays!,
+        immediateUserIds,
+        "single"
+      );
+      if (result.issuedCount === 0) return sendError(res, 404, "用户不存在");
+      emitUnreadChanged(req.params.id, "admin_shell_grant_issued");
+      if (result.claimedCount > 0) {
+        emitUserEvent(req.params.id, "shell_balance_changed", {
+          balance: result.balances[req.params.id],
+          amount: parsed.data.amount,
+          source: "admin_shell_grant_immediate",
+          at: new Date().toISOString()
+        });
+      }
+      return res.json({
+        balance: result.balances[req.params.id],
+        status: result.claimedCount > 0 ? "claimed" : "pending",
+        expiresAt: result.expiresAt
+      });
+    }
     const result = await adjustShellBalance(req.params.id, admin.id, parsed.data.operation, parsed.data.amount);
     emitUnreadChanged(req.params.id, "shell_adjustment");
     res.json(result);
   } catch (error) {
     if (error instanceof Error && error.message === "SHELL_USER_NOT_FOUND") return sendError(res, 404, "用户不存在");
     if (error instanceof Error && error.message === "SHELL_INSUFFICIENT_BALANCE") return sendError(res, 409, "扣减数量不能超过当前贝壳余额");
+    if (error instanceof Error && error.message === "ADMIN_SHELL_CLAIM_DAYS_INVALID") return sendError(res, 400, "请输入有效的领取时限天数");
+    if (error instanceof Error && error.message === "SHELL_BALANCE_OVERFLOW") return sendError(res, 409, "发放后用户贝壳余额超出上限");
     throw error;
   }
 });
@@ -7934,6 +8025,14 @@ if (config.runDatabaseMigrations) {
 }
 else await pool.query("SELECT 1");
 await syncExpiredVipRoles(pool).catch((error) => console.error("VIP expiry synchronization failed:", error));
+const reconcileExpiredAdminShellGrants = () => {
+  expireAdminShellGrants()
+    .then((userIds) => userIds.forEach((userId) => emitUnreadChanged(userId, "admin_shell_grant_expired")))
+    .catch((error) => console.error("Admin shell grant expiry reconciliation failed:", error));
+};
+reconcileExpiredAdminShellGrants();
+const adminShellGrantExpiryTimer = setInterval(reconcileExpiredAdminShellGrants, 60_000);
+adminShellGrantExpiryTimer.unref();
 await runDailyEntitlementGrantSweep().catch((error) => console.error("Initial daily entitlement grants failed:", error));
 startDailyEntitlementGrantScheduler();
 const vipExpirySyncTimer = setInterval(() => {

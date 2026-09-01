@@ -79,6 +79,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [shellLoading, setShellLoading] = useState(false);
   const [shellOperation, setShellOperation] = useState<"add" | "deduct" | null>(null);
   const [shellAmount, setShellAmount] = useState("");
+  const [shellClaimDays, setShellClaimDays] = useState("");
   const [shellError, setShellError] = useState("");
   const [shellAdjusting, setShellAdjusting] = useState(false);
   const [experienceUser, setExperienceUser] = useState<AdminUser | null>(null);
@@ -89,6 +90,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [bulkShellOpen, setBulkShellOpen] = useState(false);
   const [bulkShellOperation, setBulkShellOperation] = useState<"add" | "deduct">("add");
   const [bulkShellAmount, setBulkShellAmount] = useState("");
+  const [bulkShellClaimDays, setBulkShellClaimDays] = useState("");
   const [bulkShellConditions, setBulkShellConditions] = useState<ActivityBadgeCondition[]>(() => [newActivityCondition()]);
   const [bulkShellPreview, setBulkShellPreview] = useState<BulkShellPreview | null>(null);
   const [bulkShellBusy, setBulkShellBusy] = useState(false);
@@ -213,11 +215,25 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       setShellError("请输入正整数");
       return;
     }
+    const claimDays = Number(shellClaimDays);
+    if (shellOperation === "add" && (!Number.isSafeInteger(claimDays) || claimDays <= 0)) {
+      setShellError("领取时限只能填写正整数天数");
+      return;
+    }
     setShellAdjusting(true);
     setShellError("");
     try {
-      await api(`/api/admin/users/${shellUser.id}/shell-adjustments`, { method: "POST", body: { operation: shellOperation, amount } });
+      const result = await api<{ status?: "claimed" | "pending" }>(`/api/admin/users/${shellUser.id}/shell-adjustments`, {
+        method: "POST",
+        body: { operation: shellOperation, amount, ...(shellOperation === "add" ? { claimDays } : {}) }
+      });
+      showToast(shellOperation === "add"
+        ? result.status === "claimed"
+          ? `已发放 ${amount.toLocaleString()} 贝壳，用户当前在线并已立即到账`
+          : `已发放 ${amount.toLocaleString()} 贝壳，用户登录后可在时限内领取`
+        : `已扣除 ${amount.toLocaleString()} 贝壳`);
       setShellAmount("");
+      setShellClaimDays("");
       setShellOperation(null);
       await Promise.all([loadShellDetail(shellUser), loadUsers()]);
     } catch (error) {
@@ -263,7 +279,12 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   }
 
   function bulkShellBody() {
-    return { operation: bulkShellOperation, amount: Number(bulkShellAmount), conditions: bulkShellConditions };
+    return {
+      operation: bulkShellOperation,
+      amount: Number(bulkShellAmount),
+      ...(bulkShellOperation === "add" ? { claimDays: Number(bulkShellClaimDays) } : {}),
+      conditions: bulkShellConditions
+    };
   }
 
   function closeBulkShell() {
@@ -276,6 +297,8 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   async function previewBulkShells() {
     const amount = Number(bulkShellAmount);
     if (!Number.isInteger(amount) || amount <= 0) { setBulkShellError("请输入正整数贝壳数量"); return; }
+    const claimDays = Number(bulkShellClaimDays);
+    if (bulkShellOperation === "add" && (!Number.isSafeInteger(claimDays) || claimDays <= 0)) { setBulkShellError("领取时限只能填写正整数天数"); return; }
     if (bulkShellConditions.length === 0) { setBulkShellError("请至少设置一个用户条件"); return; }
     setBulkShellBusy(true); setBulkShellError("");
     try {
@@ -286,12 +309,17 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
 
   async function executeBulkShells() {
     if (!bulkShellPreview || bulkShellPreview.eligibleCount === 0) return;
-    if (!confirm(`确定向 ${bulkShellPreview.eligibleCount} 位用户${bulkShellOperation === "add" ? "发放" : "扣除"} ${bulkShellAmount} 贝壳吗？`)) return;
+    const confirmation = bulkShellOperation === "add"
+      ? `确定向 ${bulkShellPreview.eligibleCount} 位用户发放 ${bulkShellAmount} 贝壳吗？在线用户立即到账，离线用户须在 ${bulkShellClaimDays}×24 小时内登录领取。`
+      : `确定向 ${bulkShellPreview.eligibleCount} 位用户扣除 ${bulkShellAmount} 贝壳吗？`;
+    if (!confirm(confirmation)) return;
     setBulkShellBusy(true); setBulkShellError("");
     try {
-      const result = await api<{ matchedCount: number; adjustedCount: number; skippedCount: number }>("/api/admin/users/bulk-shell-adjustments", { method: "POST", body: bulkShellBody() });
-      showToast(`已为 ${result.adjustedCount} 位用户${bulkShellOperation === "add" ? "发放" : "扣除"}贝壳${result.skippedCount ? `，跳过 ${result.skippedCount} 位余额不足用户` : ""}`);
-      setBulkShellOpen(false); setBulkShellPreview(null); setBulkShellAmount("");
+      const result = await api<{ matchedCount: number; adjustedCount: number; skippedCount: number; claimedCount?: number; pendingCount?: number }>("/api/admin/users/bulk-shell-adjustments", { method: "POST", body: bulkShellBody() });
+      showToast(bulkShellOperation === "add"
+        ? `已向 ${result.adjustedCount} 位用户发放贝壳：${result.claimedCount ?? 0} 位立即到账，${result.pendingCount ?? 0} 位待登录领取`
+        : `已为 ${result.adjustedCount} 位用户扣除贝壳${result.skippedCount ? `，跳过 ${result.skippedCount} 位余额不足用户` : ""}`);
+      setBulkShellOpen(false); setBulkShellPreview(null); setBulkShellAmount(""); setBulkShellClaimDays("");
       await loadUsers();
     } catch (error) { setBulkShellError(error instanceof Error ? error.message : "批量贝壳操作失败"); }
     finally { setBulkShellBusy(false); }
@@ -460,13 +488,15 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       {isSuperAdmin && bulkShellOpen && <Modal full onClose={closeBulkShell}>
         <div className="flex items-start justify-between gap-3 border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">批量发放/扣除贝壳</h2><p className="mt-1 text-sm text-muted">多个条件需同时满足，{bulkShellOperation === "add" ? "发放面向所有用户类型" : "扣除仅面向普通用户"}</p></div><button className="btn btn-secondary shrink-0 px-3" disabled={bulkShellBusy} onClick={closeBulkShell}><X size={17} />关闭</button></div>
         <div className="space-y-5 py-5">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className={`grid gap-3 ${bulkShellOperation === "add" ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             <div><span className="text-sm font-bold text-ink">操作类型</span><div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={`btn ${bulkShellOperation === "add" ? "btn-primary" : "btn-secondary"}`} disabled={bulkShellBusy} onClick={() => { setBulkShellOperation("add"); setBulkShellPreview(null); }}>发放贝壳</button><button type="button" className={`btn ${bulkShellOperation === "deduct" ? "btn-danger" : "btn-secondary"}`} disabled={bulkShellBusy} onClick={() => { setBulkShellOperation("deduct"); setBulkShellPreview(null); }}>扣除贝壳</button></div></div>
             <label><span className="text-sm font-bold text-ink">每位用户调整数量</span><input className="field mt-2" type="number" min="1" step="1" value={bulkShellAmount} disabled={bulkShellBusy} onChange={(event) => { setBulkShellAmount(event.target.value); setBulkShellPreview(null); }} placeholder="请输入正整数" /></label>
+            {bulkShellOperation === "add" && <label><span className="text-sm font-bold text-ink">领取时限（天）</span><input className="field mt-2" type="number" min="1" step="1" required inputMode="numeric" aria-describedby="bulk-shell-claim-days-help" value={bulkShellClaimDays} disabled={bulkShellBusy} onChange={(event) => { setBulkShellClaimDays(event.target.value); setBulkShellPreview(null); }} placeholder="请输入正整数" /></label>}
           </div>
+          {bulkShellOperation === "add" && <p id="bulk-shell-claim-days-help" className="rounded-xl bg-blue-50 p-3 text-sm font-bold text-blue-700">在线用户发放后立即到账；离线用户须从发放时起在 N×24 小时内登录领取，逾期失效。</p>}
           <div><div className="mb-3"><h3 className="text-sm font-black text-ink">用户条件</h3><p className="mt-1 text-xs text-muted">规则与活动徽章发放条件一致</p></div><ActivityConditionsEditor value={bulkShellConditions} disabled={bulkShellBusy} onChange={(conditions) => { setBulkShellConditions(conditions); setBulkShellPreview(null); }} emptyText="请至少添加一个用户条件" /></div>
           {bulkShellOperation === "deduct" && <p className="rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-700">余额不足本次扣减数量的用户将被跳过，不会扣成负数。</p>}
-          {bulkShellError && <p className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-600">{bulkShellError}</p>}
+          {bulkShellError && <p className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-600" role="alert">{bulkShellError}</p>}
           {bulkShellPreview && <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-4 text-center"><div><p className="text-xl font-black text-ink">{bulkShellPreview.matchedCount}</p><p className="mt-1 text-xs text-muted">符合条件</p></div><div><p className="text-xl font-black text-emerald-600">{bulkShellPreview.eligibleCount}</p><p className="mt-1 text-xs text-muted">实际操作</p></div><div><p className="text-xl font-black text-amber-600">{bulkShellPreview.skippedCount}</p><p className="mt-1 text-xs text-muted">余额不足跳过</p></div></div>}
         </div>
         <div className="sticky bottom-0 flex justify-end gap-2 border-t border-line bg-white pt-3"><button className="btn btn-secondary" disabled={bulkShellBusy} onClick={() => void previewBulkShells()}>{bulkShellBusy ? "计算中…" : "计算符合用户"}</button><button className={bulkShellOperation === "add" ? "btn btn-primary" : "btn btn-danger"} disabled={bulkShellBusy || !bulkShellPreview || bulkShellPreview.eligibleCount === 0} onClick={() => void executeBulkShells()}>{bulkShellBusy ? "处理中…" : `确认${bulkShellOperation === "add" ? "发放" : "扣除"}`}</button></div>
@@ -501,7 +531,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       )}
 
       {shellUser && (
-        <Modal onClose={() => { if (!shellAdjusting) { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellError(""); } }}>
+        <Modal onClose={() => { if (!shellAdjusting) { setShellUser(null); setShellOperation(null); setShellAmount(""); setShellClaimDays(""); setShellError(""); } }}>
           <div className="space-y-4">
             <div><h2 className="text-lg font-black text-ink">{shellUser.nickname}的贝壳明细</h2><p className="mt-1 flex items-center gap-1 text-sm font-bold text-primary"><Shell size={16} />当前余额：{shellUser.shellBalance.toLocaleString()}</p></div>
             {isSuperAdmin && <div className="grid grid-cols-2 gap-2">
@@ -509,10 +539,14 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               <button className="btn btn-secondary text-red-600" onClick={() => { setShellOperation("deduct"); setShellError(""); }}>扣减</button>
             </div>}
             {isSuperAdmin && shellOperation && <form className="rounded-xl border border-line bg-slate-50 p-3" onSubmit={(event) => { event.preventDefault(); void adjustShells(); }}>
-              <label className="text-sm font-bold text-ink">{shellOperation === "add" ? "增加数量" : "扣减数量"}</label>
-              <div className="mt-2 flex gap-2"><input className="field min-w-0 flex-1" type="number" min="1" step="1" autoFocus value={shellAmount} onChange={(event) => setShellAmount(event.target.value)} /><button className="btn btn-primary shrink-0" disabled={shellAdjusting}>{shellAdjusting ? "处理中…" : "确认"}</button></div>
+              <div className={`grid gap-3 ${shellOperation === "add" ? "sm:grid-cols-2" : ""}`}>
+                <label><span className="text-sm font-bold text-ink">{shellOperation === "add" ? "增加数量" : "扣减数量"}</span><input className="field mt-2 w-full" type="number" min="1" step="1" autoFocus value={shellAmount} onChange={(event) => setShellAmount(event.target.value)} /></label>
+                {shellOperation === "add" && <label><span className="text-sm font-bold text-ink">领取时限（天）</span><input className="field mt-2 w-full" type="number" min="1" step="1" required inputMode="numeric" aria-describedby="shell-claim-days-help" value={shellClaimDays} onChange={(event) => setShellClaimDays(event.target.value)} placeholder="正整数" /></label>}
+              </div>
+              {shellOperation === "add" && <p id="shell-claim-days-help" className="mt-2 text-xs font-bold text-blue-700">在线用户立即到账；离线用户须在 N×24 小时内登录领取。</p>}
+              <button className="btn btn-primary mt-3 w-full" disabled={shellAdjusting}>{shellAdjusting ? "处理中…" : "确认"}</button>
             </form>}
-            {shellError && <p className="text-sm font-bold text-red-600">{shellError}</p>}
+            {shellError && <p className="text-sm font-bold text-red-600" role="alert">{shellError}</p>}
             <div className="max-h-[45dvh] divide-y divide-line overflow-y-auto rounded-xl border border-line">
               {shellLoading ? <ListSkeleton rows={5} /> : shellTransactions.length ? shellTransactions.map((item) => (
                 <div key={item.id} className="flex items-center justify-between gap-3 p-3 text-sm">

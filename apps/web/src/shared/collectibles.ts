@@ -9,7 +9,7 @@ export type Collectible = {
   motionStatus?: string; motionError?: string | null; owner?: { id: string; nickname: string; username: string } | null;
   status: CollectibleStatus; statusLabel: string; packBinding?: { packId: string; packName: string; probability: number } | null;
   auction?: { id: string; startingPrice: number; currentPrice: number | null; startsAt: string; endsAt: string } | null;
-  acquiredAt?: string | null; acquired?: boolean; followed?: boolean; createdAt?: string | null; updatedAt?: string | null;
+  acquiredAt?: string | null; acquired?: boolean; followed?: boolean; isEquipped?: boolean; createdAt?: string | null; updatedAt?: string | null;
 };
 
 export type CollectibleAuction = {

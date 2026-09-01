@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpen, Gem, ShieldCheck, Shell } from "lucide-react";
+import { BookOpen, Gem, LoaderCircle, ShieldCheck, Shell } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { AssetCardVisual, AssetMotionMedia } from "../components/AssetCardVisual";
@@ -27,6 +27,7 @@ export default function AssetPackPage() {
   const drawingRef = useRef(false);
   const [order, setOrder] = useState<AssetDrawOrder | null>(null);
   const [storyOpen, setStoryOpen] = useState(false);
+  const [upSelectingCardId, setUpSelectingCardId] = useState<string | null>(null);
 
   const load = useCallback((fresh = false, showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -67,6 +68,26 @@ export default function AssetPackPage() {
     }
   }
 
+  async function selectUpCard(cardId: string) {
+    if (!data || upSelectingCardId || data.pack.upCardId === cardId) return;
+    setUpSelectingCardId(cardId);
+    try {
+      const result = await api<{ upCardId: string; epicUpGuaranteed: boolean }>(`/api/asset-store/packs/${packId}/up-card`, {
+        method: "POST",
+        body: { cardId }
+      });
+      setData((current) => current ? {
+        ...current,
+        pack: { ...current.pack, upCardId: result.upCardId, epicUpGuaranteed: result.epicUpGuaranteed }
+      } : current);
+      showToast("UP卡牌已更新");
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setUpSelectingCardId(null);
+    }
+  }
+
   if (loading || !data) return <section className="min-h-screen bg-page"><PageTopBar title="卡包详情" backTo="/mine/store/cards" /><div className="mx-auto max-w-6xl space-y-3 px-4"><ListSkeleton rows={6} /></div></section>;
   const { pack } = data;
   const singleFree = Boolean(pack.freeDrawsUnlimited) || pack.freeDrawsRemaining > 0;
@@ -87,8 +108,14 @@ export default function AssetPackPage() {
 
           <div className="card p-4">
             <h2 className="font-black text-ink">卡包内容</h2>
+            {pack.upCardId && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900"><p>点击任意史诗卡可选择一张UP。每次抽到史诗卡时，UP与非UP各占50%；若抽到非UP史诗卡，下一张史诗必定为当前UP。</p>{pack.epicUpGuaranteed && <p className="mt-1 font-black text-orange-700">下一张史诗卡必定为当前UP，切换UP后状态仍保留。</p>}</div>}
             <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">
-              {(pack.cards ?? []).map((card) => <AssetCardVisual key={card.id} card={card} owned={card.owned} compactBadges packType={pack.packType} />)}
+              {(pack.cards ?? []).map((card) => {
+                const selectable = card.rarity === "epic";
+                const selected = card.id === pack.upCardId;
+                const selecting = card.id === upSelectingCardId;
+                return <div key={card.id} className="relative min-w-0"><AssetCardVisual card={card} owned={card.owned} compactBadges packType={pack.packType} selected={selected} disabled={selectable && upSelectingCardId != null} ariaPressed={selectable ? selected : undefined} ariaLabel={selectable ? `${card.name}，史诗卡，${selected ? "当前UP" : "点击选择为UP"}` : undefined} className={selectable ? "cursor-pointer disabled:cursor-wait" : ""} onClick={selectable ? () => void selectUpCard(card.id) : undefined} />{selected && <span className="asset-card-up-burst" aria-hidden="true">UP</span>}{selecting && <span className="absolute inset-0 z-40 grid place-items-center rounded-2xl bg-slate-950/45 text-white" role="status" aria-label="正在更新UP卡牌"><LoaderCircle className="animate-spin" size={24} /></span>}</div>;
+              })}
             </div>
             <div className="mt-5 border-t border-line pt-5">
               <div className="flex items-center justify-between"><div><h3 className="font-black text-ink">卡包概率</h3><p className="mt-1 text-xs text-muted">按卡牌品质展示抽取概率</p></div><ShieldCheck className="text-primary" size={24} /></div>
