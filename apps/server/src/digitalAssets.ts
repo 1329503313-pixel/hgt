@@ -26,7 +26,7 @@ import {
   isEntitlementLimitError,
   tryConsumeDailyEntitlement
 } from "./entitlements.js";
-import { awardCollectiblesForDraw, collectibleAwardsForOrder, collectiblePackCounts, collectiblesForPack } from "./collectibles.js";
+import { awardCollectiblesForDraw, collectibleAwardsForOrder, collectiblePackCounts, collectibleProbabilityDetails, collectiblesForPack } from "./collectibles.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 
 type RouteUser = { id: string; role: UserRole };
@@ -679,6 +679,11 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
     let collectionDelta = 0;
     let unlockedDelta = 0;
     let legendaryDelta = 0;
+    const [[packDrawProgress]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT COALESCE(SUM(draw_count), 0) AS completed_draw_count FROM asset_draw_count_events WHERE user_id = ? AND pack_id = ?",
+      [userId, packId]
+    );
+    const completedDrawCountBeforeOrder = Number(packDrawProgress?.completed_draw_count ?? 0);
 
     for (let index = 1; index <= drawCount; index += 1) {
       const triggeredPity = pityTrigger(pityState);
@@ -744,7 +749,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
           JSON.stringify({ originalProbability, normalizedProbability, rarityProbability: configuration.rarityProbabilities[cardRarity], pityType: triggeredPity })
         ]
       );
-      await awardCollectiblesForDraw(connection, userId, packId, orderId, index);
+      await awardCollectiblesForDraw(connection, userId, packId, orderId, index, completedDrawCountBeforeOrder + index - 1);
     }
 
     await connection.query(
@@ -1035,7 +1040,9 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           rareLimit: PITY_LIMITS.rare, epicLimit: PITY_LIMITS.epic, legendLimit: PITY_LIMITS.legend
         },
         rarityProbabilities: configuration.rarityProbabilities,
-        collectibleRewards,
+        collectibleRewards: collectibleRewards.map((item) => item.acquired
+          ? item
+          : { ...item, ...collectibleProbabilityDetails(item.probability, Number(drawCountRows[0]?.total_draw_count ?? 0)) }),
         cards: configuration.enabled.map((card) => {
           const starLevel = ownedStarLevels.get(String(card.id));
           return {

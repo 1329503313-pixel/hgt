@@ -6,7 +6,7 @@ import { CollectibleVisual } from "../components/CollectibleVisual";
 import { MineBackButton } from "../components/MineBackButton";
 import { PageTopBar } from "../components/PageTopBar";
 import { subscribeServerEvent } from "../shared/serverEvents";
-import type { CollectibleAuction } from "../shared/collectibles";
+import { formatAuctionRemainingTime, type CollectibleAuction } from "../shared/collectibles";
 
 type Tab = "active" | "upcoming" | "history";
 const labels: Record<Tab,string> = { active: "当前在拍", upcoming: "待拍藏品", history: "历史拍卖" };
@@ -14,8 +14,7 @@ const labels: Record<Tab,string> = { active: "当前在拍", upcoming: "待拍�
 function timeText(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((new Date(value).getTime() - now) / 1000));
   if (!seconds) return "已结束";
-  const h = Math.floor(seconds / 3600), m = Math.floor(seconds % 3600 / 60), s = seconds % 60;
-  return `${h ? `${h}小时` : ""}${m}分${String(s).padStart(2,"0")}秒`;
+  return formatAuctionRemainingTime(seconds);
 }
 
 export default function CollectibleAuctionsPage() {

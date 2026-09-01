@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectibleAuctionEndAfterBid, collectibleProbabilityWins, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
+import { collectibleAuctionEndAfterBid, collectibleProbabilityDetails, collectibleProbabilityWins, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
 import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
 
 test("收藏品排行榜按用户当前拥有且未删除的藏品价值总和统计", () => {
@@ -22,6 +22,31 @@ test("收藏品对每件藏品使用独立概率阈值", () => {
     collectibleProbabilityWins(50, 10_000_000),
     collectibleProbabilityWins(50, 20_000_000)
   ], [true, true]);
+});
+
+test("收藏品概率按用户在当前卡包每完成100抽提高0.01个百分点且最多四次", () => {
+  assert.deepEqual(collectibleProbabilityDetails(0.1, 99), {
+    baseProbability: 0.1, probability: 0.1, probabilityBoost: 0, probabilityBoostLevel: 0
+  });
+  assert.deepEqual(collectibleProbabilityDetails(0.1, 100), {
+    baseProbability: 0.1, probability: 0.11, probabilityBoost: 0.01, probabilityBoostLevel: 1
+  });
+  assert.deepEqual(collectibleProbabilityDetails(0.1, 399), {
+    baseProbability: 0.1, probability: 0.13, probabilityBoost: 0.03, probabilityBoostLevel: 3
+  });
+  assert.deepEqual(collectibleProbabilityDetails(0.1, 400), {
+    baseProbability: 0.1, probability: 0.14, probabilityBoost: 0.04, probabilityBoostLevel: 4
+  });
+  assert.deepEqual(collectibleProbabilityDetails(99.99, 999), {
+    baseProbability: 99.99, probability: 100, probabilityBoost: 0.04, probabilityBoostLevel: 4
+  });
+});
+
+test("十连跨越百抽边界时从边界后的下一抽开始使用新概率", () => {
+  const probabilities = Array.from({ length: 10 }, (_, index) =>
+    collectibleProbabilityDetails(0.1, 95 + index).probability
+  );
+  assert.deepEqual(probabilities, [0.1, 0.1, 0.1, 0.1, 0.1, 0.11, 0.11, 0.11, 0.11, 0.11]);
 });
 
 test("最后一分钟内出价后延长至出价时间后一整分钟", () => {

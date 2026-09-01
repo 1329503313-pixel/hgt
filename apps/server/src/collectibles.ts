@@ -135,6 +135,13 @@ export function collectibleProbabilityWins(probability: number, roll: number) {
   return roll < Math.round(probability * 1_000_000);
 }
 
+export function collectibleProbabilityDetails(baseProbability: number, completedDrawCount: number) {
+  const boostLevel = Math.min(4, Math.max(0, Math.floor(completedDrawCount / 100)));
+  const probabilityBoost = boostLevel * 0.01;
+  const probability = Math.min(100, Math.round((baseProbability + probabilityBoost) * 100_000_000) / 100_000_000);
+  return { baseProbability, probability, probabilityBoost, probabilityBoostLevel: boostLevel };
+}
+
 export function collectibleAuctionEndAfterBid(currentEnd: Date, bidAt: Date) {
   return currentEnd.getTime() - bidAt.getTime() <= 60_000
     ? new Date(bidAt.getTime() + 60_000)
@@ -169,7 +176,7 @@ function queueMotion(id: string, staged: Awaited<ReturnType<typeof stageCardMoti
   jobs.set(key, job);
 }
 
-export async function awardCollectiblesForDraw(connection: mysql.PoolConnection, userId: string, packId: string, orderId: string, drawIndex: number): Promise<CollectibleAward[]> {
+export async function awardCollectiblesForDraw(connection: mysql.PoolConnection, userId: string, packId: string, orderId: string, drawIndex: number, completedDrawCount: number): Promise<CollectibleAward[]> {
   const [rows] = await connection.query<mysql.RowDataPacket[]>(
     `SELECT c.*, b.probability AS draw_probability FROM collectibles c
      INNER JOIN collectible_pack_bindings b ON b.collectible_id=c.id
@@ -178,7 +185,7 @@ export async function awardCollectiblesForDraw(connection: mysql.PoolConnection,
   );
   const awarded: CollectibleAward[] = [];
   for (const row of rows) {
-    const probability = Number(row.draw_probability);
+    const { probability } = collectibleProbabilityDetails(Number(row.draw_probability), completedDrawCount);
     if (!collectibleProbabilityWins(probability, randomInt(100_000_000))) continue;
     await connection.query("UPDATE collectibles SET owner_user_id=?, status='owned' WHERE id=? AND status='draw_linked'", [userId, row.id]);
     await connection.query("DELETE FROM collectible_pack_bindings WHERE collectible_id=?", [row.id]);

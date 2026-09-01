@@ -29,3 +29,12 @@ export const COLLECTIBLE_EDITABLE_RARITY_LABELS = {
 export const COLLECTIBLE_TYPE_LABELS: Record<CollectibleType, string> = {
   treasure: "珍宝", commemorative: "纪念", honor: "荣耀"
 };
+
+export function formatAuctionRemainingTime(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  const restSeconds = seconds % 60;
+  return `${days}天${hours}小时${minutes}分${restSeconds}秒`;
+}

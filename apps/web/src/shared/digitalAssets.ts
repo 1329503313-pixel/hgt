@@ -63,7 +63,13 @@ export type AssetPack = {
   previewCards?: AssetCard[];
   collectibleCounts?: { available: number; total: number } | null;
   cards?: Array<AssetCard & { actualProbability: number; owned: boolean; starLevel?: number }>;
-  collectibleRewards?: Array<import("./collectibles").Collectible & { probability: number; acquired: boolean }>;
+  collectibleRewards?: Array<import("./collectibles").Collectible & {
+    probability: number;
+    acquired: boolean;
+    baseProbability?: number;
+    probabilityBoost?: number;
+    probabilityBoostLevel?: number;
+  }>;
 };
 
 export type CardCabinet = {

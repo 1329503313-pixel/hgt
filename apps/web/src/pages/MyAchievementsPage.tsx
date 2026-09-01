@@ -196,6 +196,8 @@ export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
   "shiningCrownSent:epic": 150
 };
 
+const BADGE_GRID_CLASS = "grid grid-cols-4 gap-4 lg:grid-cols-8";
+
 // 徽章文件名未包含内容哈希，版本号用于在图片更新时主动刷新浏览器长期缓存。
 export const BADGES: BadgeDef[] = BADGE_DEFINITIONS.map((badge) => ({
   ...badge,
@@ -915,7 +917,7 @@ export default function MyAchievementsPage() {
       {/* ======== 徽章网格 ======== */}
       <div className="px-4">
         <h2 className="mb-3 text-sm font-black text-ink">成就徽章</h2>
-        <div className="grid grid-cols-4 gap-4">
+        <div className={BADGE_GRID_CLASS}>
           {displayBadges.map((badge) => {
             const isThis = state && flippingSeries === badge.series;
             return (
@@ -964,14 +966,14 @@ export default function MyAchievementsPage() {
       {activityBadges.length > 0 && (
         <div className="px-4">
           <h2 className="mb-3 text-sm font-black text-ink">活动徽章</h2>
-          <div className="grid grid-cols-4 gap-4">{renderSpecialBadges(activityBadges)}</div>
+          <div className={BADGE_GRID_CLASS}>{renderSpecialBadges(activityBadges)}</div>
         </div>
       )}
 
       {limitedBadges.length > 0 && (
         <div className="px-4">
           <h2 className="mb-3 text-sm font-black text-ink">限定徽章</h2>
-          <div className="grid grid-cols-4 gap-4">{renderSpecialBadges(limitedBadges)}</div>
+          <div className={BADGE_GRID_CLASS}>{renderSpecialBadges(limitedBadges)}</div>
         </div>
       )}
 
@@ -980,7 +982,7 @@ export default function MyAchievementsPage() {
           <div className="mb-3 flex items-end justify-between gap-3">
             <div><h2 className="text-sm font-black text-ink">限时成就徽章</h2><p className="mt-1 text-xs leading-5 text-muted">30日排行榜第一名持有，下一次月度结算时换届。</p></div>
           </div>
-          <div className="grid grid-cols-4 gap-4">{renderTimedBadges()}</div>
+          <div className={BADGE_GRID_CLASS}>{renderTimedBadges()}</div>
         </div>
       )}
 
