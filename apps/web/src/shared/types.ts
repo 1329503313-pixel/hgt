@@ -637,6 +637,7 @@ export type OnlineSoupMessage = {
   senderIsHost: boolean;
   contentIndex: number | null;
   questionNumber: number | null;
+  remainingQuestionCountAfter: number | null;
   answer: OnlineSoupAnswer | null;
   isBestQuestion: boolean;
   aiPreliminaryAnswer: OnlineSoupAnswer | null;

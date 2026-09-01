@@ -33,7 +33,9 @@ import { vipGrowthSnapshot } from "./vipGrowth.js";
 import { ONLINE_SOUP_MUTE_DURATIONS, onlineSoupMuteRemainingMinutes } from "./onlineSoupMute.js";
 import {
   ONLINE_SOUP_QUESTION_LIMIT_MAX,
-  onlineSoupQuestionLimitState
+  onlineSoupQuestionLimitStartNotice,
+  onlineSoupQuestionLimitState,
+  remainingQuestionCountAfterAcceptedQuestion
 } from "./onlineSoupQuestionLimit.js";
 import {
   IMPOSTOR_MAX_PLAYERS,
@@ -1547,6 +1549,7 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     ),
     contentIndex: row.content_index == null ? null : Number(row.content_index),
     questionNumber: row.question_number == null ? null : Number(row.question_number),
+    remainingQuestionCountAfter: row.remaining_question_count_after == null ? null : Number(row.remaining_question_count_after),
     answer: row.answer
       ? String(row.answer)
       : row.ai_status === "scoring" && row.ai_preliminary_answer
@@ -3619,7 +3622,12 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       "UPDATE online_soup_rooms SET status = 'playing', current_round_id = ?, last_action_at = NOW() WHERE id = ?",
       [roundId, context.room.id]
     );
-    await systemMessage(context.room.id, roundId, "新一轮推理开始", connection);
+    await systemMessage(
+      context.room.id,
+      roundId,
+      hostMode === "human" ? onlineSoupQuestionLimitStartNotice(questionLimit) : "新一轮推理开始",
+      connection
+    );
     if (hostMode === "ai") {
       await connection.query(
         "INSERT INTO online_soup_messages (id, room_id, round_id, sender_id, message_type, content) VALUES (?, ?, ?, NULL, 'ai_advice', ?)",
@@ -3859,6 +3867,7 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   }
   const connection = await pool.getConnection();
   let questionNumber: number | null = null;
+  let remainingQuestionCountAfter: number | null = null;
   let activitySequence = "0";
   try {
     await connection.beginTransaction();
@@ -3952,6 +3961,7 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
             await connection.rollback();
             return fail(res, 409, "本轮提问次数已用尽，请等待主持人完成回答", "ROUND_QUESTION_LIMIT_REACHED");
           }
+          remainingQuestionCountAfter = remainingQuestionCountAfterAcceptedQuestion(round.question_limit, usage.used);
         }
       }
       if (!mysteryMode && String(context.room.host_mode ?? "human") === "ai") {
@@ -4000,10 +4010,10 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
     }
     await connection.query(
       `INSERT INTO online_soup_messages
-       (id, room_id, round_id, mystery_run_id, sender_id, message_type, content, sticker_id, question_number, ai_status, mentions_json, reply_to_message_id, impostor_game_number, impostor_seat)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, room_id, round_id, mystery_run_id, sender_id, message_type, content, sticker_id, question_number, remaining_question_count_after, ai_status, mentions_json, reply_to_message_id, impostor_game_number, impostor_seat)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, context.room.id, mysteryMode ? null : context.room.current_round_id, mysteryMode ? context.room.current_mystery_run_id : null,
-        context.user.id, type, content, sticker?.id ?? null, questionNumber,
+        context.user.id, type, content, sticker?.id ?? null, questionNumber, remainingQuestionCountAfter,
         parsed.data.type === "question" && (mysteryMode || String(context.room.host_mode ?? "human") === "ai") ? "pending" : "none",
         mentions.length ? JSON.stringify(mentions) : null, parsed.data.replyToMessageId ?? null, impostorGameNumber, impostorSeat]
     );

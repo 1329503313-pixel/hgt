@@ -26,3 +26,13 @@ export function onlineSoupQuestionLimitState(
     resolutionRequired: limit != null && used >= limit && unanswered === 0
   };
 }
+
+export function remainingQuestionCountAfterAcceptedQuestion(rawLimit: unknown, rawUsedBefore: unknown) {
+  const usedBefore = Math.max(0, Math.floor(Number(rawUsedBefore) || 0));
+  return onlineSoupQuestionLimitState(rawLimit, usedBefore + 1, 0).remaining;
+}
+
+export function onlineSoupQuestionLimitStartNotice(rawLimit: unknown) {
+  const limit = onlineSoupQuestionLimitState(rawLimit, 0, 0).limit;
+  return limit === null ? "本局游戏不限次数" : `本局游戏限${limit}次`;
+}

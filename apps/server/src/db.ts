@@ -1145,6 +1145,7 @@ export async function initDatabase() {
       gift_send_id VARCHAR(64) NULL,
       content_index INT UNSIGNED NULL,
       question_number INT UNSIGNED NULL,
+      remaining_question_count_after INT UNSIGNED NULL,
       answer ENUM('yes','no','both','unknown','irrelevant') NULL,
       ai_preliminary_answer ENUM('yes','no','both','unknown','irrelevant') NULL,
       ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none',
@@ -1223,6 +1224,7 @@ export async function initDatabase() {
   await ensureColumn("online_soup_rounds", "ai_fact_version_id", "ai_fact_version_id VARCHAR(64) NULL AFTER ai_hint_count");
   await ensureColumn("online_soup_rounds", "ai_phase", "ai_phase ENUM('PREPARING','PLAYING','READY_TO_SOLVE','SOLVING','COMPLETED','CANCELLED') NOT NULL DEFAULT 'PREPARING' AFTER ai_fact_version_id");
   await ensureColumn("online_soup_messages", "ai_status", "ai_status ENUM('none','pending','answering','scoring','completed','failed','cancelled') NOT NULL DEFAULT 'none' AFTER answer");
+  await ensureColumn("online_soup_messages", "remaining_question_count_after", "remaining_question_count_after INT UNSIGNED NULL AFTER question_number");
   await ensureColumn("online_soup_messages", "ai_preliminary_answer", "ai_preliminary_answer ENUM('yes','no','both','unknown','irrelevant') NULL AFTER answer");
   await ensureColumn("online_soup_messages", "ai_decision_id", "ai_decision_id VARCHAR(64) NULL AFTER ai_preliminary_answer");
   await ensureColumn("online_soup_messages", "ai_error", "ai_error VARCHAR(255) NULL AFTER ai_status");
@@ -1230,6 +1232,27 @@ export async function initDatabase() {
   await ensureColumn("online_soup_messages", "ai_progress_after", "ai_progress_after INT UNSIGNED NULL AFTER ai_progress_delta");
   await ensureColumn("online_soup_messages", "ai_feedback", "ai_feedback VARCHAR(255) NULL AFTER ai_progress_after");
   await ensureColumn("online_soup_messages", "ai_scoring_degraded", "ai_scoring_degraded TINYINT(1) NOT NULL DEFAULT 0 AFTER ai_feedback");
+  await pool.query(`
+    UPDATE online_soup_messages message
+    JOIN (
+      SELECT current_message.id,
+        GREATEST(rounds.question_limit - COUNT(previous_message.id), 0) AS remaining_after
+      FROM online_soup_messages current_message
+      JOIN online_soup_rounds rounds ON rounds.id = current_message.round_id
+      JOIN online_soup_messages previous_message
+        ON previous_message.round_id = current_message.round_id
+       AND previous_message.message_type = 'question'
+       AND previous_message.message_sequence <= current_message.message_sequence
+       AND (previous_message.recalled_at IS NULL OR previous_message.recalled_at > current_message.created_at)
+      WHERE current_message.message_type = 'question'
+        AND current_message.recalled_at IS NULL
+        AND current_message.remaining_question_count_after IS NULL
+        AND rounds.question_limit IS NOT NULL
+      GROUP BY current_message.id, rounds.question_limit
+    ) snapshots ON snapshots.id = message.id
+    SET message.remaining_question_count_after = snapshots.remaining_after
+    WHERE message.remaining_question_count_after IS NULL
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ai_soup_fact_versions (
       id VARCHAR(64) PRIMARY KEY,
