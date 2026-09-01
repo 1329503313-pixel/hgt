@@ -261,6 +261,7 @@ async function roomById(id: string, db: mysql.Pool | mysql.PoolConnection = pool
        s.surface AS soup_surface, s.supplemental_surfaces AS soup_supplemental_surfaces,
        s.bottom AS soup_bottom, s.supplemental_bottoms AS soup_supplemental_bottoms,
        s.host_manual AS soup_manual, s.enable_ai_game AS soup_enable_ai_game,
+       s.cover_image IS NOT NULL AS soup_has_cover,
        soup_creator.role AS soup_creator_role,
        cr.published_surface_indices, cr.published_bottom_indices, cr.ai_progress, cr.ai_hint_count,
        cr.question_limit,
@@ -2011,6 +2012,9 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
         id: String(room.current_soup_id),
         title: roundSoupSnapshot?.title ?? String(room.soup_title),
         type: roundSoupSnapshot?.type ?? String(room.soup_type),
+        coverImage: room.soup_has_cover
+          ? `/api/media/soups/${encodeURIComponent(String(room.current_soup_id))}/cover`
+          : null,
         enableAiGame: Boolean(roundSoupSnapshot) || (Boolean(room.soup_enable_ai_game)
           && ["super_admin", "backoffice_admin", "admin", "vip"].includes(String(room.soup_creator_role))),
         surface: roundSoupSnapshot?.surface ?? String(room.soup_surface),

@@ -702,6 +702,7 @@ export type OnlineSoupSnapshot = {
       id: string;
       title: string;
       type: string;
+      coverImage: string | null;
       enableAiGame: boolean;
       surface: string;
       visibleSupplementalSurfaces: Array<{ index: number; content: string }>;

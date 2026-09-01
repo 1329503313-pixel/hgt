@@ -1901,8 +1901,16 @@ export default function OnlineSoupRoomPage() {
 
         <section className={`card relative flex min-h-0 flex-col overflow-hidden lg:order-2 ${impostorNightMode ? "impostor-night-chat" : ""}`}>
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">{impostorMode ? "游戏者自由讨论；旁观者保持只读" : mysteryMode ? "讨论、房主行动和故事回应会实时同步" : "讨论、正式提问、主持人回复和线索会实时同步"}</p></div>
-          <div className="relative min-h-0 flex-1">
-            <div ref={messagesRef} className={`h-full space-y-3 overflow-y-auto overscroll-contain px-4 pt-4 ${showScrollToLatest ? "pb-16" : "pb-3"}`} onScroll={updateMessagesScrollPosition}>
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            {snapshot.room.contentType === "soup" && snapshot.room.soup?.coverImage && <img
+              src={snapshot.room.soup.coverImage}
+              alt=""
+              aria-hidden="true"
+              loading="lazy"
+              decoding="async"
+              className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover opacity-20"
+            />}
+            <div ref={messagesRef} className={`relative z-10 h-full space-y-3 overflow-y-auto overscroll-contain px-4 pt-4 ${showScrollToLatest ? "pb-16" : "pb-3"}`} onScroll={updateMessagesScrollPosition}>
               {snapshot.messagesHasMore && <button className="mx-auto block rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-primary shadow-sm transition hover:bg-blue-50 disabled:opacity-50" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? "加载中…" : "加载更早消息"}</button>}
               {giftTimelineEntries(snapshot.messages).map((entry) => {
                 if (entry.kind === "gift_bundle") {
