@@ -110,7 +110,7 @@ export type AssetDrawOrder = {
   usedFreeDraw: boolean;
   createdAt: string;
   results: AssetDrawResult[];
-  collectibleAwards: Array<import("./collectibles").Collectible & { drawIndex: number; probability: number }>;
+  collectibleAwards: Array<import("./collectibles").Collectible & { drawIndex: number; packDrawNumber: number; probability: number }>;
 };
 
 export const ASSET_RARITY_LABELS: Record<AssetRarity, string> = {

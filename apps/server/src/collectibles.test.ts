@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectibleAuctionEndAfterBid, collectibleProbabilityDetails, collectibleProbabilityWins, equipFirstOwnedCollectible, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
+import { awardCollectiblesForDraw, collectibleAuctionEndAfterBid, collectibleProbabilityDetails, collectibleProbabilityWins, equipFirstOwnedCollectible, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
 import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
 
 test("收藏品排行榜按用户当前拥有且未删除的藏品价值总和统计", () => {
@@ -47,6 +47,33 @@ test("十连跨越百抽边界时从边界后的下一抽开始使用新概率",
     collectibleProbabilityDetails(0.1, 95 + index).probability
   );
   assert.deepEqual(probabilities, [0.1, 0.1, 0.1, 0.1, 0.1, 0.11, 0.11, 0.11, 0.11, 0.11]);
+});
+
+test("抽中收藏品时记录当前卡包的真实累计抽数", async () => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const connection = {
+    query: async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (sql.includes("SELECT c.*, b.probability AS draw_probability")) {
+        return [[{
+          id: "collectible-1", collectible_no: "001", name: "测试收藏品", rarity: "epic",
+          collectible_type: "physical", collectible_value: 10, description: "", image_url: "/test.webp",
+          thumbnail_url: "/test.webp", status: "draw_linked", draw_probability: 100
+        }]];
+      }
+      if (sql.includes("COUNT(*) AS owned_count")) return [[{ owned_count: 1 }]];
+      return [{ affectedRows: 1 }];
+    }
+  };
+
+  const awards = await awardCollectiblesForDraw(connection as never, "user-1", "pack-1", "order-1", 3, 109);
+  const awardInsert = calls.find((call) => call.sql.includes("INSERT INTO collectible_draw_awards"));
+
+  assert.equal(awards.length, 1);
+  assert.equal(awards[0].drawIndex, 3);
+  assert.equal(awards[0].packDrawNumber, 110);
+  assert.match(awardInsert?.sql ?? "", /pack_draw_number/);
+  assert.deepEqual(awardInsert?.params.slice(1), ["collectible-1", "order-1", 3, 110, "user-1", 100]);
 });
 
 test("最后一分钟内出价后延长至出价时间后一整分钟", () => {

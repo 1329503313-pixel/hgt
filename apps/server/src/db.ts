@@ -1165,8 +1165,9 @@ export async function initDatabase() {
       sender_id VARCHAR(64) NULL,
       message_type ENUM('discussion','question','host','sticker','gift','clue','supplemental_surface','bottom','manual','system','ai_advice','ai_honor','mystery_narrative') NOT NULL,
       content TEXT NOT NULL,
+      entry_collectible_id VARCHAR(64) NULL,
       entry_collectible_name VARCHAR(120) NULL,
-      entry_collectible_rarity ENUM('legend','epic') NULL,
+      entry_collectible_rarity ENUM('limited','collaboration','legend','epic') NULL,
       sticker_id VARCHAR(64) NULL,
       gift_send_id VARCHAR(64) NULL,
       content_index INT UNSIGNED NULL,
@@ -1463,14 +1464,29 @@ export async function initDatabase() {
   );
   await ensureColumn(
     "online_soup_messages",
+    "entry_collectible_id",
+    "entry_collectible_id VARCHAR(64) NULL AFTER content"
+  );
+  await ensureColumn(
+    "online_soup_messages",
     "entry_collectible_name",
-    "entry_collectible_name VARCHAR(120) NULL AFTER content"
+    "entry_collectible_name VARCHAR(120) NULL AFTER entry_collectible_id"
   );
   await ensureColumn(
     "online_soup_messages",
     "entry_collectible_rarity",
-    "entry_collectible_rarity ENUM('legend','epic') NULL AFTER entry_collectible_name"
+    "entry_collectible_rarity ENUM('limited','collaboration','legend','epic') NULL AFTER entry_collectible_name"
   );
+  const [[onlineSoupEntryCollectibleRarity]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_messages' AND COLUMN_NAME = 'entry_collectible_rarity'`
+  );
+  const onlineSoupEntryCollectibleRarityType = String(onlineSoupEntryCollectibleRarity?.COLUMN_TYPE ?? "");
+  if (!onlineSoupEntryCollectibleRarityType.includes("'limited'") || !onlineSoupEntryCollectibleRarityType.includes("'collaboration'")) {
+    await pool.query(
+      "ALTER TABLE online_soup_messages MODIFY COLUMN entry_collectible_rarity ENUM('limited','collaboration','legend','epic') NULL"
+    );
+  }
   await ensureColumn(
     "online_soup_messages",
     "sticker_id",
@@ -2964,6 +2980,7 @@ export async function initDatabase() {
       collectible_id VARCHAR(64) NOT NULL UNIQUE,
       order_id VARCHAR(64) NOT NULL,
       draw_index TINYINT UNSIGNED NOT NULL,
+      pack_draw_number BIGINT UNSIGNED NULL,
       user_id VARCHAR(64) NOT NULL,
       probability_snapshot DECIMAL(12,8) NOT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2973,6 +2990,7 @@ export async function initDatabase() {
       CONSTRAINT fk_collectible_award_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("collectible_draw_awards", "pack_draw_number", "pack_draw_number BIGINT UNSIGNED NULL AFTER draw_index");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS collectible_value_events (
       id VARCHAR(128) PRIMARY KEY,

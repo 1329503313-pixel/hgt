@@ -128,6 +128,19 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
           </div>
         ) : (
           <div className="asset-result-pop py-8">
+            {order.collectibleAwards?.length > 0 && (
+              <div className="mx-auto mb-8 max-w-3xl rounded-3xl border border-amber-300/30 bg-amber-300/10 p-5">
+                <h3 className="text-center text-lg font-black text-amber-200">获得收藏品</h3>
+                <div className="mt-4 flex flex-wrap justify-center gap-3">
+                  {order.collectibleAwards.map((item) => (
+                    <div key={item.id} className="w-[calc(50%-0.375rem)] sm:w-[calc(25%-0.5625rem)]">
+                      <CollectibleVisual collectible={item} className="aspect-[5/6]" />
+                      <p className="mt-1 text-center text-xs font-bold text-amber-100">第 {item.packDrawNumber} 抽</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className={`mx-auto grid gap-3 ${order.results.length === 1 ? "max-w-xs grid-cols-1" : "grid-cols-2 sm:grid-cols-5"}`}>
               {displayResults.map((result) => (
                 <div key={result.drawIndex} className="relative min-w-0">
@@ -139,7 +152,6 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
                 </div>
               ))}
             </div>
-            {order.collectibleAwards?.length > 0 && <div className="mx-auto mt-8 max-w-3xl rounded-3xl border border-amber-300/30 bg-amber-300/10 p-5"><h3 className="text-center text-lg font-black text-amber-200">额外获得收藏品</h3><p className="mt-1 text-center text-xs text-amber-100/75">每件收藏品均按独立概率判定</p><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">{order.collectibleAwards.map(item=><div key={item.id}><CollectibleVisual collectible={item} className="aspect-[5/6]"/><p className="mt-1 text-center text-xs font-bold text-amber-100">第 {item.drawIndex} 抽</p></div>)}</div></div>}
             <div className="mx-auto mt-7 flex max-w-xl flex-wrap items-center justify-center gap-3 rounded-2xl border border-white/15 bg-white/10 p-4 text-sm font-bold">
               <span>{order.usedFreeDraw ? "使用免费单抽" : `消耗 ${order.shellCost} 贝壳`}</span>
               {totalRefund > 0 && <span className="inline-flex items-center gap-1 text-emerald-300"><Shell size={16} />满星返还 +{totalRefund}</span>}

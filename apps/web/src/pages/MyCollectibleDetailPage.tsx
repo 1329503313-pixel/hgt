@@ -51,7 +51,7 @@ export default function MyCollectibleDetailPage() {
     { icon: Gem, label: "类型", value: item.collectibleTypeLabel },
     { icon: ShieldCheck, label: "状态", value: item.statusLabel },
     { icon: Gem, label: "收藏品价值", value: item.collectibleValue.toLocaleString() },
-    { icon: CircleUserRound, label: "拥有者", value: item.owner ? `${item.owner.nickname}（${item.owner.username}）` : "暂无拥有者" },
+    { icon: CircleUserRound, label: "拥有者", value: item.owner?.nickname || "暂无拥有者" },
     { icon: CalendarClock, label: "获取时间", value: detailDate(item.acquiredAt) }
   ];
 

@@ -615,7 +615,7 @@ export type OnlineSoupMessage = {
   senderVipLevel: VipLevel;
   senderVipActive: boolean;
   senderEquippedBadge: EquippedBadge | null;
-  entryCollectible: { name: string; rarity: "epic" | "legend" } | null;
+  entryCollectible: { id: string | null; name: string; rarity: import("./collectibles").CollectibleRarity } | null;
   impostorGameNumber: number | null;
   impostorSeat: number | null;
   impostorEvent: {

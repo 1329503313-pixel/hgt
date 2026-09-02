@@ -26,7 +26,7 @@ type Dependencies = {
   onBadgeProgress?: (userId: string) => void;
 };
 
-export type CollectibleAward = ReturnType<typeof collectiblePayload> & { drawIndex: number; probability: number };
+export type CollectibleAward = ReturnType<typeof collectiblePayload> & { drawIndex: number; packDrawNumber: number; probability: number };
 const rarityLabels = { limited: "限定", collaboration: "联动", legend: "传说", epic: "史诗" } as const;
 const collectibleTypeLabels = { treasure: "珍宝", commemorative: "纪念", honor: "荣耀" } as const;
 const statusLabels = { unowned: "无主", owned: "被拥有", auction_pending: "待拍卖", auction_active: "拍卖中", draw_linked: "已关联抽卡" } as const;
@@ -204,16 +204,17 @@ export async function awardCollectiblesForDraw(connection: mysql.PoolConnection,
      ORDER BY CAST(c.collectible_no AS UNSIGNED), c.collectible_no, c.id FOR UPDATE`, [packId]
   );
   const awarded: CollectibleAward[] = [];
+  const packDrawNumber = completedDrawCount + 1;
   for (const row of rows) {
     const { probability } = collectibleProbabilityDetails(Number(row.draw_probability), completedDrawCount);
     if (!collectibleProbabilityWins(probability, randomInt(100_000_000))) continue;
     await connection.query("UPDATE collectibles SET owner_user_id=?, status='owned' WHERE id=? AND status='draw_linked'", [userId, row.id]);
     await connection.query("DELETE FROM collectible_pack_bindings WHERE collectible_id=?", [row.id]);
-    await connection.query("INSERT INTO collectible_draw_awards (id,collectible_id,order_id,draw_index,user_id,probability_snapshot) VALUES (?,?,?,?,?,?)", [nanoid(), row.id, orderId, drawIndex, userId, probability]);
+    await connection.query("INSERT INTO collectible_draw_awards (id,collectible_id,order_id,draw_index,pack_draw_number,user_id,probability_snapshot) VALUES (?,?,?,?,?,?,?)", [nanoid(), row.id, orderId, drawIndex, packDrawNumber, userId, probability]);
     await connection.query("INSERT INTO collectible_transfers (id,collectible_id,to_user_id,transfer_type,related_type,related_id,collectible_snapshot) VALUES (?,?,?,'draw','asset_draw_order',?,?)", [nanoid(), row.id, userId, orderId, snapshot(row)]);
     await recordValueEvent(connection, row, userId, Number(row.collectible_value ?? 1), "draw", "asset_draw_order", orderId);
     await equipFirstOwnedCollectible(connection, userId, String(row.id));
-    awarded.push({ ...collectiblePayload({ ...row, owner_user_id: userId, status: "owned" }), drawIndex, probability });
+    awarded.push({ ...collectiblePayload({ ...row, owner_user_id: userId, status: "owned" }), drawIndex, packDrawNumber, probability });
   }
   return awarded;
 }
@@ -258,10 +259,15 @@ export async function collectiblePackCounts(packIds: string[]) {
 
 export async function collectibleAwardsForOrder(orderId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT c.*,a.draw_index,a.probability_snapshot FROM collectible_draw_awards a
+    `SELECT c.*,a.draw_index,a.pack_draw_number,a.probability_snapshot FROM collectible_draw_awards a
      INNER JOIN collectibles c ON c.id=a.collectible_id WHERE a.order_id=? ORDER BY a.draw_index,c.collectible_no`, [orderId]
   );
-  return rows.map((row) => ({ ...collectiblePayload(row), drawIndex: Number(row.draw_index), probability: Number(row.probability_snapshot) }));
+  return rows.map((row) => ({
+    ...collectiblePayload(row),
+    drawIndex: Number(row.draw_index),
+    packDrawNumber: Number(row.pack_draw_number ?? row.draw_index),
+    probability: Number(row.probability_snapshot)
+  }));
 }
 
 async function auctionPayload(id: string, userId?: string) {

@@ -733,22 +733,23 @@ async function roomEntrySystemMessage(
   db: mysql.PoolConnection,
 ) {
   const [[collectible]] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT c.name, c.rarity
+    `SELECT c.id, c.name, c.rarity
      FROM users u
      JOIN collectibles c ON c.id = u.equipped_collectible_id
        AND c.owner_user_id = u.id
        AND c.status = 'owned'
        AND c.deleted_at IS NULL
-     WHERE u.id = ? AND c.rarity IN ('epic', 'legend')
+     WHERE u.id = ?
      LIMIT 1`,
     [user.id]
   );
   await db.query(
     `INSERT INTO online_soup_messages
-      (id, room_id, round_id, sender_id, message_type, content, entry_collectible_name, entry_collectible_rarity)
-     VALUES (?, ?, ?, ?, 'system', ?, ?, ?)`,
+      (id, room_id, round_id, sender_id, message_type, content, entry_collectible_id, entry_collectible_name, entry_collectible_rarity)
+     VALUES (?, ?, ?, ?, 'system', ?, ?, ?, ?)`,
     [
       nanoid(), roomId, roundId, user.id, `${user.nickname} 进入了房间`,
+      collectible ? String(collectible.id) : null,
       collectible ? String(collectible.name) : null,
       collectible ? String(collectible.rarity) : null,
     ]
@@ -1579,8 +1580,9 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
     senderVipActive: vipGrowthSnapshot({ role: row.sender_role, vip_growth_value: row.sender_vip_growth_value, vip_expires_at: row.sender_vip_expires_at, vip_legacy_active: row.sender_vip_legacy_active }).active,
     senderEquippedBadge: memberBadge(row.sender_badge_key, row.sender_badge_icon_url, row.sender_special_badge_name, row.sender_special_badge_tier),
     entryCollectible: row.entry_collectible_name ? {
+      id: row.entry_collectible_id ? String(row.entry_collectible_id) : null,
       name: String(row.entry_collectible_name),
-      rarity: String(row.entry_collectible_rarity) as "epic" | "legend",
+      rarity: String(row.entry_collectible_rarity) as "limited" | "collaboration" | "epic" | "legend",
     } : null,
     impostorGameNumber: row.impostor_game_number == null ? null : Number(row.impostor_game_number),
     impostorSeat: row.impostor_seat == null ? null : Number(row.impostor_seat),
