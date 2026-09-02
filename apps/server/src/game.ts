@@ -1406,26 +1406,44 @@ ${missingFacts.map((fact) => `[${fact.id}] ${fact.content}`).join("\n")}
       if (soupData.keyFacts.some((fact) => !fact.hintContent)) return;
     }
 
+    const [latestRows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT key_facts_customized, key_fact_atoms, key_fact_atoms_hash,
+              SHA2(CAST(key_facts AS CHAR), 256) AS key_facts_storage_digest
+       FROM soups WHERE id = ? LIMIT 1`,
+      [soupId],
+    );
+    const expectedStorageDigest = String(latestRows[0]?.key_facts_storage_digest ?? "");
+    if (!expectedStorageDigest) return;
+
     if (options.forceAtomicFacts) {
-      const [clearResult] = await pool.query<mysql.ResultSetHeader>(
+      await pool.query<mysql.ResultSetHeader>(
         `UPDATE soups
          SET key_fact_atoms = NULL, key_fact_atoms_hash = NULL
-         WHERE id = ? AND enable_ai_game = 1 AND key_facts = CAST(? AS JSON)`,
-        [soupId, JSON.stringify(soupData.keyFacts)],
+         WHERE id = ? AND enable_ai_game = 1
+           AND SHA2(CAST(key_facts AS CHAR), 256) = ?`,
+        [soupId, expectedStorageDigest],
       );
-      if (clearResult.affectedRows !== 1) {
+      const [[clearCheck]] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT enable_ai_game, key_fact_atoms, key_fact_atoms_hash,
+                SHA2(CAST(key_facts AS CHAR), 256) AS key_facts_storage_digest
+         FROM soups WHERE id = ? LIMIT 1`,
+        [soupId],
+      );
+      if (Number(clearCheck?.enable_ai_game ?? 0) !== 1
+        || String(clearCheck?.key_facts_storage_digest ?? "") !== expectedStorageDigest
+        || clearCheck?.key_fact_atoms !== null
+        || clearCheck?.key_fact_atoms_hash !== null) {
         throw new Error(`AI key facts changed while rebuilding atomic facts: ${soupId}`);
       }
     }
 
-    const [latestRows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT key_facts_customized, key_fact_atoms, key_fact_atoms_hash FROM soups WHERE id = ? LIMIT 1",
-      [soupId],
-    );
     const latestCustomized = Number(latestRows[0]?.key_facts_customized ?? 0) === 1;
     const expectedAtomHash = atomicFactsContentHash(soupData);
     const storedAtoms = parseJson<unknown>(latestRows[0]?.key_fact_atoms);
-    if (latestRows[0]?.key_fact_atoms_hash === expectedAtomHash && Array.isArray(storedAtoms) && storedAtoms.length > 0) return;
+    if (!options.forceAtomicFacts
+      && latestRows[0]?.key_fact_atoms_hash === expectedAtomHash
+      && Array.isArray(storedAtoms)
+      && storedAtoms.length > 0) return;
 
     let rawAtomicFacts: unknown = [];
     if (DEEPSEEK_API_KEY) {
@@ -1470,11 +1488,11 @@ ${soupData.keyFacts.map((fact) => `[K${fact.id}] ${fact.content}`).join("\n")}
     await pool.query(
       `UPDATE soups SET key_fact_atoms = ?, key_fact_atoms_hash = ?
        WHERE id = ? AND key_facts_customized = ? AND JSON_LENGTH(key_facts) = ?
-         AND key_facts = CAST(? AS JSON)
+         AND SHA2(CAST(key_facts AS CHAR), 256) = ?
          AND (key_fact_atoms_hash IS NULL OR key_fact_atoms_hash <> ?)`,
       [
         JSON.stringify(atomicFacts), expectedAtomHash, soupId, latestCustomized ? 1 : 0,
-        soupData.keyFacts.length, JSON.stringify(soupData.keyFacts), expectedAtomHash,
+        soupData.keyFacts.length, expectedStorageDigest, expectedAtomHash,
       ],
     );
   } catch (err) {
