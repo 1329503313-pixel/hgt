@@ -15,13 +15,15 @@ export function SoupLinkList({
   onOpen,
   onLongPress,
   emptyHint,
-  showHeatValue = false
+  showHeatValue = false,
+  showProfilePins = false
 }: {
   soups: SoupSummary[];
   onOpen: (id: string) => void;
   onLongPress?: (soup: SoupSummary) => void;
   emptyHint: string;
   showHeatValue?: boolean;
+  showProfilePins?: boolean;
 }) {
   const longPressTimer = useRef<number | null>(null);
   const pointerStart = useRef({ x: 0, y: 0 });
@@ -68,11 +70,18 @@ export function SoupLinkList({
             onContextMenu={(event) => { if (onLongPress) event.preventDefault(); }}
             onClick={() => { if (longPressTriggered.current) { longPressTriggered.current = false; return; } onOpen(soup.id); }}
           >
-            {soup.coverImage ? (
-              <img className="soup-link-list-cover h-14 w-14 shrink-0 rounded-lg object-cover" src={soup.coverImage} alt="" />
-            ) : (
-              <img className="soup-link-list-cover h-14 w-14 shrink-0 rounded-lg object-cover" src={defaultCoverUrl} alt="" />
-            )}
+            <span className="relative h-14 w-14 shrink-0">
+              {soup.coverImage ? (
+                <img className="soup-link-list-cover h-14 w-14 rounded-lg object-cover" src={soup.coverImage} alt="" />
+              ) : (
+                <img className="soup-link-list-cover h-14 w-14 rounded-lg object-cover" src={defaultCoverUrl} alt="" />
+              )}
+              {showProfilePins && soup.isProfilePinned && (
+                <span className="absolute left-1 top-1 rounded-md bg-slate-950/80 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-sm ring-1 ring-white/20 backdrop-blur-sm">
+                  置顶
+                </span>
+              )}
+            </span>
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 truncate">
                 <span className="truncate text-base font-semibold text-ink">{soup.title}</span>
@@ -117,12 +126,14 @@ export function SubListPage({
   soups,
   emptyHint,
   showHeatValue = false,
+  showProfilePins = false,
   onLongPress
 }: {
   title: string;
   soups: SoupSummary[];
   emptyHint: string;
   showHeatValue?: boolean;
+  showProfilePins?: boolean;
   onLongPress?: (soup: SoupSummary) => void;
 }) {
   const navigate = useNavigate();
@@ -225,7 +236,7 @@ export function SubListPage({
     <section className="soup-sub-list-page space-y-3">
       <PageTopBar title={title} />
       <MineBackButton />
-      <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} onLongPress={onLongPress} emptyHint={emptyHint} showHeatValue={showHeatValue} />
+      <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} onLongPress={onLongPress} emptyHint={emptyHint} showHeatValue={showHeatValue} showProfilePins={showProfilePins} />
 
       {/* 导出汤名悬浮按钮 */}
       <button

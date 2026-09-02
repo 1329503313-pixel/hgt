@@ -14,7 +14,7 @@ function useWaitForUser() {
   return { user, loading: loadingUser };
 }
 
-function MyListPage({ title, endpoint, emptyHint, showHeatValue = false, allowLongPressDelete = false }: { title: string; endpoint: string; emptyHint: string; showHeatValue?: boolean; allowLongPressDelete?: boolean }) {
+function MyListPage({ title, endpoint, emptyHint, showHeatValue = false, showProfilePins = false, allowLongPressDelete = false }: { title: string; endpoint: string; emptyHint: string; showHeatValue?: boolean; showProfilePins?: boolean; allowLongPressDelete?: boolean }) {
   const { user, loading: loadingUser } = useWaitForUser();
   const { showToast } = useApp();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
@@ -58,7 +58,7 @@ function MyListPage({ title, endpoint, emptyHint, showHeatValue = false, allowLo
   }
 
   return <>
-    <SubListPage title={title} soups={soups} emptyHint={emptyHint} showHeatValue={showHeatValue} onLongPress={allowLongPressDelete ? setDeleteTarget : undefined} />
+    <SubListPage title={title} soups={soups} emptyHint={emptyHint} showHeatValue={showHeatValue} showProfilePins={showProfilePins} onLongPress={allowLongPressDelete ? setDeleteTarget : undefined} />
     {deleteTarget && <Modal onClose={() => !deleting && setDeleteTarget(null)}>
       <div className="space-y-4">
         <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-red-50 text-red-600"><Trash2 size={22} /></div>
@@ -70,5 +70,5 @@ function MyListPage({ title, endpoint, emptyHint, showHeatValue = false, allowLo
 }
 
 export default function MySoupsPage() {
-  return <MyListPage title="我发布的" endpoint="/api/me/soups" emptyHint="还没有发布海龟汤。" showHeatValue allowLongPressDelete />;
+  return <MyListPage title="我发布的" endpoint="/api/me/soups" emptyHint="还没有发布海龟汤。" showHeatValue showProfilePins allowLongPressDelete />;
 }

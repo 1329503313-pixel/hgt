@@ -1230,29 +1230,38 @@ function sessionMatchesSoup(session: GameSessionRow, soupData: GameSoupData) {
 // ---------- 大模型预拆分关键事实点 ----------
 const keyFactAnalysisJobs = new Map<string, Promise<void>>();
 
-export async function splitKeyFactsForSoup(soupId: string): Promise<void> {
-  const existing = keyFactAnalysisJobs.get(soupId);
+type SplitKeyFactOptions = {
+  preserveExistingKeyFacts?: boolean;
+  forceAtomicFacts?: boolean;
+};
+
+export async function splitKeyFactsForSoup(soupId: string, options: SplitKeyFactOptions = {}): Promise<void> {
+  const jobKey = `${soupId}:${options.preserveExistingKeyFacts ? "preserve" : "refresh"}:${options.forceAtomicFacts ? "force-atoms" : "cached-atoms"}`;
+  const existing = keyFactAnalysisJobs.get(jobKey);
   if (existing) return existing;
-  const job = performSplitKeyFactsForSoup(soupId);
-  keyFactAnalysisJobs.set(soupId, job);
+  const job = performSplitKeyFactsForSoup(soupId, options);
+  keyFactAnalysisJobs.set(jobKey, job);
   try {
     await job;
   } finally {
-    if (keyFactAnalysisJobs.get(soupId) === job) keyFactAnalysisJobs.delete(soupId);
+    if (keyFactAnalysisJobs.get(jobKey) === job) keyFactAnalysisJobs.delete(jobKey);
   }
 }
 
-async function performSplitKeyFactsForSoup(soupId: string): Promise<void> {
+async function performSplitKeyFactsForSoup(soupId: string, options: SplitKeyFactOptions): Promise<void> {
   const lockConnection = await pool.getConnection();
   const lockName = `hgt-keyfacts-${createHash("sha256").update(soupId).digest("hex").slice(0, 48)}`;
   let lockAcquired = false;
   try {
     const [[lockRow]] = await lockConnection.query<mysql.RowDataPacket[]>(
-      "SELECT GET_LOCK(?, 0) AS acquired",
-      [lockName],
+      "SELECT GET_LOCK(?, ?) AS acquired",
+      [lockName, options.forceAtomicFacts ? 30 : 0],
     );
     lockAcquired = Number(lockRow?.acquired ?? 0) === 1;
-    if (!lockAcquired) return;
+    if (!lockAcquired) {
+      if (options.forceAtomicFacts) throw new Error(`Timed out waiting for AI key fact lock: ${soupId}`);
+      return;
+    }
 
     let soupData = await getSoupGameData(soupId);
     if (!soupData) return;
@@ -1268,7 +1277,8 @@ async function performSplitKeyFactsForSoup(soupId: string): Promise<void> {
     // 历史上出现过“手动标记为真但列表为空”的脏数据；空列表不构成有效手动配置。
     const isCustomized = (rows[0].key_facts_customized as number) === 1 && soupData.keyFacts.length > 0;
     // 用户手动配置永远优先；自动流程只继续生成内部原子事实，不改写进度关键点。
-    const progressCacheValid = isCustomized
+    const progressCacheValid = (options.preserveExistingKeyFacts && soupData.keyFacts.length > 0)
+      || isCustomized
       || (rows[0].key_facts_hash === progressFactsHash && soupData.keyFacts.length > 0);
 
     // 未由作者配置时，先生成玩家前台仍可编辑的“进度关键点”。
@@ -1342,7 +1352,7 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
 
     if (soupData.keyFacts.length === 0) return;
 
-    if (soupData.keyFacts.some((fact) => !fact.hintContent)) {
+    if (!options.preserveExistingKeyFacts && soupData.keyFacts.some((fact) => !fact.hintContent)) {
       if (!DEEPSEEK_API_KEY) return;
       const missingFacts = soupData.keyFacts.filter((fact) => !fact.hintContent);
       const hintPrompt = `你是海龟汤提示内容生成器。请为下列缺少提示内容的进度关键点逐项生成一条中文方向性提示。
@@ -1394,6 +1404,18 @@ ${missingFacts.map((fact) => `[${fact.id}] ${fact.content}`).join("\n")}
       );
       soupData = (await getSoupGameData(soupId)) ?? soupData;
       if (soupData.keyFacts.some((fact) => !fact.hintContent)) return;
+    }
+
+    if (options.forceAtomicFacts) {
+      const [clearResult] = await pool.query<mysql.ResultSetHeader>(
+        `UPDATE soups
+         SET key_fact_atoms = NULL, key_fact_atoms_hash = NULL
+         WHERE id = ? AND enable_ai_game = 1 AND key_facts = CAST(? AS JSON)`,
+        [soupId, JSON.stringify(soupData.keyFacts)],
+      );
+      if (clearResult.affectedRows !== 1) {
+        throw new Error(`AI key facts changed while rebuilding atomic facts: ${soupId}`);
+      }
     }
 
     const [latestRows] = await pool.query<mysql.RowDataPacket[]>(
@@ -1457,12 +1479,28 @@ ${soupData.keyFacts.map((fact) => `[K${fact.id}] ${fact.content}`).join("\n")}
     );
   } catch (err) {
     console.error("splitKeyFacts error:", err);
+    if (options.forceAtomicFacts) throw err;
   } finally {
     if (lockAcquired) {
       await lockConnection.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
     }
     lockConnection.release();
   }
+}
+
+export async function rebuildAtomicFactsForSoup(soupId: string): Promise<boolean> {
+  const soupData = await getSoupGameData(soupId);
+  if (!soupData || soupData.keyFacts.length === 0) return false;
+  await splitKeyFactsForSoup(soupId, {
+    preserveExistingKeyFacts: true,
+    forceAtomicFacts: true,
+  });
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT JSON_LENGTH(key_fact_atoms) AS atom_count, key_fact_atoms_hash
+     FROM soups WHERE id = ? LIMIT 1`,
+    [soupId],
+  );
+  return Number(row?.atom_count ?? 0) > 0 && Boolean(row?.key_fact_atoms_hash);
 }
 
 // ---------- 强制重新拆分（清除自定义标记） ----------

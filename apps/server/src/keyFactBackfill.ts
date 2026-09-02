@@ -47,3 +47,53 @@ export async function backfillMissingAiKeyFacts(
   }));
   return soupIds.length;
 }
+
+export type AiAtomicFactRebuildResult = {
+  total: number;
+  rebuilt: number;
+  skipped: string[];
+  failed: { soupId: string; error: string }[];
+};
+
+/**
+ * 重建所有当前有效 AI 主持作品的内部原子事实。
+ * 具体重建器必须保留 key_facts、key_facts_hash 与 key_facts_customized。
+ */
+export async function rebuildAllAiAtomicFacts(
+  db: Queryable,
+  rebuild: (soupId: string) => Promise<boolean>,
+  concurrency = 2,
+): Promise<AiAtomicFactRebuildResult> {
+  const [rows] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT s.id
+     FROM soups s
+     JOIN users creator ON creator.id = s.creator_id
+     WHERE s.enable_ai_game = 1
+       AND creator.role IN ('super_admin','backoffice_admin','admin','vip')
+     ORDER BY s.created_at ASC`,
+  );
+  const soupIds = [...new Set(rows.map((row) => String(row.id)).filter(Boolean))];
+  let cursor = 0;
+  let rebuilt = 0;
+  const skipped: string[] = [];
+  const failed: { soupId: string; error: string }[] = [];
+  const workerCount = Math.min(Math.max(1, Math.floor(concurrency)), Math.max(1, soupIds.length));
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < soupIds.length) {
+      const soupId = soupIds[cursor];
+      cursor += 1;
+      try {
+        if (await rebuild(soupId)) rebuilt += 1;
+        else skipped.push(soupId);
+      } catch (error) {
+        failed.push({
+          soupId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }));
+
+  return { total: soupIds.length, rebuilt, skipped, failed };
+}
