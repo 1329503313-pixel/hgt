@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   mergeMissingKeyFactHints,
+  mergeMissingKeyFactHintsIntoStoredValue,
   normalizeStoredKeyFacts,
   parseGeneratedKeyFactHintsResponse,
   parseGeneratedKeyFactsResponse,
@@ -37,6 +38,22 @@ test("补齐提示只写入缺失项并允许模型分批返回", () => {
   const second = mergeMissingKeyFactHints(first.facts, [{ id: 3, hintContent: "留意实现方式" }]);
   assert.equal(second.added, 1);
   assert.deepEqual(second.missingIds, []);
+});
+
+test("历史关键点写回只新增提示并保留原始权重和扩展字段", () => {
+  const stored = [
+    { id: 1, content: "身份", weight: 0, legacy: true },
+    { id: 2, content: "动机", weight: 100, hintContent: "作者提示" },
+  ];
+  const merged = mergeMissingKeyFactHintsIntoStoredValue(stored, [
+    { id: 1, hintContent: "留意身份" },
+    { id: 2, hintContent: "不得覆盖" },
+  ]);
+  assert.equal(merged.added, 1);
+  assert.deepEqual(merged.facts, [
+    { id: 1, content: "身份", weight: 0, legacy: true, hintContent: "留意身份" },
+    { id: 2, content: "动机", weight: 100, hintContent: "作者提示" },
+  ]);
 });
 
 test("解析历史关键点缺失提示内容的 AI 补齐结果", () => {

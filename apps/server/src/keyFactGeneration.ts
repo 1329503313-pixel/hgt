@@ -117,3 +117,27 @@ export function mergeMissingKeyFactHints(
     missingIds: facts.filter((fact) => !fact.hintContent).map((fact) => fact.id),
   };
 }
+
+/**
+ * 写回历史 JSON 时保留原始对象的全部字段和值（尤其是历史零权重），仅新增缺失的
+ * hintContent。并发保护由调用方使用读取该 JSON 时取得的存储摘要完成。
+ */
+export function mergeMissingKeyFactHintsIntoStoredValue(
+  value: unknown,
+  generatedHints: readonly GeneratedKeyFactHint[],
+) {
+  if (!Array.isArray(value)) return { facts: [] as unknown[], added: 0 };
+  const hintById = new Map(generatedHints.map((hint) => [hint.id, hint.hintContent]));
+  let added = 0;
+  const facts = value.map((fact) => {
+    if (!fact || typeof fact !== "object" || Array.isArray(fact)) return fact;
+    const record = fact as Record<string, unknown>;
+    if (String(record.hintContent ?? "").trim()) return fact;
+    const id = Number(record.id);
+    const hintContent = hintById.get(id)?.trim().slice(0, 50) ?? "";
+    if (!Number.isInteger(id) || !hintContent) return fact;
+    added += 1;
+    return { ...record, hintContent };
+  });
+  return { facts, added };
+}

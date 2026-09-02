@@ -9,6 +9,7 @@ import { canEnableAiGameRole, canViewAllSoupContentRole, type UserRole } from ".
 import { recordUserBehavior } from "./behaviorAnalytics.js";
 import {
   mergeMissingKeyFactHints,
+  mergeMissingKeyFactHintsIntoStoredValue,
   normalizeStoredKeyFacts,
   parseGeneratedKeyFactHintsResponse,
   parseGeneratedKeyFactsResponse,
@@ -1401,11 +1402,24 @@ ${missingFacts.map((fact) => `[${fact.id}] ${fact.content}`).join("\n")}
             console.error("Key fact hint backfill returned no usable missing hints (attempt %d/%d)", attempt, generationAttempts);
             continue;
           }
-          const previousKeyFacts = JSON.stringify(soupData.keyFacts);
+          const [[storageRow]] = await pool.query<mysql.RowDataPacket[]>(
+            `SELECT key_facts, SHA2(CAST(key_facts AS CHAR), 256) AS storage_digest
+             FROM soups WHERE id = ? LIMIT 1`,
+            [soupId],
+          );
+          const storageDigest = String(storageRow?.storage_digest ?? "");
+          const storedMerge = mergeMissingKeyFactHintsIntoStoredValue(
+            parseJson<unknown>(storageRow?.key_facts),
+            generatedHints,
+          );
+          if (!storageDigest || storedMerge.added === 0) {
+            soupData = (await getSoupGameData(soupId)) ?? soupData;
+            continue;
+          }
           await pool.query(
             `UPDATE soups SET key_facts = ?, key_fact_atoms = NULL, key_fact_atoms_hash = NULL
-             WHERE id = ? AND key_facts = CAST(? AS JSON)`,
-            [JSON.stringify(merged.facts), soupId, previousKeyFacts],
+             WHERE id = ? AND SHA2(CAST(key_facts AS CHAR), 256) = ?`,
+            [JSON.stringify(storedMerge.facts), soupId, storageDigest],
           );
           soupData = (await getSoupGameData(soupId)) ?? soupData;
         } catch (error) {
