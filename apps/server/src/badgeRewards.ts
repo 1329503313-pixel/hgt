@@ -35,6 +35,47 @@ export const LEGENDARY_CARD_DRAW_COUNT_SQL = `
   WHERE owned.user_id = ? AND card.rarity = 'legend'
 `;
 
+// AI 主持曾有独立单人存档与现行游戏房间两套入口。成就累计必须合并两者，
+// 但游戏房间只统计确实由 AI 主持的回合，不能把真人主持通关算入汤灵系列。
+export const AI_COMPLETION_COUNT_SQL = `
+  SELECT
+    (SELECT COUNT(*) FROM game_completions legacy WHERE legacy.user_id = ?)
+    +
+    (SELECT COUNT(*)
+     FROM online_soup_completions online_completion
+     INNER JOIN online_soup_rounds online_round ON online_round.id = online_completion.round_id
+     WHERE online_completion.user_id = ? AND online_round.host_mode = 'ai') AS count
+`;
+
+// 仅返回达到任一汤灵徽章门槛但仍缺少对应永久解锁记录的历史用户。
+// 启动补发完成后该查询自然返回空集，因此可以安全重复执行。
+export const AI_COMPLETION_BADGE_BACKFILL_USERS_SQL = `
+  SELECT completion_stats.user_id
+  FROM (
+    SELECT completions.user_id, COUNT(*) AS completion_count
+    FROM (
+      SELECT legacy.user_id, CONCAT('legacy:', legacy.session_id) AS completion_key
+      FROM game_completions legacy
+      UNION ALL
+      SELECT online_completion.user_id,
+        CONCAT('online:', online_completion.round_id, ':', online_completion.user_id) AS completion_key
+      FROM online_soup_completions online_completion
+      INNER JOIN online_soup_rounds online_round ON online_round.id = online_completion.round_id
+      WHERE online_round.host_mode = 'ai'
+    ) completions
+    GROUP BY completions.user_id
+  ) completion_stats
+  LEFT JOIN user_badge_unlocks normal_unlock
+    ON normal_unlock.user_id = completion_stats.user_id AND normal_unlock.badge_key = 'aiClear:normal'
+  LEFT JOIN user_badge_unlocks rare_unlock
+    ON rare_unlock.user_id = completion_stats.user_id AND rare_unlock.badge_key = 'aiClear:rare'
+  LEFT JOIN user_badge_unlocks epic_unlock
+    ON epic_unlock.user_id = completion_stats.user_id AND epic_unlock.badge_key = 'aiClear:epic'
+  WHERE (completion_stats.completion_count >= 1 AND normal_unlock.user_id IS NULL)
+     OR (completion_stats.completion_count >= 10 AND rare_unlock.user_id IS NULL)
+     OR (completion_stats.completion_count >= 50 AND epic_unlock.user_id IS NULL)
+`;
+
 const BADGE_TIER_ORDER = ["normal", "rare", "epic", "legend"] as const;
 
 export function systemBadgeKeysWithPrerequisites(

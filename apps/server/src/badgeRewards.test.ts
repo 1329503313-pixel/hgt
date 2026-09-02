@@ -1,12 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  AI_COMPLETION_BADGE_BACKFILL_USERS_SQL,
+  AI_COMPLETION_COUNT_SQL,
   LEGENDARY_CARD_DRAW_COUNT_SQL,
   SYSTEM_BADGE_ACHIEVEMENT_POINTS,
   badgeUnlockNotificationContent,
   calculateBadgeShellReward,
   systemBadgeKeysWithPrerequisites
 } from "./badgeRewards.js";
+
+test("汤灵系列合并旧单人 AI 与现行 AI 主持房间通关", () => {
+  assert.match(AI_COMPLETION_COUNT_SQL, /FROM game_completions legacy/);
+  assert.match(AI_COMPLETION_COUNT_SQL, /FROM online_soup_completions online_completion/);
+  assert.match(AI_COMPLETION_COUNT_SQL, /online_round\.host_mode = 'ai'/);
+  assert.equal((AI_COMPLETION_COUNT_SQL.match(/user_id = \?/g) ?? []).length, 2);
+});
+
+test("汤灵系列历史补发只扫描达到门槛且缺少对应徽章的用户", () => {
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /UNION ALL/);
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /online_round\.host_mode = 'ai'/);
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /completion_count >= 1/);
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /completion_count >= 10/);
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /completion_count >= 50/);
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /badge_key = 'aiClear:normal'/);
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /badge_key = 'aiClear:rare'/);
+  assert.match(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL, /badge_key = 'aiClear:epic'/);
+});
 
 test("抽卡、慷慨和魅力成就使用产品配置的四阶成就点", () => {
   assert.deepEqual(

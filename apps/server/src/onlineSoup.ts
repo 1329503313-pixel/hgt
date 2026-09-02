@@ -72,14 +72,19 @@ type ImpostorMessageEvent =
   | { kind: "settlement"; gameNumber: number; winner: "good" | "impostor" | "draw"; endReason: string; players: Array<{ userId: string; seat: number; nickname: string; role: "detective" | "civilian" | "impostor"; roleLabel: string }> };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
 type LobbyEventEmitter = (event: string, payload: unknown) => void;
+type BadgeProgressListener = (userIds: string[]) => void;
 
 let emitRoomEvent: RoomEventEmitter = () => undefined;
 let emitLobbyEvent: LobbyEventEmitter = () => undefined;
+let badgeProgressListener: BadgeProgressListener = () => undefined;
 export function setOnlineSoupEventEmitter(emitter: RoomEventEmitter) {
   emitRoomEvent = emitter;
 }
 export function setOnlineSoupLobbyEventEmitter(emitter: LobbyEventEmitter) {
   emitLobbyEvent = emitter;
+}
+export function setOnlineSoupBadgeProgressListener(listener: BadgeProgressListener) {
+  badgeProgressListener = listener;
 }
 
 const router = Router();
@@ -965,6 +970,15 @@ async function completeAiRound(
 }
 
 async function settleOnlineSoupRoundAfterCommit(roundId: string) {
+  const [completionRows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT completion.user_id
+     FROM online_soup_completions completion
+     INNER JOIN online_soup_rounds round_record ON round_record.id = completion.round_id
+     WHERE completion.round_id = ? AND round_record.host_mode = 'ai'`,
+    [roundId],
+  );
+  badgeProgressListener(completionRows.map((row) => String(row.user_id)));
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();

@@ -79,6 +79,8 @@ import {
   authTokenFromCookies
 } from "./authCookies.js";
 import {
+  AI_COMPLETION_BADGE_BACKFILL_USERS_SQL,
+  AI_COMPLETION_COUNT_SQL,
   LEGENDARY_CARD_DRAW_COUNT_SQL,
   SYSTEM_BADGE_ACHIEVEMENT_POINTS,
   badgeUnlockNotificationContent,
@@ -122,6 +124,7 @@ import onlineSoupRouter, {
   resumeEligibleOnlineSoupAiFinishVotes,
   resumePendingMysteryTurns,
   resumePendingOnlineSoupAiQuestions,
+  setOnlineSoupBadgeProgressListener,
   setOnlineSoupEventEmitter,
   setOnlineSoupLobbyEventEmitter,
   validRoomInviteToken
@@ -1790,7 +1793,7 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorite_history WHERE creator_id = ?", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE creator_id = ? AND is_original = TRUE", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM evaluation_comment_history WHERE reviewer_id = ?", [userId]),
-    pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM game_completions WHERE user_id = ?", [userId]),
+    pool.query<mysql.RowDataPacket[]>(AI_COMPLETION_COUNT_SQL, [userId, userId]),
     getMaxOriginalSoupHeat(userId),
     pool.query<mysql.RowDataPacket[]>(
       `SELECT COALESCE(total_collection_value, 0) AS total_collection_value,
@@ -2207,6 +2210,21 @@ async function getLegendaryBadgeUnlockDetails(userId: string, keys: string[]) {
 const pendingBadgeSyncUsers = new Set<string>();
 let badgeSyncTimer: NodeJS.Timeout | null = null;
 
+async function syncBadgeUnlocksForUser(userId: string) {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT badges_initialized FROM users WHERE id = ? LIMIT 1",
+    [userId]
+  );
+  if (rows.length === 0) return;
+  const wasInitialized = Boolean(rows[0].badges_initialized);
+  await syncSystemBadgeUnlocks(userId, wasInitialized);
+  if (!wasInitialized) {
+    await markPendingBadgePopupsSurfaced(userId);
+    await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [userId]);
+  }
+  await syncActivityBadges(userId);
+}
+
 function queueSystemBadgeSync(userIds: string[]) {
   userIds.filter(Boolean).forEach((userId) => {
     achievementStatsCache.delete(userId);
@@ -2221,24 +2239,22 @@ function queueSystemBadgeSync(userIds: string[]) {
     for (let index = 0; index < batch.length; index += 5) {
       await Promise.all(batch.slice(index, index + 5).map(async (userId) => {
         try {
-          const [rows] = await pool.query<mysql.RowDataPacket[]>(
-            "SELECT badges_initialized FROM users WHERE id = ? LIMIT 1",
-            [userId]
-          );
-          if (rows.length === 0) return;
-          const wasInitialized = Boolean(rows[0].badges_initialized);
-          await syncSystemBadgeUnlocks(userId, wasInitialized);
-          if (!wasInitialized) {
-            await markPendingBadgePopupsSurfaced(userId);
-            await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [userId]);
-          }
-          await syncActivityBadges(userId);
+          await syncBadgeUnlocksForUser(userId);
         } catch (error) {
           console.error("badge event sync failed", { userId, error });
         }
       }));
     }
   }, 0);
+}
+
+async function backfillOnlineSoupAiCompletionBadges() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL);
+  const userIds = rows.map((row) => String(row.user_id));
+  for (let index = 0; index < userIds.length; index += 5) {
+    await Promise.all(userIds.slice(index, index + 5).map((userId) => syncBadgeUnlocksForUser(userId)));
+  }
+  return userIds.length;
 }
 
 const pendingActivityBadgeSyncUsers = new Set<string>();
@@ -2267,6 +2283,7 @@ function queueActivityBadgeSync(userIds: string[]) {
 }
 
 setBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
+setOnlineSoupBadgeProgressListener((userIds) => queueSystemBadgeSync(userIds));
 setShellBadgeProgressListener((userId) => queueSystemBadgeSync([userId]));
 setTaskGiftNotificationListener((userId) => emitUnreadChanged(userId, "daily_task_gift_reward"));
 setInviteRewardProgressListener((userId) => queueSystemBadgeSync([userId]));
@@ -8083,6 +8100,10 @@ const onlineSoupSeatCleanupTimer = setInterval(() => {
 }, 60_000);
 onlineSoupSeatCleanupTimer.unref();
 await refreshEquippedSpecialBadgeMetadata();
+const aiCompletionBadgeBackfillCount = await backfillOnlineSoupAiCompletionBadges();
+if (aiCompletionBadgeBackfillCount > 0) {
+  console.log(`Backfilled AI completion badges for ${aiCompletionBadgeBackfillCount} user(s)`);
+}
 await refreshBadgeOwnershipRates();
 const badgeOwnershipRefreshTimer = setInterval(() => {
   refreshBadgeOwnershipRates().catch((error) => console.error("Badge ownership rate refresh failed:", error));
