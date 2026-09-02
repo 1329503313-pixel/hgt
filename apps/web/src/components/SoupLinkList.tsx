@@ -6,7 +6,7 @@ import type { SoupSummary } from "../shared/types";
 import { formatViews } from "../context/AppContext";
 import { PageTopBar } from "./PageTopBar";
 import { useApp } from "../context/AppContext";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { MineBackButton } from "./MineBackButton";
 import { defaultCoverUrl, turtleAvatarUrl } from "../shared/staticAssets";
 
@@ -137,6 +137,7 @@ export function SubListPage({
   onLongPress?: (soup: SoupSummary) => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { setExportReady } = useApp();
   const [showExportConfirm, setShowExportConfirm] = useState(false);
 
@@ -236,7 +237,19 @@ export function SubListPage({
     <section className="soup-sub-list-page space-y-3">
       <PageTopBar title={title} />
       <MineBackButton />
-      <SoupLinkList soups={soups} onOpen={(id) => navigate(`/soup/${id}`)} onLongPress={onLongPress} emptyHint={emptyHint} showHeatValue={showHeatValue} showProfilePins={showProfilePins} />
+      <SoupLinkList
+        soups={soups}
+        onOpen={(id) => navigate(`/soup/${id}`, {
+          state: {
+            soupReturnTo: `${location.pathname}${location.search}`,
+            soupReturnHistory: true
+          }
+        })}
+        onLongPress={onLongPress}
+        emptyHint={emptyHint}
+        showHeatValue={showHeatValue}
+        showProfilePins={showProfilePins}
+      />
 
       {/* 导出汤名悬浮按钮 */}
       <button

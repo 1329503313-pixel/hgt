@@ -324,7 +324,7 @@ export function SoupCoverGrid({
         <button
           key={soup.id}
           className="group relative aspect-video overflow-hidden rounded-xl bg-slate-200 text-left"
-          onClick={() => navigate(`/soup/${soup.id}`, { state: returnTo ? { soupReturnTo: returnTo } : undefined })}
+          onClick={() => navigate(`/soup/${soup.id}`, { state: returnTo ? { soupReturnTo: returnTo, soupReturnHistory: true } : undefined })}
         >
           <img
             className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
