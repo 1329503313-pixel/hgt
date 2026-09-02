@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseGeneratedKeyFactHintsResponse, parseGeneratedKeyFactsResponse } from "./keyFactGeneration.js";
+import {
+  normalizeStoredKeyFacts,
+  parseGeneratedKeyFactHintsResponse,
+  parseGeneratedKeyFactsResponse,
+} from "./keyFactGeneration.js";
 
 test("解析 DeepSeek JSON 对象格式的自动关键点", () => {
   const facts = parseGeneratedKeyFactsResponse(JSON.stringify({
@@ -28,4 +32,17 @@ test("兼容历史数组格式并拒绝无效关键点", () => {
   assert.equal(facts.length, 1);
   assert.equal(facts[0].weight, 100);
   assert.deepEqual(parseGeneratedKeyFactsResponse('{"keyFacts":[]}'), []);
+});
+
+test("历史零权重关键点全部保留并只在运行时确定性分配权重", () => {
+  const stored = [
+    { id: 1, content: "身份", weight: 0 },
+    { id: 2, content: "动机", weight: 0 },
+    { id: 3, content: "手法", weight: 0 },
+  ];
+  const normalized = normalizeStoredKeyFacts(stored);
+  assert.deepEqual(normalized.map((fact) => fact.content), ["身份", "动机", "手法"]);
+  assert.equal(normalized.reduce((sum, fact) => sum + fact.weight, 0), 100);
+  assert.ok(normalized.every((fact) => fact.weight > 0));
+  assert.deepEqual(stored.map((fact) => fact.weight), [0, 0, 0]);
 });

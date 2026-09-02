@@ -7,7 +7,11 @@ import { pool } from "./db.js";
 import { awardShellTask } from "./shellCurrency.js";
 import { canEnableAiGameRole, canViewAllSoupContentRole, type UserRole } from "./roles.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
-import { parseGeneratedKeyFactHintsResponse, parseGeneratedKeyFactsResponse } from "./keyFactGeneration.js";
+import {
+  normalizeStoredKeyFacts,
+  parseGeneratedKeyFactHintsResponse,
+  parseGeneratedKeyFactsResponse,
+} from "./keyFactGeneration.js";
 import { inspectAiHostResponse } from "./aiHostResponse.js";
 import { type AiSoupRoundSnapshot } from "./aiSoupRoundSnapshot.js";
 import { selectAllowedSupplementSurfaceIndices } from "./onlineSoupAiState.js";
@@ -91,17 +95,7 @@ function reportBadgeProgress(userId: string) {
 type KeyFact = ProgressKeyFact;
 
 function normalizeKeyFacts(value: unknown): KeyFact[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<number>();
-  return value.flatMap((fact: any) => {
-    const id = Number(fact?.id);
-    const weight = Number(fact?.weight);
-    const content = typeof fact?.content === "string" ? fact.content.trim() : "";
-    const hintContent = typeof fact?.hintContent === "string" ? fact.hintContent.trim().slice(0, 50) : "";
-    if (!Number.isInteger(id) || seen.has(id) || !Number.isFinite(weight) || weight <= 0 || !content) return [];
-    seen.add(id);
-    return [{ id, content, weight, hintContent }];
-  });
+  return normalizeStoredKeyFacts(value);
 }
 
 function parseKeyIds(value: unknown): number[] {
