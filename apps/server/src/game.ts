@@ -8,6 +8,7 @@ import { awardShellTask } from "./shellCurrency.js";
 import { canEnableAiGameRole, canViewAllSoupContentRole, type UserRole } from "./roles.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
 import {
+  mergeMissingKeyFactHints,
   normalizeStoredKeyFacts,
   parseGeneratedKeyFactHintsResponse,
   parseGeneratedKeyFactsResponse,
@@ -1227,10 +1228,12 @@ const keyFactAnalysisJobs = new Map<string, Promise<void>>();
 type SplitKeyFactOptions = {
   preserveExistingKeyFacts?: boolean;
   forceAtomicFacts?: boolean;
+  generationAttempts?: number;
 };
 
 export async function splitKeyFactsForSoup(soupId: string, options: SplitKeyFactOptions = {}): Promise<void> {
-  const jobKey = `${soupId}:${options.preserveExistingKeyFacts ? "preserve" : "refresh"}:${options.forceAtomicFacts ? "force-atoms" : "cached-atoms"}`;
+  const generationAttempts = Math.max(1, Math.min(3, Math.floor(options.generationAttempts ?? 1)));
+  const jobKey = `${soupId}:${options.preserveExistingKeyFacts ? "preserve" : "refresh"}:${options.forceAtomicFacts ? "force-atoms" : "cached-atoms"}:${generationAttempts}`;
   const existing = keyFactAnalysisJobs.get(jobKey);
   if (existing) return existing;
   const job = performSplitKeyFactsForSoup(soupId, options);
@@ -1243,6 +1246,7 @@ export async function splitKeyFactsForSoup(soupId: string, options: SplitKeyFact
 }
 
 async function performSplitKeyFactsForSoup(soupId: string, options: SplitKeyFactOptions): Promise<void> {
+  const generationAttempts = Math.max(1, Math.min(3, Math.floor(options.generationAttempts ?? 1)));
   const lockConnection = await pool.getConnection();
   const lockName = `hgt-keyfacts-${createHash("sha256").update(soupId).digest("hex").slice(0, 48)}`;
   let lockAcquired = false;
@@ -1311,28 +1315,36 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
 
 注意：content 和 hintContent 字段必须是中文；hintContent 是不直接泄露答案的方向性提示，最多 50 个字。`;
 
-      const resp = await fetchAiChatWithRateLimitFallback({
-          model: "deepseek-v4-flash",
-          messages: [
-            { role: "system", content: "你是海龟汤进度关键点生成器。严格按要求输出 JSON。" },
-            { role: "user", content: prompt },
-          ],
-          thinking: { type: "disabled" },
-          response_format: { type: "json_object" },
-          max_tokens: 3000,
-          temperature: 0.3,
-        }, { timeoutMs: 30_000 });
-      if (!resp.ok) {
-        console.error("Progress key fact analysis API error:", resp.status);
-        return;
+      let generatedKeyFacts: ReturnType<typeof parseGeneratedKeyFactsResponse> = [];
+      for (let attempt = 1; attempt <= generationAttempts && generatedKeyFacts.length === 0; attempt += 1) {
+        try {
+          const resp = await fetchAiChatWithRateLimitFallback({
+            model: "deepseek-v4-flash",
+            messages: [
+              { role: "system", content: "你是海龟汤进度关键点生成器。严格按要求输出 JSON。" },
+              { role: "user", content: prompt },
+            ],
+            thinking: { type: "disabled" },
+            response_format: { type: "json_object" },
+            max_tokens: 3000,
+            temperature: 0.3,
+          }, { timeoutMs: 30_000 });
+          if (!resp.ok) {
+            console.error("Progress key fact analysis API error (attempt %d/%d): %d", attempt, generationAttempts, resp.status);
+            continue;
+          }
+          const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
+          const raw = data.choices?.[0]?.message?.content ?? "";
+          generatedKeyFacts = parseGeneratedKeyFactsResponse(raw);
+          if (generatedKeyFacts.length === 0) {
+            console.error("Progress key fact analysis returned invalid data (attempt %d/%d, length %d)", attempt, generationAttempts, raw.length);
+          }
+        } catch (error) {
+          console.error("Progress key fact analysis failed (attempt %d/%d): %s", attempt, generationAttempts,
+            error instanceof Error ? error.message : String(error));
+        }
       }
-      const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
-      const raw = data.choices?.[0]?.message?.content ?? "";
-      const generatedKeyFacts = parseGeneratedKeyFactsResponse(raw);
-      if (generatedKeyFacts.length === 0 || generatedKeyFacts.some((fact) => !fact.hintContent)) {
-        console.error("Progress key fact analysis returned invalid data (length %d)", raw.length);
-        return;
-      }
+      if (generatedKeyFacts.length === 0) return;
       await pool.query(
         `UPDATE soups
          SET key_facts = ?, key_facts_hash = ?, key_fact_atoms = NULL, key_fact_atoms_hash = NULL,
@@ -1348,8 +1360,10 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
 
     if (!options.preserveExistingKeyFacts && soupData.keyFacts.some((fact) => !fact.hintContent)) {
       if (!DEEPSEEK_API_KEY) return;
-      const missingFacts = soupData.keyFacts.filter((fact) => !fact.hintContent);
-      const hintPrompt = `你是海龟汤提示内容生成器。请为下列缺少提示内容的进度关键点逐项生成一条中文方向性提示。
+      for (let attempt = 1; attempt <= generationAttempts; attempt += 1) {
+        const missingFacts = soupData.keyFacts.filter((fact) => !fact.hintContent);
+        if (missingFacts.length === 0) break;
+        const hintPrompt = `你是海龟汤提示内容生成器。请为下列缺少提示内容的进度关键点逐项生成一条中文方向性提示。
 
 要求：
 - 提示要引导玩家接近对应关键点，但不能直接说出关键点答案
@@ -1364,40 +1378,46 @@ ${soupData.supplementalBottoms.length > 0 ? soupData.supplementalBottoms.map((s,
 ${missingFacts.map((fact) => `[${fact.id}] ${fact.content}`).join("\n")}
 
 只输出 JSON 对象：{"keyFacts":[{"id":1,"hintContent":"留意人物之间被忽略的关系"}]}`;
-      const response = await fetchAiChatWithRateLimitFallback({
-        model: "deepseek-v4-flash",
-        messages: [
-          { role: "system", content: "你是海龟汤关键点提示生成器。严格按要求输出 JSON。" },
-          { role: "user", content: hintPrompt },
-        ],
-        thinking: { type: "disabled" },
-        response_format: { type: "json_object" },
-        max_tokens: 2000,
-        temperature: 0.3,
-      }, { timeoutMs: 30_000 });
-      if (!response.ok) {
-        console.error("Key fact hint backfill API error:", response.status);
+        try {
+          const response = await fetchAiChatWithRateLimitFallback({
+            model: "deepseek-v4-flash",
+            messages: [
+              { role: "system", content: "你是海龟汤关键点提示生成器。严格按要求输出 JSON。" },
+              { role: "user", content: hintPrompt },
+            ],
+            thinking: { type: "disabled" },
+            response_format: { type: "json_object" },
+            max_tokens: 2000,
+            temperature: 0.3,
+          }, { timeoutMs: 30_000 });
+          if (!response.ok) {
+            console.error("Key fact hint backfill API error (attempt %d/%d): %d", attempt, generationAttempts, response.status);
+            continue;
+          }
+          const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+          const generatedHints = parseGeneratedKeyFactHintsResponse(data.choices?.[0]?.message?.content ?? "");
+          const merged = mergeMissingKeyFactHints(soupData.keyFacts, generatedHints);
+          if (merged.added === 0) {
+            console.error("Key fact hint backfill returned no usable missing hints (attempt %d/%d)", attempt, generationAttempts);
+            continue;
+          }
+          const previousKeyFacts = JSON.stringify(soupData.keyFacts);
+          await pool.query(
+            `UPDATE soups SET key_facts = ?, key_fact_atoms = NULL, key_fact_atoms_hash = NULL
+             WHERE id = ? AND key_facts = CAST(? AS JSON)`,
+            [JSON.stringify(merged.facts), soupId, previousKeyFacts],
+          );
+          soupData = (await getSoupGameData(soupId)) ?? soupData;
+        } catch (error) {
+          console.error("Key fact hint backfill failed (attempt %d/%d): %s", attempt, generationAttempts,
+            error instanceof Error ? error.message : String(error));
+        }
+      }
+      const missingHintCount = soupData.keyFacts.filter((fact) => !fact.hintContent).length;
+      if (missingHintCount > 0) {
+        console.error("Key fact hint backfill remains incomplete for soup %s: %d hint(s) missing", soupId, missingHintCount);
         return;
       }
-      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
-      const generatedHints = parseGeneratedKeyFactHintsResponse(data.choices?.[0]?.message?.content ?? "");
-      const hintById = new Map(generatedHints.map((hint) => [hint.id, hint.hintContent]));
-      if (missingFacts.some((fact) => !hintById.has(fact.id))) {
-        console.error("Key fact hint backfill returned incomplete data");
-        return;
-      }
-      const previousKeyFacts = JSON.stringify(soupData.keyFacts);
-      const keyFactsWithHints = soupData.keyFacts.map((fact) => ({
-        ...fact,
-        hintContent: fact.hintContent || hintById.get(fact.id) || "",
-      }));
-      await pool.query(
-        `UPDATE soups SET key_facts = ?, key_fact_atoms = NULL, key_fact_atoms_hash = NULL
-         WHERE id = ? AND key_facts = CAST(? AS JSON)`,
-        [JSON.stringify(keyFactsWithHints), soupId, previousKeyFacts],
-      );
-      soupData = (await getSoupGameData(soupId)) ?? soupData;
-      if (soupData.keyFacts.some((fact) => !fact.hintContent)) return;
     }
 
     const [latestRows] = await pool.query<mysql.RowDataPacket[]>(

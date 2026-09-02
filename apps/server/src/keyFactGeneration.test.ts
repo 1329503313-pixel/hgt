@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  mergeMissingKeyFactHints,
   normalizeStoredKeyFacts,
   parseGeneratedKeyFactHintsResponse,
   parseGeneratedKeyFactsResponse,
@@ -16,6 +17,26 @@ test("解析 DeepSeek JSON 对象格式的自动关键点", () => {
   assert.deepEqual(facts.map((fact) => fact.content), ["关键身份", "核心动机"]);
   assert.deepEqual(facts.map((fact) => fact.hintContent), ["留意人物身份", "思考事件动机"]);
   assert.equal(facts.reduce((sum, fact) => sum + fact.weight, 0), 100);
+});
+
+test("补齐提示只写入缺失项并允许模型分批返回", () => {
+  const existing = [
+    { id: 1, content: "身份", weight: 50, hintContent: "保留作者提示" },
+    { id: 2, content: "动机", weight: 30, hintContent: "" },
+    { id: 3, content: "手法", weight: 20, hintContent: "" },
+  ];
+  const first = mergeMissingKeyFactHints(existing, [
+    { id: 1, hintContent: "不得覆盖" },
+    { id: 2, hintContent: "从人物动机入手" },
+  ]);
+  assert.equal(first.added, 1);
+  assert.equal(first.facts[0].hintContent, "保留作者提示");
+  assert.equal(first.facts[1].hintContent, "从人物动机入手");
+  assert.deepEqual(first.missingIds, [3]);
+
+  const second = mergeMissingKeyFactHints(first.facts, [{ id: 3, hintContent: "留意实现方式" }]);
+  assert.equal(second.added, 1);
+  assert.deepEqual(second.missingIds, []);
 });
 
 test("解析历史关键点缺失提示内容的 AI 补齐结果", () => {

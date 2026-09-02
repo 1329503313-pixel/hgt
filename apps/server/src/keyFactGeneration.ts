@@ -1,4 +1,6 @@
 export type GeneratedKeyFact = { id: number; content: string; weight: number; hintContent: string };
+export type GeneratedKeyFactHint = { id: number; hintContent: string };
+type HintableKeyFact = Omit<GeneratedKeyFact, "hintContent"> & { hintContent?: string };
 
 /**
  * 兼容早期保存的零权重关键点。只返回运行时副本，不回写作者配置；一旦存在
@@ -79,7 +81,7 @@ export function parseGeneratedKeyFactsResponse(raw: string): GeneratedKeyFact[] 
   return facts.map((fact, index) => ({ ...fact, weight: allocations[index].base }));
 }
 
-export function parseGeneratedKeyFactHintsResponse(raw: string): Array<{ id: number; hintContent: string }> {
+export function parseGeneratedKeyFactHintsResponse(raw: string): GeneratedKeyFactHint[] {
   const value = candidateArray(raw);
   if (!Array.isArray(value)) return [];
   const seen = new Set<number>();
@@ -90,4 +92,28 @@ export function parseGeneratedKeyFactHintsResponse(raw: string): Array<{ id: num
     seen.add(id);
     return [{ id, hintContent }];
   });
+}
+
+/**
+ * 只填充当前仍为空的提示。模型重复返回已有关键点时也不得覆盖作者或先前任务
+ * 已经保存的提示；部分响应可以先落库，剩余项留给本轮后续尝试或下次补齐任务。
+ */
+export function mergeMissingKeyFactHints(
+  keyFacts: readonly HintableKeyFact[],
+  generatedHints: readonly GeneratedKeyFactHint[],
+) {
+  const hintById = new Map(generatedHints.map((hint) => [hint.id, hint.hintContent]));
+  let added = 0;
+  const facts = keyFacts.map((fact) => {
+    if (fact.hintContent) return fact;
+    const hintContent = hintById.get(fact.id)?.trim().slice(0, 50) ?? "";
+    if (!hintContent) return fact;
+    added += 1;
+    return { ...fact, hintContent };
+  });
+  return {
+    facts,
+    added,
+    missingIds: facts.filter((fact) => !fact.hintContent).map((fact) => fact.id),
+  };
 }

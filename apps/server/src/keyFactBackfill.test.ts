@@ -9,21 +9,37 @@ test("关键点补齐任务固定每小时执行", () => {
 test("关键点补齐任务去重并处理全部缺失作品", async () => {
   const generated: string[] = [];
   let querySql = "";
+  let queryCount = 0;
   const db = {
     async query(sql: string) {
       querySql = sql;
-      return [[{ id: "soup-1" }, { id: "soup-2" }, { id: "soup-1" }], []];
+      queryCount += 1;
+      return [queryCount === 1 ? [{ id: "soup-1" }, { id: "soup-2" }, { id: "soup-1" }] : [], []];
     },
   } as any;
 
-  const count = await backfillMissingAiKeyFacts(db, async (soupId) => {
+  const result = await backfillMissingAiKeyFacts(db, async (soupId) => {
     generated.push(soupId);
   });
 
-  assert.equal(count, 2);
+  assert.deepEqual(result, { checked: 2, remaining: 0, failed: [] });
   assert.deepEqual(generated.sort(), ["soup-1", "soup-2"]);
   assert.match(querySql, /hintContent/);
   assert.match(querySql, /JSON_TABLE/);
+});
+
+test("关键点补齐任务隔离单件失败并复查剩余作品", async () => {
+  let queryCount = 0;
+  const db = {
+    async query() {
+      queryCount += 1;
+      return [queryCount === 1 ? [{ id: "good" }, { id: "bad" }] : [{ id: "bad" }], []];
+    },
+  } as any;
+  const result = await backfillMissingAiKeyFacts(db, async (soupId) => {
+    if (soupId === "bad") throw new Error("provider unavailable");
+  });
+  assert.deepEqual(result, { checked: 2, remaining: 1, failed: ["bad"] });
 });
 
 test("内部原子事实重建覆盖全部有效 AI 主持作品并汇总结果", async () => {

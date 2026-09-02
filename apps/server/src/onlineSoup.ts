@@ -2821,6 +2821,12 @@ router.post("/rooms/:roomId/ai-hint", async (req, res) => {
         await connection.rollback();
         return fail(res, 409, "本轮状态已更新，请重试");
       }
+      await consumeDailyEntitlement(connection, {
+        userId: context.user.id,
+        role: context.user.role,
+        metric: "ai_hint",
+        eventKey: clueId
+      });
       await connection.query(
         `UPDATE online_soup_rounds SET ai_messages = ?, ai_revealed_keys = ?, ai_revealed_atoms = ?,
            ai_revealed_supplements = ?, ai_progress = ?, ai_version = ai_version + 1,

@@ -13,8 +13,7 @@ export async function backfillMissingAiKeyFacts(
   generate: (soupId: string) => Promise<void>,
   concurrency = 2,
 ) {
-  const [rows] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT s.id
+  const missingSql = `SELECT s.id
      FROM soups s
      JOIN users creator ON creator.id = s.creator_id
      WHERE s.enable_ai_game = 1
@@ -31,21 +30,28 @@ export async function backfillMissingAiKeyFacts(
            WHERE NULLIF(TRIM(key_fact.hint_content), '') IS NULL
          )
        )
-     ORDER BY s.created_at ASC`,
-  );
+     ORDER BY s.created_at ASC`;
+  const [rows] = await db.query<mysql.RowDataPacket[]>(missingSql);
   const soupIds = [...new Set(rows.map((row) => String(row.id)).filter(Boolean))];
-  if (soupIds.length === 0) return 0;
+  if (soupIds.length === 0) return { checked: 0, remaining: 0, failed: [] as string[] };
 
   let cursor = 0;
+  const failed: string[] = [];
   const workerCount = Math.min(Math.max(1, Math.floor(concurrency)), soupIds.length);
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (cursor < soupIds.length) {
       const soupId = soupIds[cursor];
       cursor += 1;
-      await generate(soupId);
+      try {
+        await generate(soupId);
+      } catch {
+        failed.push(soupId);
+      }
     }
   }));
-  return soupIds.length;
+  const [remainingRows] = await db.query<mysql.RowDataPacket[]>(missingSql);
+  const remaining = new Set(remainingRows.map((row) => String(row.id)).filter(Boolean)).size;
+  return { checked: soupIds.length, remaining, failed };
 }
 
 export type AiAtomicFactRebuildResult = {

@@ -8077,8 +8077,16 @@ const onlineSoupAiRecoveryTimer = setInterval(() => {
 }, 30_000);
 onlineSoupAiRecoveryTimer.unref();
 const fillMissingAiKeyFacts = async () => {
-  const count = await backfillMissingAiKeyFacts(pool, splitKeyFactsForSoup);
-  if (count > 0) console.log(`AI key fact backfill checked ${count} soup(s)`);
+  const result = await backfillMissingAiKeyFacts(
+    pool,
+    (soupId) => splitKeyFactsForSoup(soupId, { generationAttempts: 3 }),
+  );
+  if (result.checked > 0) {
+    console.log(`AI key fact backfill checked ${result.checked} soup(s); ${result.remaining} still incomplete`);
+  }
+  if (result.failed.length > 0) {
+    console.error(`AI key fact backfill failed for ${result.failed.length} soup(s)`);
+  }
 };
 // 启动时先补一次，之后每小时兜底；生成失败的作品会在下一轮继续重试。
 void fillMissingAiKeyFacts().catch((error) => console.error("AI key fact backfill failed:", error));

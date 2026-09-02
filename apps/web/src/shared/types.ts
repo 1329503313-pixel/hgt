@@ -1,6 +1,22 @@
 export type UserRole = "super_admin" | "backoffice_admin" | "vip" | "user";
 export type VipLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 export type VipGrowthEvent = { id: string; type: string; amount: number; date: string | null; remark: string; createdAt: string };
+export type VipBenefitPlan = {
+  dailySoupPublishLimit: number | null;
+  dailyEvaluationLimit: number | null;
+  dailyAutoShellGrant: number;
+  dailyAutoExperienceGrant: number;
+  dailyLikeLimit: number | null;
+  dailyFavoriteLimit: number | null;
+  dailyDrawLimit: number | null;
+  dailyAiQuestionLimit: number | null;
+  dailyAiHintLimit: number | null;
+  dailyMysteryQuestionLimit: number | null;
+  dailyGiftSendShellValueLimit: number | null;
+  dailyGiftReceiveShellLimit: number | null;
+  dailyCharmReceiveLimit: number | null;
+  dailyExtraFreeDraws: number | null;
+};
 export type VipOverview = {
   growthValue: number;
   level: VipLevel;
@@ -11,8 +27,8 @@ export type VipOverview = {
   previousThreshold: number;
   nextThreshold: number | null;
   progressPercent: number;
-  benefits: Record<string, number | null>;
-  activePlan: Record<string, number | null>;
+  benefits: VipBenefitPlan;
+  activePlan: VipBenefitPlan;
   events: VipGrowthEvent[];
 };
 export type RequestStatus = "pending" | "approved" | "rejected";
