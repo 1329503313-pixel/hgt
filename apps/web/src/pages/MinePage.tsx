@@ -329,7 +329,7 @@ export default function MinePage() {
           ))}
         </div>
         {tabs[activeTab].loading && !tabs[activeTab].loaded ? <CoverGridSkeleton /> : <>
-          <SoupCoverGrid className="lg:grid-cols-4 lg:gap-4 lg:p-5" soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} returnTo="/mine" />
+          <SoupCoverGrid className="lg:grid-cols-4 lg:gap-4 lg:p-5" soups={tabs[activeTab].soups} emptyHint={activeTab === "published" ? "还没有发布作品" : activeTab === "favorites" ? "还没有收藏作品" : "还没有点赞作品"} returnTo="/mine" showProfilePins={activeTab === "published"} />
           <ContentPagination page={pages[activeTab]} pageSize={pageSize} total={tabs[activeTab].total} loading={tabs[activeTab].loading} ariaLabel={`${tabLabels[activeTab]}海龟汤分页`} onPageChange={(page) => changePage(activeTab, page)} />
         </>}
       </div>

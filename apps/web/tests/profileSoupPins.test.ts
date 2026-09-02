@@ -8,14 +8,19 @@ const userProfilePage = readFileSync(new URL("../src/pages/UserProfilePage.tsx",
 const mySoupsPage = readFileSync(new URL("../src/pages/MySoupsPage.tsx", import.meta.url), "utf8");
 const minePage = readFileSync(new URL("../src/pages/MinePage.tsx", import.meta.url), "utf8");
 
-test("海龟汤置顶标识只由用户主页和我的作品显式启用", () => {
+test("海龟汤置顶标识在用户主页、我的发布栏和我的作品显式启用", () => {
   assert.match(profileViews, /showProfilePins = false/);
   assert.match(profileViews, /showProfilePins && soup\.isProfilePinned/);
   assert.match(soupLinkList, /showProfilePins = false/);
   assert.match(soupLinkList, /showProfilePins && soup\.isProfilePinned/);
   assert.match(userProfilePage, /<SoupCoverGrid[^>]+showProfilePins/);
   assert.match(mySoupsPage, /<MyListPage[^>]+showProfilePins/);
-  assert.doesNotMatch(minePage, /<SoupCoverGrid[^>]+showProfilePins/);
+  assert.match(minePage, /<SoupCoverGrid[^>]+showProfilePins=\{activeTab === "published"\}/);
+});
+
+test("我的收藏和点赞栏不展示其他作者的主页置顶标识", () => {
+  assert.doesNotMatch(minePage, /showProfilePins=\{true\}/);
+  assert.match(minePage, /showProfilePins=\{activeTab === "published"\}/);
 });
 
 test("我的作品只展示置顶状态，不新增置顶操作或改变排序", () => {
