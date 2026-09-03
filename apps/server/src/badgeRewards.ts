@@ -77,11 +77,13 @@ export const AI_COMPLETION_BADGE_BACKFILL_USERS_SQL = `
 `;
 
 export const SHINING_CROWN_BADGE_BACKFILL_USERS_SQL = `
-  SELECT DISTINCT affected.user_id
+  SELECT DISTINCT affected.user_id, affected.badge_key, users.badges_initialized
   FROM (
     SELECT sends.sender_id AS user_id, 'shiningCrownSent:epic' AS badge_key
     FROM gift_sends sends
-    WHERE sends.gift_name_snapshot = '闪耀皇冠'
+    LEFT JOIN gifts gift ON gift.id = sends.gift_id
+    WHERE TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
+       OR TRIM(gift.name) = '闪耀皇冠'
        OR EXISTS (
          SELECT 1 FROM system_reward_gift_bindings bindings
          WHERE bindings.reward_key = 'achievement:shining_crown'
@@ -90,13 +92,16 @@ export const SHINING_CROWN_BADGE_BACKFILL_USERS_SQL = `
     UNION ALL
     SELECT sends.recipient_id AS user_id, 'shiningCrownReceived:epic' AS badge_key
     FROM gift_sends sends
-    WHERE sends.gift_name_snapshot = '闪耀皇冠'
+    LEFT JOIN gifts gift ON gift.id = sends.gift_id
+    WHERE TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
+       OR TRIM(gift.name) = '闪耀皇冠'
        OR EXISTS (
          SELECT 1 FROM system_reward_gift_bindings bindings
          WHERE bindings.reward_key = 'achievement:shining_crown'
            AND bindings.gift_id = sends.gift_id
        )
   ) affected
+  INNER JOIN users ON users.id = affected.user_id
   LEFT JOIN user_badge_unlocks unlocks
     ON unlocks.user_id = affected.user_id AND unlocks.badge_key = affected.badge_key
   WHERE unlocks.user_id IS NULL

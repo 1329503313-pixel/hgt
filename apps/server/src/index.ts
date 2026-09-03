@@ -1845,8 +1845,10 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     pool.query<mysql.RowDataPacket[]>(
       `SELECT COUNT(*) AS count
        FROM gift_sends sends
+       LEFT JOIN gifts gift ON gift.id = sends.gift_id
        WHERE sends.recipient_id = ? AND (
-         sends.gift_name_snapshot = '闪耀皇冠'
+         TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
+         OR TRIM(gift.name) = '闪耀皇冠'
          OR sends.gift_id = (
            SELECT bindings.gift_id FROM system_reward_gift_bindings bindings
            WHERE bindings.reward_key = 'achievement:shining_crown' LIMIT 1
@@ -1857,8 +1859,10 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     pool.query<mysql.RowDataPacket[]>(
       `SELECT COUNT(*) AS count
        FROM gift_sends sends
+       LEFT JOIN gifts gift ON gift.id = sends.gift_id
        WHERE sends.sender_id = ? AND (
-         sends.gift_name_snapshot = '闪耀皇冠'
+         TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
+         OR TRIM(gift.name) = '闪耀皇冠'
          OR sends.gift_id = (
            SELECT bindings.gift_id FROM system_reward_gift_bindings bindings
            WHERE bindings.reward_key = 'achievement:shining_crown' LIMIT 1
@@ -2266,11 +2270,38 @@ async function backfillOnlineSoupAiCompletionBadges() {
 
 async function backfillShiningCrownBadges() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL);
-  const userIds = rows.map((row) => String(row.user_id));
-  for (let index = 0; index < userIds.length; index += 5) {
-    await Promise.all(userIds.slice(index, index + 5).map((userId) => syncBadgeUnlocksForUser(userId)));
+  let grantedCount = 0;
+  for (let index = 0; index < rows.length; index += 5) {
+    const results = await Promise.all(rows.slice(index, index + 5).map(async (row) => {
+      const userId = String(row.user_id);
+      const badgeKey = String(row.badge_key);
+      const rewardEligible = Boolean(row.badges_initialized);
+      const badgeName = badgeNotificationLabel(badgeKey);
+      const result = await grantBadge({
+        userId,
+        badgeKey,
+        badgeName,
+        achievementPoints: SYSTEM_BADGE_ACHIEVEMENT_POINTS[badgeKey] ?? 0,
+        rewardEligible,
+        notification: rewardEligible ? {
+          type: "badge_unlock",
+          title: "获得新徽章",
+          content: `恭喜你获得徽章「${badgeName}」`,
+          relatedId: badgeKey,
+          actorId: userId
+        } : null
+      });
+      if (result.granted) {
+        emitUserEvent(userId, "badge_ownership_changed", {
+          source: "shining_crown_backfill",
+          grantedKeys: [badgeKey]
+        });
+      }
+      return result.granted;
+    }));
+    grantedCount += results.filter(Boolean).length;
   }
-  return userIds.length;
+  return grantedCount;
 }
 
 const pendingActivityBadgeSyncUsers = new Set<string>();

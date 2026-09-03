@@ -59,8 +59,11 @@ test("闪耀皇冠成就同时支持固定绑定和准确名称识别", () => {
 test("闪耀皇冠历史补发同时覆盖送礼人和收礼人", () => {
   assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /sender_id AS user_id/);
   assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /recipient_id AS user_id/);
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /affected\.badge_key/);
   assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /shiningCrownSent:epic/);
   assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /shiningCrownReceived:epic/);
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /TRIM\(sends\.gift_name_snapshot\)/);
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /TRIM\(gift\.name\)/);
   assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /unlocks\.user_id IS NULL/);
 });
 
