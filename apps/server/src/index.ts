@@ -82,6 +82,7 @@ import {
   AI_COMPLETION_BADGE_BACKFILL_USERS_SQL,
   AI_COMPLETION_COUNT_SQL,
   LEGENDARY_CARD_DRAW_COUNT_SQL,
+  SHINING_CROWN_BADGE_BACKFILL_USERS_SQL,
   SYSTEM_BADGE_ACHIEVEMENT_POINTS,
   badgeUnlockNotificationContent,
   calculateBadgeShellReward,
@@ -2124,6 +2125,12 @@ async function syncSystemBadgeUnlocks(userId: string, rewardEligible = true) {
     });
     if (result.granted) newKeys.push(key);
   }
+  if (newKeys.length > 0) {
+    emitUserEvent(userId, "badge_ownership_changed", {
+      source: "system_badge_sync",
+      grantedKeys: newKeys
+    });
+  }
   const collectibleBadgeKeys = await syncHiddenCollectibleBadges(userId, rewardEligible);
   newKeys.push(...collectibleBadgeKeys);
   return { stats, newKeys };
@@ -2250,6 +2257,15 @@ function queueSystemBadgeSync(userIds: string[]) {
 
 async function backfillOnlineSoupAiCompletionBadges() {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL);
+  const userIds = rows.map((row) => String(row.user_id));
+  for (let index = 0; index < userIds.length; index += 5) {
+    await Promise.all(userIds.slice(index, index + 5).map((userId) => syncBadgeUnlocksForUser(userId)));
+  }
+  return userIds.length;
+}
+
+async function backfillShiningCrownBadges() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL);
   const userIds = rows.map((row) => String(row.user_id));
   for (let index = 0; index < userIds.length; index += 5) {
     await Promise.all(userIds.slice(index, index + 5).map((userId) => syncBadgeUnlocksForUser(userId)));
@@ -7964,6 +7980,15 @@ registerGiftRoutes(app, {
   onCharmChanged: (userIds) => {
     rankingsCache.clear();
     queueSystemBadgeSync(userIds);
+  },
+  onShiningCrownGift: async (userIds) => {
+    rankingsCache.clear();
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+    uniqueUserIds.forEach((userId) => {
+      achievementStatsCache.delete(userId);
+      activityBadgeSyncCache.delete(userId);
+    });
+    await Promise.all(uniqueUserIds.map((userId) => syncBadgeUnlocksForUser(userId)));
   }
 });
 const notifyCircleRedPacketPublished = async (circleId: string, messageId: string) => {
@@ -8108,6 +8133,10 @@ const onlineSoupSeatCleanupTimer = setInterval(() => {
 }, 60_000);
 onlineSoupSeatCleanupTimer.unref();
 await refreshEquippedSpecialBadgeMetadata();
+const shiningCrownBadgeBackfillCount = await backfillShiningCrownBadges();
+if (shiningCrownBadgeBackfillCount > 0) {
+  console.log(`Backfilled shining crown badges for ${shiningCrownBadgeBackfillCount} user(s)`);
+}
 const aiCompletionBadgeBackfillCount = await backfillOnlineSoupAiCompletionBadges();
 if (aiCompletionBadgeBackfillCount > 0) {
   console.log(`Backfilled AI completion badges for ${aiCompletionBadgeBackfillCount} user(s)`);

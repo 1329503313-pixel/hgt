@@ -11,6 +11,7 @@ import type { PublicUser } from "./types.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
 import { recordChatMessageForRateLimit } from "./chatMessageRateLimit.js";
 import { capDailyEntitlement, consumeDailyEntitlement } from "./entitlements.js";
+import { isShiningCrownGift } from "./badgeRewards.js";
 
 type AuthenticatedUser = PublicUser & { tokenVersion: number };
 type RequireUser = (
@@ -55,6 +56,7 @@ type GiftRouteDependencies = {
   onCircleGift: (circleId: string, messageId: string, senderId: string) => Promise<void>;
   onOnlineSoupGift: (roomId: string) => void;
   onCharmChanged: (userIds: string[]) => void;
+  onShiningCrownGift: (userIds: string[]) => Promise<void>;
 };
 
 const giftWriteSchema = z.object({
@@ -114,7 +116,12 @@ async function storedGiftSend(giftSendId: string) {
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT gs.*, sender.nickname AS sender_nickname, recipient.nickname AS recipient_nickname,
        recipient.charm_value AS recipient_charm_value,
-       sender.generosity_value AS sender_generosity_value
+       sender.generosity_value AS sender_generosity_value,
+       EXISTS (
+         SELECT 1 FROM system_reward_gift_bindings bindings
+         WHERE bindings.reward_key = 'achievement:shining_crown'
+           AND bindings.gift_id = gs.gift_id
+       ) AS shining_crown_binding_matched
      FROM gift_sends gs
      INNER JOIN users sender ON sender.id = gs.sender_id
      INNER JOIN users recipient ON recipient.id = gs.recipient_id
@@ -125,7 +132,8 @@ async function storedGiftSend(giftSendId: string) {
     ? {
         gift: giftMessageFromRow(rows[0]),
         recipientCharmValue: Number(rows[0].recipient_charm_value ?? 0),
-        senderGenerosityValue: Number(rows[0].sender_generosity_value ?? 0)
+        senderGenerosityValue: Number(rows[0].sender_generosity_value ?? 0),
+        shiningCrownBindingMatched: Boolean(rows[0].shining_crown_binding_matched)
       }
     : null;
 }
@@ -194,7 +202,8 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     onPrivateGift,
     onCircleGift,
     onOnlineSoupGift,
-    onCharmChanged
+    onCharmChanged,
+    onShiningCrownGift
   } = dependencies;
 
   app.get("/api/media/gifts/:id/icon", async (req, res) => {
@@ -629,6 +638,10 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
     const stored = await storedGiftSend(giftSendId);
     if (!stored) return sendError(res, 500, "送礼记录保存失败");
     const { gift, recipientCharmValue, senderGenerosityValue } = stored;
+    const grantsShiningCrownAchievements = isShiningCrownGift({
+      name: gift.giftName,
+      rewardBindingMatched: stored.shiningCrownBindingMatched
+    });
     const [inventoryRows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT quantity FROM user_gift_inventory
        WHERE user_id = ? AND gift_id = ?
@@ -636,8 +649,17 @@ export function registerGiftRoutes(app: express.Express, dependencies: GiftRoute
       [user.id, giftId]
     );
     const inventoryQuantity = Number(inventoryRows[0]?.quantity ?? 0);
-    if (!duplicate) {
+    if (grantsShiningCrownAchievements) {
+      try {
+        await onShiningCrownGift([gift.sender.id, gift.recipient.id]);
+      } catch (error) {
+        console.error("Immediate shining crown badge sync failed; queued retry", error);
+        onCharmChanged([gift.sender.id, gift.recipient.id]);
+      }
+    } else if (!duplicate) {
       onCharmChanged([user.id, recipientId]);
+    }
+    if (!duplicate) {
       onPrivateGift(recipientId, {
         id: privateMessageId,
         conversationId: privateConversationId,

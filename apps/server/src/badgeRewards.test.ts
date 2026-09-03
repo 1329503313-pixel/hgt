@@ -4,9 +4,11 @@ import {
   AI_COMPLETION_BADGE_BACKFILL_USERS_SQL,
   AI_COMPLETION_COUNT_SQL,
   LEGENDARY_CARD_DRAW_COUNT_SQL,
+  SHINING_CROWN_BADGE_BACKFILL_USERS_SQL,
   SYSTEM_BADGE_ACHIEVEMENT_POINTS,
   badgeUnlockNotificationContent,
   calculateBadgeShellReward,
+  isShiningCrownGift,
   systemBadgeKeysWithPrerequisites
 } from "./badgeRewards.js";
 
@@ -46,6 +48,20 @@ test("抽卡、慷慨和魅力成就使用产品配置的四阶成就点", () =>
 test("闪耀皇冠赠送双方的史诗成就均为 150 成就点", () => {
   assert.equal(SYSTEM_BADGE_ACHIEVEMENT_POINTS["shiningCrownReceived:epic"], 150);
   assert.equal(SYSTEM_BADGE_ACHIEVEMENT_POINTS["shiningCrownSent:epic"], 150);
+});
+
+test("闪耀皇冠成就同时支持固定绑定和准确名称识别", () => {
+  assert.equal(isShiningCrownGift({ name: "改名后的皇冠", rewardBindingMatched: 1 }), true);
+  assert.equal(isShiningCrownGift({ name: " 闪耀皇冠 ", rewardBindingMatched: 0 }), true);
+  assert.equal(isShiningCrownGift({ name: "普通皇冠", rewardBindingMatched: 0 }), false);
+});
+
+test("闪耀皇冠历史补发同时覆盖送礼人和收礼人", () => {
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /sender_id AS user_id/);
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /recipient_id AS user_id/);
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /shiningCrownSent:epic/);
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /shiningCrownReceived:epic/);
+  assert.match(SHINING_CROWN_BADGE_BACKFILL_USERS_SQL, /unlocks\.user_id IS NULL/);
 });
 
 test("VIP 荣耀成就按四档产品配置结算成就点", () => {

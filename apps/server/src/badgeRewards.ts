@@ -76,6 +76,32 @@ export const AI_COMPLETION_BADGE_BACKFILL_USERS_SQL = `
      OR (completion_stats.completion_count >= 50 AND epic_unlock.user_id IS NULL)
 `;
 
+export const SHINING_CROWN_BADGE_BACKFILL_USERS_SQL = `
+  SELECT DISTINCT affected.user_id
+  FROM (
+    SELECT sends.sender_id AS user_id, 'shiningCrownSent:epic' AS badge_key
+    FROM gift_sends sends
+    WHERE sends.gift_name_snapshot = '闪耀皇冠'
+       OR EXISTS (
+         SELECT 1 FROM system_reward_gift_bindings bindings
+         WHERE bindings.reward_key = 'achievement:shining_crown'
+           AND bindings.gift_id = sends.gift_id
+       )
+    UNION ALL
+    SELECT sends.recipient_id AS user_id, 'shiningCrownReceived:epic' AS badge_key
+    FROM gift_sends sends
+    WHERE sends.gift_name_snapshot = '闪耀皇冠'
+       OR EXISTS (
+         SELECT 1 FROM system_reward_gift_bindings bindings
+         WHERE bindings.reward_key = 'achievement:shining_crown'
+           AND bindings.gift_id = sends.gift_id
+       )
+  ) affected
+  LEFT JOIN user_badge_unlocks unlocks
+    ON unlocks.user_id = affected.user_id AND unlocks.badge_key = affected.badge_key
+  WHERE unlocks.user_id IS NULL
+`;
+
 const BADGE_TIER_ORDER = ["normal", "rare", "epic", "legend"] as const;
 
 export function systemBadgeKeysWithPrerequisites(
@@ -108,4 +134,8 @@ export function calculateBadgeShellReward(
 
 export function badgeUnlockNotificationContent(content: string, _shellReward: number) {
   return content;
+}
+
+export function isShiningCrownGift(input: { name: unknown; rewardBindingMatched: unknown }) {
+  return Boolean(input.rewardBindingMatched) || String(input.name ?? "").trim() === "闪耀皇冠";
 }
