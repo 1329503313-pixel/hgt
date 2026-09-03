@@ -1847,8 +1847,8 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
        FROM gift_sends sends
        LEFT JOIN gifts gift ON gift.id = sends.gift_id
        WHERE sends.recipient_id = ? AND (
-         TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
-         OR TRIM(gift.name) = '闪耀皇冠'
+         TRIM(sends.gift_name_snapshot) IN ('闪耀皇冠', '传说皇冠')
+         OR TRIM(gift.name) IN ('闪耀皇冠', '传说皇冠')
          OR sends.gift_id = (
            SELECT bindings.gift_id FROM system_reward_gift_bindings bindings
            WHERE bindings.reward_key = 'achievement:shining_crown' LIMIT 1
@@ -1861,8 +1861,8 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
        FROM gift_sends sends
        LEFT JOIN gifts gift ON gift.id = sends.gift_id
        WHERE sends.sender_id = ? AND (
-         TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
-         OR TRIM(gift.name) = '闪耀皇冠'
+         TRIM(sends.gift_name_snapshot) IN ('闪耀皇冠', '传说皇冠')
+         OR TRIM(gift.name) IN ('闪耀皇冠', '传说皇冠')
          OR sends.gift_id = (
            SELECT bindings.gift_id FROM system_reward_gift_bindings bindings
            WHERE bindings.reward_key = 'achievement:shining_crown' LIMIT 1

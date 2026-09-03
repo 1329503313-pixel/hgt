@@ -2050,6 +2050,11 @@ export async function initDatabase() {
     SELECT 'achievement:shining_crown', id, '闪耀皇冠' FROM gifts
     WHERE name = '闪耀皇冠' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
   `);
+  await pool.query(`
+    INSERT IGNORE INTO system_reward_gift_bindings (reward_key, gift_id, expected_name)
+    SELECT 'achievement:shining_crown', id, '传说皇冠' FROM gifts
+    WHERE TRIM(name) = '传说皇冠' ORDER BY (status = 'active') DESC, created_at ASC, id ASC LIMIT 1
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_gift_inventory (

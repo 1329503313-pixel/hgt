@@ -82,8 +82,8 @@ export const SHINING_CROWN_BADGE_BACKFILL_USERS_SQL = `
     SELECT sends.sender_id AS user_id, 'shiningCrownSent:epic' AS badge_key
     FROM gift_sends sends
     LEFT JOIN gifts gift ON gift.id = sends.gift_id
-    WHERE TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
-       OR TRIM(gift.name) = '闪耀皇冠'
+    WHERE TRIM(sends.gift_name_snapshot) IN ('闪耀皇冠', '传说皇冠')
+       OR TRIM(gift.name) IN ('闪耀皇冠', '传说皇冠')
        OR EXISTS (
          SELECT 1 FROM system_reward_gift_bindings bindings
          WHERE bindings.reward_key = 'achievement:shining_crown'
@@ -93,8 +93,8 @@ export const SHINING_CROWN_BADGE_BACKFILL_USERS_SQL = `
     SELECT sends.recipient_id AS user_id, 'shiningCrownReceived:epic' AS badge_key
     FROM gift_sends sends
     LEFT JOIN gifts gift ON gift.id = sends.gift_id
-    WHERE TRIM(sends.gift_name_snapshot) = '闪耀皇冠'
-       OR TRIM(gift.name) = '闪耀皇冠'
+    WHERE TRIM(sends.gift_name_snapshot) IN ('闪耀皇冠', '传说皇冠')
+       OR TRIM(gift.name) IN ('闪耀皇冠', '传说皇冠')
        OR EXISTS (
          SELECT 1 FROM system_reward_gift_bindings bindings
          WHERE bindings.reward_key = 'achievement:shining_crown'
@@ -142,5 +142,6 @@ export function badgeUnlockNotificationContent(content: string, _shellReward: nu
 }
 
 export function isShiningCrownGift(input: { name: unknown; rewardBindingMatched: unknown }) {
-  return Boolean(input.rewardBindingMatched) || String(input.name ?? "").trim() === "闪耀皇冠";
+  return Boolean(input.rewardBindingMatched)
+    || ["闪耀皇冠", "传说皇冠"].includes(String(input.name ?? "").trim());
 }
