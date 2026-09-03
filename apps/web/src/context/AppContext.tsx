@@ -20,6 +20,9 @@ export type SoupForm = {
   author: string;
   type: string;
   difficulty: "简单" | "普通" | "困难" | "地狱";
+  topicId: string;
+  topicName: string;
+  topicIsActive: boolean;
   summary: string;
   coverImage: string;
   isOriginal: boolean;
@@ -53,6 +56,9 @@ export const emptySoup: SoupForm = {
   author: "",
   type: "本格清汤",
   difficulty: "普通",
+  topicId: "",
+  topicName: "",
+  topicIsActive: false,
   summary: "",
   coverImage: "",
   isOriginal: true,
@@ -298,6 +304,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         author: soup.author,
         type: soup.type,
         difficulty: soup.difficulty,
+        topicId: soup.topic?.id ?? "",
+        topicName: soup.topic?.name ?? "",
+        topicIsActive: soup.topic?.isActive ?? false,
         summary: soup.summary,
         coverImage: soup.coverImage ?? "",
         isOriginal: soup.isOriginal,

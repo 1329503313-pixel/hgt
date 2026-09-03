@@ -87,7 +87,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => {
-    if (session?.snapshot.room.contentType === "impostor") setMessageMode("discussion");
+    if (["impostor", "card_battle"].includes(session?.snapshot.room.contentType ?? "")) setMessageMode("discussion");
   }, [session?.snapshot.room.contentType]);
   useEffect(() => {
     if (session?.snapshot.room.remainingQuestionCount === 0) setMessageMode("discussion");
@@ -210,7 +210,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     try {
       await api(`/api/online-soup/rooms/${session.snapshot.room.id}/messages`, {
         method: "POST",
-        body: { type: session.snapshot.room.contentType === "impostor" ? "discussion" : messageMode, content: content.trim() }
+        body: { type: ["impostor", "card_battle"].includes(session.snapshot.room.contentType) ? "discussion" : messageMode, content: content.trim() }
       });
       setContent("");
       await refreshSession();
@@ -310,8 +310,8 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
           <span>第 {miniImpostorGame.day} 天 · {impostorPhaseLabels[miniImpostorGame.phase]}</span>
           <strong>{miniImpostorGame.me ? "返回完整房间操作" : "返回完整房间查看"}<Maximize2 size={14} /></strong>
         </button>}
-        {session.snapshot.me.role !== "spectator" && !currentMemberMuted && <div className="online-soup-mini-composer">
-          {session.snapshot.me.role === "player" && session.snapshot.room.contentType !== "impostor" && <button
+        {(session.snapshot.me.role !== "spectator" || session.snapshot.room.contentType === "card_battle") && !currentMemberMuted && <div className="online-soup-mini-composer">
+          {session.snapshot.me.role === "player" && !["impostor", "card_battle"].includes(session.snapshot.room.contentType) && <button
             type="button"
             className={messageMode === "question" ? "is-question" : ""}
             disabled={session.snapshot.room.status !== "playing"}
@@ -323,10 +323,10 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
               return current === "discussion" ? "question" : "discussion";
             })}
           >{messageMode === "question" ? "提问" : "讨论"}</button>}
-          <textarea rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} placeholder={session.snapshot.room.contentType !== "impostor" && messageMode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
+          <textarea rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} placeholder={!["impostor", "card_battle"].includes(session.snapshot.room.contentType) && messageMode === "question" ? "输入正式问题…" : "参与讨论…"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
           <button type="button" className="is-send" disabled={sending || !content.trim()} onClick={() => void sendMessage()} aria-label="发送"><Send size={17} /></button>
         </div>}
-        {session.snapshot.me.role !== "spectator" && currentMemberMuted && <div className="flex items-center justify-center gap-1.5 border-t border-red-100 bg-red-50 px-3 py-3 text-xs font-bold text-red-600" role="status"><VolumeX size={15} />你已被房主禁言</div>}
+        {(session.snapshot.me.role !== "spectator" || session.snapshot.room.contentType === "card_battle") && currentMemberMuted && <div className="flex items-center justify-center gap-1.5 border-t border-red-100 bg-red-50 px-3 py-3 text-xs font-bold text-red-600" role="status"><VolumeX size={15} />你已被房主禁言</div>}
       </section>}
     </div>}
     {confirmLeave && session && <Modal onClose={() => setConfirmLeave(false)}>

@@ -357,6 +357,18 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS soup_topics (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(16) NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_soup_topics_name (name),
+      INDEX idx_soup_topics_active_updated (is_active, updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS soups (
       id VARCHAR(64) PRIMARY KEY,
       title LONGTEXT NOT NULL,
@@ -380,10 +392,13 @@ export async function initDatabase() {
       reviewed_at DATETIME NULL,
       reviewed_by VARCHAR(64) NULL,
       view_count INT NOT NULL DEFAULT 0,
+      topic_id VARCHAR(64) NULL,
       creator_id VARCHAR(64) NOT NULL,
       creator_name VARCHAR(50) NOT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_soups_topic (topic_id),
+      CONSTRAINT fk_soups_topic FOREIGN KEY (topic_id) REFERENCES soup_topics(id) ON DELETE SET NULL,
       CONSTRAINT fk_soups_creator FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
@@ -520,6 +535,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "enable_ai_game", "enable_ai_game BOOLEAN NOT NULL DEFAULT FALSE AFTER is_bottom_public");
   await ensureColumn("soups", "profile_pinned_at", "profile_pinned_at DATETIME(6) NULL AFTER updated_at");
   await ensureColumn("soups", "is_sensitive", "is_sensitive BOOLEAN NOT NULL DEFAULT FALSE AFTER is_original");
+  await ensureColumn("soups", "topic_id", "topic_id VARCHAR(64) NULL AFTER view_count");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("evaluations", "is_content_hidden", "is_content_hidden BOOLEAN NOT NULL DEFAULT FALSE AFTER content");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
@@ -552,6 +568,8 @@ export async function initDatabase() {
   await ensureIndex("soups", "idx_soups_home_visibility", "review_status, is_surface_public, created_at");
   await ensureIndex("soups", "idx_soups_creator_review", "creator_id, review_status, created_at");
   await ensureIndex("soups", "idx_soups_creator_profile_pin", "creator_id, profile_pinned_at, created_at");
+  await ensureIndex("soups", "idx_soups_topic", "topic_id");
+  await ensureSoupTopicConstraint();
   await ensureIndex("evaluations", "idx_evaluations_created_at", "created_at");
   await ensureIndex("evaluations", "idx_evaluations_reviewer", "reviewer_id");
   await pool.query(`
@@ -944,7 +962,7 @@ export async function initDatabase() {
       name VARCHAR(50) NOT NULL,
       host_id VARCHAR(64) NOT NULL,
       host_mode ENUM('human','ai') NOT NULL DEFAULT 'human',
-      content_type ENUM('soup','mystery','impostor') NOT NULL DEFAULT 'soup',
+      content_type ENUM('soup','mystery','impostor','card_battle') NOT NULL DEFAULT 'soup',
       room_type ENUM('public','password') NOT NULL DEFAULT 'public',
       password_hash VARCHAR(128) NULL,
       status ENUM('preparing','playing','ended','closed') NOT NULL DEFAULT 'preparing',
@@ -1217,14 +1235,14 @@ export async function initDatabase() {
     "host_mode",
     "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER host_id"
   );
-  await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery','impostor') NOT NULL DEFAULT 'soup' AFTER host_mode");
+  await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery','impostor','card_battle') NOT NULL DEFAULT 'soup' AFTER host_mode");
   const [[onlineSoupContentType]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_rooms' AND COLUMN_NAME = 'content_type'`
   );
-  if (!String(onlineSoupContentType?.COLUMN_TYPE ?? "").includes("'impostor'")) {
+  if (!String(onlineSoupContentType?.COLUMN_TYPE ?? "").includes("'card_battle'")) {
     await pool.query(
-      "ALTER TABLE online_soup_rooms MODIFY COLUMN content_type ENUM('soup','mystery','impostor') NOT NULL DEFAULT 'soup'"
+      "ALTER TABLE online_soup_rooms MODIFY COLUMN content_type ENUM('soup','mystery','impostor','card_battle') NOT NULL DEFAULT 'soup'"
     );
   }
   await ensureColumn("online_soup_rooms", "current_mystery_id", "current_mystery_id VARCHAR(64) NULL AFTER current_soup_id");
@@ -2753,6 +2771,113 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  // 卡牌对战配置按星级独立保存；技能由有序条件-效果行组成。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_card_battle_tiers (
+      card_id VARCHAR(64) NOT NULL,
+      star_level TINYINT UNSIGNED NOT NULL,
+      max_hp INT UNSIGNED NOT NULL,
+      attack_value INT UNSIGNED NOT NULL,
+      defense_value INT UNSIGNED NOT NULL,
+      speed_value INT UNSIGNED NOT NULL,
+      energy_required INT UNSIGNED NOT NULL,
+      can_attack_rear TINYINT(1) NOT NULL DEFAULT 0,
+      skill_name VARCHAR(50) NULL,
+      skill_description VARCHAR(500) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (card_id, star_level),
+      CONSTRAINT chk_asset_card_battle_star CHECK (star_level BETWEEN 0 AND 3),
+      CONSTRAINT fk_asset_card_battle_tier_card FOREIGN KEY (card_id) REFERENCES asset_cards(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asset_card_battle_effects (
+      id VARCHAR(64) PRIMARY KEY,
+      card_id VARCHAR(64) NOT NULL,
+      star_level TINYINT UNSIGNED NOT NULL,
+      effect_order INT UNSIGNED NOT NULL,
+      condition_code VARCHAR(64) NOT NULL,
+      condition_value INT UNSIGNED NULL,
+      effect_code VARCHAR(64) NOT NULL,
+      effect_value INT UNSIGNED NULL,
+      duration_rounds INT UNSIGNED NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_asset_card_battle_effect_order (card_id, star_level, effect_order),
+      CONSTRAINT fk_asset_card_battle_effect_tier FOREIGN KEY (card_id, star_level)
+        REFERENCES asset_card_battle_tiers(card_id, star_level) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  // 历史史诗/传说卡自动获得安全默认值；技能保持为空。
+  await pool.query(`
+    INSERT IGNORE INTO asset_card_battle_tiers
+      (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear)
+    SELECT cards.id, defaults.star_level, defaults.max_hp, defaults.attack_value,
+      defaults.defense_value, defaults.speed_value, 50, 0
+    FROM asset_cards cards
+    JOIN (
+      SELECT 0 AS star_level, 1000 AS max_hp, 500 AS attack_value, 100 AS defense_value, 100 AS speed_value
+      UNION ALL SELECT 1, 1500, 750, 150, 150
+      UNION ALL SELECT 2, 2000, 1000, 200, 200
+      UNION ALL SELECT 3, 3000, 1500, 300, 300
+    ) defaults
+    WHERE cards.rarity IN ('epic','legend')
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_card_battle_seats (
+      room_id VARCHAR(64) NOT NULL,
+      seat_number TINYINT UNSIGNED NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      lineup_json JSON NOT NULL,
+      is_ready TINYINT(1) NOT NULL DEFAULT 0,
+      joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (room_id, seat_number),
+      UNIQUE KEY uq_online_card_battle_room_user (room_id, user_id),
+      CONSTRAINT chk_online_card_battle_seat CHECK (seat_number IN (1,2)),
+      CONSTRAINT fk_online_card_battle_seat_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
+      CONSTRAINT fk_online_card_battle_seat_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_card_battles (
+      id VARCHAR(64) PRIMARY KEY,
+      room_id VARCHAR(64) NOT NULL,
+      game_number INT UNSIGNED NOT NULL,
+      mode ENUM('1v1') NOT NULL DEFAULT '1v1',
+      status ENUM('playing','ended','aborted') NOT NULL DEFAULT 'playing',
+      random_seed VARCHAR(128) NOT NULL,
+      lineup_snapshot_json JSON NOT NULL,
+      result_json JSON NOT NULL,
+      playback_ends_at DATETIME(3) NOT NULL,
+      started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      ended_at DATETIME(3) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_online_card_battle_room_number (room_id, game_number),
+      INDEX idx_online_card_battle_room_status (room_id, status, game_number),
+      CONSTRAINT fk_online_card_battle_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS online_card_battle_playback_progress (
+      game_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      completed_sequence INT UNSIGNED NOT NULL DEFAULT 0,
+      active_sequence INT UNSIGNED NULL,
+      active_started_at DATETIME(3) NULL,
+      completed_at DATETIME(3) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (game_id, user_id),
+      INDEX idx_card_battle_playback_user (user_id, updated_at),
+      CONSTRAINT fk_card_battle_playback_game FOREIGN KEY (game_id) REFERENCES online_card_battles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_card_battle_playback_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_asset_pack_up_selections (
       user_id VARCHAR(64) NOT NULL,
@@ -3359,6 +3484,27 @@ async function ensureAdminNoticeCreatorConstraint() {
   if (!rows[0]) {
     await pool.query(
       "ALTER TABLE admin_notices ADD CONSTRAINT fk_admin_notice_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL"
+    );
+  }
+}
+
+async function ensureSoupTopicConstraint() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT rc.CONSTRAINT_NAME, rc.DELETE_RULE
+     FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+     WHERE rc.CONSTRAINT_SCHEMA = ?
+       AND rc.TABLE_NAME = 'soups'
+       AND rc.CONSTRAINT_NAME = 'fk_soups_topic'
+     LIMIT 1`,
+    [config.db.database]
+  );
+  if (rows[0] && String(rows[0].DELETE_RULE).toUpperCase() !== "SET NULL") {
+    await pool.query("ALTER TABLE soups DROP FOREIGN KEY fk_soups_topic");
+    rows.length = 0;
+  }
+  if (!rows[0]) {
+    await pool.query(
+      "ALTER TABLE soups ADD CONSTRAINT fk_soups_topic FOREIGN KEY (topic_id) REFERENCES soup_topics(id) ON DELETE SET NULL"
     );
   }
 }

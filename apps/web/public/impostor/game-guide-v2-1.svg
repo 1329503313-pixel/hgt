@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="941" height="1672" viewBox="0 0 941 1672" role="img" aria-labelledby="title desc">
+  <title id="title">谁是伪人玩法介绍：任务与胜负</title>
+  <desc id="desc">说明五天任务、每次两人、不得连续执行任务，以及四次成功、三次失败和三比二公投的胜负规则。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07111f"/><stop offset=".48" stop-color="#101b2b"/><stop offset="1" stop-color="#050a12"/></linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff"/><stop offset=".5" stop-color="#b9c9da"/><stop offset="1" stop-color="#64748b"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#38bdf8"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#7dd3fc" stroke-opacity=".035"/></pattern>
+  </defs>
+  <rect width="941" height="1672" fill="url(#bg)"/>
+  <rect width="941" height="1672" fill="url(#grid)"/>
+  <circle cx="470" cy="195" r="150" fill="#38bdf8" opacity=".06" filter="url(#glow)"/>
+  <path d="M470 54l26 43-26 43-26-43z" fill="none" stroke="#7dd3fc" stroke-width="3"/>
+  <path d="M470 68l13 29-13 29-13-29z" fill="#7dd3fc" opacity=".85" filter="url(#glow)"/>
+  <rect x="22" y="22" width="897" height="1628" rx="8" fill="none" stroke="#dbeafe" stroke-opacity=".75" stroke-width="2"/>
+  <rect x="38" y="38" width="865" height="1596" rx="6" fill="none" stroke="#60a5fa" stroke-opacity=".28"/>
+  <path d="M58 115h210M673 115h210M58 1557h210M673 1557h210" stroke="url(#accent)" stroke-width="2" opacity=".7"/>
+  <text x="470" y="248" text-anchor="middle" fill="url(#silver)" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="92" font-weight="900" letter-spacing="8">谁是伪人</text>
+  <text x="470" y="318" text-anchor="middle" fill="#cbd5e1" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="34" font-weight="700" letter-spacing="12">任务与胜负</text>
+  <rect x="76" y="385" width="789" height="1155" rx="28" fill="#07111f" fill-opacity=".72" stroke="#93c5fd" stroke-opacity=".52" stroke-width="2"/>
+  <rect x="98" y="420" width="745" height="124" rx="20" fill="#172554" fill-opacity=".7" stroke="#60a5fa" stroke-opacity=".55"/>
+  <text x="128" y="470" fill="#e0f2fe" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">游戏配置</text>
+  <text x="128" y="515" fill="#cbd5e1" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="26">4–6 名游戏者 · 侦探 ×1 · 伪人 ×1 · 其余为平民</text>
+  <text x="112" y="626" fill="#7dd3fc" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">01  五天任务</text>
+  <text x="132" y="681" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="27">
+    <tspan x="132" dy="0">整局共五天，每天先夜间、后白天。</tspan>
+    <tspan x="132" dy="46">五天的任务人数全部固定为 2 人。</tspan>
+    <tspan x="132" dy="46">所有游戏者投票选出当天任务成员。</tspan>
+  </text>
+  <line x1="112" y1="835" x2="829" y2="835" stroke="#94a3b8" stroke-opacity=".25"/>
+  <text x="112" y="896" fill="#a78bfa" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">02  任务限制</text>
+  <text x="132" y="951" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="27">
+    <tspan x="132" dy="0">同一名玩家不能连续两天执行任务。</tspan>
+    <tspan x="132" dy="46">前一天任务成员仍可投票，但当天不能成为候选人。</tspan>
+    <tspan x="132" dy="46">两名任务成员都实际守护，任务才成功；</tspan>
+    <tspan x="132" dy="46">只要一人实际破坏，任务即失败。</tspan>
+  </text>
+  <line x1="112" y1="1145" x2="829" y2="1145" stroke="#94a3b8" stroke-opacity=".25"/>
+  <text x="112" y="1206" fill="#34d399" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">03  胜负条件</text>
+  <text x="132" y="1261" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="27">
+    <tspan x="132" dy="0">任务成功累计 4 次：好人阵营立即胜利。</tspan>
+    <tspan x="132" dy="46">任务失败累计 3 次：伪人阵营立即胜利。</tspan>
+    <tspan x="132" dy="46">第五天结束为成功 3 次、失败 2 次：</tspan>
+    <tspan x="132" dy="46">全员进入 300 秒最终公投，投出伪人。</tspan>
+  </text>
+  <text x="470" y="1600" text-anchor="middle" fill="#94a3b8" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="22" letter-spacing="4">第 1 页 / 共 3 页</text>
+</svg>

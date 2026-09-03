@@ -28,6 +28,7 @@ import {
 } from "./entitlements.js";
 import { awardCollectiblesForDraw, collectibleAwardsForOrder, collectiblePackCounts, collectibleProbabilityDetails, collectiblesForPack } from "./collectibles.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
+import { cardBattleTiersSchema, loadCardBattleTiers, saveCardBattleTiers } from "./cardBattleConfig.js";
 
 type RouteUser = { id: string; role: UserRole };
 type RouteDependencies = {
@@ -140,7 +141,7 @@ function richTextCharacterCount(value: string) {
     .trim().length;
 }
 
-const cardSchema = z.object({
+const cardSchemaObject = z.object({
   cardNo: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(100),
   rarity: z.enum(["normal", "rare", "epic", "legend"]),
@@ -149,8 +150,18 @@ const cardSchema = z.object({
   story: z.string().trim().max(20_000).optional().default(""),
   releaseAt: z.string().datetime().nullable().optional().default(null),
   status: z.enum(["active", "inactive"]).optional().default("inactive"),
-  packIds: z.array(z.string().trim().min(1).max(64)).min(1, "卡牌必须至少绑定一个卡包").max(500).transform((ids) => [...new Set(ids)]).optional().default([])
+  packIds: z.array(z.string().trim().min(1).max(64)).min(1, "卡牌必须至少绑定一个卡包").max(500).transform((ids) => [...new Set(ids)]).optional().default([]),
+  battleTiers: cardBattleTiersSchema.nullable().optional(),
 });
+const cardSchema = cardSchemaObject.superRefine((value, context) => {
+  if (["epic", "legend"].includes(value.rarity) && !value.battleTiers) {
+    context.addIssue({ code: "custom", path: ["battleTiers"], message: "史诗和传说卡必须完整配置 0-3 星战斗属性" });
+  }
+  if (!["epic", "legend"].includes(value.rarity) && value.battleTiers) {
+    context.addIssue({ code: "custom", path: ["battleTiers"], message: "仅史诗和传说卡可配置战斗属性" });
+  }
+});
+const cardPatchSchema = cardSchemaObject.partial();
 
 const packSchemaObject = z.object({
   name: z.string().trim().min(1).max(120),
@@ -1633,7 +1644,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           NULL AS story, c.release_at, c.status, c.created_at, c.updated_at,
           COUNT(DISTINCT uc.user_id) AS owner_count, COALESCE(SUM(uc.total_obtained), 0) AS total_drawn,
           COALESCE(SUM(uc.star_level = 0), 0) AS star_0_count, COALESCE(SUM(uc.star_level = 1), 0) AS star_1_count,
-          COALESCE(SUM(uc.star_level = 2), 0) AS star_2_count, COALESCE(SUM(uc.star_level = 3), 0) AS star_3_count
+          COALESCE(SUM(uc.star_level = 2), 0) AS star_2_count, COALESCE(SUM(uc.star_level = 3), 0) AS star_3_count,
+          (SELECT COUNT(*) FROM asset_card_battle_tiers bt WHERE bt.card_id = c.id) AS battle_tier_count
          FROM asset_cards c LEFT JOIN user_asset_cards uc ON uc.card_id = c.id
          GROUP BY c.id ORDER BY c.card_no ASC`
       ).then(([result]) => result),
@@ -1644,7 +1656,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       const cardId = String(row.card_id);
       packIdsByCard.set(cardId, [...(packIdsByCard.get(cardId) ?? []), String(row.pack_id)]);
     }
-    res.json({ cards: rows.map((row) => ({ ...cardPayload(row, true), createdAt: iso(row.created_at), packIds: packIdsByCard.get(String(row.id)) ?? [], ownerCount: Number(row.owner_count), totalDrawn: Number(row.total_drawn), starCounts: [0, 1, 2, 3].map((star) => Number(row[`star_${star}_count`])) })) });
+    res.json({ cards: rows.map((row) => ({ ...cardPayload(row, true), createdAt: iso(row.created_at), packIds: packIdsByCard.get(String(row.id)) ?? [], ownerCount: Number(row.owner_count), totalDrawn: Number(row.total_drawn), starCounts: [0, 1, 2, 3].map((star) => Number(row[`star_${star}_count`])), battleConfigured: Number(row.battle_tier_count) === 4 })) });
   });
 
   app.get("/api/admin/asset-cards/:id", async (req, res) => {
@@ -1654,7 +1666,8 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       pool.query<mysql.RowDataPacket[]>("SELECT pack_id FROM asset_pack_cards WHERE card_id = ?", [req.params.id]).then(([rows]) => rows)
     ]);
     if (!row) return sendError(res, 404, "卡片不存在");
-    res.json({ card: { ...cardPayload(row), packIds: packRows.map((item: mysql.RowDataPacket) => String(item.pack_id)) } });
+    const battleTiers = ["epic", "legend"].includes(String(row.rarity)) ? await loadCardBattleTiers(String(row.id)) : null;
+    res.json({ card: { ...cardPayload(row, true), packIds: packRows.map((item: mysql.RowDataPacket) => String(item.pack_id)), battleTiers } });
   });
 
   app.get("/api/admin/asset-cards/:id/motion/status", async (req, res) => {
@@ -1735,7 +1748,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const parsed = cardSchema.safeParse(req.body);
     if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "卡片资料无效");
     const id = nanoid();
-    const { packIds, thumbnailUrl: _thumbnailUrl, ...value } = parsed.data;
+    const { packIds, battleTiers, thumbnailUrl: _thumbnailUrl, ...value } = parsed.data;
     const optimizedImages = await optimizedAssetImages(value.imageUrl, id, 1200, 360);
     const connection = await pool.getConnection();
     try {
@@ -1747,6 +1760,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         [id, value.cardNo, value.name, value.rarity, optimizedImages.full, optimizedImages.thumbnail, value.story || null, value.releaseAt ? new Date(value.releaseAt) : null, value.status]
       );
       await syncCardPacks(id, packIds, connection);
+      if (battleTiers) await saveCardBattleTiers(id, battleTiers, connection);
       await assertCardHasPack(id, connection);
       await connection.commit();
       res.status(201).json({ id });
@@ -1760,7 +1774,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
 
   app.patch("/api/admin/asset-cards/:id", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
-    const parsed = cardSchema.partial().safeParse(req.body);
+    const parsed = cardPatchSchema.safeParse(req.body);
     if (!parsed.success || !Object.keys(parsed.data).length) return sendError(res, 400, "卡片资料无效");
     const [[usage], currentRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM user_asset_cards WHERE card_id = ?", [req.params.id]).then(([rows]) => rows),
@@ -1775,7 +1789,14 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const changesProtectedField = (parsed.data.rarity != null && parsed.data.rarity !== current.rarity)
       || (parsed.data.cardNo != null && parsed.data.cardNo !== current.card_no);
     if (Number(usage.count) > 0 && changesProtectedField) return sendError(res, 409, "已有用户获得的卡片不能修改编号或品质");
-    const { packIds, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
+    const finalRarity = String(parsed.data.rarity ?? current.rarity);
+    const { packIds, battleTiers, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
+    if (["epic", "legend"].includes(finalRarity)) {
+      if (battleTiers === null) return sendError(res, 400, "史诗和传说卡必须保留完整战斗配置");
+      if (battleTiers === undefined && !["epic", "legend"].includes(String(current.rarity))) {
+        return sendError(res, 400, "史诗和传说卡必须完整配置 0-3 星战斗属性");
+      }
+    } else if (battleTiers) return sendError(res, 400, "仅史诗和传说卡可配置战斗属性");
     const changes: Record<string, unknown> = { ...parsedChanges };
     if (typeof changes.imageUrl === "string") {
       const optimizedImages = await optimizedAssetImages(String(changes.imageUrl), req.params.id, 1200, 360);
@@ -1792,6 +1813,10 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           `UPDATE asset_cards SET ${entries.map(([key]) => `${columns[key]} = ?`).join(", ")} WHERE id = ?`,
           [...entries.map(([key, value]) => key === "releaseAt" ? (value ? new Date(String(value)) : null) : ["thumbnailUrl", "story"].includes(key) && value === "" ? null : value), req.params.id]
         );
+      }
+      if (battleTiers) await saveCardBattleTiers(req.params.id, battleTiers, connection);
+      if (!["epic", "legend"].includes(finalRarity)) {
+        await connection.query("DELETE FROM asset_card_battle_tiers WHERE card_id = ?", [req.params.id]);
       }
       if (packIds !== undefined) await syncCardPacks(req.params.id, packIds, connection);
       await assertCardHasPack(req.params.id, connection);

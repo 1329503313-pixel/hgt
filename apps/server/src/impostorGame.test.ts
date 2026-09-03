@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  IMPOSTOR_MISSION_SIZES,
   advanceExpiredImpostorGame,
   createImpostorGame,
+  impostorNightActionTargetCount,
+  startImpostorAssassination,
   submitImpostorAccusation,
   submitImpostorAssassination,
   submitImpostorClue,
@@ -29,9 +32,9 @@ function firstNightResolved() {
   return state;
 }
 
-function reachMission(state: ImpostorGameState) {
+function reachMission(state: ImpostorGameState, requestedTeam?: string[]) {
   const required = state.nomination!.required;
-  const selected = state.nomination!.candidateUserIds.slice(0, required);
+  const selected = requestedTeam ?? state.nomination!.candidateUserIds.slice(0, required);
   for (const userId of users) state = submitImpostorNomination(state, userId, selected, now);
   return state;
 }
@@ -60,6 +63,20 @@ test("第一夜固定持续30秒，行动全部提交也不会提前结束", () 
   assert.equal(state.day, 1);
 });
 
+test("侦探第一夜查验也可把自己作为两名不同目标之一", () => {
+  let state = createImpostorGame(users, 1, now, fixedRandom);
+  const impostor = state.players.find((player) => player.role === "impostor")!;
+  const detective = state.players.find((player) => player.role === "detective")!;
+  state = submitImpostorNightAction(state, detective.userId, {
+    type: "investigate",
+    targetUserIds: [detective.userId, impostor.userId],
+  }, now, fixedRandom);
+  state = submitImpostorNightAction(state, impostor.userId, { type: "skip", targetUserIds: [] }, now, fixedRandom);
+  assert.deepEqual(state.investigations, {});
+  state = advanceExpiredImpostorGame(state, new Date(now.getTime() + 30_001), fixedRandom);
+  assert.equal(state.investigations[detective.userId]?.reportedHasImpostor, true);
+});
+
 test("白天不设倒计时，全部游戏者准备后才进入任务投票", () => {
   let state = createImpostorGame(users, 1, now, fixedRandom);
   state.deadlineAt = new Date(now.getTime() - 1).toISOString();
@@ -72,6 +89,7 @@ test("白天不设倒计时，全部游戏者准备后才进入任务投票", ()
   assert.equal(state.phase, "day_vote");
   assert.equal(state.nomination?.required, 2);
   assert.equal(state.deadlineAt, "2026-08-25T00:01:00.000Z");
+  assert.deepEqual(IMPOSTOR_MISSION_SIZES.slice(1), [2, 2, 2, 2, 2]);
 });
 
 test("任务人选截断位平票时只对平票候选重投", () => {
@@ -126,19 +144,20 @@ test("偶数次混乱抵消，奇数次混乱反转任务选择", () => {
   assert.equal(state.failures, 1);
 });
 
-test("隔离人数被限制，四人局第三天始终保留三名候选人", () => {
-  let state = createImpostorGame(users, 1, now, fixedRandom);
-  state.day = 3;
-  state.nightEligibleUserIds = [...users];
-  state.nightActions = {};
-  state.phase = "night";
-  for (let index = 0; index < users.length; index += 1) {
-    state = submitImpostorNightAction(state, users[index], { type: "isolate", targetUserIds: [users[(index + 1) % users.length]] }, now, fixedRandom);
-  }
+test("隔离与连续任务限制同时生效时仍保留两名任务候选人", () => {
+  let state = reachMission(firstNightResolved(), ["u1", "u2"]);
+  for (const userId of state.missionTeamUserIds) state = submitImpostorMissionChoice(state, userId, "protect", now);
+  assert.equal(state.day, 2);
+  state.nightActions = {
+    u1: { type: "isolate", targetUserIds: ["u3"] },
+    u2: { type: "isolate", targetUserIds: ["u4"] },
+  };
   state.deadlineAt = new Date(now.getTime() - 1).toISOString();
   state = advanceExpiredImpostorGame(state, now, fixedRandom);
-  assert.equal(state.phase, "clue");
-  assert.equal(state.isolatedUserIds.length, 1);
+  assert.equal(state.phase, "day_ready");
+  assert.deepEqual(state.isolatedUserIds, []);
+  for (const userId of users) state = submitImpostorReady(state, userId, now);
+  assert.deepEqual(state.nomination?.candidateUserIds.sort(), ["u3", "u4"]);
 });
 
 test("守护同时抵消目标受到的混乱和隔离", () => {
@@ -157,14 +176,58 @@ test("守护同时抵消目标受到的混乱和隔离", () => {
   assert.deepEqual(state.isolatedUserIds, []);
 });
 
-test("任务超时自动守护且不授予伪人奖励行动", () => {
-  let state = reachMission(firstNightResolved());
+test("侦探和平民均可查验含自己的两名玩家，混乱判定后才生成各自结果", () => {
+  let state = createImpostorGame(users, 1, now, fixedRandom);
+  const impostor = state.players.find((player) => player.role === "impostor")!;
+  const detective = state.players.find((player) => player.role === "detective")!;
+  const civilian = state.players.find((player) => player.role === "civilian")!;
+  state.day = 2;
+  state.phase = "night";
+  state.nightEligibleUserIds = [impostor.userId, detective.userId, civilian.userId];
+  state.nightActions = {};
+  state = submitImpostorNightAction(state, detective.userId, {
+    type: "investigate",
+    targetUserIds: [detective.userId, impostor.userId],
+  }, now, fixedRandom);
+  state = submitImpostorNightAction(state, civilian.userId, {
+    type: "investigate",
+    targetUserIds: [civilian.userId, detective.userId],
+  }, now, fixedRandom);
+  state = submitImpostorNightAction(state, impostor.userId, {
+    type: "chaos",
+    targetUserIds: [civilian.userId],
+  }, now, fixedRandom);
+  assert.deepEqual(state.investigations, {});
+  state.deadlineAt = new Date(now.getTime() - 1).toISOString();
+  state = advanceExpiredImpostorGame(state, now, fixedRandom);
+  assert.equal(state.investigations[detective.userId]?.reportedHasImpostor, true);
+  assert.equal(state.investigations[civilian.userId]?.reportedHasImpostor, true);
+});
+
+test("伪人参与并主动破坏任务仍获得下一夜技能，非守护时只选择一人", () => {
+  let state = firstNightResolved();
+  const impostor = state.players.find((player) => player.role === "impostor")!;
+  const teammate = state.nomination!.candidateUserIds.find((userId) => userId !== impostor.userId)!;
+  state = reachMission(state, [impostor.userId, teammate]);
+  state = submitImpostorMissionChoice(state, impostor.userId, "sabotage", now);
+  state = submitImpostorMissionChoice(state, teammate, "protect", now);
+  assert.equal(state.phase, "night");
+  assert.ok(state.nightEligibleUserIds.includes(impostor.userId));
+  assert.equal(impostorNightActionTargetCount(state, impostor.userId, "chaos"), 1);
+});
+
+test("伪人参与任务并超时自动守护时获得双目标夜间技能", () => {
+  let state = firstNightResolved();
+  const impostor = state.players.find((player) => player.role === "impostor")!;
+  const teammate = state.nomination!.candidateUserIds.find((userId) => userId !== impostor.userId)!;
+  state = reachMission(state, [impostor.userId, teammate]);
   state.deadlineAt = new Date(now.getTime() - 1).toISOString();
   state = advanceExpiredImpostorGame(state, now, fixedRandom);
   assert.equal(state.successes, 1);
   assert.equal(state.phase, "night");
   assert.equal(state.day, 2);
-  assert.equal(state.nightEligibleUserIds.length, 0);
+  assert.deepEqual(state.nightEligibleUserIds, [impostor.userId]);
+  assert.equal(impostorNightActionTargetCount(state, impostor.userId, "guard"), 2);
   assert.ok(Object.values(state.history[0].missionChoices).every((choice) => choice.automatic));
 });
 
@@ -207,23 +270,58 @@ test("完整五天可依次经过夜晚、准备、投票、任务与第三夜�
   assert.equal(state.day, 5);
   expireNight(); readyAll(); nominate(); completeMission("success");
 
-  assert.equal(state.phase, "assassination");
+  assert.equal(state.phase, "accusation");
   assert.equal(state.successes, 3);
   assert.equal(state.failures, 2);
+  assert.equal(state.deadlineAt, "2026-08-25T00:05:00.000Z");
   assert.deepEqual(state.history.map((item) => item.day), [1, 2, 3, 4, 5]);
+  assert.ok(state.history.every((item) => item.missionTeamUserIds.length === 2));
+  for (let index = 1; index < state.history.length; index += 1) {
+    assert.ok(state.history[index].missionTeamUserIds.every((userId) => !state.history[index - 1].missionTeamUserIds.includes(userId)));
+  }
 });
 
-test("三次成功进入刺杀，刺中侦探则伪人获胜", () => {
+test("伪人可在任意进行中阶段发起60秒刺杀并立即中止原进程", () => {
   let state = firstNightResolved();
-  state.successes = 2;
-  state = reachMission(state);
-  for (const userId of state.missionTeamUserIds) state = submitImpostorMissionChoice(state, userId, "protect", now);
-  assert.equal(state.phase, "assassination");
-  assert.equal(state.deadlineAt, "2026-08-25T00:01:30.000Z");
   const impostor = state.players.find((player) => player.role === "impostor")!;
   const detective = state.players.find((player) => player.role === "detective")!;
+  assert.equal(state.phase, "day_vote");
+  state = startImpostorAssassination(state, impostor.userId, now);
+  assert.equal(state.phase, "assassination");
+  assert.equal(state.deadlineAt, "2026-08-25T00:01:00.000Z");
+  assert.equal(state.nomination, null);
   state = submitImpostorAssassination(state, impostor.userId, detective.userId);
   assert.equal(state.winner, "impostor");
+});
+
+test("刺杀错误或60秒超时均由好人获胜", () => {
+  let state = createImpostorGame(users, 1, now, fixedRandom);
+  const impostor = state.players.find((player) => player.role === "impostor")!;
+  const civilian = state.players.find((player) => player.role === "civilian")!;
+  state = startImpostorAssassination(state, impostor.userId, now);
+  state = submitImpostorAssassination(state, impostor.userId, civilian.userId);
+  assert.equal(state.winner, "good");
+
+  state = startImpostorAssassination(createImpostorGame(users, 2, now, fixedRandom), impostor.userId, now);
+  state = advanceExpiredImpostorGame(state, new Date(now.getTime() + 60_001), fixedRandom);
+  assert.equal(state.winner, "good");
+  assert.match(state.endReason ?? "", /60秒/);
+});
+
+test("四次任务成功时好人立即胜利，三次任务失败时伪人立即胜利", () => {
+  let state = reachMission(firstNightResolved());
+  state.successes = 3;
+  for (const userId of state.missionTeamUserIds) state = submitImpostorMissionChoice(state, userId, "protect", now);
+  assert.equal(state.winner, "good");
+  assert.match(state.endReason ?? "", /四次成功/);
+
+  state = reachMission(firstNightResolved());
+  state.failures = 2;
+  for (const [index, userId] of state.missionTeamUserIds.entries()) {
+    state = submitImpostorMissionChoice(state, userId, index === 0 ? "sabotage" : "protect", now);
+  }
+  assert.equal(state.winner, "impostor");
+  assert.match(state.endReason ?? "", /三次失败/);
 });
 
 test("最终指认第二次仍平票时伪人胜利", () => {
@@ -235,7 +333,7 @@ test("最终指认第二次仍平票时伪人胜利", () => {
   state = submitImpostorAccusation(state, "u3", "u4", now);
   state = submitImpostorAccusation(state, "u4", "u3", now);
   assert.equal(state.accusation?.attempt, 2);
-  assert.equal(state.deadlineAt, "2026-08-25T00:01:00.000Z");
+  assert.equal(state.deadlineAt, "2026-08-25T00:05:00.000Z");
   state = submitImpostorAccusation(state, "u1", "u3", now);
   state = submitImpostorAccusation(state, "u2", "u4", now);
   state = submitImpostorAccusation(state, "u3", "u4", now);

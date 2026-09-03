@@ -66,6 +66,12 @@ export type Evaluation = {
   createdAt: string;
 };
 
+export type SoupTopicReference = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
 export type SoupDetail = SoupSummary & {
   surface: string;
   supplementalSurfaces: string[];
@@ -74,6 +80,7 @@ export type SoupDetail = SoupSummary & {
   manual: string | null;
   enableAiGame: boolean;
   canConfigureAiGame: boolean;
+  topic: SoupTopicReference | null;
   canViewFull: boolean;
   canEdit: boolean;
   isFavorited: boolean;

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="941" height="1672" viewBox="0 0 941 1672" role="img" aria-labelledby="title desc">
+  <title id="title">谁是伪人玩法介绍：聊天行动与刺杀</title>
+  <desc id="desc">说明所有阶段选择均在聊天行动卡完成，以及伪人可随时从更多发起刺杀并公开号码牌。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07111f"/><stop offset=".48" stop-color="#101b2b"/><stop offset="1" stop-color="#050a12"/></linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff"/><stop offset=".5" stop-color="#b9c9da"/><stop offset="1" stop-color="#64748b"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#38bdf8"/><stop offset="1" stop-color="#fb7185"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#7dd3fc" stroke-opacity=".035"/></pattern>
+  </defs>
+  <rect width="941" height="1672" fill="url(#bg)"/><rect width="941" height="1672" fill="url(#grid)"/>
+  <circle cx="470" cy="195" r="150" fill="#fb7185" opacity=".055" filter="url(#glow)"/>
+  <path d="M470 54l26 43-26 43-26-43z" fill="none" stroke="#fb7185" stroke-width="3"/><path d="M470 68l13 29-13 29-13-29z" fill="#fb7185" opacity=".85" filter="url(#glow)"/>
+  <rect x="22" y="22" width="897" height="1628" rx="8" fill="none" stroke="#dbeafe" stroke-opacity=".75" stroke-width="2"/><rect x="38" y="38" width="865" height="1596" rx="6" fill="none" stroke="#60a5fa" stroke-opacity=".28"/>
+  <path d="M58 115h210M673 115h210M58 1557h210M673 1557h210" stroke="url(#accent)" stroke-width="2" opacity=".7"/>
+  <text x="470" y="248" text-anchor="middle" fill="url(#silver)" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="92" font-weight="900" letter-spacing="8">谁是伪人</text>
+  <text x="470" y="318" text-anchor="middle" fill="#cbd5e1" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="34" font-weight="700" letter-spacing="10">聊天行动与刺杀</text>
+  <rect x="76" y="385" width="789" height="1155" rx="28" fill="#07111f" fill-opacity=".72" stroke="#fb7185" stroke-opacity=".45" stroke-width="2"/>
+  <text x="112" y="458" fill="#7dd3fc" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">01  所有阶段选择都在聊天中</text>
+  <text x="132" y="513" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="26">
+    <tspan x="132" dy="0">白天准备、夜间技能与查验对象</tspan><tspan x="132" dy="44">第三夜匿名留言、任务人选投票与平票重投</tspan><tspan x="132" dy="44">任务守护或破坏、刺杀目标、最终公投</tspan><tspan x="132" dy="44">全部在对应系统消息下方的行动卡完成。</tspan>
+  </text>
+  <line x1="112" y1="710" x2="829" y2="710" stroke="#94a3b8" stroke-opacity=".25"/>
+  <text x="112" y="772" fill="#fb7185" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">02  伪人可随时发起刺杀</text>
+  <text x="132" y="827" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="26">
+    <tspan x="132" dy="0">开局后、结算前，伪人可点击“更多 → 刺杀”。</tspan><tspan x="132" dy="44">二次确认后，当前阶段立即中止且不会恢复。</tspan><tspan x="132" dy="44">系统直接公开伪人的号码牌，进入 60 秒刺杀。</tspan><tspan x="132" dy="44">刺中侦探：伪人胜利；刺错或超时：好人胜利。</tspan>
+  </text>
+  <line x1="112" y1="1025" x2="829" y2="1025" stroke="#94a3b8" stroke-opacity=".25"/>
+  <text x="112" y="1087" fill="#a78bfa" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">03  阶段时间</text>
+  <g font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="25" font-weight="700">
+    <rect x="112" y="1125" width="340" height="70" rx="16" fill="#172554"/><text x="136" y="1170" fill="#dbeafe">夜间行动　30 秒</text>
+    <rect x="489" y="1125" width="340" height="70" rx="16" fill="#172554"/><text x="513" y="1170" fill="#dbeafe">匿名留言　60 秒</text>
+    <rect x="112" y="1215" width="340" height="70" rx="16" fill="#312e81"/><text x="136" y="1260" fill="#ede9fe">任务投票　60 秒</text>
+    <rect x="489" y="1215" width="340" height="70" rx="16" fill="#312e81"/><text x="513" y="1260" fill="#ede9fe">任务执行　60 秒</text>
+    <rect x="112" y="1305" width="340" height="70" rx="16" fill="#164e63"/><text x="136" y="1350" fill="#cffafe">最终公投　300 秒</text>
+    <rect x="489" y="1305" width="340" height="70" rx="16" fill="#4c0519"/><text x="513" y="1350" fill="#ffe4e6">伪人刺杀　60 秒</text>
+  </g>
+  <text x="470" y="1465" text-anchor="middle" fill="#94a3b8" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="24">倒计时与超时默认行为均以服务端状态为准</text>
+  <text x="470" y="1600" text-anchor="middle" fill="#94a3b8" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="22" letter-spacing="4">第 3 页 / 共 3 页</text>
+</svg>

@@ -1,6 +1,18 @@
 export type AssetRarity = "normal" | "rare" | "epic" | "legend";
 export type AssetPackType = "permanent" | "limited" | "collaboration";
 
+export type CardBattleCondition = "energy_full" | "self_death" | "self_hp_below_percent" | "normal_kill" | "skill_kill" | "ally_death" | "self_death_energy_full" | "self_hp_below_percent_energy_full" | "normal_kill_energy_full" | "skill_kill_energy_full" | "ally_death_energy_full";
+export type CardBattleEffectType = "damage_single" | "damage_rear" | "damage_random" | "damage_all_front" | "damage_all_rear" | "damage_random_2" | "damage_random_3" | "damage_random_4" | "damage_all" | "heal_self" | "heal_lowest_ally" | "energy_self" | "energy_lowest_ally" | "heal_all_allies" | "energy_all_allies" | "defense_self" | "defense_all_allies" | "speed_self" | "speed_all_allies" | "max_hp_self" | "max_hp_all_allies" | "attack_self" | "attack_all_allies" | "revive_self" | "revive_ally_1" | "revive_ally_2" | "revive_ally_3" | "revive_ally_4" | "revive_all_allies";
+export type CardBattleSkillEffect = { id?: string; order: number; condition: CardBattleCondition; conditionValue: number | null; type: CardBattleEffectType; value: number | null; duration: number | null };
+export type CardBattleTier = { starLevel: 0 | 1 | 2 | 3; maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; canAttackRear: boolean; skillName: string; skillDescription: string; effects: CardBattleSkillEffect[] };
+
+export const DEFAULT_CARD_BATTLE_TIERS: CardBattleTier[] = [
+  { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 1, maxHp: 1500, attack: 750, defense: 150, speed: 150, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 2, maxHp: 2000, attack: 1000, defense: 200, speed: 200, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 3, maxHp: 3000, attack: 1500, defense: 300, speed: 300, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+];
+
 export type AssetCard = {
   id: string;
   cardNo: string;
@@ -14,6 +26,7 @@ export type AssetCard = {
   story: string;
   releaseAt: string | null;
   status: string;
+  battleTiers?: CardBattleTier[] | null;
 };
 
 export type OwnedAssetCard = AssetCard & {

@@ -48,7 +48,8 @@ import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
-import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
+import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
+import { SOUP_TOPIC_NAME_MAX_LENGTH, shouldRequireActiveSoupTopic, soupTopicDirectMatchOrderSql, soupTopicNameLength, soupTopicSearchFilterSql } from "./soupTopics.js";
 import {
   evaluationCountsTowardScore,
   scoringEvaluationJoin,
@@ -651,6 +652,7 @@ const soupSchema = z.preprocess(normalizeSoupAiConfigurationInput, z.object({
   author: z.string().trim().max(100).optional().default(""),
   type: text.max(20),
   difficulty: z.enum(["简单", "普通", "困难", "地狱"]),
+  topicId: z.union([z.string().trim().min(1).max(64), z.null()]).optional(),
   summary: z.string().trim().max(40, "摘要不超过 40 个字").optional().default(""),
   coverImage: z
     .string()
@@ -693,6 +695,20 @@ const soupSchema = z.preprocess(normalizeSoupAiConfigurationInput, z.object({
     });
   }
 }));
+
+const soupTopicNameSchema = z.string()
+  .trim()
+  .min(1, "请输入话题名称")
+  .refine((value) => soupTopicNameLength(value) <= SOUP_TOPIC_NAME_MAX_LENGTH, `话题名称最多 ${SOUP_TOPIC_NAME_MAX_LENGTH} 个字`);
+
+const soupTopicSchema = z.object({
+  name: soupTopicNameSchema,
+  isActive: z.boolean()
+});
+
+const soupTopicStatusSchema = z.object({
+  isActive: z.boolean()
+});
 
 const evaluationSchema = z.object({
   total: score,
@@ -2234,6 +2250,12 @@ async function syncBadgeUnlocksForUser(userId: string) {
     await pool.query("UPDATE users SET badges_initialized = 1 WHERE id = ?", [userId]);
   }
   await syncActivityBadges(userId);
+}
+
+async function soupTitleExists(title: string, excludedId?: string) {
+  const lookup = duplicateSoupTitleLookup(title, excludedId);
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(lookup.sql, lookup.params);
+  return rows.length > 0;
 }
 
 function queueSystemBadgeSync(userIds: string[]) {
@@ -5092,6 +5114,114 @@ async function homeFeaturedSoupIds() {
   return ids;
 }
 
+function mapSoupTopic(row: mysql.RowDataPacket) {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    isActive: bool(row.is_active),
+    soupCount: Number(row.soup_count ?? 0),
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString()
+  };
+}
+
+app.get("/api/soup-topics", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT id, name, is_active, created_at, updated_at
+     FROM soup_topics
+     WHERE is_active = TRUE
+     ORDER BY name ASC, created_at ASC`
+  );
+  res.json({ topics: rows.map(mapSoupTopic) });
+});
+
+app.get("/api/admin/soup-topics", async (req, res) => {
+  const user = await requireAdmin(req, res);
+  if (!user) return;
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT t.id, t.name, t.is_active, t.created_at, t.updated_at, COUNT(s.id) AS soup_count
+     FROM soup_topics t
+     LEFT JOIN soups s ON s.topic_id = t.id
+     GROUP BY t.id
+     ORDER BY t.is_active DESC, t.updated_at DESC, t.created_at DESC`
+  );
+  res.json({ topics: rows.map(mapSoupTopic) });
+});
+
+app.post("/api/admin/soup-topics", async (req, res) => {
+  const user = await requireAdmin(req, res);
+  if (!user) return;
+  const parsed = soupTopicSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "话题信息不正确");
+  const id = nanoid();
+  try {
+    await pool.query(
+      "INSERT INTO soup_topics (id, name, is_active) VALUES (?, ?, ?)",
+      [id, parsed.data.name, parsed.data.isActive]
+    );
+  } catch (error) {
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") return sendError(res, 409, "话题名称已存在");
+    throw error;
+  }
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT id, name, is_active, created_at, updated_at, 0 AS soup_count FROM soup_topics WHERE id = ? LIMIT 1",
+    [id]
+  );
+  res.status(201).json({ topic: mapSoupTopic(row) });
+});
+
+app.put("/api/admin/soup-topics/:id", async (req, res) => {
+  const user = await requireAdmin(req, res);
+  if (!user) return;
+  const parsed = soupTopicSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "话题信息不正确");
+  try {
+    const [result] = await pool.query<mysql.ResultSetHeader>(
+      "UPDATE soup_topics SET name = ?, is_active = ? WHERE id = ?",
+      [parsed.data.name, parsed.data.isActive, req.params.id]
+    );
+    if (result.affectedRows === 0) return sendError(res, 404, "话题不存在");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") return sendError(res, 409, "话题名称已存在");
+    throw error;
+  }
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT t.id, t.name, t.is_active, t.created_at, t.updated_at, COUNT(s.id) AS soup_count
+     FROM soup_topics t
+     LEFT JOIN soups s ON s.topic_id = t.id
+     WHERE t.id = ?
+     GROUP BY t.id`,
+    [req.params.id]
+  );
+  res.json({ topic: mapSoupTopic(row) });
+});
+
+app.patch("/api/admin/soup-topics/:id/status", async (req, res) => {
+  const user = await requireAdmin(req, res);
+  if (!user) return;
+  const parsed = soupTopicStatusSchema.safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "话题状态不正确");
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "UPDATE soup_topics SET is_active = ? WHERE id = ?",
+    [parsed.data.isActive, req.params.id]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, "话题不存在");
+  res.json({ ok: true, isActive: parsed.data.isActive });
+});
+
+app.delete("/api/admin/soup-topics/:id", async (req, res) => {
+  const user = await requireAdmin(req, res);
+  if (!user) return;
+  const [result] = await pool.query<mysql.ResultSetHeader>(
+    "DELETE FROM soup_topics WHERE id = ?",
+    [req.params.id]
+  );
+  if (result.affectedRows === 0) return sendError(res, 404, "话题不存在");
+  res.json({ ok: true });
+});
+
 app.get("/api/soups", async (req, res) => {
   // 首页数据会因当前用户的点赞/收藏状态而不同，只允许浏览器私有短缓存。
   // 前端另有 30 秒内存缓存；这里主要覆盖刷新、返回导航和重复 GET。
@@ -5125,9 +5255,9 @@ app.get("/api/soups", async (req, res) => {
   }
 
   if (req.query.keyword) {
-    where.push("(s.title LIKE ? OR s.author LIKE ? OR s.summary LIKE ?)");
+    where.push(soupTopicSearchFilterSql());
     const keyword = `%${String(req.query.keyword)}%`;
-    params.push(keyword, keyword, keyword);
+    params.push(keyword, keyword, keyword, keyword);
   }
   if (req.query.author) {
     where.push("s.author LIKE ?");
@@ -5208,7 +5338,7 @@ app.get("/api/soups", async (req, res) => {
   const featuredCases = featuredSoupIds.map((_, index) => `WHEN ? THEN ${index}`).join(" ");
   const featuredPlaceholders = featuredSoupIds.map(() => "?").join(", ");
   const heatOrderExpression = scoringSoupHeatExpression("s");
-  const orderClause = featuredSoupIds.length > 0
+  const baseOrderClause = featuredSoupIds.length > 0
     ? `CASE s.id ${featuredCases} ELSE ${featuredSoupIds.length} END ASC,
        CASE WHEN s.id IN (${featuredPlaceholders}) THEN 0 ELSE CRC32(CONCAT(s.id, ?)) END ASC`
     : order === "RANDOM"
@@ -5216,11 +5346,18 @@ app.get("/api/soups", async (req, res) => {
       : sortBy === "heat"
         ? `${heatOrderExpression} ${order}, s.created_at DESC`
         : `s.created_at ${order}, s.id ${order}`;
-  const orderParams = featuredSoupIds.length > 0
+  const searchOrderKeyword = req.query.keyword ? `%${String(req.query.keyword)}%` : null;
+  const orderClause = searchOrderKeyword
+    ? `${soupTopicDirectMatchOrderSql()}, ${baseOrderClause}`
+    : baseOrderClause;
+  const baseOrderParams = featuredSoupIds.length > 0
     ? [...featuredSoupIds, ...featuredSoupIds, randomSeed]
     : order === "RANDOM"
       ? [randomSeed]
       : [];
+  const orderParams = searchOrderKeyword
+    ? [searchOrderKeyword, searchOrderKeyword, searchOrderKeyword, ...baseOrderParams]
+    : baseOrderParams;
 
   const summarySelect = (lightImages = false) => `
     SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail,
@@ -5335,8 +5472,17 @@ app.post("/api/soups", async (req, res) => {
         enableAiGame: false,
         keyFacts: [],
         keyFactsCustomized: false
-      };
+  };
   if (soup.isOriginal && !soup.author) return sendError(res, 400, "原创海龟汤需要填写作者");
+  const topicId = soup.topicId ?? null;
+  if (shouldRequireActiveSoupTopic(topicId, null)) {
+    const [[topic]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM soup_topics WHERE id = ? AND is_active = TRUE LIMIT 1",
+      [topicId]
+    );
+    if (!topic) return sendError(res, 400, "所选话题不存在或已下架");
+  }
+  if (await soupTitleExists(soup.title)) return sendError(res, 409, SOUP_TITLE_EXISTS_MESSAGE);
   const duplicate = await findDuplicateSoup(soup);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
   const hasUnlimitedPublishing = hasUnlimitedSoupPublishingRole(user.role);
@@ -5377,12 +5523,12 @@ app.post("/api/soups", async (req, res) => {
     });
     await connection.query(
       `INSERT INTO soups
-        (id, title, author, type, difficulty, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, key_facts, key_facts_hash, key_facts_customized, creator_id, creator_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, title, author, type, difficulty, summary, cover_image, cover_thumbnail, is_original, is_sensitive, surface, supplemental_surfaces, bottom, supplemental_bottoms, host_manual, is_surface_public, is_bottom_public, enable_ai_game, review_status, review_reason, review_version, key_facts, key_facts_hash, key_facts_customized, topic_id, creator_id, creator_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, soup.title, author, soup.type, soup.difficulty, soup.summary, optimizedCover?.full ?? null, optimizedCover?.thumbnail ?? null, soup.isOriginal, soup.isSensitive,
         soup.surface, JSON.stringify(soup.supplementalSurfaces), soup.bottom, JSON.stringify(soup.supplementalBottoms), soup.manual || null,
         soup.isSurfacePublic, soup.isBottomPublic, soup.enableAiGame, review.decision, review.reason, 1,
-        soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null, null, soup.keyFactsCustomized ? 1 : 0, user.id, user.nickname]
+        soup.keyFacts.length > 0 ? JSON.stringify(soup.keyFacts) : null, null, soup.keyFactsCustomized ? 1 : 0, topicId, user.id, user.nickname]
     );
     if (review.decision === "approved" && soup.isSurfacePublic) {
       await awardShellTask(user.id, "publish_soup", `publish:${user.id}:${id}`, {
@@ -5447,7 +5593,8 @@ app.get("/api/soups/:id", async (req, res) => {
 
   const [[statsRows], [evalRows], full] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(`
-    SELECT s.id, s.view_count, NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
+    SELECT s.id, s.view_count, t.id AS topic_id, t.name AS topic_name, t.is_active AS topic_is_active,
+      NULL AS creator_avatar, u.avatar IS NOT NULL AS creator_has_avatar,
       u.experience AS creator_experience, u.role AS creator_role, u.vip_growth_value AS creator_vip_growth_value, u.vip_expires_at AS creator_vip_expires_at, u.vip_legacy_active AS creator_vip_legacy_active, u.equipped_badge_key AS creator_badge_key, u.equipped_badge_icon_url AS creator_badge_icon_url,
       (SELECT COUNT(*) FROM soup_likes WHERE soup_id = s.id) AS like_count,
       (SELECT COUNT(*) FROM soup_favorites WHERE soup_id = s.id) AS favorite_count,
@@ -5462,6 +5609,7 @@ app.get("/api/soups/:id", async (req, res) => {
     FROM soups s
     ${scoringEvaluationJoin("e", "s")}
     LEFT JOIN users u ON u.id = s.creator_id
+    LEFT JOIN soup_topics t ON t.id = s.topic_id
     WHERE s.id = ?
     GROUP BY s.id
     LIMIT 1
@@ -5513,6 +5661,11 @@ app.get("/api/soups/:id", async (req, res) => {
       canConfigureAiGame: canEnableAiGameRole(statsRows[0]?.creator_role),
       keyFacts: canEdit ? safeParseJson(soup.key_facts) : null,
       keyFactsCustomized: canEdit && (soup.key_facts_customized as number) === 1,
+      topic: statsRows[0]?.topic_id ? {
+        id: String(statsRows[0].topic_id),
+        name: String(statsRows[0].topic_name),
+        isActive: bool(statsRows[0].topic_is_active)
+      } : null,
       canViewFull: full,
       canEdit,
       canPinToProfile,
@@ -5794,6 +5947,18 @@ app.put("/api/soups/:id", async (req, res) => {
   if (!parsed.success) return sendError(res, 400, soupValidationMessage(parsed.error.issues));
   const next = parsed.data;
   if (next.isOriginal && !next.author) return sendError(res, 400, "原创海龟汤需要填写作者");
+  const currentTopicId = soup.topic_id ? String(soup.topic_id) : null;
+  const topicId = next.topicId === undefined ? currentTopicId : next.topicId;
+  if (shouldRequireActiveSoupTopic(topicId, currentTopicId)) {
+    const [[topic]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT id FROM soup_topics WHERE id = ? AND is_active = TRUE LIMIT 1",
+      [topicId]
+    );
+    if (!topic) return sendError(res, 400, "所选话题不存在或已下架");
+  }
+  if (next.title !== String(soup.title) && await soupTitleExists(next.title, req.params.id)) {
+    return sendError(res, 409, SOUP_TITLE_EXISTS_MESSAGE);
+  }
   const duplicate = await findDuplicateSoup(next, req.params.id);
   if (duplicate) return sendError(res, 409, "该海龟汤在平台上高度重复");
   let review: SoupReviewResult;
@@ -5836,7 +6001,7 @@ app.put("/api/soups/:id", async (req, res) => {
            is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + ?,
            reviewed_at = CASE WHEN ? THEN NULL ELSE reviewed_at END,
            reviewed_by = CASE WHEN ? THEN NULL ELSE reviewed_by END,
-           key_facts = ?, key_facts_hash = ?, key_facts_customized = ?
+           key_facts = ?, key_facts_hash = ?, key_facts_customized = ?, topic_id = ?
        WHERE id = ?`,
       [
         next.title,
@@ -5864,6 +6029,7 @@ app.put("/api/soups/:id", async (req, res) => {
         keyFacts,
         keyFactsHash,
         keyFactsCustomized,
+        topicId,
         req.params.id
       ]
     );

@@ -135,6 +135,12 @@ export type KeyFact = {
   hintContent: string;
 };
 
+export type SoupTopicReference = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
 export type SoupDetail = SoupSummary & {
   surface: string;
   supplementalSurfaces: string[];
@@ -145,6 +151,7 @@ export type SoupDetail = SoupSummary & {
   canConfigureAiGame: boolean;
   keyFacts: KeyFact[] | null;
   keyFactsCustomized: boolean;
+  topic: SoupTopicReference | null;
   canViewFull: boolean;
   canEdit: boolean;
   canPinToProfile: boolean;
@@ -327,7 +334,7 @@ export type OnlineSoupRoomInvite = {
   roomName: string;
   roomCode: string;
   soupTitle: string | null;
-  contentType?: "soup" | "mystery" | "impostor";
+  contentType?: "soup" | "mystery" | "impostor" | "card_battle";
   status: OnlineSoupRoomStatus;
   playerCount: number;
   playerCapacity: number;
@@ -530,6 +537,7 @@ export type OnlineImpostorGame = {
   } | null;
   winner: "good" | "impostor" | "draw" | null;
   endReason: string | null;
+  revealedImpostorSeat: number | null;
   history: Array<{
     day: number;
     isolatedUserIds: string[];
@@ -545,6 +553,7 @@ export type OnlineImpostorGame = {
     roleLabel: string;
     readySubmitted: boolean;
     nightActionTypes: Array<"chaos" | "isolate" | "guard" | "investigate" | "skip">;
+    nightActionTargetCounts: Partial<Record<"chaos" | "isolate" | "guard" | "investigate" | "skip", number>>;
     nightSubmitted: boolean;
     investigation: { targetUserIds: string[]; reportedHasImpostor: boolean } | null;
     clueSubmitted: boolean;
@@ -552,6 +561,7 @@ export type OnlineImpostorGame = {
     missionChoiceSubmitted: boolean;
     accusationSubmitted: boolean;
     canAssassinate: boolean;
+    canStartAssassination: boolean;
   } | null;
 };
 
@@ -563,6 +573,63 @@ export type OnlineSoupBackgroundMusic = {
   enabled: boolean;
   startedAt?: string | null;
   updatedAt?: string | null;
+};
+
+export type OnlineCardBattleCard = {
+  id: string;
+  cardNo: string;
+  name: string;
+  rarity: "epic" | "legend";
+  starLevel: number;
+  imageUrl: string;
+  stats: { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; canAttackRear: boolean };
+  skillName: string;
+  skillDescription: string;
+};
+export type OnlineCardBattleState = {
+  mode: "1v1";
+  phase: "preparing" | "playing" | "ended" | "aborted";
+  seats: Array<{
+    seat: 1 | 2;
+    user: { id: string; nickname: string; avatar: string | null } | null;
+    ready: boolean;
+    lineup: Array<{ slot: number; card: OnlineCardBattleCard | null; cardBack: boolean }>;
+  }>;
+  me: { userId: string; seat: 1 | 2 | null; eligibleCardCount: number };
+  game: null | {
+    id: string;
+    gameNumber: number;
+    status: "playing" | "ended" | "aborted";
+    startedAt: string;
+    playbackEndsAt: string;
+    playback: OnlineCardBattlePlayback;
+    lineups: Array<{ userId: string; nickname: string; seat: 1 | 2; cards: OnlineCardBattleCard[] }>;
+    settlement: null | {
+      winnerSeat: 1 | 2 | null;
+      endReason: "elimination" | "round_limit" | "simultaneous_elimination" | "safety_limit";
+      rounds: number;
+      players: Array<{ userId: string; nickname: string; seat: 1 | 2; cards: Array<{ slot: number; cardId: string; name: string; damageDealt: number; damageTaken: number }> }>;
+    };
+  };
+};
+export type OnlineCardBattlePlayback = {
+  completedSequence: number;
+  totalEvents: number;
+  complete: boolean;
+  states: OnlineCardBattleCardState[];
+  activeEvent: OnlineCardBattleEvent | null;
+  activeEventStartedAt: string | null;
+};
+export type OnlineCardBattleCardState = {
+  instanceId: string; userId: string; seat: 1 | 2; slot: 1 | 2 | 3 | 4 | 5; row: "front" | "rear";
+  hp: number; maxHp: number; energy: number; energyRequired: number; attack: number; defense: number; speed: number; alive: boolean;
+};
+export type OnlineCardBattleEvent = {
+  sequence: number; round: number; kind: "round" | "attack" | "skill" | "end";
+  visual: "round" | "damage" | "heal" | "energy" | "buff" | "revive" | "end";
+  actorId: string | null; skillName: string | null;
+  effects: Array<{ targetId: string; amount?: number; blocked?: boolean; label?: string }>;
+  states: OnlineCardBattleCardState[]; durationMs: number; text: string;
 };
 
 export type OnlineSoupAiHonors = {
@@ -592,7 +659,7 @@ export type OnlineSoupLobbyRoom = {
   type: "public" | "password";
   status: OnlineSoupRoomStatus;
   hostMode: OnlineSoupHostMode;
-  contentType: "soup" | "mystery" | "impostor";
+  contentType: "soup" | "mystery" | "impostor" | "card_battle";
   host: { id: string; nickname: string };
   soupTitle: string | null;
   mysteryTitle: string | null;
@@ -635,10 +702,11 @@ export type OnlineSoupMessage = {
   impostorGameNumber: number | null;
   impostorSeat: number | null;
   impostorEvent: {
-    kind: "night_action" | "clue" | "nomination" | "assassination" | "accusation";
+    kind: "night_action" | "clue" | "ready" | "nomination" | "mission" | "assassination" | "accusation";
     gameNumber: number;
     day: number;
     attempt?: number;
+    impostorSeat?: number;
   } | {
     kind: "settlement";
     gameNumber: number;
@@ -690,7 +758,7 @@ export type OnlineSoupSnapshot = {
     type: "public" | "password";
     status: OnlineSoupRoomStatus;
     hostMode: OnlineSoupHostMode;
-    contentType: "soup" | "mystery" | "impostor";
+    contentType: "soup" | "mystery" | "impostor" | "card_battle";
     aiProgress: number | null;
     finishVote: {
       id: string;
@@ -740,6 +808,7 @@ export type OnlineSoupSnapshot = {
       gameEnded: boolean;
     } | null;
     impostorGame: OnlineImpostorGame | null;
+    cardBattle: OnlineCardBattleState | null;
     createdAt: string;
   };
   me: { role: OnlineSoupMemberRole; isHost: boolean };

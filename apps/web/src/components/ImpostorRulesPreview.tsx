@@ -4,9 +4,9 @@ import { createPortal } from "react-dom";
 import { registerAndroidBackHandler } from "../android/backStack";
 
 const RULE_IMAGES = [
-  "/impostor/game-guide-3.webp",
-  "/impostor/game-guide-2.webp",
-  "/impostor/game-guide-1.webp",
+  { src: "/impostor/game-guide-v2-1.svg", alt: "谁是伪人玩法介绍：任务与胜负" },
+  { src: "/impostor/game-guide-v2-2.svg", alt: "谁是伪人玩法介绍：夜间技能" },
+  { src: "/impostor/game-guide-v2-3.svg", alt: "谁是伪人玩法介绍：聊天行动与刺杀" },
 ] as const;
 
 export function ImpostorRulesPreview({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -79,14 +79,14 @@ export function ImpostorRulesPreview({ open, onClose }: { open: boolean; onClose
             }
           }}
         >
-          {RULE_IMAGES.map((src, index) => (
-            <div key={src} className="w-full shrink-0 snap-center snap-always" role="group" aria-label={`第 ${index + 1} 页，共 ${RULE_IMAGES.length} 页`}>
+          {RULE_IMAGES.map((image, index) => (
+            <div key={image.src} className="w-full shrink-0 snap-center snap-always" role="group" aria-label={`第 ${index + 1} 页，共 ${RULE_IMAGES.length} 页`}>
               <img
                 className="block h-auto max-h-[calc(100dvh-88px)] w-full object-contain"
-                src={src}
+                src={image.src}
                 width={941}
                 height={1672}
-                alt={`谁是伪人玩法介绍第 ${index + 1} 页`}
+                alt={image.alt}
                 loading={index === 0 ? "eager" : "lazy"}
                 decoding="async"
                 draggable={false}
@@ -96,9 +96,9 @@ export function ImpostorRulesPreview({ open, onClose }: { open: boolean; onClose
         </div>
 
         <div className="impostor-rules-dots" aria-label="玩法介绍分页">
-          {RULE_IMAGES.map((src, index) => (
+          {RULE_IMAGES.map((image, index) => (
             <button
-              key={src}
+              key={image.src}
               type="button"
               className={index === activeIndex ? "is-active" : ""}
               aria-label={`切换到第 ${index + 1} 页`}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
+import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
 
 test("编辑海龟汤时将当前 OSS 封面转换为站内封面标记", () => {
   const body = {
@@ -30,6 +30,18 @@ test("仅修改封面等非审核内容时不触发重新审核", () => {
 
   assert.equal(hasSoupReviewContentChanged(existing, { ...existing }), false);
   assert.equal(hasSoupReviewContentChanged(existing, { ...existing, bottom: "新汤底" }), true);
+});
+
+test("海龟汤标题查重在编辑时排除当前汤品", () => {
+  assert.equal(SOUP_TITLE_EXISTS_MESSAGE, "海龟汤标题已存在，请更改标题");
+  assert.deepEqual(duplicateSoupTitleLookup("重复标题"), {
+    sql: "SELECT id FROM soups WHERE title = ? LIMIT 1",
+    params: ["重复标题"]
+  });
+  assert.deepEqual(duplicateSoupTitleLookup("重复标题", "soup-1"), {
+    sql: "SELECT id FROM soups WHERE title = ? AND id <> ? LIMIT 1",
+    params: ["重复标题", "soup-1"]
+  });
 });
 
 test("编辑无 AI 配置权限的旧作品时将数据库 JSON 对象安全序列化", () => {

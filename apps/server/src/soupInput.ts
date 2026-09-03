@@ -23,6 +23,20 @@ export function hasSoupReviewContentChanged(
     || String(existing.bottom) !== next.bottom;
 }
 
+export const SOUP_TITLE_EXISTS_MESSAGE = "海龟汤标题已存在，请更改标题";
+
+export function duplicateSoupTitleLookup(title: string, excludedId?: string) {
+  return excludedId
+    ? {
+        sql: "SELECT id FROM soups WHERE title = ? AND id <> ? LIMIT 1",
+        params: [title, excludedId]
+      }
+    : {
+        sql: "SELECT id FROM soups WHERE title = ? LIMIT 1",
+        params: [title]
+      };
+}
+
 export function normalizeStoredJsonForSql(value: unknown): string | null {
   if (value == null || value === "") return null;
   if (typeof value === "string") return value;

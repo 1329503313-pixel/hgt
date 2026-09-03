@@ -57,7 +57,7 @@ const adminRoutePresentations: Record<AdminTab, AdminRoutePresentation> = {
   users: { icon: Users, render: ({ isSuperAdmin }) => <UserManagement isSuperAdmin={isSuperAdmin} /> },
   vip: { icon: Crown, render: () => <VipManagement /> },
   entitlements: { icon: ShieldCheck, render: () => <EntitlementManagement /> },
-  soups: { icon: Soup, render: ({ isSuperAdmin }) => <SoupManagement canDelete={isSuperAdmin} /> },
+  soups: { icon: Soup, render: ({ isSuperAdmin }) => <SoupManagement isSuperAdmin={isSuperAdmin} /> },
   mysteries: { icon: BookOpenCheck, render: () => <MysteryManagement /> },
   evaluations: { icon: MessageSquare, render: () => <EvaluationManagement /> },
   gifts: { icon: Gift, render: () => <GiftManagement /> },

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="941" height="1672" viewBox="0 0 941 1672" role="img" aria-labelledby="title desc">
+  <title id="title">谁是伪人玩法介绍：夜间技能</title>
+  <desc id="desc">说明第一夜和后续夜间技能资格、查验、混乱、隔离、守护以及伪人的双目标能力。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07111f"/><stop offset=".48" stop-color="#101b2b"/><stop offset="1" stop-color="#050a12"/></linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff"/><stop offset=".5" stop-color="#b9c9da"/><stop offset="1" stop-color="#64748b"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#38bdf8"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#7dd3fc" stroke-opacity=".035"/></pattern>
+  </defs>
+  <rect width="941" height="1672" fill="url(#bg)"/><rect width="941" height="1672" fill="url(#grid)"/>
+  <circle cx="470" cy="195" r="150" fill="#8b5cf6" opacity=".07" filter="url(#glow)"/>
+  <path d="M470 54l26 43-26 43-26-43z" fill="none" stroke="#a78bfa" stroke-width="3"/><path d="M470 68l13 29-13 29-13-29z" fill="#a78bfa" opacity=".9" filter="url(#glow)"/>
+  <rect x="22" y="22" width="897" height="1628" rx="8" fill="none" stroke="#dbeafe" stroke-opacity=".75" stroke-width="2"/><rect x="38" y="38" width="865" height="1596" rx="6" fill="none" stroke="#60a5fa" stroke-opacity=".28"/>
+  <path d="M58 115h210M673 115h210M58 1557h210M673 1557h210" stroke="url(#accent)" stroke-width="2" opacity=".7"/>
+  <text x="470" y="248" text-anchor="middle" fill="url(#silver)" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="92" font-weight="900" letter-spacing="8">谁是伪人</text>
+  <text x="470" y="318" text-anchor="middle" fill="#cbd5e1" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="34" font-weight="700" letter-spacing="12">夜间技能</text>
+  <rect x="76" y="385" width="789" height="1155" rx="28" fill="#07111f" fill-opacity=".72" stroke="#a78bfa" stroke-opacity=".5" stroke-width="2"/>
+  <text x="112" y="458" fill="#7dd3fc" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">01  第一夜</text>
+  <text x="132" y="513" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="26">
+    <tspan x="132" dy="0">伪人：混乱、隔离或跳过。</tspan><tspan x="132" dy="44">侦探：查验两名不同玩家或跳过。</tspan><tspan x="132" dy="44">查验可以包括自己，结果表示两人中是否有伪人。</tspan>
+  </text>
+  <line x1="112" y1="660" x2="829" y2="660" stroke="#94a3b8" stroke-opacity=".25"/>
+  <text x="112" y="722" fill="#a78bfa" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">02  后续技能资格</text>
+  <text x="132" y="777" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="26">
+    <tspan x="132" dy="0">好人或侦探主动破坏任务：下一夜获得技能。</tspan><tspan x="132" dy="44">伪人只要参与任务：下一夜必定获得技能。</tspan><tspan x="132" dy="44">资格只在当夜有效，不累计。</tspan>
+  </text>
+  <line x1="112" y1="925" x2="829" y2="925" stroke="#94a3b8" stroke-opacity=".25"/>
+  <text x="112" y="987" fill="#34d399" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="30" font-weight="800">03  技能效果</text>
+  <text x="132" y="1042" fill="#e2e8f0" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="25">
+    <tspan x="132" dy="0">混乱：反转目标的查验结果与白天任务实际选择。</tspan><tspan x="132" dy="43">隔离：目标当天不能成为任务候选人。</tspan><tspan x="132" dy="43">守护：取消目标当夜受到的全部混乱和隔离。</tspan><tspan x="132" dy="43">查验：好人或侦探查看两人中是否存在伪人。</tspan><tspan x="132" dy="43">所有查验结果都在夜晚效果结算后私下展示。</tspan>
+  </text>
+  <rect x="105" y="1277" width="731" height="184" rx="20" fill="#4c1d2f" fill-opacity=".48" stroke="#fb7185" stroke-opacity=".6"/>
+  <text x="132" y="1327" fill="#fda4af" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="28" font-weight="800">伪人双目标</text>
+  <text x="132" y="1374" fill="#ffe4e6" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="25"><tspan x="132">主动守护或超时自动守护：同一技能选择 2 人。</tspan><tspan x="132" dy="42">选择破坏：夜间技能只选择 1 人。</tspan></text>
+  <text x="470" y="1600" text-anchor="middle" fill="#94a3b8" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="22" letter-spacing="4">第 2 页 / 共 3 页</text>
+</svg>

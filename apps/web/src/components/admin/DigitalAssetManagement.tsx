@@ -8,8 +8,10 @@ import { ASSET_PACK_TYPE_LABELS, ASSET_RARITY_LABELS, assetRarityLabel, assetRar
 import type { Collectible } from "../../shared/collectibles";
 import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
+import { CardBattleConfigEditor } from "./CardBattleConfigEditor";
+import { DEFAULT_CARD_BATTLE_TIERS, type CardBattleTier } from "../../shared/digitalAssets";
 
-type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[] };
+type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[]; battleConfigured: boolean };
 type AdminPack = {
   id: string; name: string; coverUrl: string; coverCard: AssetCard | null; description: string; packStory: string; packType: AssetPackType; packTypeLabel: string;
   singlePrice: number; tenPrice: number; dailyFreeDraws: number; saleStartAt: string | null; saleEndAt: string | null;
@@ -20,9 +22,14 @@ type AssetStats = { cardCount: number; packCount: number; enabledPackCount: numb
 type DrawRecord = { id: string; orderId: string; drawIndex: number; drawMode: string; shellCost: number; usedFreeDraw: boolean; nickname: string; packName: string; packType: AssetPackType; cardNo: string; cardName: string; rarity: AssetRarity; pityType: string | null; starBefore: number | null; starAfter: number; firstObtained: boolean; starUpgraded: boolean; fullStarDuplicate: boolean; shellRefund: number; createdAt: string };
 type CardSort = "number-asc" | "number-desc" | "rarity-asc" | "rarity-desc";
 
-const blankCard = {
+type CardForm = {
+  cardNo: string; name: string; rarity: AssetRarity; imageUrl: string; story: string; status: string; packIds: string[];
+  motionMp4Url: string | null; motionWebmUrl: string | null; motionPosterUrl: string | null; battleTiers: CardBattleTier[] | null;
+};
+const freshBattleTiers = () => DEFAULT_CARD_BATTLE_TIERS.map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) }));
+const blankCard: CardForm = {
   cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "active", packIds: [] as string[],
-  motionMp4Url: null as string | null, motionWebmUrl: null as string | null, motionPosterUrl: null as string | null
+  motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null, battleTiers: null,
 };
 const blankPack = { name: "", description: "", packStory: "", packType: "permanent" as AssetPackType, singlePrice: 10, tenPrice: 90, dailyFreeDraws: 0, saleStartAt: "", saleEndAt: "", sortOrder: 0 };
 const rarityKeys: AssetRarity[] = ["normal", "rare", "epic", "legend"];
@@ -114,6 +121,7 @@ export function DigitalAssetManagement() {
   const [cards, setCards] = useState<AdminCard[]>([]);
   const [packs, setPacks] = useState<AdminPack[]>([]);
   const [cardForm, setCardForm] = useState(blankCard);
+  const [activeBattleStar, setActiveBattleStar] = useState<0 | 1 | 2 | 3>(0);
   const [motionFile, setMotionFile] = useState<File | null>(null);
   const [removeMotion, setRemoveMotion] = useState(false);
   const motionPreviewUrl = useMemo(() => motionFile ? URL.createObjectURL(motionFile) : null, [motionFile]);
@@ -207,8 +215,10 @@ export function DigitalAssetManagement() {
         ...blankCard,
         cardNo: nextCardNo(latestCard.cardNo),
         rarity: latestCard.rarity,
-        packIds: [...latestCard.packIds]
+        packIds: [...latestCard.packIds],
+        battleTiers: ["epic", "legend"].includes(latestCard.rarity) ? freshBattleTiers() : null,
       } : blankCard);
+      setActiveBattleStar(0);
       setPackKeyword("");
       setPackTypeFilter("all");
       setCardModal(true);
@@ -224,8 +234,10 @@ export function DigitalAssetManagement() {
       setCardForm({
         cardNo: data.card.cardNo, name: data.card.name, rarity: data.card.rarity, imageUrl: data.card.imageUrl,
         story: data.card.story, status: data.card.status, packIds: data.card.packIds,
-        motionMp4Url: data.card.motionMp4Url ?? null, motionWebmUrl: data.card.motionWebmUrl ?? null, motionPosterUrl: data.card.motionPosterUrl ?? null
+        motionMp4Url: data.card.motionMp4Url ?? null, motionWebmUrl: data.card.motionWebmUrl ?? null, motionPosterUrl: data.card.motionPosterUrl ?? null,
+        battleTiers: data.card.battleTiers ? data.card.battleTiers.map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) })) : null,
       });
+      setActiveBattleStar(0);
     } catch (error) {
       setMessage((error as Error).message);
       return;
@@ -252,9 +264,10 @@ export function DigitalAssetManagement() {
     if (cardForm.packIds.length === 0) { setMessage("卡牌必须至少绑定一个卡包"); return; }
     setSaving(true); setSavingPhase("正在保存卡牌资料…"); setMessage("");
     try {
-      const imageUrl = await normalizedImageData(cardForm.imageUrl);
-      const { motionMp4Url: _motionMp4Url, motionWebmUrl: _motionWebmUrl, motionPosterUrl: _motionPosterUrl, ...cardValues } = cardForm;
-      const body = { ...cardValues, imageUrl, releaseAt: null };
+      const unchangedStoredImage = Boolean(editingCardId && cardForm.imageUrl.startsWith(`/api/media/assets/cards/${encodeURIComponent(editingCardId!)}/`));
+      const imageUrl = unchangedStoredImage ? undefined : await normalizedImageData(cardForm.imageUrl);
+      const { imageUrl: _imageUrl, motionMp4Url: _motionMp4Url, motionWebmUrl: _motionWebmUrl, motionPosterUrl: _motionPosterUrl, ...cardValues } = cardForm;
+      const body = { ...cardValues, ...(imageUrl === undefined ? {} : { imageUrl }), releaseAt: null };
       const result = await api<{ id?: string }>(editingCardId ? `/api/admin/asset-cards/${editingCardId}` : "/api/admin/asset-cards", { method: editingCardId ? "PATCH" : "POST", body });
       const cardId = editingCardId ?? result.id;
       if (!cardId) throw new Error("卡牌保存成功，但未返回卡牌编号");
@@ -477,13 +490,20 @@ export function DigitalAssetManagement() {
             <>
               <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4 lg:grid-cols-6">
                 {visibleCards.map((card) => (
-                  <button key={card.id} className="min-w-0 text-left disabled:cursor-wait disabled:opacity-60" disabled={detailLoading === `card:${card.id}`} onClick={() => openCard(card)}>
-                    <AssetCardVisual card={card} packType={primaryPackType(card)} />
+                  <div key={card.id} className="min-w-0 text-left">
+                    <AssetCardVisual
+                      card={card}
+                      packType={primaryPackType(card)}
+                      disabled={detailLoading === `card:${card.id}`}
+                      ariaLabel={`${detailLoading === `card:${card.id}` ? "正在加载" : "编辑"}卡牌${card.name}`}
+                      className="disabled:cursor-wait disabled:opacity-60"
+                      onClick={() => openCard(card)}
+                    />
                     <p className="mt-2 truncate text-sm font-black text-ink">{card.name}</p>
                     <p className="mt-1 text-[11px] text-muted">
                       {detailLoading === `card:${card.id}` ? "正在加载原图…" : <>{assetRarityLabel(card.rarity, primaryPackType(card))} · {card.status === "active" ? "启用" : "停用"} · {card.ownerCount} 人拥有</>}
                     </p>
-                  </button>
+                  </div>
                 ))}
               </div>
               <div className="px-4 pb-4"><AdminPagination {...cardPagination} /></div>
@@ -594,9 +614,10 @@ export function DigitalAssetManagement() {
           </div>
           <label><span className="text-sm font-bold">卡片编号</span><input className="field mt-1" value={cardForm.cardNo} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => setCardForm({ ...cardForm, cardNo: e.target.value })} /></label>
           <label><span className="text-sm font-bold">名称</span><input className="field mt-1" value={cardForm.name} onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })} /></label>
-          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => setCardForm({ ...cardForm, rarity: e.target.value as AssetRarity })}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleTiers: ["epic", "legend"].includes(rarity) ? (cardForm.battleTiers ?? freshBattleTiers()) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label><span className="text-sm font-bold">状态</span><select className="field mt-1" value={cardForm.status} onChange={(e) => setCardForm({ ...cardForm, status: e.target.value })}><option value="inactive">停用</option><option value="active">启用</option></select></label>
           <label className="sm:col-span-2"><span className="text-sm font-bold">卡片故事</span><textarea className="field mt-1 min-h-32" value={cardForm.story} onChange={(e) => setCardForm({ ...cardForm, story: e.target.value })} /></label>
+          {["epic", "legend"].includes(cardForm.rarity) && cardForm.battleTiers && <CardBattleConfigEditor tiers={cardForm.battleTiers} activeStar={activeBattleStar} onActiveStar={setActiveBattleStar} onChange={(battleTiers) => setCardForm((current) => ({ ...current, battleTiers }))} />}
           <fieldset className="sm:col-span-2">
             <div className="flex items-center justify-between gap-3"><legend className="text-sm font-bold">卡包 <span className="text-red-500">*</span></legend><span className={`text-xs ${cardForm.packIds.length ? "text-muted" : "font-bold text-red-500"}`}>已选 {cardForm.packIds.length} 个</span></div>
             <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px]">

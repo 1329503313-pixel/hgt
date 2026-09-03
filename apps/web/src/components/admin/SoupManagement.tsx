@@ -7,6 +7,7 @@ import { soupDifficulties, soupTypes } from "../../context/AppContext";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
+import { SoupTopicManagement } from "./SoupTopicManagement";
 
 type SoupColumn = "title" | "review" | "original" | "difficulty" | "heat" | "likes" | "favorites" | "evaluations" | "creator" | "createdAt" | "actions";
 
@@ -24,7 +25,7 @@ const soupColumns: readonly AdminColumn<SoupColumn>[] = [
   { key: "actions", label: "操作", width: "180px" }
 ];
 
-export function SoupManagement({ canDelete }: { canDelete: boolean }) {
+function SoupListManagement({ canDelete }: { canDelete: boolean }) {
   const navigate = useNavigate();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -199,6 +200,50 @@ export function SoupManagement({ canDelete }: { canDelete: boolean }) {
         onPageChange={setPage}
         onPageSizeChange={(size) => { setPage(1); setPageSize(size); }}
       />
+    </div>
+  );
+}
+
+export function SoupManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
+  const [section, setSection] = useState<"soups" | "topics">("soups");
+
+  return (
+    <div className="space-y-4">
+      <div className="card flex gap-2 p-2" role="tablist" aria-label="汤品管理子栏目">
+        <button
+          className={`min-h-11 rounded-xl px-5 text-sm font-black transition ${section === "soups" ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-100 hover:text-ink"}`}
+          type="button"
+          role="tab"
+          id="soup-admin-tab-soups"
+          aria-controls="soup-admin-panel"
+          aria-selected={section === "soups"}
+          onClick={() => setSection("soups")}
+        >
+          汤品
+        </button>
+        {isSuperAdmin && (
+          <button
+            className={`min-h-11 rounded-xl px-5 text-sm font-black transition ${section === "topics" ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-100 hover:text-ink"}`}
+            type="button"
+            role="tab"
+            id="soup-admin-tab-topics"
+            aria-controls="topic-admin-panel"
+            aria-selected={section === "topics"}
+            onClick={() => setSection("topics")}
+          >
+            话题
+          </button>
+        )}
+      </div>
+      <div
+        id={section === "topics" && isSuperAdmin ? "topic-admin-panel" : "soup-admin-panel"}
+        role="tabpanel"
+        aria-labelledby={section === "topics" && isSuperAdmin ? "soup-admin-tab-topics" : "soup-admin-tab-soups"}
+      >
+        {section === "topics" && isSuperAdmin
+          ? <SoupTopicManagement />
+          : <SoupListManagement canDelete={isSuperAdmin} />}
+      </div>
     </div>
   );
 }

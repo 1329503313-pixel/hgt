@@ -2,7 +2,9 @@ import { randomInt } from "node:crypto";
 
 export const IMPOSTOR_MIN_PLAYERS = 4;
 export const IMPOSTOR_MAX_PLAYERS = 6;
-export const IMPOSTOR_MISSION_SIZES = [0, 2, 1, 3, 2, 3] as const;
+export const IMPOSTOR_MISSION_SIZES = [0, 2, 2, 2, 2, 2] as const;
+export const IMPOSTOR_ASSASSINATION_SECONDS = 60;
+export const IMPOSTOR_ACCUSATION_SECONDS = 300;
 
 export type ImpostorRole = "detective" | "civilian" | "impostor";
 export type ImpostorPhase = "night" | "clue" | "day_ready" | "day_vote" | "mission" | "assassination" | "accusation" | "ended";
@@ -21,6 +23,7 @@ export type ImpostorMissionSubmission = {
   effectiveChoice: ImpostorMissionChoice;
 };
 export type ImpostorPublicClue = { role: ImpostorRole; content: string };
+export type ImpostorInvestigationResult = { targetUserIds: string[]; reportedHasImpostor: boolean };
 export type ImpostorDayHistory = {
   day: number;
   isolatedUserIds: string[];
@@ -44,7 +47,7 @@ export type ImpostorGameState = {
   nightActions: Record<string, ImpostorNightAction>;
   nightChaosCounts: Record<string, number>;
   isolatedUserIds: string[];
-  investigation: { targetUserIds: string[]; reportedHasImpostor: boolean } | null;
+  investigations: Record<string, ImpostorInvestigationResult>;
   nomination: {
     attempt: number;
     lockedUserIds: string[];
@@ -114,9 +117,36 @@ function missionSize(day: number) {
   return IMPOSTOR_MISSION_SIZES[day as 1 | 2 | 3 | 4 | 5] ?? 0;
 }
 
+function previousMissionUserIds(state: ImpostorGameState) {
+  return state.history.at(-1)?.missionTeamUserIds ?? [];
+}
+
+export function impostorNightActionTypes(state: ImpostorGameState, userId: string): ImpostorNightActionType[] {
+  const role = roleOf(state, userId);
+  if (!role || state.phase !== "night" || !state.nightEligibleUserIds.includes(userId)
+    || Object.prototype.hasOwnProperty.call(state.nightActions, userId)) return [];
+  const firstNight = state.day === 1 && state.history.length === 0;
+  if (firstNight) {
+    if (role === "detective") return ["investigate", "skip"];
+    if (role === "impostor") return ["chaos", "isolate", "skip"];
+    return [];
+  }
+  return role === "impostor"
+    ? ["chaos", "isolate", "guard", "skip"]
+    : ["chaos", "isolate", "guard", "investigate", "skip"];
+}
+
+export function impostorNightActionTargetCount(state: ImpostorGameState, userId: string, action: ImpostorNightActionType) {
+  if (action === "skip") return 0;
+  if (action === "investigate") return 2;
+  const previousSubmission = state.history.at(-1)?.missionChoices[userId];
+  return roleOf(state, userId) === "impostor" && previousSubmission?.choice === "protect" ? 2 : 1;
+}
+
 function beginDayVote(state: ImpostorGameState, now: Date): ImpostorGameState {
   const next = cloneState(state);
-  const candidates = playerIds(next).filter((userId) => !next.isolatedUserIds.includes(userId));
+  const previousTeam = new Set(previousMissionUserIds(next));
+  const candidates = playerIds(next).filter((userId) => !previousTeam.has(userId) && !next.isolatedUserIds.includes(userId));
   const required = missionSize(next.day);
   if (candidates.length < required) throw new ImpostorGameRuleError("可执行任务人数不足");
   next.phase = "day_vote";
@@ -158,7 +188,7 @@ function beginNight(state: ImpostorGameState, now: Date, eligibleUserIds: string
   next.nightActions = {};
   next.nightChaosCounts = {};
   next.isolatedUserIds = [];
-  next.investigation = null;
+  next.investigations = {};
   return next;
 }
 
@@ -204,7 +234,7 @@ export function createImpostorGame(
     nightActions: {},
     nightChaosCounts: {},
     isolatedUserIds: [],
-    investigation: null,
+    investigations: {},
     nomination: null,
     missionTeamUserIds: [],
     missionChoices: {},
@@ -223,24 +253,16 @@ function validateNightAction(state: ImpostorGameState, userId: string, action: I
   if (state.phase !== "night") throw new ImpostorGameRuleError("当前不是夜间行动阶段");
   if (!state.nightEligibleUserIds.includes(userId)) throw new ImpostorGameRuleError("你本夜没有行动资格");
   if (Object.prototype.hasOwnProperty.call(state.nightActions, userId)) throw new ImpostorGameRuleError("你已经提交过本夜行动");
-  const role = roleOf(state, userId);
   const targetIds = [...new Set(action.targetUserIds)];
   if (targetIds.length !== action.targetUserIds.length) throw new ImpostorGameRuleError("行动目标不能重复");
   if (action.type === "skip") {
     if (targetIds.length) throw new ImpostorGameRuleError("跳过行动不能选择目标");
     return;
   }
-  if (state.day === 1 && role === "detective") {
-    if (action.type !== "investigate" || targetIds.length !== 2 || targetIds.includes(userId)) {
-      throw new ImpostorGameRuleError("侦探第一夜只能调查两名不同的其他玩家");
-    }
-  } else {
-    const allowed = state.day === 1 && role === "impostor"
-      ? ["chaos", "isolate"]
-      : ["chaos", "isolate", "guard"];
-    if (!allowed.includes(action.type) || targetIds.length !== 1) throw new ImpostorGameRuleError("请选择有效的夜间行动");
-    if (action.type !== "guard" && targetIds[0] === userId) throw new ImpostorGameRuleError("该技能不能对自己使用");
-  }
+  const allowed = impostorNightActionTypes(state, userId).filter((type) => type !== "skip");
+  const requiredTargets = impostorNightActionTargetCount(state, userId, action.type);
+  if (!allowed.includes(action.type) || targetIds.length !== requiredTargets) throw new ImpostorGameRuleError("请选择有效的夜间行动");
+  if (["chaos", "isolate"].includes(action.type) && targetIds.includes(userId)) throw new ImpostorGameRuleError("该技能不能对自己使用");
   for (const targetId of targetIds) assertPlayer(state, targetId);
 }
 
@@ -261,25 +283,33 @@ function settleNight(state: ImpostorGameState, now: Date, randomIndex: RandomInd
   const next = cloneState(state);
   const guarded = new Set<string>();
   for (const action of Object.values(next.nightActions)) {
-    if (action.type === "guard") guarded.add(action.targetUserIds[0]);
+    if (action.type === "guard") for (const targetId of action.targetUserIds) guarded.add(targetId);
   }
   const chaosCounts: Record<string, number> = {};
   const isolateTargets = new Set<string>();
   for (const action of Object.values(next.nightActions)) {
-    const target = action.targetUserIds[0];
-    if (!target || guarded.has(target)) continue;
-    if (action.type === "chaos") chaosCounts[target] = (chaosCounts[target] ?? 0) + 1;
-    if (action.type === "isolate") isolateTargets.add(target);
+    for (const target of action.targetUserIds) {
+      if (!target || guarded.has(target)) continue;
+      if (action.type === "chaos") chaosCounts[target] = (chaosCounts[target] ?? 0) + 1;
+      if (action.type === "isolate") isolateTargets.add(target);
+    }
   }
   next.nightChaosCounts = chaosCounts;
-  const maxIsolations = Math.max(0, next.players.length - missionSize(next.day));
-  next.isolatedUserIds = shuffle([...isolateTargets], randomIndex).slice(0, maxIsolations);
-  const detective = next.players.find((player) => player.role === "detective");
-  const detectiveAction = detective ? next.nightActions[detective.userId] : null;
-  if (detective && detectiveAction?.type === "investigate") {
-    const actual = detectiveAction.targetUserIds.some((targetId) => roleOf(next, targetId) === "impostor");
-    const confused = (chaosCounts[detective.userId] ?? 0) % 2 === 1;
-    next.investigation = { targetUserIds: [...detectiveAction.targetUserIds], reportedHasImpostor: confused ? !actual : actual };
+  const previousTeam = new Set(previousMissionUserIds(next));
+  const redundantIsolations = [...isolateTargets].filter((userId) => previousTeam.has(userId));
+  const relevantIsolations = [...isolateTargets].filter((userId) => !previousTeam.has(userId));
+  const availableWithoutIsolation = next.players.length - previousTeam.size;
+  const maxRelevantIsolations = Math.max(0, availableWithoutIsolation - missionSize(next.day));
+  next.isolatedUserIds = [...redundantIsolations, ...shuffle(relevantIsolations, randomIndex).slice(0, maxRelevantIsolations)];
+  next.investigations = {};
+  for (const [userId, action] of Object.entries(next.nightActions)) {
+    if (action.type !== "investigate") continue;
+    const actual = action.targetUserIds.some((targetId) => roleOf(next, targetId) === "impostor");
+    const confused = (chaosCounts[userId] ?? 0) % 2 === 1;
+    next.investigations[userId] = {
+      targetUserIds: [...action.targetUserIds],
+      reportedHasImpostor: confused ? !actual : actual,
+    };
   }
   if (next.day === 3) {
     next.phase = "clue";
@@ -398,26 +428,50 @@ function settleMission(state: ImpostorGameState, now: Date): ImpostorGameState {
     missionChoices: cloneState(next).missionChoices,
     nightActions: cloneState(next).nightActions,
   });
-  if (next.successes >= 3) {
-    next.phase = "assassination";
-    next.deadlineAt = deadline(now, 90);
-    return next;
-  }
   if (next.failures >= 3) {
+    return endGame(next, "impostor", "五天任务中已有三次失败");
+  }
+  if (next.successes >= 4) {
+    return endGame(next, "good", "五天任务中已有四次成功");
+  }
+  if (next.day >= 5) {
     next.phase = "accusation";
-    next.deadlineAt = deadline(now, 60);
+    next.deadlineAt = deadline(now, IMPOSTOR_ACCUSATION_SECONDS);
     next.accusation = { attempt: 1, candidateUserIds: playerIds(next), ballots: {} };
     return next;
   }
   const bonusActors = next.players.flatMap((player) => {
     const submission = next.missionChoices[player.userId];
-    if (!submission || submission.automatic) return [];
-    if (player.role === "impostor" && submission.choice === "protect") return [player.userId];
-    if (player.role !== "impostor" && submission.choice === "sabotage") return [player.userId];
+    if (!submission) return [];
+    if (player.role === "impostor") return [player.userId];
+    if (!submission.automatic && submission.choice === "sabotage") return [player.userId];
     return [];
   });
   next.day += 1;
   return beginNight(next, now, bonusActors);
+}
+
+export function startImpostorAssassination(state: ImpostorGameState, userId: string, now = new Date()) {
+  assertPlayer(state, userId);
+  if (roleOf(state, userId) !== "impostor") throw new ImpostorGameRuleError("只有伪人可以发起刺杀");
+  if (state.phase === "ended") throw new ImpostorGameRuleError("本局已经结束");
+  if (state.phase === "assassination") throw new ImpostorGameRuleError("已经进入刺杀环节");
+  const next = cloneState(state);
+  next.phase = "assassination";
+  next.deadlineAt = deadline(now, IMPOSTOR_ASSASSINATION_SECONDS);
+  next.readyUserIds = [];
+  next.nightEligibleUserIds = [];
+  next.nightActions = {};
+  next.nightChaosCounts = {};
+  next.isolatedUserIds = [];
+  next.investigations = {};
+  next.nomination = null;
+  next.missionTeamUserIds = [];
+  next.missionChoices = {};
+  next.clues = {};
+  next.accusation = null;
+  next.assassinationTargetUserId = null;
+  return next;
 }
 
 export function submitImpostorAssassination(state: ImpostorGameState, userId: string, targetUserId: string) {
@@ -466,7 +520,7 @@ function settleAccusation(state: ImpostorGameState, now: Date): ImpostorGameStat
   }
   if (accusation.attempt >= 2) return endGame(next, "impostor", "第二次最终指认仍然平票");
   next.accusation = { attempt: 2, candidateUserIds: leaders, ballots: {} };
-  next.deadlineAt = deadline(now, 60);
+  next.deadlineAt = deadline(now, IMPOSTOR_ACCUSATION_SECONDS);
   return next;
 }
 
@@ -487,7 +541,7 @@ export function advanceExpiredImpostorGame(state: ImpostorGameState, now = new D
       for (const userId of next.missionTeamUserIds) if (!Object.prototype.hasOwnProperty.call(next.missionChoices, userId)) next.missionChoices[userId] = missionSubmission(next, userId, "protect", true);
       next = settleMission(next, now);
     } else if (next.phase === "assassination") {
-      next = endGame(next, "good", "伪人刺杀超时");
+      next = endGame(next, "good", "伪人未在60秒内完成刺杀");
     } else if (next.phase === "accusation") {
       for (const userId of playerIds(next)) if (!Object.prototype.hasOwnProperty.call(next.accusation!.ballots, userId)) next.accusation!.ballots[userId] = null;
       next = settleAccusation(next, now);

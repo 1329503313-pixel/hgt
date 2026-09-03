@@ -27,6 +27,7 @@ import { MutedAvatarIndicator } from "../components/MutedAvatarIndicator";
 import { ImpostorChatActionCard, ImpostorGamePanel, ImpostorSettlementCard } from "../components/ImpostorGamePanel";
 import { ImpostorRulesPreview } from "../components/ImpostorRulesPreview";
 import { CollectibleInfoModal } from "../components/CollectibleInfoModal";
+import { CardBattleRoomView } from "../components/CardBattleRoomView";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -218,7 +219,6 @@ export default function OnlineSoupRoomPage() {
   const [stickersOpen, setStickersOpen] = useState(false);
   const [hostActionsOpen, setHostActionsOpen] = useState(true);
   const [impostorRulesOpen, setImpostorRulesOpen] = useState(false);
-  const [impostorReadySaving, setImpostorReadySaving] = useState(false);
   const [impostorLobbyActionSaving, setImpostorLobbyActionSaving] = useState(false);
   const [backgroundMusicOpen, setBackgroundMusicOpen] = useState(false);
   const [backgroundMusicTracks, setBackgroundMusicTracks] = useState<OnlineSoupBackgroundMusic[]>([]);
@@ -234,7 +234,7 @@ export default function OnlineSoupRoomPage() {
   const [managedMemberId, setManagedMemberId] = useState<string | null>(null);
   const [memberManagementAction, setMemberManagementAction] = useState<"kick" | "transfer" | "mute" | null>(null);
   const [memberManagementLoading, setMemberManagementLoading] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<"close" | "leave" | "end-round" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"close" | "leave" | "end-round" | "terminate-impostor" | "start-assassination" | null>(null);
   const [exitChoiceOpen, setExitChoiceOpen] = useState(false);
   const [entryPasswordOpen, setEntryPasswordOpen] = useState(false);
   const [entryPassword, setEntryPassword] = useState("");
@@ -754,11 +754,12 @@ export default function OnlineSoupRoomPage() {
   const isHost = snapshot?.me.isHost ?? false;
   const mysteryMode = snapshot?.room.contentType === "mystery";
   const impostorMode = snapshot?.room.contentType === "impostor";
+  const cardBattleMode = snapshot?.room.contentType === "card_battle";
   const impostorNightMode = Boolean(impostorMode && ["night", "clue"].includes(snapshot?.room.impostorGame?.phase ?? ""));
   const aiHosted = snapshot?.room.hostMode === "ai";
-  const canHumanHost = isHost && !aiHosted && !mysteryMode && !impostorMode;
+  const canHumanHost = isHost && !aiHosted && !mysteryMode && !impostorMode && !cardBattleMode;
   const currentMemberMuted = isActiveMute(snapshot?.members.find((member) => member.id === user?.id)?.mutedUntil);
-  const canParticipate = Boolean(snapshot && snapshot.me.role !== "spectator" && snapshot.room.status !== "closed");
+  const canParticipate = Boolean(snapshot && (snapshot.me.role !== "spectator" || cardBattleMode) && snapshot.room.status !== "closed");
   const canDiscuss = canParticipate && !currentMemberMuted;
   const questionLimitExhausted = Boolean(
     snapshot
@@ -766,7 +767,7 @@ export default function OnlineSoupRoomPage() {
     && snapshot.room.questionLimit !== null
     && snapshot.room.remainingQuestionCount === 0
   );
-  const canQuestion = Boolean(snapshot && !impostorMode && !questionLimitExhausted && snapshot.room.status === "playing" && (mysteryMode ? isHost : snapshot.me.role === "player"));
+  const canQuestion = Boolean(snapshot && !impostorMode && !cardBattleMode && !questionLimitExhausted && snapshot.room.status === "playing" && (mysteryMode ? isHost : snapshot.me.role === "player"));
   const impostorSeatByUserId = useMemo(() => new Map(snapshot?.room.impostorGame?.playerSeats.map((seat) => [seat.userId, seat.seat]) ?? []), [snapshot?.room.impostorGame?.playerSeats]);
   const impostorMemberName = useCallback((member: OnlineSoupSnapshot["members"][number]) => {
     const seat = impostorMode ? impostorSeatByUserId.get(member.id) : null;
@@ -793,8 +794,8 @@ export default function OnlineSoupRoomPage() {
     return () => document.body.classList.remove("impostor-night-theme");
   }, [impostorNightMode]);
   useEffect(() => {
-    setShowQuestionModeGuide(!impostorMode && (mysteryMode ? isHost : snapshot?.me.role === "player"));
-  }, [impostorMode, isHost, mysteryMode, roomId, snapshot?.me.role]);
+    setShowQuestionModeGuide(!impostorMode && !cardBattleMode && (mysteryMode ? isHost : snapshot?.me.role === "player"));
+  }, [cardBattleMode, impostorMode, isHost, mysteryMode, roomId, snapshot?.me.role]);
   useEffect(() => {
     const music = snapshot?.room.backgroundMusic;
     if (!music) {
@@ -1068,20 +1069,6 @@ export default function OnlineSoupRoomPage() {
     catch (error) { showToast(error instanceof Error ? error.message : "操作失败"); throw error; }
   }
 
-  async function submitImpostorReady() {
-    if (impostorReadySaving) return;
-    setImpostorReadySaving(true);
-    try {
-      await api(`/api/online-soup/rooms/${roomId}/impostor/ready`, { method: "POST" });
-      await Promise.all([loadState(), loadNewMessages()]);
-      setHostActionsOpen(false);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "准备失败，请稍后重试");
-    } finally {
-      setImpostorReadySaving(false);
-    }
-  }
-
   async function changeImpostorMemberRole() {
     if (!snapshot || impostorLobbyActionSaving || snapshot.me.role === "admin") return;
     setImpostorLobbyActionSaving(true);
@@ -1106,6 +1093,20 @@ export default function OnlineSoupRoomPage() {
       setHostActionsOpen(false);
     } catch {
       // hostAction 已展示服务端错误。
+    } finally {
+      setImpostorLobbyActionSaving(false);
+    }
+  }
+
+  async function runImpostorControl(path: "impostor/start-assassination" | "impostor/terminate") {
+    if (impostorLobbyActionSaving) return;
+    setImpostorLobbyActionSaving(true);
+    try {
+      await hostAction(path);
+      setConfirmAction(null);
+      setHostActionsOpen(false);
+    } catch {
+      // hostAction 已展示服务端错误，保留确认框供用户重试或取消。
     } finally {
       setImpostorLobbyActionSaving(false);
     }
@@ -1667,13 +1668,27 @@ export default function OnlineSoupRoomPage() {
     </Modal>}
   </div>;
 
+  if (snapshot.room.contentType === "card_battle" && snapshot.room.cardBattle) return <CardBattleRoomView
+    roomId={roomId}
+    snapshot={snapshot}
+    stickerSeries={stickerSeries}
+    stickersLoading={stickersLoading}
+    onReload={loadState}
+    onReloadMessages={() => load(true)}
+    showToast={showToast}
+  />;
+
   const activeImpostorActionPrompt = impostorMode && snapshot.room.impostorGame
-    ? snapshot.room.impostorGame.phase === "day_vote"
+    ? snapshot.room.impostorGame.phase === "day_ready"
+      ? `天亮了，所有游戏者请准备（第${snapshot.room.impostorGame.gameNumber}局第${snapshot.room.impostorGame.day}天）`
+      : snapshot.room.impostorGame.phase === "day_vote"
       ? snapshot.room.impostorGame.nomination?.attempt === 1
         ? `所有玩家已准备，开始投票选择今日参与任务成员，今日任务共需要${snapshot.room.impostorGame.nomination?.required ?? snapshot.room.impostorGame.missionSize}人（第${snapshot.room.impostorGame.gameNumber}局第${snapshot.room.impostorGame.day}天）`
         : `任务人选出现平票，请进行第${snapshot.room.impostorGame.nomination?.attempt ?? 2}次投票（第${snapshot.room.impostorGame.gameNumber}局第${snapshot.room.impostorGame.day}天）`
-      : snapshot.room.impostorGame.phase === "assassination"
-        ? `伪人选择刺杀目标（第${snapshot.room.impostorGame.gameNumber}局）`
+      : snapshot.room.impostorGame.phase === "mission"
+        ? `任务成员秘密选择守护或破坏（第${snapshot.room.impostorGame.gameNumber}局第${snapshot.room.impostorGame.day}天）`
+        : snapshot.room.impostorGame.phase === "assassination"
+        ? `${snapshot.room.impostorGame.revealedImpostorSeat ?? "?"}号伪人选择刺杀目标（第${snapshot.room.impostorGame.gameNumber}局）`
         : snapshot.room.impostorGame.phase === "accusation"
           ? snapshot.room.impostorGame.accusation?.attempt === 1 ? `所有玩家选择公投目标（第${snapshot.room.impostorGame.gameNumber}局）` : `公投出现平票，所有玩家重新选择公投目标（第${snapshot.room.impostorGame.gameNumber}局）`
           : null
@@ -1683,7 +1698,9 @@ export default function OnlineSoupRoomPage() {
       const event = message.impostorEvent;
       const game = snapshot.room.impostorGame;
       if (!event || event.kind === "settlement" || !game || event.gameNumber !== game.gameNumber || event.day !== game.day) return false;
+      if (game.phase === "day_ready") return event.kind === "ready";
       if (game.phase === "day_vote") return event.kind === "nomination" && event.attempt === game.nomination?.attempt;
+      if (game.phase === "mission") return event.kind === "mission";
       if (game.phase === "assassination") return event.kind === "assassination";
       if (game.phase === "accusation") return event.kind === "accusation" && event.attempt === game.accusation?.attempt;
       return false;
@@ -1701,7 +1718,9 @@ export default function OnlineSoupRoomPage() {
       if (!event || event.kind === "settlement" || event.gameNumber !== game.gameNumber || event.day !== game.day) return false;
       if (game.phase === "night") return event.kind === "night_action";
       if (game.phase === "clue") return event.kind === "clue";
+      if (game.phase === "day_ready") return event.kind === "ready";
       if (game.phase === "day_vote") return event.kind === "nomination" && event.attempt === game.nomination?.attempt;
+      if (game.phase === "mission") return event.kind === "mission";
       if (game.phase === "assassination") return event.kind === "assassination";
       if (game.phase === "accusation") return event.kind === "accusation" && event.attempt === game.accusation?.attempt;
       return false;
@@ -1716,7 +1735,8 @@ export default function OnlineSoupRoomPage() {
     <FloatingAction label="玩法介绍" onClick={() => { if (mobile) setHostActionsOpen(false); setImpostorRulesOpen(true); }} />
     {canConfigureNextImpostorGame && snapshot.me.role !== "admin" && <FloatingAction label={snapshot.me.role === "player" ? "切换旁观" : "成为玩家"} disabled={impostorLobbyActionSaving || (snapshot.me.role === "spectator" && groupedMembers.players.length >= 6)} onClick={() => void changeImpostorMemberRole()} />}
     {canConfigureNextImpostorGame && isHost && <FloatingAction tone="primary" label={snapshot.room.impostorGame ? "开始下一局" : "开始游戏"} disabled={impostorLobbyActionSaving || groupedMembers.players.length < 4 || groupedMembers.players.length > 6} onClick={() => void startImpostorGame()} />}
-    {snapshot.room.impostorGame?.phase === "day_ready" && snapshot.room.impostorGame.me && <FloatingAction tone="primary" label={snapshot.room.impostorGame.me.readySubmitted ? "已准备" : "准备"} disabled={impostorReadySaving || snapshot.room.impostorGame.me.readySubmitted} onClick={() => void submitImpostorReady()} />}
+    {snapshot.room.impostorGame?.me?.canStartAssassination && <FloatingAction tone="danger" label="刺杀" disabled={impostorLobbyActionSaving} onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("start-assassination"); }} />}
+    {isHost && snapshot.room.impostorGame && snapshot.room.impostorGame.phase !== "ended" && <FloatingAction tone="danger" label="终止本局" disabled={impostorLobbyActionSaving} onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("terminate-impostor"); }} />}
     {isHost && <FloatingAction tone="primary" label="背景音乐" onClick={() => { if (mobile) setHostActionsOpen(false); void openBackgroundMusic(); }} />}
     {isHost && <FloatingAction tone="danger" label="关闭房间" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("close"); }} />}
   </> : <>
@@ -2083,7 +2103,7 @@ export default function OnlineSoupRoomPage() {
         <div className="grid grid-cols-2 gap-2"><button type="button" className="btn btn-secondary min-h-11" disabled={submittingFinishVote} onClick={() => void submitFinishVote("continue")}>继续游戏</button><button type="button" className="btn btn-primary min-h-11" disabled={submittingFinishVote} onClick={() => void submitFinishVote("view_bottom")}>{submittingFinishVote ? <LoaderCircle size={16} className="animate-spin" /> : <Eye size={16} />}查看汤底</button></div>
       </div></Modal>}
       {exitChoiceOpen && <Modal onClose={() => setExitChoiceOpen(false)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">离开完整房间</h2><p className="mt-2 text-sm leading-6 text-muted">收起后会继续保持在线，并在桌面右下角接收聊天、线索和进度。</p></div><button className="btn btn-primary !hidden w-full lg:!flex" onClick={minimizeCurrentRoom}><Minimize2 size={17} />收起到右下角</button><button className="btn w-full bg-red-50 text-red-600 hover:bg-red-100" onClick={() => { setExitChoiceOpen(false); setConfirmAction("leave"); }}><LogOut size={17} />{isHost ? "退出房间" : "退出并释放席位"}</button><button className="btn btn-secondary w-full" onClick={() => setExitChoiceOpen(false)}>取消</button></div></Modal>}
-      {confirmAction && <Modal onClose={() => setConfirmAction(null)}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "end-round" ? "确认关闭本轮？" : confirmAction === "close" ? "确认解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "end-round" ? "关闭后将结束本轮推理，但不会解散房间，也不会自动发布尚未公布的汤底。" : confirmAction === "close" ? "解散后所有成员都会退出，此操作无法撤销。" : impostorMode && snapshot.room.status === "playing" && snapshot.me.role === "player" ? "你是本局游戏者，退出会立即终止本局并按平局结算；你的房间席位随后释放。" : isHost ? snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的游戏会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" onClick={() => { if (confirmAction === "end-round") void endRound(); else if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{confirmAction === "end-round" ? "关闭本轮" : confirmAction === "close" ? "确认解散" : "确认退出"}</button></div></div></Modal>}
+      {confirmAction && <Modal onClose={() => { if (!impostorLobbyActionSaving) setConfirmAction(null); }}><div className="space-y-4"><div className="text-center"><h2 className="text-xl font-black text-ink">{confirmAction === "start-assassination" ? "是否进行刺杀？" : confirmAction === "terminate-impostor" ? "确认终止本局？" : confirmAction === "end-round" ? "确认关闭本轮？" : confirmAction === "close" ? "确认解散房间？" : "确认退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{confirmAction === "start-assassination" ? `确认后将立即中止当前游戏进程，公开你是${snapshot.room.impostorGame?.me?.seat ?? "?"}号伪人，并进入60秒刺杀环节。刺中侦探则伪人胜利，刺错或超时则好人胜利。` : confirmAction === "terminate-impostor" ? "终止后不计算任何阵营胜利，并公开本局全部身份。" : confirmAction === "end-round" ? "关闭后将结束本轮推理，但不会解散房间，也不会自动发布尚未公布的汤底。" : confirmAction === "close" ? "解散后所有成员都会退出，此操作无法撤销。" : impostorMode && snapshot.room.status === "playing" && snapshot.me.role === "player" ? "你是本局游戏者，退出会立即终止本局并按平局结算；你的房间席位随后释放。" : isHost ? snapshot.members.some((member) => member.id !== user?.id) ? "退出后将立即由房内成员接任房主；当前房间和正在进行的游戏会继续。" : "房间内暂无其他成员，退出后房间将立即解散。" : "退出后将释放当前席位，重新进入时可能需要再次验证。"}</p></div><div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={impostorLobbyActionSaving} onClick={() => setConfirmAction(null)}>取消</button><button className="btn bg-red-500 text-white hover:bg-red-600" disabled={impostorLobbyActionSaving} onClick={() => { if (confirmAction === "start-assassination") void runImpostorControl("impostor/start-assassination"); else if (confirmAction === "terminate-impostor") void runImpostorControl("impostor/terminate"); else if (confirmAction === "end-round") void endRound(); else if (confirmAction === "close") void closeRoom(); else void leaveRoom(); }}>{impostorLobbyActionSaving && (confirmAction === "start-assassination" || confirmAction === "terminate-impostor") ? "处理中…" : confirmAction === "start-assassination" ? "确认刺杀" : confirmAction === "terminate-impostor" ? "确认终止" : confirmAction === "end-round" ? "关闭本轮" : confirmAction === "close" ? "确认解散" : "确认退出"}</button></div></div></Modal>}
       {startConfigOpen && <Modal onClose={() => { if (!startSaving) setStartConfigOpen(false); }} hideClose={startSaving}>
         <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void startConfiguredGame(); }}>
           <div><h2 className="text-xl font-black text-ink">开始游戏</h2><p className="mt-1 text-sm leading-6 text-muted">设置这一局所有玩家合计可提出的正式问题次数。</p></div>

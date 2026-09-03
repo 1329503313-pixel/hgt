@@ -39,11 +39,15 @@ import {
 } from "./onlineSoupQuestionLimit.js";
 import {
   IMPOSTOR_MAX_PLAYERS,
+  IMPOSTOR_MISSION_SIZES,
   IMPOSTOR_MIN_PLAYERS,
   ImpostorGameRuleError,
   advanceExpiredImpostorGame,
   createImpostorGame,
+  impostorNightActionTargetCount,
+  impostorNightActionTypes,
   impostorRoleLabel,
+  startImpostorAssassination,
   submitImpostorAccusation,
   submitImpostorAssassination,
   submitImpostorClue,
@@ -65,10 +69,24 @@ import {
   savePreliminaryAiDecision,
   updateAiDecision,
 } from "./aiHostRepository.js";
+import {
+  acknowledgeCardBattleEvent,
+  CardBattleRoomRuleError,
+  cardBattleClientState,
+  claimCardBattleSeat,
+  eligibleCardCount,
+  finalizeCardBattleIfDue,
+  isCardBattleRoom,
+  loadEligibleBattleCards,
+  releaseCardBattleSeat,
+  saveCardBattleLineup,
+  setCardBattleReady,
+  startCardBattle,
+} from "./cardBattleRoom.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type ImpostorMessageEvent =
-  | { kind: "night_action" | "clue" | "nomination" | "assassination" | "accusation"; gameNumber: number; day: number; attempt?: number }
+  | { kind: "night_action" | "clue" | "ready" | "nomination" | "mission" | "assassination" | "accusation"; gameNumber: number; day: number; attempt?: number; impostorSeat?: number }
   | { kind: "settlement"; gameNumber: number; winner: "good" | "impostor" | "draw"; endReason: string; players: Array<{ userId: string; seat: number; nickname: string; role: "detective" | "civilian" | "impostor"; roleLabel: string }> };
 type RoomEventEmitter = (roomId: string, event: string, payload: unknown) => void;
 type LobbyEventEmitter = (event: string, payload: unknown) => void;
@@ -101,15 +119,18 @@ function isImpostorRoom(room: mysql.RowDataPacket) {
 }
 
 function playerCapacityForRoom(room: mysql.RowDataPacket) {
+  if (isCardBattleRoom(room)) return 2;
   return isImpostorRoom(room) ? IMPOSTOR_MAX_PLAYERS : PLAYER_CAPACITY;
 }
 
 function participantCapacityForRoom(room: mysql.RowDataPacket) {
+  if (isCardBattleRoom(room)) return 2;
   if (isImpostorRoom(room)) return IMPOSTOR_MAX_PLAYERS;
   return String(room.host_mode ?? "human") === "ai" ? PLAYER_CAPACITY : ONLINE_SOUP_PARTICIPANT_CAPACITY;
 }
 
 function participantCountForRoom(room: mysql.RowDataPacket, playerCount: number) {
+  if (isCardBattleRoom(room)) return playerCount;
   if (isImpostorRoom(room)) return playerCount;
   return playerCount + (String(room.host_mode ?? "human") === "ai" ? 0 : 1);
 }
@@ -361,10 +382,18 @@ async function releaseStaleSeats(roomId?: string, db: mysql.Pool | mysql.PoolCon
        AND NOT EXISTS (
          SELECT 1 FROM online_soup_rooms active_impostor
          WHERE active_impostor.id = online_soup_members.room_id
-           AND active_impostor.content_type = 'impostor' AND active_impostor.status = 'playing'
+           AND active_impostor.content_type IN ('impostor','card_battle') AND active_impostor.status = 'playing'
        )
        ${roomId ? "AND room_id = ?" : ""}`,
     roomId ? [roomId] : []
+  );
+  await db.query(
+    `DELETE battle_seats FROM online_card_battle_seats battle_seats
+     JOIN online_soup_rooms rooms ON rooms.id = battle_seats.room_id
+     LEFT JOIN online_soup_members members ON members.room_id = battle_seats.room_id AND members.user_id = battle_seats.user_id
+     WHERE rooms.status <> 'playing' AND (members.user_id IS NULL OR members.is_active = 0)
+       ${roomId ? "AND battle_seats.room_id = ?" : ""}`,
+    roomId ? [roomId] : [],
   );
 }
 
@@ -417,7 +446,7 @@ async function transferDepartedHost(
     );
   }
   const [[room]] = await db.query<mysql.RowDataPacket[]>("SELECT content_type FROM online_soup_rooms WHERE id = ? LIMIT 1", [roomId]);
-  if (String(room?.content_type ?? "soup") !== "impostor") {
+  if (!["impostor", "card_battle"].includes(String(room?.content_type ?? "soup"))) {
     await db.query(
       `UPDATE online_soup_members SET member_role = ?, muted_until = NULL, last_seen_at = NOW()
        WHERE room_id = ? AND user_id = ? AND is_active = 1`,
@@ -469,7 +498,9 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
       successor = await activeHostSuccessor(String(room.id), previousHostId, connection);
 
       const impostorRoom = String(room.content_type ?? "soup") === "impostor";
-      if (!impostorRoom && String(room.status) === "playing" && room.current_round_id) {
+      const cardBattleRoom = isCardBattleRoom(room);
+      const systemManagedRoom = impostorRoom || cardBattleRoom;
+      if (!systemManagedRoom && String(room.status) === "playing" && room.current_round_id) {
         endedRoundId = String(room.current_round_id);
         await connection.query(
           "UPDATE online_soup_rounds SET status = 'ended', ai_phase = 'CANCELLED', ended_at = NOW() WHERE id = ? AND status = 'playing'",
@@ -483,7 +514,7 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
           connection
         );
       }
-      clearedSoup = !impostorRoom && Boolean(room.current_soup_id || room.current_round_id || room.current_mystery_id || room.current_mystery_run_id || String(room.status) !== "preparing");
+      clearedSoup = !systemManagedRoom && Boolean(room.current_soup_id || room.current_round_id || room.current_mystery_id || room.current_mystery_run_id || String(room.status) !== "preparing");
       if (clearedSoup) {
         await connection.query(
           `UPDATE online_soup_rooms
@@ -500,7 +531,7 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
           successor,
           connection,
           String(room.host_mode ?? "human") === "ai" ? "ai" : "human",
-          impostorRoom && String(room.status) === "playing",
+          systemManagedRoom && String(room.status) === "playing",
         );
         await systemMessage(
           String(room.id),
@@ -1691,9 +1722,17 @@ async function roomMessagePage(room: mysql.RowDataPacket, before?: string, limit
 function parseImpostorState(value: unknown): ImpostorGameState | null {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    return parsed && typeof parsed === "object" && (parsed as ImpostorGameState).version === 1
-      ? parsed as ImpostorGameState
-      : null;
+    if (!parsed || typeof parsed !== "object" || (parsed as ImpostorGameState).version !== 1) return null;
+    const compatible = parsed as ImpostorGameState & {
+      investigation?: { targetUserIds: string[]; reportedHasImpostor: boolean } | null;
+      investigations?: Record<string, { targetUserIds: string[]; reportedHasImpostor: boolean }>;
+    };
+    if (!compatible.investigations) {
+      compatible.investigations = {};
+      const detective = compatible.players.find((player) => player.role === "detective");
+      if (detective && compatible.investigation) compatible.investigations[detective.userId] = compatible.investigation;
+    }
+    return compatible;
   } catch {
     return null;
   }
@@ -1747,17 +1786,19 @@ function impostorClientState(state: ImpostorGameState, viewerId: string) {
   const me = state.players.find((player) => player.userId === viewerId) ?? null;
   const ended = state.phase === "ended";
   const nightSubmitted = Object.prototype.hasOwnProperty.call(state.nightActions, viewerId);
-  const firstNight = state.day === 1 && state.history.length === 0;
-  const nightActionTypes = !me || state.phase !== "night" || !state.nightEligibleUserIds.includes(viewerId) || nightSubmitted
-    ? []
-    : firstNight
-      ? me.role === "detective" ? ["investigate", "skip"] : me.role === "impostor" ? ["chaos", "isolate", "skip"] : []
-      : ["chaos", "isolate", "guard", "skip"];
+  const nightActionTypes = me ? impostorNightActionTypes(state, viewerId) : [];
+  const nightActionTargetCounts = Object.fromEntries(nightActionTypes.map((type) => [
+    type,
+    impostorNightActionTargetCount(state, viewerId, type),
+  ]));
+  const revealedImpostor = state.phase === "assassination"
+    ? state.players.find((player) => player.role === "impostor") ?? null
+    : null;
   return {
     gameNumber: state.gameNumber,
     phase: state.phase,
     day: state.day,
-    missionSize: [0, 2, 1, 3, 2, 3][state.day] ?? 0,
+    missionSize: IMPOSTOR_MISSION_SIZES[state.day as 1 | 2 | 3 | 4 | 5] ?? 0,
     successes: state.successes,
     failures: state.failures,
     deadlineAt: state.deadlineAt,
@@ -1781,6 +1822,7 @@ function impostorClientState(state: ImpostorGameState, viewerId: string) {
     } : null,
     winner: state.winner,
     endReason: state.endReason,
+    revealedImpostorSeat: revealedImpostor?.seat ?? null,
     history: state.history.map((day) => ({
       day: day.day,
       isolatedUserIds: day.isolatedUserIds,
@@ -1795,13 +1837,15 @@ function impostorClientState(state: ImpostorGameState, viewerId: string) {
       roleLabel: impostorRoleLabel(me.role),
       readySubmitted: (state.readyUserIds ?? []).includes(viewerId),
       nightActionTypes,
+      nightActionTargetCounts,
       nightSubmitted,
-      investigation: me.role === "detective" ? state.investigation : null,
+      investigation: state.investigations[viewerId] ?? null,
       clueSubmitted: Object.prototype.hasOwnProperty.call(state.clues, viewerId),
       nominationSubmitted: Boolean(state.nomination && Object.prototype.hasOwnProperty.call(state.nomination.ballots, viewerId)),
       missionChoiceSubmitted: Object.prototype.hasOwnProperty.call(state.missionChoices, viewerId),
       accusationSubmitted: Boolean(state.accusation && Object.prototype.hasOwnProperty.call(state.accusation.ballots, viewerId)),
       canAssassinate: state.phase === "assassination" && me.role === "impostor",
+      canStartAssassination: state.phase !== "ended" && state.phase !== "assassination" && me.role === "impostor",
     } : null,
   };
 }
@@ -1831,11 +1875,12 @@ async function writeImpostorTransitionMessages(
   const playerDescription = (userId: string) => `${seats.get(userId) ?? "?"}号 ${playerNames.get(userId) ?? "玩家"}`;
 
   if (before.phase !== "day_ready" && after.phase === "day_ready") {
-    if (after.isolatedUserIds.length) {
-      await systemMessage(roomId, null, `天亮了，${after.isolatedUserIds.map(playerDescription).join("、")}已被隔离`, connection);
-    } else {
-      await systemMessage(roomId, null, "天亮了", connection);
-    }
+    const content = after.isolatedUserIds.length
+      ? `天亮了，${after.isolatedUserIds.map(playerDescription).join("、")}已被隔离；所有游戏者请准备`
+      : "天亮了，所有游戏者请准备";
+    await impostorEventMessage(roomId, content, {
+      kind: "ready", gameNumber: after.gameNumber, day: after.day,
+    }, connection);
   }
   for (const userId of newlyReady) {
     await systemMessage(roomId, null, `${playerDescription(userId)}已准备`, connection);
@@ -1868,7 +1913,9 @@ async function writeImpostorTransitionMessages(
     }, connection);
   }
   if (before.phase !== "mission" && after.phase === "mission") {
-    await systemMessage(roomId, null, `投票结束，今日参与任务成员为：${after.missionTeamUserIds.map(playerDescription).join("、")}`, connection);
+    await impostorEventMessage(roomId, `投票结束，今日参与任务成员为：${after.missionTeamUserIds.map(playerDescription).join("、")}。任务成员请秘密选择守护或破坏`, {
+      kind: "mission", gameNumber: after.gameNumber, day: after.day,
+    }, connection);
   }
   if (before.phase !== "night" && after.phase === "night") {
     await impostorEventMessage(roomId, "天黑了，等待行动中", {
@@ -1876,8 +1923,9 @@ async function writeImpostorTransitionMessages(
     }, connection);
   }
   if (before.phase !== "assassination" && after.phase === "assassination") {
-    await impostorEventMessage(roomId, `伪人选择刺杀目标（第${after.gameNumber}局）`, {
-      kind: "assassination", gameNumber: after.gameNumber, day: after.day,
+    const impostorSeat = after.players.find((player) => player.role === "impostor")?.seat;
+    await impostorEventMessage(roomId, `伪人已亮明身份：${impostorSeat ?? "?"}号。请在60秒内选择刺杀目标（第${after.gameNumber}局）`, {
+      kind: "assassination", gameNumber: after.gameNumber, day: after.day, impostorSeat,
     }, connection);
   }
   if (before.phase !== "accusation" && after.phase === "accusation") {
@@ -1961,7 +2009,7 @@ async function mutateImpostorGame(
 async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysql.RowDataPacket, includeMessages = true) {
   const room = knownRoom ?? await roomById(roomId);
   if (!room) return null;
-  const [[memberRows], messagePage, finishVote, impostorGame] = await Promise.all([
+  const [[memberRows], messagePage, finishVote, impostorGame, cardBattle] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
     `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, m.muted_until, u.nickname, u.experience, u.role,
        u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.avatar IS NOT NULL AS has_avatar,
@@ -2005,8 +2053,10 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
         })()
       : Promise.resolve(null),
     isImpostorRoom(room) ? currentImpostorGame(roomId) : Promise.resolve(null),
+    isCardBattleRoom(room) ? cardBattleClientState(roomId, viewer.id) : Promise.resolve(null),
   ]);
   if (impostorGame?.state.phase === "ended") room.status = "ended";
+  if (cardBattle?.phase === "ended") room.status = "ended";
   const viewerMember = memberRows.find((row) => String(row.user_id) === viewer.id);
   const isHost = room.host_id === viewer.id;
   const canViewHostMaterials = canViewOnlineSoupHostMaterials(isHost, room.host_mode);
@@ -2088,6 +2138,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
         gameEnded: String(room.mystery_run_status ?? "") === "completed",
       } : null,
       impostorGame: impostorGame ? impostorClientState(impostorGame.state, viewer.id) : null,
+      cardBattle,
       createdAt: iso(room.created_at)
     },
     me: { role: String(viewerMember?.member_role ?? (isSuperAdminRole(viewer.role) ? "admin" : "spectator")), isHost },
@@ -2289,12 +2340,18 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
        FROM online_soup_members WHERE room_id = ?`,
       [room.id]
     );
-    const role = (!isImpostorRoom(room) || room.status !== "playing")
-      && Number(counts.player_count ?? 0) < playerCapacityForRoom(room)
-      ? "player"
-      : Number(counts.spectator_count ?? 0) < SPECTATOR_CAPACITY
-        ? "spectator"
-        : null;
+    let role: "player" | "spectator" | null;
+    if (isCardBattleRoom(room)) {
+      const seat = room.status === "playing" ? null : await claimCardBattleSeat(String(room.id), user.id, connection);
+      role = seat ? "player" : Number(counts.spectator_count ?? 0) < SPECTATOR_CAPACITY ? "spectator" : null;
+    } else {
+      role = (!isImpostorRoom(room) || room.status !== "playing")
+        && Number(counts.player_count ?? 0) < playerCapacityForRoom(room)
+        ? "player"
+        : Number(counts.spectator_count ?? 0) < SPECTATOR_CAPACITY
+          ? "spectator"
+          : null;
+    }
     if (!role) {
       await connection.rollback();
       return fail(res, 409, "房间已满", "ROOM_FULL");
@@ -2435,7 +2492,7 @@ router.post("/rooms", async (req, res) => {
   const parsed = z.object({
     name: z.string().trim().min(1).max(50), type: z.enum(["public", "password"]),
     password: z.string().max(4).optional().default(""),
-    contentType: z.enum(["soup", "mystery", "impostor"]).default("soup"),
+    contentType: z.enum(["soup", "mystery", "impostor", "card_battle"]).default("soup"),
     hostMode: z.enum(["human", "ai"]).default("human"),
     mysteryId: z.string().trim().min(1).max(64).optional(),
     mysteryChoice: z.enum(["continue", "restart"]).optional(),
@@ -2446,6 +2503,7 @@ router.post("/rooms", async (req, res) => {
   const contentType = parsed.data.mysteryId ? "mystery" : parsed.data.contentType;
   if (contentType === "mystery" && parsed.data.hostMode !== "human") return fail(res, 400, "谜局固定使用世界裁决器，不能选择 AI 主持模式");
   if (contentType === "impostor" && parsed.data.hostMode !== "human") return fail(res, 400, "谁是伪人由系统主持，不能选择主持模式");
+  if (contentType === "card_battle" && parsed.data.hostMode !== "human") return fail(res, 400, "卡牌对战由系统自动结算，不能选择主持模式");
   let code = "";
   for (let i = 0; i < 10; i++) {
     code = String(Math.floor(100000 + Math.random() * 900000));
@@ -2463,9 +2521,12 @@ router.post("/rooms", async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [roomId, code, parsed.data.name, user.id, parsed.data.hostMode, contentType, parsed.data.type, passwordHash]
     );
+    const creatorRole = contentType === "card_battle"
+      ? (await claimCardBattleSeat(roomId, user.id, connection) ? "player" : "spectator")
+      : contentType === "impostor" || parsed.data.hostMode === "ai" ? "player" : "host";
     await connection.query(
       "INSERT INTO online_soup_members (room_id, user_id, member_role) VALUES (?, ?, ?)",
-      [roomId, user.id, contentType === "impostor" || parsed.data.hostMode === "ai" ? "player" : "host"]
+      [roomId, user.id, creatorRole]
     );
     if (parsed.data.mysteryId && parsed.data.mysteryChoice) {
       mysteryRun = await startOrContinueMysteryRun({
@@ -2483,7 +2544,9 @@ router.post("/rooms", async (req, res) => {
     }
     await systemMessage(roomId, null, contentType === "impostor"
       ? `房主 ${user.nickname} 创建了“谁是伪人”房间`
-      : `主持人 ${user.nickname} 创建了房间`, connection);
+      : contentType === "card_battle"
+        ? `房主 ${user.nickname} 创建了“卡牌对战”房间${creatorRole === "spectator" ? "，因可参战卡牌不足五张已进入观战席" : ""}`
+        : `主持人 ${user.nickname} 创建了房间`, connection);
     if (mysteryRun) {
       if (mysteryRun.continued) {
         await restoreMysteryRunMessages(connection, {
@@ -2509,6 +2572,7 @@ router.patch("/rooms/:roomId/host-mode", async (req, res) => {
   if (!context) return;
   if (String(context.room.content_type ?? "soup") === "mystery") return fail(res, 409, "谜局固定由世界裁决器和叙事模型处理，不能切换主持方式");
   if (isImpostorRoom(context.room)) return fail(res, 409, "谁是伪人由系统主持，不能切换主持方式");
+  if (isCardBattleRoom(context.room)) return fail(res, 409, "卡牌对战由系统自动结算，不能切换主持方式");
   if (context.room.status === "playing") return fail(res, 409, "游戏进行中不能更改主持模式，请先结束本轮");
   const parsed = z.object({ hostMode: z.enum(["human", "ai"]) }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "主持模式不正确");
@@ -2624,6 +2688,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
   const parsed = z.object({ password: z.string().max(4).optional().default(""), role: z.enum(["player", "spectator"]).default("player") }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "加入信息不正确");
   const connection = await pool.getConnection();
+  let resolvedRole: "player" | "spectator" = parsed.data.role;
   try {
     await connection.beginTransaction();
     const [rows] = await connection.query<mysql.RowDataPacket[]>("SELECT * FROM online_soup_rooms WHERE id = ? FOR UPDATE", [req.params.roomId]);
@@ -2639,7 +2704,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
         "SELECT COUNT(*) AS total FROM online_soup_members WHERE room_id = ? AND member_role = ? AND is_active = 1",
         [room.id, parsed.data.role]
       );
-      if (parsed.data.role === "player" && isImpostorRoom(room) && room.status === "playing") {
+      if (parsed.data.role === "player" && (isImpostorRoom(room) || isCardBattleRoom(room)) && room.status === "playing") {
         await connection.rollback();
         return fail(res, 409, "对局已经开始，请以旁观者身份加入", "GAME_IN_PROGRESS");
       }
@@ -2653,20 +2718,29 @@ router.post("/rooms/:roomId/join", async (req, res) => {
           parsed.data.role === "player" ? "PLAYER_FULL" : "ROOM_FULL"
         );
       }
+      if (isCardBattleRoom(room) && parsed.data.role === "player") {
+        const seat = await claimCardBattleSeat(String(room.id), user.id, connection);
+        if (!seat) {
+          const enoughCards = await eligibleCardCount(user.id, connection) >= 5;
+          await connection.rollback();
+          return fail(res, 409, enoughCards ? "对战席已满，可以选择观战" : "至少拥有五张启用中的史诗或传说卡才能进入对战席", "PLAYER_FULL");
+        }
+        resolvedRole = "player";
+      }
     }
     if (!existing) {
       await connection.query(
         `INSERT INTO online_soup_members (room_id, user_id, member_role) VALUES (?, ?, ?)
          ON DUPLICATE KEY UPDATE member_role = VALUES(member_role), is_active = 1, joined_at = NOW(), last_seen_at = NOW(), left_at = NULL`,
         [room.id, user.id, room.host_id === user.id
-          ? (isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")
-          : parsed.data.role]
+          ? (isCardBattleRoom(room) ? resolvedRole : isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")
+          : resolvedRole]
       );
       await roomEntrySystemMessage(String(room.id), room.current_round_id ? String(room.current_round_id) : null, user, connection);
     }
     const role = existing?.member_role ?? (room.host_id === user.id
-      ? (isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")
-      : parsed.data.role);
+      ? (isCardBattleRoom(room) ? resolvedRole : isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")
+      : resolvedRole);
     await connection.commit();
     if (!existing) recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role: String(role), joined: !existing });
@@ -2684,6 +2758,143 @@ router.get("/rooms/:roomId/state", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
   res.json(await roomSnapshot(context.room.id, context.user, context.room, false));
+});
+
+router.get("/rooms/:roomId/card-battle/eligible-cards", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  res.json({ cards: await loadEligibleBattleCards(context.user.id) });
+});
+
+router.put("/rooms/:roomId/card-battle/lineup", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  if (context.room.status === "playing") return fail(res, 409, "对局进行中不能更改阵容");
+  const parsed = z.object({ cardIds: z.array(z.string().trim().min(1).max(64).nullable()).max(5) }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "阵容信息不正确");
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT status FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' FOR UPDATE",
+      [context.room.id],
+    );
+    if (!room || String(room.status) === "playing") {
+      await connection.rollback();
+      return fail(res, 409, "房间状态已经变化，请刷新后重试");
+    }
+    await saveCardBattleLineup(context.room.id, context.user.id, parsed.data.cardIds, connection);
+    await connection.query(
+      "UPDATE online_soup_rooms SET status = IF(status = 'ended', 'preparing', status), last_action_at = NOW() WHERE id = ?",
+      [context.room.id],
+    );
+    await connection.commit();
+    res.json({ ok: true });
+    void notifyRoom(context.room.id, "card_battle_lineup_changed", { userId: context.user.id });
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
+    throw error;
+  } finally { connection.release(); }
+});
+
+router.post("/rooms/:roomId/card-battle/ready", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  if (context.room.status === "playing") return fail(res, 409, "对局进行中不能改变准备状态");
+  const parsed = z.object({ ready: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "准备状态不正确");
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT status FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' FOR UPDATE",
+      [context.room.id],
+    );
+    if (!room || String(room.status) === "playing") {
+      await connection.rollback();
+      return fail(res, 409, "房间状态已经变化，请刷新后重试");
+    }
+    await setCardBattleReady(context.room.id, context.user.id, parsed.data.ready, connection);
+    await connection.query(
+      "UPDATE online_soup_rooms SET status = IF(status = 'ended', 'preparing', status), last_action_at = NOW() WHERE id = ?",
+      [context.room.id],
+    );
+    await systemMessage(context.room.id, null, `${context.user.nickname}${parsed.data.ready ? "已准备" : "取消准备"}`, connection);
+    await connection.commit();
+    res.json({ ok: true });
+    void notifyRoom(context.room.id, "card_battle_ready_changed", { userId: context.user.id, ready: parsed.data.ready });
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
+    throw error;
+  } finally { connection.release(); }
+});
+
+router.post("/rooms/:roomId/card-battle/member-role", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  if (context.room.status === "playing") return fail(res, 409, "对局进行中不能切换对战或观战");
+  const parsed = z.object({ role: z.enum(["player", "spectator"]) }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "成员身份不正确");
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT status FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' FOR UPDATE",
+      [context.room.id],
+    );
+    if (!room || room.status === "playing") { await connection.rollback(); return fail(res, 409, "房间状态已经变化，请刷新后重试"); }
+    if (parsed.data.role === "player") {
+      const seat = await claimCardBattleSeat(context.room.id, context.user.id, connection);
+      if (!seat) {
+        const enough = await eligibleCardCount(context.user.id, connection) >= 5;
+        await connection.rollback();
+        return fail(res, 409, enough ? "对战席已满" : "至少拥有五张启用中的史诗或传说卡才能进入对战席");
+      }
+    } else await releaseCardBattleSeat(context.room.id, context.user.id, connection);
+    await connection.query(
+      "UPDATE online_soup_members SET member_role = ? WHERE room_id = ? AND user_id = ? AND is_active = 1",
+      [parsed.data.role, context.room.id, context.user.id],
+    );
+    await connection.query(
+      "UPDATE online_soup_rooms SET status = IF(status = 'ended', 'preparing', status), last_action_at = NOW() WHERE id = ?",
+      [context.room.id],
+    );
+    await systemMessage(context.room.id, null, `${context.user.nickname} 已切换为${parsed.data.role === "player" ? "对战" : "观战"}`, connection);
+    await connection.commit();
+    res.json({ ok: true, role: parsed.data.role });
+    void notifyRoom(context.room.id, "member_role_changed", { userId: context.user.id, role: parsed.data.role });
+  } catch (error) { await connection.rollback().catch(() => {}); throw error; }
+  finally { connection.release(); }
+});
+
+router.patch("/rooms/:roomId/card-battle/mode", async (req, res) => {
+  const context = await requireHost(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  const parsed = z.object({ mode: z.literal("1v1") }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "当前仅开放 1v1 玩法");
+  res.json({ ok: true, mode: "1v1" });
+});
+
+router.post("/rooms/:roomId/card-battle/playback/ack", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  const parsed = z.object({ sequence: z.number().int().min(1) }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, "战斗动画序号不正确");
+  try {
+    const playback = await acknowledgeCardBattleEvent(context.room.id, context.user.id, parsed.data.sequence);
+    res.json({ ok: true, playback });
+  } catch (error) {
+    if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
+    throw error;
+  }
 });
 
 router.get("/rooms/:roomId/messages", async (req, res) => {
@@ -3145,6 +3356,9 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
       successor = await activeHostSuccessor(context.room.id, context.user.id, connection);
       if (successor) {
         await transferDepartedHost(context.room.id, context.user.id, successor, connection, String(room.host_mode ?? "human") === "ai" ? "ai" : "human");
+        if (isCardBattleRoom(room) && String(room.status) !== "playing") {
+          await releaseCardBattleSeat(context.room.id, context.user.id, connection);
+        }
         await systemMessage(
           context.room.id,
           room.current_round_id ? String(room.current_round_id) : null,
@@ -3162,6 +3376,13 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
           "UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ? AND host_id = ?",
           [context.room.id, context.user.id]
         );
+        if (isCardBattleRoom(room) && String(room.status) === "playing") {
+          await connection.query(
+            "UPDATE online_card_battles SET status = 'aborted', ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'",
+            [context.room.id],
+          );
+        }
+        if (isCardBattleRoom(room)) await releaseCardBattleSeat(context.room.id, context.user.id, connection);
       }
       await connection.commit();
     } catch (error) {
@@ -3190,8 +3411,25 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
     }
     return;
   }
-  await pool.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ?", [context.room.id, context.user.id]);
-  await systemMessage(context.room.id, context.room.current_round_id, `${context.user.nickname} 离开了房间`);
+  const leaveConnection = await pool.getConnection();
+  try {
+    await leaveConnection.beginTransaction();
+    const [[lockedRoom]] = await leaveConnection.query<mysql.RowDataPacket[]>(
+      "SELECT status FROM online_soup_rooms WHERE id = ? AND status <> 'closed' FOR UPDATE",
+      [context.room.id],
+    );
+    if (!lockedRoom) {
+      await leaveConnection.rollback();
+      return fail(res, 409, "房间状态已经变化，请刷新后重试");
+    }
+    await leaveConnection.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ?", [context.room.id, context.user.id]);
+    if (isCardBattleRoom(context.room) && String(lockedRoom.status) !== "playing") {
+      await releaseCardBattleSeat(context.room.id, context.user.id, leaveConnection);
+    }
+    await systemMessage(context.room.id, context.room.current_round_id, `${context.user.nickname} 离开了房间`, leaveConnection);
+    await leaveConnection.commit();
+  } catch (error) { await leaveConnection.rollback().catch(() => {}); throw error; }
+  finally { leaveConnection.release(); }
   res.json({ ok: true });
   void notifyRoom(context.room.id, "member_left");
 });
@@ -3206,11 +3444,15 @@ router.post("/rooms/:roomId/members/:userId/kick", async (req, res) => {
     await connection.beginTransaction();
     const [[room], [target]] = await Promise.all([
       connection.query<mysql.RowDataPacket[]>(
-        "SELECT host_id, host_mode, content_type, current_round_id FROM online_soup_rooms WHERE id = ? AND status <> 'closed' FOR UPDATE",
+        "SELECT host_id, host_mode, content_type, current_round_id, status FROM online_soup_rooms WHERE id = ? AND status <> 'closed' FOR UPDATE",
         [context.room.id]
       ).then(([rows]) => rows),
       connection.query<mysql.RowDataPacket[]>(
-        `SELECT m.member_role, u.nickname
+        `SELECT m.member_role, u.nickname,
+           EXISTS (
+             SELECT 1 FROM online_card_battle_seats battle_seats
+             WHERE battle_seats.room_id = m.room_id AND battle_seats.user_id = m.user_id
+           ) AS has_battle_seat
          FROM online_soup_members m JOIN users u ON u.id = m.user_id
          WHERE m.room_id = ? AND m.user_id = ? AND m.is_active = 1
          LIMIT 1 FOR UPDATE`,
@@ -3225,7 +3467,10 @@ router.post("/rooms/:roomId/members/:userId/kick", async (req, res) => {
       await connection.rollback();
       return fail(res, 404, "该用户已不在房间");
     }
-    if (String(room.content_type ?? "soup") === "impostor" && String(room.status) === "playing" && String(target.member_role) === "player") {
+    if (String(room.status) === "playing" && (
+      (String(room.content_type ?? "soup") === "impostor" && String(target.member_role) === "player")
+      || (String(room.content_type ?? "soup") === "card_battle" && Boolean(target.has_battle_seat))
+    )) {
       await connection.rollback();
       return fail(res, 409, "对局进行中不能移出游戏者，请先终止本局");
     }
@@ -3238,6 +3483,7 @@ router.post("/rooms/:roomId/members/:userId/kick", async (req, res) => {
       "UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ? AND is_active = 1",
       [context.room.id, req.params.userId]
     );
+    if (String(room.content_type) === "card_battle") await releaseCardBattleSeat(context.room.id, req.params.userId, connection);
     await systemMessage(context.room.id, room.current_round_id ? String(room.current_round_id) : null, `${targetNickname} 被主持人移出房间`, connection);
     await connection.commit();
   } catch (error) {
@@ -3332,7 +3578,7 @@ router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => 
        WHERE id = ?`,
       [req.params.userId, context.room.id]
     );
-    if (String(room.content_type ?? "soup") !== "impostor") {
+    if (!["impostor", "card_battle"].includes(String(room.content_type ?? "soup"))) {
       const aiHosted = String(room.host_mode ?? "human") === "ai";
       await connection.query(
         "UPDATE online_soup_members SET member_role = ?, muted_until = NULL WHERE room_id = ? AND user_id = ? AND is_active = 1",
@@ -3504,6 +3750,28 @@ router.post("/rooms/:roomId/select-soup", async (req, res) => {
 router.post("/rooms/:roomId/start", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
+  if (isCardBattleRoom(context.room)) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const started = await startCardBattle(context.room.id, context.user.id, connection);
+      await systemMessage(context.room.id, null, `卡牌对战第 ${started.gameNumber} 局开始，双方卡面已公开`, connection);
+      await connection.commit();
+      const activitySequence = await recordRoomActivity(context.room.id, "progress", context.user.id, started.gameId);
+      res.json({ ok: true, gameId: started.gameId });
+      void notifyRoom(context.room.id, "card_battle_started", { activitySequence, activityType: "progress", gameId: started.gameId });
+      setTimeout(() => {
+        void finalizeCardBattleIfDue(context.room.id).then((changed) => {
+          if (changed) notifyRoom(context.room.id, "card_battle_ended", { gameId: started.gameId });
+        }).catch((error) => console.error("Card battle finalization failed", error));
+      }, Math.max(0, started.playbackEndsAt.getTime() - Date.now()) + 50);
+      return;
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
+      throw error;
+    } finally { connection.release(); }
+  }
   if (isImpostorRoom(context.room)) {
     const connection = await pool.getConnection();
     let state: ImpostorGameState;
@@ -3812,6 +4080,23 @@ router.post("/rooms/:roomId/impostor/mission", async (req, res) => {
   }
 });
 
+router.post("/rooms/:roomId/impostor/start-assassination", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isImpostorRoom(context.room)) return fail(res, 409, "当前不是谁是伪人房间");
+  try {
+    const state = await mutateImpostorGame(
+      context.room.id,
+      (current) => startImpostorAssassination(current, context.user.id),
+      context.user.id,
+    );
+    res.json({ ok: true, game: impostorClientState(state, context.user.id) });
+    void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
+  } catch (error) {
+    if (!sendImpostorMutationError(res, error)) throw error;
+  }
+});
+
 router.post("/rooms/:roomId/impostor/assassinate", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
@@ -3931,6 +4216,7 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
   const mysteryMode = String(context.room.content_type ?? "soup") === "mystery";
   if (parsed.data.type === "question") {
     if (isImpostorRoom(context.room)) return fail(res, 403, "谁是伪人房间只有自由讨论，不使用正式提问");
+    if (isCardBattleRoom(context.room)) return fail(res, 403, "卡牌对战房间只有聊天和表情，不使用正式提问");
     if (mysteryMode && context.user.id !== String(context.room.host_id)) return fail(res, 403, "谜局中只有房主可以提交正式行动，其他成员只能讨论");
     if (!mysteryMode && context.member?.member_role !== "player") return fail(res, 403, "只有玩家可以发送正式提问");
     if (context.room.status !== "playing") return fail(res, 409, "当前不在推理阶段");
@@ -3938,7 +4224,7 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
       return fail(res, 409, "当前谜局存档不属于房主，请重新选择谜局");
     }
   }
-  if (parsed.data.type !== "question" && context.member?.member_role === "spectator") {
+  if (parsed.data.type !== "question" && context.member?.member_role === "spectator" && !isCardBattleRoom(context.room)) {
     return fail(res, 403, "旁观者只能查看房间内容");
   }
   const connection = await pool.getConnection();
@@ -4813,6 +5099,10 @@ router.post("/rooms/:roomId/close", async (req, res) => {
   await systemMessage(context.room.id, context.room.current_round_id, "主持人关闭了房间");
   await pool.query(
     "UPDATE online_soup_finish_votes SET status = 'cancelled', closed_at = NOW() WHERE room_id = ? AND status = 'open'",
+    [context.room.id],
+  );
+  if (isCardBattleRoom(context.room)) await pool.query(
+    "UPDATE online_card_battles SET status = 'aborted', ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'",
     [context.room.id],
   );
   await pool.query("UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW() WHERE id = ?", [context.room.id]);

@@ -1,4 +1,4 @@
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { ImagePlus, Plus, Trash2, X } from "lucide-react";
 import type { SoupForm } from "../context/AppContext";
 import { soupDifficulties, soupTypes } from "../context/AppContext";
@@ -9,6 +9,12 @@ import { api } from "../api";
 import { useNavigate } from "react-router-dom";
 import { refreshMineContentCache } from "../shared/mineContentCache";
 import { CoverCropper } from "./CoverCropper";
+
+type SoupTopicOption = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
 
 function SupplementEditor({
   title,
@@ -93,6 +99,10 @@ export function SoupEditor() {
   const [coverCropSource, setCoverCropSource] = useState<string | null>(null);
   const [advSettingsOpen, setAdvSettingsOpen] = useState(false);
   const [reanalyzeConfirmOpen, setReanalyzeConfirmOpen] = useState(false);
+  const [topics, setTopics] = useState<SoupTopicOption[]>([]);
+  const [topicsLoading, setTopicsLoading] = useState(true);
+  const [topicsError, setTopicsError] = useState("");
+  const [topicReloadKey, setTopicReloadKey] = useState(0);
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const createIdempotencyKeyRef = useRef(
@@ -105,6 +115,17 @@ export function SoupEditor() {
     : user?.role === "super_admin" || user?.role === "backoffice_admin" || user?.role === "vip";
 
   const patch = (next: Partial<SoupForm>) => setValue({ ...value, ...next });
+
+  useEffect(() => {
+    let active = true;
+    setTopicsLoading(true);
+    setTopicsError("");
+    api<{ topics: SoupTopicOption[] }>("/api/soup-topics", { bypassCache: true })
+      .then((data) => { if (active) setTopics(data.topics); })
+      .catch((error) => { if (active) setTopicsError(error instanceof Error ? error.message : "话题加载失败"); })
+      .finally(() => { if (active) setTopicsLoading(false); });
+    return () => { active = false; };
+  }, [topicReloadKey]);
 
   // 高级设置：关键点增/删/改
   function addKeyFact() {
@@ -208,9 +229,15 @@ export function SoupEditor() {
 
     const method = editing ? "PUT" : "POST";
     const path = editing ? `/api/soups/${editingSoupId}` : "/api/soups";
-    const { canConfigureAiGame: _canConfigureAiGame, ...formValue } = value;
+    const {
+      canConfigureAiGame: _canConfigureAiGame,
+      topicName: _topicName,
+      topicIsActive: _topicIsActive,
+      ...formValue
+    } = value;
     const payload = {
       ...formValue,
+      topicId: value.topicId || null,
       enableAiGame: canEnableAiGame ? value.enableAiGame : false,
       keyFacts: canEnableAiGame && value.enableAiGame && value.keyFactsCustomized ? value.keyFacts : [],
       keyFactsCustomized: canEnableAiGame && value.enableAiGame ? value.keyFactsCustomized : false,
@@ -293,6 +320,37 @@ export function SoupEditor() {
             <select className="field" value={value.difficulty} onChange={(e) => patch({ difficulty: e.target.value as SoupForm["difficulty"] })} required>
               {soupDifficulties.map((difficulty) => <option key={difficulty}>{difficulty}</option>)}
             </select>
+          </label>
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-xs font-bold text-muted">话题</span>
+            <select
+              className="field"
+              value={value.topicId}
+              disabled={topicsLoading || Boolean(topicsError)}
+              onChange={(event) => {
+                const topic = topics.find((item) => item.id === event.target.value);
+                patch({
+                  topicId: event.target.value,
+                  topicName: topic?.name ?? "",
+                  topicIsActive: topic?.isActive ?? false
+                });
+              }}
+            >
+              <option value="">不绑定话题</option>
+              {value.topicId && !topics.some((topic) => topic.id === value.topicId) && value.topicName && (
+                <option value={value.topicId} disabled>{value.topicName}（{!topicsLoading && !topicsError && !value.topicIsActive ? "已下架" : "当前话题"}）</option>
+              )}
+              {topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.name}</option>)}
+            </select>
+            {topicsLoading && <p className="text-xs text-muted" role="status">正在加载可选话题…</p>}
+            {topicsError && (
+              <p className="flex flex-wrap items-center gap-2 text-xs font-semibold text-danger" role="alert">
+                {topicsError}
+                <button className="min-h-11 text-primary underline underline-offset-4" type="button" onClick={() => setTopicReloadKey((key) => key + 1)}>重新加载</button>
+              </p>
+            )}
+            {!topicsLoading && !topicsError && topics.length === 0 && !value.topicId && <p className="text-xs text-muted">暂无上架话题，可暂不绑定。</p>}
+            {value.topicId && !value.topicIsActive && <p className="text-xs text-amber-700">当前话题已下架，保存时会保留；改选后不能再次选择该话题。</p>}
           </label>
         </div>
 
