@@ -2554,6 +2554,7 @@ export async function initDatabase() {
       card_no VARCHAR(64) NOT NULL UNIQUE,
       name VARCHAR(100) NOT NULL,
       rarity ENUM('normal','rare','epic','legend') NOT NULL,
+      battle_role ENUM('damage','tank','support') NULL,
       image_url LONGTEXT NOT NULL,
       thumbnail_url LONGTEXT NULL,
       motion_mp4_path VARCHAR(500) NULL,
@@ -2571,6 +2572,7 @@ export async function initDatabase() {
       INDEX idx_asset_cards_status_no (status, card_no)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("asset_cards", "battle_role", "battle_role ENUM('damage','tank','support') NULL AFTER rarity");
   await ensureColumn("asset_cards", "motion_mp4_path", "motion_mp4_path VARCHAR(500) NULL AFTER thumbnail_url");
   await ensureColumn("asset_cards", "motion_webm_path", "motion_webm_path VARCHAR(500) NULL AFTER motion_mp4_path");
   await ensureColumn("asset_cards", "motion_poster_path", "motion_poster_path VARCHAR(500) NULL AFTER motion_webm_path");
@@ -2579,6 +2581,9 @@ export async function initDatabase() {
   await ensureColumn("asset_cards", "motion_status", "motion_status ENUM('idle','processing','ready','failed') NOT NULL DEFAULT 'idle' AFTER motion_processing_version");
   await ensureColumn("asset_cards", "motion_error", "motion_error VARCHAR(255) NULL AFTER motion_status");
   await pool.query("UPDATE asset_cards SET motion_status = 'ready' WHERE motion_mp4_path IS NOT NULL AND motion_status = 'idle'");
+  // 对战定位只属于可参战卡；历史史诗和传说卡默认归为输出。
+  await pool.query("UPDATE asset_cards SET battle_role = 'damage' WHERE rarity IN ('epic','legend') AND battle_role IS NULL");
+  await pool.query("UPDATE asset_cards SET battle_role = NULL WHERE rarity NOT IN ('epic','legend') AND battle_role IS NOT NULL");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sticker_series (

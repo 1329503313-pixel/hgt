@@ -4,7 +4,8 @@ import { CARD_BATTLE_MAX_EVENTS, CARD_BATTLE_MAX_PLAYBACK_MS, CARD_BATTLE_MAX_RO
 
 function card(id: string, slot: 1 | 2 | 3 | 4 | 5, overrides: Partial<CardBattleDeckCard["tier"]> = {}, effects: CardBattleSkillEffect[] = []): CardBattleDeckCard {
   return {
-    instanceId: id, cardId: id, name: id, imageUrl: `/${id}.webp`, rarity: "legend", starLevel: 0, slot,
+    instanceId: id, cardId: id, name: id, imageUrl: `/${id}.webp`, rarity: "legend", battleRole: "damage", starLevel: 0, slot,
+    motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null,
     tier: { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, skillName: "测试技能", skillDescription: "", effects, ...overrides },
   };
 }

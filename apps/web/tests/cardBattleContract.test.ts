@@ -28,6 +28,24 @@ test("管理后台为史诗和传说卡展示配置，并按品质初始化默�
   assert.match(assetTypes, /maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40/);
 });
 
+test("管理后台和选卡弹窗展示对战定位、完整属性与已选卡技能", () => {
+  assert.match(assetTypes, /CARD_BATTLE_ROLE_LABELS/);
+  assert.match(assetAdmin, />对战定位</);
+  assert.match(assetAdmin, /仅参与卡牌对战的史诗与传说卡可配置/);
+  assert.match(view, /CARD_BATTLE_ROLE_LABELS\[card\.battleRole\]/);
+  assert.match(view, /!selected && <span/);
+  for (const label of ["生命", "攻击", "防御", "速度", "能量"]) assert.match(view, new RegExp(`<dt>${label}<\\/dt>`));
+  assert.match(view, /card\.skillName \|\| "未配置技能"/);
+  assert.match(view, /card\.skillDescription \|\| "暂无技能说明"/);
+});
+
+test("战场保留星级并使用共享动态媒体播放器", () => {
+  assert.match(view, /card\.name} · \{card\.starLevel}★/);
+  assert.match(view, /card\.motionMp4Url/);
+  assert.match(view, /<AssetMotionMedia/);
+  assert.match(view, /thumbnailUrl: card\.imageUrl/);
+});
+
 test("技能名称在四个星级联动，其他技能配置仍按当前星级编辑", () => {
   assert.match(battleConfigEditor, /updateSharedSkillName = \(skillName: string\) => onChange\(tiers\.map/);
   assert.match(battleConfigEditor, /onChange=\{\(event\) => updateSharedSkillName\(event\.target\.value\)\}/);

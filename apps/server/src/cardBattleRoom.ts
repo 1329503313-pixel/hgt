@@ -41,6 +41,18 @@ function iso(value: unknown) {
   return value ? new Date(value as string | number | Date).toISOString() : null;
 }
 
+function battleMotionPayload(row: mysql.RowDataPacket, starLevel: number) {
+  const unlocked = starLevel >= 2 && Boolean(row.motion_mp4_path);
+  if (!unlocked) return { motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null };
+  const cardId = encodeURIComponent(String(row.id ?? row.card_id));
+  const version = encodeURIComponent(String(row.motion_version ?? new Date(row.updated_at).getTime()));
+  return {
+    motionMp4Url: `/api/media/assets/cards/${cardId}/motion/mp4?v=${version}`,
+    motionWebmUrl: row.motion_webm_path ? `/api/media/assets/cards/${cardId}/motion/webm?v=${version}` : null,
+    motionPosterUrl: row.motion_poster_path ? `/api/media/assets/cards/${cardId}/motion/poster?v=${version}` : null,
+  };
+}
+
 function playbackState(result: CardBattleResult, row: mysql.RowDataPacket, status: string): CardBattlePlaybackState {
   const completedSequence = Math.max(0, Math.min(result.events.length, Number(row.completed_sequence ?? 0)));
   const complete = completedSequence >= result.events.length;
@@ -148,7 +160,10 @@ export async function acknowledgeCardBattleEvent(roomId: string, viewerId: strin
 function publicFrozenCard(card: CardBattleDeckCard) {
   return {
     id: card.cardId, cardNo: "", name: card.name, rarity: card.rarity, starLevel: card.starLevel,
-    imageUrl: card.imageUrl,
+    battleRole: card.battleRole ?? "damage", imageUrl: card.imageUrl,
+    motionMp4Url: card.motionMp4Url ?? null,
+    motionWebmUrl: card.motionWebmUrl ?? null,
+    motionPosterUrl: card.motionPosterUrl ?? null,
     stats: {
       maxHp: card.tier.maxHp, attack: card.tier.attack, defense: card.tier.defense, speed: card.tier.speed,
       energyRequired: card.tier.energyRequired, canAttackRear: card.tier.canAttackRear,
@@ -200,7 +215,8 @@ export async function releaseCardBattleSeat(roomId: string, userId: string, db: 
 
 export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | mysql.PoolConnection = pool) {
   const [rows] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.updated_at, owned.star_level,
+    `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
+       cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level,
        tiers.max_hp, tiers.attack_value, tiers.defense_value, tiers.speed_value, tiers.energy_required, tiers.can_attack_rear,
        tiers.skill_name, tiers.skill_description
      FROM user_asset_cards owned
@@ -210,20 +226,25 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
      ORDER BY cards.card_no ASC`,
     [userId],
   );
-  return rows.map((row) => ({
-    id: String(row.id),
-    cardNo: String(row.card_no),
-    name: String(row.name),
-    rarity: String(row.rarity) as "epic" | "legend",
-    starLevel: Number(row.star_level),
-    imageUrl: `/api/media/assets/cards/${encodeURIComponent(String(row.id))}/thumbnail?v=${new Date(row.updated_at).getTime()}`,
-    stats: {
-      maxHp: Number(row.max_hp), attack: Number(row.attack_value), defense: Number(row.defense_value), speed: Number(row.speed_value),
-      energyRequired: Number(row.energy_required), canAttackRear: Boolean(row.can_attack_rear),
-    },
-    skillName: String(row.skill_name ?? ""),
-    skillDescription: String(row.skill_description ?? ""),
-  }));
+  return rows.map((row) => {
+    const starLevel = Number(row.star_level);
+    return {
+      id: String(row.id),
+      cardNo: String(row.card_no),
+      name: String(row.name),
+      rarity: String(row.rarity) as "epic" | "legend",
+      battleRole: String(row.battle_role ?? "damage") as "damage" | "tank" | "support",
+      starLevel,
+      imageUrl: `/api/media/assets/cards/${encodeURIComponent(String(row.id))}/thumbnail?v=${new Date(row.updated_at).getTime()}`,
+      ...battleMotionPayload(row, starLevel),
+      stats: {
+        maxHp: Number(row.max_hp), attack: Number(row.attack_value), defense: Number(row.defense_value), speed: Number(row.speed_value),
+        energyRequired: Number(row.energy_required), canAttackRear: Boolean(row.can_attack_rear),
+      },
+      skillName: String(row.skill_name ?? ""),
+      skillDescription: String(row.skill_description ?? ""),
+    };
+  });
 }
 
 export async function saveCardBattleLineup(roomId: string, userId: string, cardIds: Array<string | null>, db: mysql.PoolConnection) {
@@ -280,7 +301,8 @@ export async function setCardBattleReady(roomId: string, userId: string, ready: 
 
 async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId: string, db: mysql.PoolConnection): Promise<CardBattleDeckCard> {
   const [[row]] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT cards.id, cards.name, cards.rarity, cards.updated_at, owned.star_level
+    `SELECT cards.id, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
+       cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level
      FROM user_asset_cards owned JOIN asset_cards cards ON cards.id = owned.card_id
      WHERE owned.user_id = ? AND cards.id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend') LIMIT 1`,
     [userId, cardId],
@@ -296,8 +318,10 @@ async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId:
     name: String(row.name),
     imageUrl: `/api/media/assets/cards/${encodeURIComponent(cardId)}/thumbnail?v=${new Date(row.updated_at).getTime()}`,
     rarity: String(row.rarity) as "epic" | "legend",
+    battleRole: String(row.battle_role ?? "damage") as "damage" | "tank" | "support",
     starLevel,
     slot: slot as 1 | 2 | 3 | 4 | 5,
+    ...battleMotionPayload(row, starLevel),
     tier,
   };
 }

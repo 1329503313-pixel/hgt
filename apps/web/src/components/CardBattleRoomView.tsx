@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { Check, ChevronDown, Eye, GripVertical, LogOut, Menu, Send, Share2, Shield, Smile, Sparkles, Swords, Users, X, Zap } from "lucide-react";
+import { Check, ChevronDown, Eye, GripVertical, LogOut, Menu, Send, Share2, Smile, Sparkles, Swords, Users, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { reorderCardBattleLineup } from "../shared/cardBattleLineup";
+import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
 import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleEvent, OnlineCardBattlePlayback, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
+import { AssetMotionMedia } from "./AssetCardVisual";
 import { Modal } from "./Modal";
 import { StickerKeyboard } from "./StickerKeyboard";
 import { UnifiedBackButton } from "./UnifiedBackButton";
@@ -33,6 +35,12 @@ function hpTone(hp: number, maxHp: number) {
   if (ratio >= .5) return "bg-lime-500";
   if (ratio >= .25) return "bg-amber-400";
   return "bg-red-500";
+}
+
+function battleRoleTone(role: OnlineCardBattleCard["battleRole"]) {
+  if (role === "tank") return "border-sky-200/70 bg-sky-700/90 text-sky-50";
+  if (role === "support") return "border-emerald-200/70 bg-emerald-700/90 text-emerald-50";
+  return "border-rose-200/70 bg-rose-700/90 text-rose-50";
 }
 
 function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selectable, drag }: {
@@ -92,7 +100,10 @@ function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selecta
       <span className={`block h-full transition-[width,background-color] duration-300 ${state ? hpTone(state.hp, state.maxHp) : "bg-emerald-500"}`} style={{ width: `${state ? Math.max(0, state.hp / Math.max(1, state.maxHp) * 100) : 100}%` }} />
     </div>
     {state && <div className="absolute inset-x-1 top-3 z-20 h-1 overflow-hidden rounded-full bg-slate-950/40" aria-label={`能量比例 ${Math.round(state.energy / Math.max(1, state.energyRequired) * 100)}%`}><span className="block h-full bg-cyan-400 transition-[width] duration-300" style={{ width: `${Math.max(0, state.energy / Math.max(1, state.energyRequired) * 100)}%` }} /></div>}
-    {cardBack ? <div className="card-battle-back absolute inset-0 grid place-items-center rounded-[inherit]"><Swords size={28} /><span>HGT</span></div> : card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full rounded-[inherit] object-cover" draggable={false} /> : <div className="grid h-full place-items-center rounded-[inherit] border border-dashed border-white/25 bg-white/5 text-center text-[10px] font-bold text-white/45">选择<br />卡牌</div>}
+    {cardBack ? <div className="card-battle-back absolute inset-0 grid place-items-center rounded-[inherit]"><Swords size={28} /><span>HGT</span></div> : card ? card.motionMp4Url
+      ? <AssetMotionMedia card={{ ...card, thumbnailUrl: card.imageUrl }} className="h-full w-full rounded-[inherit] object-cover" />
+      : <img src={card.imageUrl} alt={card.name} className="h-full w-full rounded-[inherit] object-cover" draggable={false} />
+      : <div className="grid h-full place-items-center rounded-[inherit] border border-dashed border-white/25 bg-white/5 text-center text-[10px] font-bold text-white/45">选择<br />卡牌</div>}
     {card && !cardBack && <><span className="absolute inset-x-1 bottom-1 z-10 truncate rounded bg-slate-950/70 px-1 py-0.5 text-center text-[9px] font-black text-white">{card.name} · {card.starLevel}★</span></>}
     {activeEffect && activeEvent?.visual === "damage" && <span className={`card-battle-number absolute left-1/2 top-1/3 z-40 -translate-x-1/2 text-lg font-black ${activeEffect.blocked ? "text-slate-100" : "text-red-300"}`}>{activeEffect.blocked ? "格挡" : activeEffect.amount}</span>}
     {activeEffect && activeEvent?.visual === "heal" && <span className="card-battle-number absolute left-1/2 top-0 z-40 -translate-x-1/2 text-lg font-black text-emerald-300">+{activeEffect.amount ?? 0}</span>}
@@ -532,7 +543,16 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       {animationComplete && battle.game?.settlement && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} />}
     </main>
 
-    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{eligibleCards.map((card) => { const selected = ownIds.includes(card.id); return <button key={card.id} type="button" className={`relative overflow-hidden rounded-xl border-2 text-left ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line"}`} onClick={() => void chooseCard(card.id)}><img className="aspect-[5/7] w-full object-cover" src={card.imageUrl} alt={card.name} /><div className="p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-1 flex gap-2 text-[10px] text-muted"><span>攻 {card.stats.attack}</span><span><Shield className="inline" size={10} /> {card.stats.defense}</span><span><Zap className="inline" size={10} /> {card.stats.speed}</span></p></div>{selected && <span className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full bg-cyan-500 text-white"><Check size={14} /></span>}</button>; })}</div>{eligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">当前没有可参战的史诗或传说卡</p>}</Modal>}
+    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡；已上场卡展示技能信息。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{eligibleCards.map((card) => {
+      const selected = ownIds.includes(card.id);
+      return <button key={card.id} type="button" aria-pressed={selected} aria-label={`${card.name}，${card.starLevel}星，${CARD_BATTLE_ROLE_LABELS[card.battleRole]}${selected ? "，已上场" : ""}`} className={`relative overflow-hidden rounded-xl border-2 bg-white text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line hover:border-cyan-300"}`} onClick={() => void chooseCard(card.id)}>
+        <div className="relative aspect-[5/7] overflow-hidden bg-slate-100"><img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} loading="lazy" decoding="async" />{!selected && <span className={`absolute left-2 top-2 rounded-full border px-2 py-1 text-[10px] font-black shadow-md backdrop-blur-sm ${battleRoleTone(card.battleRole)}`}>{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span>}</div>
+        <div className="min-h-[108px] p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p>{selected
+          ? <div className="mt-2"><p className="truncate text-[11px] font-black text-cyan-700">{card.skillName || "未配置技能"}</p><p className="mt-1 line-clamp-3 text-[10px] leading-4 text-muted">{card.skillDescription || "暂无技能说明"}</p></div>
+          : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] leading-4 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div></dl>}
+        </div>{selected && <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-cyan-500 text-white shadow-md" aria-hidden="true"><Check size={15} /></span>}
+      </button>;
+    })}</div>{eligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">当前没有可参战的史诗或传说卡</p>}</Modal>}
     {modeOpen && <Modal onClose={() => setModeOpen(false)}><div><h2 className="text-xl font-black text-ink">选择玩法</h2><button type="button" className="mt-4 flex min-h-14 w-full items-center justify-between rounded-xl border-2 border-primary bg-blue-50 px-4 text-left text-primary"><span><strong className="block">1v1</strong><span className="text-xs">双方各选择五张卡牌自动战斗</span></span><Check /></button><p className="mt-3 text-xs text-muted">暂时只开放 1v1，后续玩法不会影响本局规则。</p></div></Modal>}
     {leaveOpen && <Modal onClose={() => setLeaveOpen(false)}><div><h2 className="text-xl font-black text-ink">退出房间？</h2><p className="mt-2 text-sm leading-6 text-muted">对局进行中退出不会中断服务端战斗；重新进入后会从尚未播放的动画继续。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setLeaveOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(false)}>确认退出</button></div></div></Modal>}
     {closeOpen && <Modal onClose={() => setCloseOpen(false)}><div><h2 className="text-xl font-black text-ink">关闭房间？</h2><p className="mt-2 text-sm leading-6 text-muted">房间关闭后所有成员退出；进行中的对局会标记为中止，不生成胜负结算。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setCloseOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(true)}>关闭房间</button></div></div></Modal>}

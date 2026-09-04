@@ -580,8 +580,12 @@ export type OnlineCardBattleCard = {
   cardNo: string;
   name: string;
   rarity: "epic" | "legend";
+  battleRole: "damage" | "tank" | "support";
   starLevel: number;
   imageUrl: string;
+  motionMp4Url: string | null;
+  motionWebmUrl: string | null;
+  motionPosterUrl: string | null;
   stats: { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; canAttackRear: boolean };
   skillName: string;
   skillDescription: string;

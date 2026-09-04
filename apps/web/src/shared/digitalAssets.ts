@@ -1,5 +1,12 @@
 export type AssetRarity = "normal" | "rare" | "epic" | "legend";
 export type AssetPackType = "permanent" | "limited" | "collaboration";
+export type CardBattleRole = "damage" | "tank" | "support";
+
+export const CARD_BATTLE_ROLE_LABELS: Record<CardBattleRole, string> = {
+  damage: "输出",
+  tank: "坦克",
+  support: "辅助",
+};
 
 export type CardBattleCondition = "energy_full" | "self_death" | "self_hp_below_percent" | "normal_kill" | "skill_kill" | "ally_death" | "self_death_energy_full" | "self_hp_below_percent_energy_full" | "normal_kill_energy_full" | "skill_kill_energy_full" | "ally_death_energy_full";
 export type CardBattleEffectType = "damage_single" | "damage_rear" | "damage_random" | "damage_all_front" | "damage_all_rear" | "damage_random_2" | "damage_random_3" | "damage_random_4" | "damage_all" | "heal_self" | "heal_lowest_ally" | "energy_self" | "energy_lowest_ally" | "heal_all_allies" | "energy_all_allies" | "defense_self" | "defense_all_allies" | "speed_self" | "speed_all_allies" | "max_hp_self" | "max_hp_all_allies" | "attack_self" | "attack_all_allies" | "attack_skill_damage_self" | "attack_skill_damage_all_allies" | "revive_self" | "revive_ally_1" | "revive_ally_2" | "revive_ally_3" | "revive_ally_4" | "revive_all_allies";
@@ -31,6 +38,7 @@ export type AssetCard = {
   cardNo: string;
   name: string;
   rarity: AssetRarity;
+  battleRole?: CardBattleRole | null;
   imageUrl: string;
   thumbnailUrl: string;
   motionMp4Url?: string | null;

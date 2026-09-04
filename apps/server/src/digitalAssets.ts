@@ -28,6 +28,7 @@ import {
 } from "./entitlements.js";
 import { awardCollectiblesForDraw, collectibleAwardsForOrder, collectiblePackCounts, collectibleProbabilityDetails, collectiblesForPack } from "./collectibles.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
+import { cardBattleRoleCodes } from "./cardBattle.js";
 import { cardBattleTiersSchema, loadCardBattleTiers, saveCardBattleTiers } from "./cardBattleConfig.js";
 
 type RouteUser = { id: string; role: UserRole };
@@ -145,6 +146,7 @@ const cardSchemaObject = z.object({
   cardNo: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(100),
   rarity: z.enum(["normal", "rare", "epic", "legend"]),
+  battleRole: z.enum(cardBattleRoleCodes).nullable().optional().default(null),
   imageUrl: z.string().trim().min(1).max(8_000_000),
   thumbnailUrl: z.string().trim().max(8_000_000).optional().default(""),
   story: z.string().trim().max(20_000).optional().default(""),
@@ -160,6 +162,12 @@ const cardSchema = cardSchemaObject.superRefine((value, context) => {
   }
   if (!cardRaritySupportsBattle(value.rarity) && value.battleTiers) {
     context.addIssue({ code: "custom", path: ["battleTiers"], message: "仅史诗或传说卡可配置战斗属性" });
+  }
+  if (cardRaritySupportsBattle(value.rarity) && !value.battleRole) {
+    context.addIssue({ code: "custom", path: ["battleRole"], message: "史诗或传说卡必须选择对战定位" });
+  }
+  if (!cardRaritySupportsBattle(value.rarity) && value.battleRole) {
+    context.addIssue({ code: "custom", path: ["battleRole"], message: "仅参与卡牌对战的卡牌可选择对战定位" });
   }
 });
 const cardPatchSchema = cardSchemaObject.partial();
@@ -305,6 +313,7 @@ function cardPayload(row: mysql.RowDataPacket, useMediaUrls = false) {
     cardNo: String(row.card_no),
     name: String(row.name),
     rarity: rarity(row.rarity),
+    battleRole: row.battle_role ? String(row.battle_role) : null,
     imageUrl: useMediaUrls ? cardMediaUrl(row, "image") : publicOssUrl(row.image_url) ?? "",
     thumbnailUrl: useMediaUrls ? cardMediaUrl(row, "thumbnail") : publicOssUrl(row.thumbnail_url || row.image_url) ?? "",
     motionMp4Url: hasMotion ? cardMotionMediaUrl(row, "mp4") : null,
@@ -1640,7 +1649,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (!(await requireAdmin(req, res))) return;
     const [rows, packRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(
-        `SELECT c.id, c.card_no, c.name, c.rarity,
+        `SELECT c.id, c.card_no, c.name, c.rarity, c.battle_role,
           '' AS image_url, '' AS thumbnail_url,
           NULL AS story, c.release_at, c.status, c.created_at, c.updated_at,
           COUNT(DISTINCT uc.user_id) AS owner_count, COALESCE(SUM(uc.total_obtained), 0) AS total_drawn,
@@ -1756,9 +1765,9 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       await connection.beginTransaction();
       await connection.query(
         `INSERT INTO asset_cards
-          (id, card_no, name, rarity, image_url, thumbnail_url, story, release_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, value.cardNo, value.name, value.rarity, optimizedImages.full, optimizedImages.thumbnail, value.story || null, value.releaseAt ? new Date(value.releaseAt) : null, value.status]
+          (id, card_no, name, rarity, battle_role, image_url, thumbnail_url, story, release_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, value.cardNo, value.name, value.rarity, value.battleRole, optimizedImages.full, optimizedImages.thumbnail, value.story || null, value.releaseAt ? new Date(value.releaseAt) : null, value.status]
       );
       await syncCardPacks(id, packIds, connection);
       if (battleTiers) await saveCardBattleTiers(id, battleTiers, connection);
@@ -1780,7 +1789,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const [[usage], currentRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM user_asset_cards WHERE card_id = ?", [req.params.id]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>(
-        `SELECT card_no, rarity, motion_mp4_path, motion_webm_path, motion_poster_path
+        `SELECT card_no, rarity, battle_role, motion_mp4_path, motion_webm_path, motion_poster_path
          FROM asset_cards WHERE id = ? LIMIT 1`,
         [req.params.id]
       ).then(([rows]) => rows)
@@ -1791,6 +1800,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       || (parsed.data.cardNo != null && parsed.data.cardNo !== current.card_no);
     if (Number(usage.count) > 0 && changesProtectedField) return sendError(res, 409, "已有用户获得的卡片不能修改编号或品质");
     const finalRarity = String(parsed.data.rarity ?? current.rarity);
+    const finalBattleRole = parsed.data.battleRole === undefined ? current.battle_role : parsed.data.battleRole;
     const { packIds, battleTiers, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
     if (cardRaritySupportsBattle(finalRarity)) {
       if (battleTiers === null) return sendError(res, 400, "史诗或传说卡必须保留完整战斗配置");
@@ -1798,13 +1808,15 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         return sendError(res, 400, "史诗或传说卡必须完整配置 0-3 星战斗属性");
       }
     } else if (battleTiers) return sendError(res, 400, "仅史诗或传说卡可配置战斗属性");
+    if (cardRaritySupportsBattle(finalRarity) && !finalBattleRole) return sendError(res, 400, "史诗或传说卡必须选择对战定位");
+    if (!cardRaritySupportsBattle(finalRarity) && finalBattleRole) return sendError(res, 400, "仅参与卡牌对战的卡牌可选择对战定位");
     const changes: Record<string, unknown> = { ...parsedChanges };
     if (typeof changes.imageUrl === "string") {
       const optimizedImages = await optimizedAssetImages(String(changes.imageUrl), req.params.id, 1200, 360);
       changes.imageUrl = optimizedImages.full;
       changes.thumbnailUrl = optimizedImages.thumbnail;
     }
-    const columns: Record<string, string> = { cardNo: "card_no", name: "name", rarity: "rarity", imageUrl: "image_url", thumbnailUrl: "thumbnail_url", story: "story", releaseAt: "release_at", status: "status" };
+    const columns: Record<string, string> = { cardNo: "card_no", name: "name", rarity: "rarity", battleRole: "battle_role", imageUrl: "image_url", thumbnailUrl: "thumbnail_url", story: "story", releaseAt: "release_at", status: "status" };
     const entries = Object.entries(changes);
     const connection = await pool.getConnection();
     try {

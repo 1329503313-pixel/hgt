@@ -3,8 +3,8 @@ import { Check, ImagePlus, Plus, Save, Search, Shell, Sparkles, Trash2, Video, X
 import { api } from "../../api";
 import { Modal } from "../Modal";
 import { AssetCardVisual } from "../AssetCardVisual";
-import type { AssetCard, AssetPackType, AssetRarity } from "../../shared/digitalAssets";
-import { ASSET_PACK_TYPE_LABELS, ASSET_RARITY_LABELS, assetRarityLabel, assetRarityMatchesQuery } from "../../shared/digitalAssets";
+import type { AssetCard, AssetPackType, AssetRarity, CardBattleRole } from "../../shared/digitalAssets";
+import { ASSET_PACK_TYPE_LABELS, ASSET_RARITY_LABELS, CARD_BATTLE_ROLE_LABELS, assetRarityLabel, assetRarityMatchesQuery } from "../../shared/digitalAssets";
 import type { Collectible } from "../../shared/collectibles";
 import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
@@ -24,12 +24,14 @@ type CardSort = "number-asc" | "number-desc" | "rarity-asc" | "rarity-desc";
 
 type CardForm = {
   cardNo: string; name: string; rarity: AssetRarity; imageUrl: string; story: string; status: string; packIds: string[];
+  battleRole: CardBattleRole | null;
   motionMp4Url: string | null; motionWebmUrl: string | null; motionPosterUrl: string | null; battleTiers: CardBattleTier[] | null;
 };
 const isBattleRarity = (rarity: AssetRarity): rarity is "epic" | "legend" => rarity === "epic" || rarity === "legend";
 const freshBattleTiers = (rarity: "epic" | "legend") => defaultCardBattleTiersForRarity(rarity).map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) }));
 const blankCard: CardForm = {
   cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "active", packIds: [] as string[],
+  battleRole: null,
   motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null, battleTiers: null,
 };
 const blankPack = { name: "", description: "", packStory: "", packType: "permanent" as AssetPackType, singlePrice: 10, tenPrice: 90, dailyFreeDraws: 0, saleStartAt: "", saleEndAt: "", sortOrder: 0 };
@@ -216,6 +218,7 @@ export function DigitalAssetManagement() {
         ...blankCard,
         cardNo: nextCardNo(latestCard.cardNo),
         rarity: latestCard.rarity,
+        battleRole: isBattleRarity(latestCard.rarity) ? (latestCard.battleRole ?? "damage") : null,
         packIds: [...latestCard.packIds],
         battleTiers: isBattleRarity(latestCard.rarity) ? freshBattleTiers(latestCard.rarity) : null,
       } : blankCard);
@@ -235,6 +238,7 @@ export function DigitalAssetManagement() {
       setCardForm({
         cardNo: data.card.cardNo, name: data.card.name, rarity: data.card.rarity, imageUrl: data.card.imageUrl,
         story: data.card.story, status: data.card.status, packIds: data.card.packIds,
+        battleRole: isBattleRarity(data.card.rarity) ? (data.card.battleRole ?? "damage") : null,
         motionMp4Url: data.card.motionMp4Url ?? null, motionWebmUrl: data.card.motionWebmUrl ?? null, motionPosterUrl: data.card.motionPosterUrl ?? null,
         battleTiers: data.card.battleTiers ? data.card.battleTiers.map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) })) : null,
       });
@@ -615,7 +619,8 @@ export function DigitalAssetManagement() {
           </div>
           <label><span className="text-sm font-bold">卡片编号</span><input className="field mt-1" value={cardForm.cardNo} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => setCardForm({ ...cardForm, cardNo: e.target.value })} /></label>
           <label><span className="text-sm font-bold">名称</span><input className="field mt-1" value={cardForm.name} onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })} /></label>
-          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleTiers: isBattleRarity(rarity) ? (rarity === cardForm.rarity ? cardForm.battleTiers : freshBattleTiers(rarity)) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleRole: isBattleRarity(rarity) ? (cardForm.battleRole ?? "damage") : null, battleTiers: isBattleRarity(rarity) ? (rarity === cardForm.rarity ? cardForm.battleTiers : freshBattleTiers(rarity)) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          {isBattleRarity(cardForm.rarity) && <label><span className="text-sm font-bold">对战定位</span><select className="field mt-1" value={cardForm.battleRole ?? "damage"} onChange={(event) => setCardForm({ ...cardForm, battleRole: event.target.value as CardBattleRole })}>{Object.entries(CARD_BATTLE_ROLE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="mt-1 block text-xs leading-5 text-muted">仅参与卡牌对战的史诗与传说卡可配置。</span></label>}
           <label><span className="text-sm font-bold">状态</span><select className="field mt-1" value={cardForm.status} onChange={(e) => setCardForm({ ...cardForm, status: e.target.value })}><option value="inactive">停用</option><option value="active">启用</option></select></label>
           <label className="sm:col-span-2"><span className="text-sm font-bold">卡片故事</span><textarea className="field mt-1 min-h-32" value={cardForm.story} onChange={(e) => setCardForm({ ...cardForm, story: e.target.value })} /></label>
           {isBattleRarity(cardForm.rarity) && cardForm.battleTiers && <CardBattleConfigEditor tiers={cardForm.battleTiers} activeStar={activeBattleStar} onActiveStar={setActiveBattleStar} onChange={(battleTiers) => setCardForm((current) => ({ ...current, battleTiers }))} />}

@@ -22,6 +22,21 @@ test("参战资格和后台战斗配置同时允许史诗与传说卡", () => {
   assert.match(dbSource, /WHERE cards\.rarity = 'legend'/);
 });
 
+test("对战定位仅属于可参战卡，历史卡默认输出并随冻结阵容返回", () => {
+  assert.match(dbSource, /battle_role ENUM\('damage','tank','support'\) NULL/);
+  assert.match(dbSource, /SET battle_role = 'damage' WHERE rarity IN \('epic','legend'\) AND battle_role IS NULL/);
+  assert.match(dbSource, /SET battle_role = NULL WHERE rarity NOT IN \('epic','legend'\)/);
+  assert.match(digitalAssetsSource, /史诗或传说卡必须选择对战定位/);
+  assert.match(digitalAssetsSource, /仅参与卡牌对战的卡牌可选择对战定位/);
+  assert.match(roomSource, /battleRole: String\(row\.battle_role \?\? "damage"\)/);
+});
+
+test("二星且已配置动态卡面的参战卡才取得战场动态媒体", () => {
+  assert.match(roomSource, /const unlocked = starLevel >= 2 && Boolean\(row\.motion_mp4_path\)/);
+  assert.match(roomSource, /motionMp4Url: `\/api\/media\/assets\/cards\/\$\{cardId\}\/motion\/mp4\?v=\$\{version\}`/);
+  assert.match(roomSource, /\.\.\.battleMotionPayload\(row, starLevel\)/);
+});
+
 test("备战阶段只公开本人新阵容，对手新阵容不会沿用上一局公开状态", () => {
   assert.doesNotMatch(roomSource, /frozenStillSelected/);
   assert.match(roomSource, /const gamePublic = Boolean\(result && String\(currentGame\?\.status\) === "playing"\)/);

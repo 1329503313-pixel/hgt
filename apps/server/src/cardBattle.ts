@@ -4,6 +4,9 @@ export const CARD_BATTLE_MAX_TRIGGER_EFFECTS = 100;
 export const CARD_BATTLE_MAX_EVENTS = 400;
 export const CARD_BATTLE_MAX_PLAYBACK_MS = 7 * 60_000;
 
+export const cardBattleRoleCodes = ["damage", "tank", "support"] as const;
+export type CardBattleRole = typeof cardBattleRoleCodes[number];
+
 export const cardBattleConditionCodes = [
   "energy_full",
   "self_death",
@@ -84,8 +87,12 @@ export type CardBattleDeckCard = {
   name: string;
   imageUrl: string;
   rarity: "epic" | "legend";
+  battleRole: CardBattleRole;
   starLevel: 0 | 1 | 2 | 3;
   slot: 1 | 2 | 3 | 4 | 5;
+  motionMp4Url: string | null;
+  motionWebmUrl: string | null;
+  motionPosterUrl: string | null;
   tier: CardBattleTier;
 };
 
