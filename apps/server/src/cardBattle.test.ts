@@ -4,7 +4,7 @@ import { CARD_BATTLE_MAX_EVENTS, CARD_BATTLE_MAX_PLAYBACK_MS, CARD_BATTLE_MAX_RO
 
 function card(id: string, slot: 1 | 2 | 3 | 4 | 5, overrides: Partial<CardBattleDeckCard["tier"]> = {}, effects: CardBattleSkillEffect[] = []): CardBattleDeckCard {
   return {
-    instanceId: id, cardId: id, name: id, imageUrl: `/${id}.webp`, rarity: "epic", starLevel: 0, slot,
+    instanceId: id, cardId: id, name: id, imageUrl: `/${id}.webp`, rarity: "legend", starLevel: 0, slot,
     tier: { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, skillName: "测试技能", skillDescription: "", effects, ...overrides },
   };
 }
@@ -53,6 +53,37 @@ test("临时攻击提升持续回合到期后失效，回合数绝不超过30", 
   assert.equal(result.rounds, CARD_BATTLE_MAX_ROUNDS);
   assert.ok(result.events.some((event) => event.visual === "buff"));
   assert.equal(result.finalStates.find((state) => state.instanceId === "a1")?.attack, 0);
+});
+
+test("自身攻击与技能伤害提升同时加成普通攻击属性和攻击性技能伤害", () => {
+  const effects: CardBattleSkillEffect[] = [
+    { id: "self-combined-buff", order: 0, condition: "energy_full", conditionValue: null, type: "attack_skill_damage_self", value: 200, duration: 2 },
+    { id: "self-damage", order: 1, condition: "energy_full", conditionValue: null, type: "damage_single", value: 300, duration: null },
+  ];
+  const one = [card("a1", 1, { attack: 100, energyRequired: 10, speed: 1000 }, effects), ...[2, 3, 4, 5].map((slot) => card(`a${slot}`, slot as 2 | 3 | 4 | 5, { attack: 0, speed: 1 }))];
+  const two = [1, 2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, defense: 100, maxHp: 5000 }));
+  const result = simulateCardBattle(players(one, two), "self-attack-skill-damage");
+  const buffEvent = result.events.find((event) => event.actorId === "a1" && event.visual === "buff");
+  const damageEvent = result.events.find((event) => event.actorId === "a1" && event.kind === "skill" && event.visual === "damage");
+  assert.equal(buffEvent?.states.find((state) => state.instanceId === "a1")?.attack, 300);
+  assert.equal(buffEvent?.effects[0]?.label, "攻击与技能伤害 +200");
+  assert.equal(damageEvent?.effects[0]?.amount, -400);
+});
+
+test("全体攻击与技能伤害提升会加成友军随后释放的攻击性技能", () => {
+  const teamBuff: CardBattleSkillEffect = { id: "team-combined-buff", order: 0, condition: "energy_full", conditionValue: null, type: "attack_skill_damage_all_allies", value: 200, duration: 2 };
+  const damageSkill: CardBattleSkillEffect = { id: "ally-damage", order: 0, condition: "energy_full", conditionValue: null, type: "damage_single", value: 300, duration: null };
+  const one = [
+    card("a1", 1, { attack: 100, energyRequired: 10, speed: 1000 }, [teamBuff]),
+    card("a2", 2, { attack: 100, energyRequired: 10, speed: 900 }, [damageSkill]),
+    ...[3, 4, 5].map((slot) => card(`a${slot}`, slot as 3 | 4 | 5, { attack: 0, speed: 1 })),
+  ];
+  const two = [1, 2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, defense: 100, maxHp: 5000 }));
+  const result = simulateCardBattle(players(one, two), "team-attack-skill-damage");
+  const buffEvent = result.events.find((event) => event.actorId === "a1" && event.visual === "buff");
+  const allyDamageEvent = result.events.find((event) => event.actorId === "a2" && event.kind === "skill" && event.visual === "damage");
+  assert.equal(buffEvent?.states.find((state) => state.instanceId === "a2")?.attack, 300);
+  assert.equal(allyDamageEvent?.effects[0]?.amount, -400);
 });
 
 test("技能指定后排时优先命中后排，后排清空后使用前排兜底", () => {

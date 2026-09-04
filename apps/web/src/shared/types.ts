@@ -579,7 +579,7 @@ export type OnlineCardBattleCard = {
   id: string;
   cardNo: string;
   name: string;
-  rarity: "epic" | "legend";
+  rarity: "legend";
   starLevel: number;
   imageUrl: string;
   stats: { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; canAttackRear: boolean };

@@ -2723,7 +2723,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
         if (!seat) {
           const enoughCards = await eligibleCardCount(user.id, connection) >= 5;
           await connection.rollback();
-          return fail(res, 409, enoughCards ? "对战席已满，可以选择观战" : "至少拥有五张启用中的史诗或传说卡才能进入对战席", "PLAYER_FULL");
+          return fail(res, 409, enoughCards ? "对战席已满，可以选择观战" : "至少拥有五张启用中的传说卡才能进入对战席", "PLAYER_FULL");
         }
         resolvedRole = "player";
       }
@@ -2854,7 +2854,7 @@ router.post("/rooms/:roomId/card-battle/member-role", async (req, res) => {
       if (!seat) {
         const enough = await eligibleCardCount(context.user.id, connection) >= 5;
         await connection.rollback();
-        return fail(res, 409, enough ? "对战席已满" : "至少拥有五张启用中的史诗或传说卡才能进入对战席");
+        return fail(res, 409, enough ? "对战席已满" : "至少拥有五张启用中的传说卡才能进入对战席");
       }
     } else await releaseCardBattleSeat(context.room.id, context.user.id, connection);
     await connection.query(

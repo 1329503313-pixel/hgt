@@ -216,7 +216,7 @@ export function DigitalAssetManagement() {
         cardNo: nextCardNo(latestCard.cardNo),
         rarity: latestCard.rarity,
         packIds: [...latestCard.packIds],
-        battleTiers: ["epic", "legend"].includes(latestCard.rarity) ? freshBattleTiers() : null,
+        battleTiers: latestCard.rarity === "legend" ? freshBattleTiers() : null,
       } : blankCard);
       setActiveBattleStar(0);
       setPackKeyword("");
@@ -614,10 +614,10 @@ export function DigitalAssetManagement() {
           </div>
           <label><span className="text-sm font-bold">卡片编号</span><input className="field mt-1" value={cardForm.cardNo} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => setCardForm({ ...cardForm, cardNo: e.target.value })} /></label>
           <label><span className="text-sm font-bold">名称</span><input className="field mt-1" value={cardForm.name} onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })} /></label>
-          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleTiers: ["epic", "legend"].includes(rarity) ? (cardForm.battleTiers ?? freshBattleTiers()) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleTiers: rarity === "legend" ? (cardForm.battleTiers ?? freshBattleTiers()) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label><span className="text-sm font-bold">状态</span><select className="field mt-1" value={cardForm.status} onChange={(e) => setCardForm({ ...cardForm, status: e.target.value })}><option value="inactive">停用</option><option value="active">启用</option></select></label>
           <label className="sm:col-span-2"><span className="text-sm font-bold">卡片故事</span><textarea className="field mt-1 min-h-32" value={cardForm.story} onChange={(e) => setCardForm({ ...cardForm, story: e.target.value })} /></label>
-          {["epic", "legend"].includes(cardForm.rarity) && cardForm.battleTiers && <CardBattleConfigEditor tiers={cardForm.battleTiers} activeStar={activeBattleStar} onActiveStar={setActiveBattleStar} onChange={(battleTiers) => setCardForm((current) => ({ ...current, battleTiers }))} />}
+          {cardForm.rarity === "legend" && cardForm.battleTiers && <CardBattleConfigEditor tiers={cardForm.battleTiers} activeStar={activeBattleStar} onActiveStar={setActiveBattleStar} onChange={(battleTiers) => setCardForm((current) => ({ ...current, battleTiers }))} />}
           <fieldset className="sm:col-span-2">
             <div className="flex items-center justify-between gap-3"><legend className="text-sm font-bold">卡包 <span className="text-red-500">*</span></legend><span className={`text-xs ${cardForm.packIds.length ? "text-muted" : "font-bold text-red-500"}`}>已选 {cardForm.packIds.length} 个</span></div>
             <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px]">

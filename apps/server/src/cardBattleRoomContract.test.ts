@@ -1,10 +1,26 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import type { CardBattleResult } from "./cardBattle.js";
+import { resolveCardBattlePlaybackStates } from "./cardBattlePlayback.js";
 
 const roomSource = readFileSync(new URL("./cardBattleRoom.ts", import.meta.url), "utf8");
 const routesSource = readFileSync(new URL("./onlineSoup.ts", import.meta.url), "utf8");
 const dbSource = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
+const digitalAssetsSource = readFileSync(new URL("./digitalAssets.ts", import.meta.url), "utf8");
+
+test("参战资格和后台战斗配置均仅允许传说卡", () => {
+  assert.equal((roomSource.match(/cards\.rarity = 'legend'/g) ?? []).length, 5);
+  assert.doesNotMatch(roomSource, /cards\.rarity IN \('epic','legend'\)/);
+  assert.match(routesSource, /至少拥有五张启用中的传说卡才能进入对战席/);
+  assert.doesNotMatch(routesSource, /至少拥有五张启用中的史诗或传说卡才能进入对战席/);
+  assert.match(digitalAssetsSource, /value\.rarity === "legend" && !value\.battleTiers/);
+  assert.match(digitalAssetsSource, /value\.rarity !== "legend" && value\.battleTiers/);
+  assert.match(digitalAssetsSource, /String\(row\.rarity\) === "legend" \? await loadCardBattleTiers/);
+  assert.match(digitalAssetsSource, /if \(finalRarity !== "legend"\) \{\s*await connection\.query\("DELETE FROM asset_card_battle_tiers/s);
+  assert.match(dbSource, /DELETE battle_tiers[\s\S]*WHERE cards\.rarity <> 'legend'/);
+  assert.match(dbSource, /INSERT IGNORE INTO asset_card_battle_tiers[\s\S]*WHERE cards\.rarity = 'legend'/);
+});
 
 test("备战阶段只公开本人新阵容，对手新阵容不会沿用上一局公开状态", () => {
   assert.doesNotMatch(roomSource, /frozenStillSelected/);
@@ -18,6 +34,26 @@ test("客户端每次只能取得一个服务端计时的事件并按序确认",
   assert.match(roomSource, /sequence !== expectedSequence \|\| Number\(progress\.active_sequence/);
   assert.match(roomSource, /elapsedMs \+ 25 < event\.durationMs/);
   assert.doesNotMatch(roomSource, /events:\s*result\.events/);
+  assert.match(roomSource, /settlement: playback!\.complete && gameStatus !== "aborted"/);
+});
+
+test("对局动画结束或中止后恢复初始卡牌状态但继续保留结算", () => {
+  const initialStates = [{ instanceId: "card-1", hp: 1000, energy: 0, alive: true }];
+  const damagedStates = [{ instanceId: "card-1", hp: 475, energy: 20, alive: true }];
+  const defeatedStates = [{ instanceId: "card-1", hp: 0, energy: 30, alive: false }];
+  const result = {
+    initialStates,
+    events: [{ states: damagedStates }, { states: defeatedStates }],
+  } as unknown as CardBattleResult;
+
+  assert.equal(resolveCardBattlePlaybackStates(result, 0, "playing"), initialStates);
+  assert.equal(resolveCardBattlePlaybackStates(result, 1, "ended"), damagedStates);
+  assert.equal(resolveCardBattlePlaybackStates(result, 2, "ended"), initialStates);
+  assert.equal(resolveCardBattlePlaybackStates(result, 0, "aborted"), initialStates);
+  assert.equal(resolveCardBattlePlaybackStates(result, 2, "ended")[0]?.hp, 1000);
+  assert.equal(resolveCardBattlePlaybackStates(result, 2, "ended")[0]?.energy, 0);
+  assert.equal(resolveCardBattlePlaybackStates(result, 2, "ended")[0]?.alive, true);
+  assert.match(roomSource, /states: resolveCardBattlePlaybackStates\(result, completedSequence, status\)/);
   assert.match(roomSource, /settlement: playback!\.complete && gameStatus !== "aborted"/);
 });
 

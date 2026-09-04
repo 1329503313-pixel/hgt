@@ -15,9 +15,11 @@ const numericValueEffects = new Set([
   "heal_self", "heal_lowest_ally", "energy_self", "energy_lowest_ally", "heal_all_allies", "energy_all_allies",
   "defense_self", "defense_all_allies", "speed_self", "speed_all_allies", "max_hp_self", "max_hp_all_allies",
   "attack_self", "attack_all_allies",
+  "attack_skill_damage_self", "attack_skill_damage_all_allies",
 ]);
 const durationEffects = new Set([
   "attack_self", "attack_all_allies", "defense_self", "defense_all_allies", "speed_self", "speed_all_allies",
+  "attack_skill_damage_self", "attack_skill_damage_all_allies",
 ]);
 const thresholdConditions = new Set(["self_hp_below_percent", "self_hp_below_percent_energy_full"]);
 const selfDeathConditions = new Set(["self_death", "self_death_energy_full"]);
@@ -44,7 +46,7 @@ export const cardBattleEffectSchema = z.object({
     context.addIssue({ code: "custom", path: ["value"], message: "当前技能类型不需要技能数值" });
   }
   if (durationEffects.has(value.type) && value.duration == null) {
-    context.addIssue({ code: "custom", path: ["duration"], message: "攻击、防御、速度提升必须填写持续回合" });
+    context.addIssue({ code: "custom", path: ["duration"], message: "攻击、技能伤害、防御、速度提升必须填写持续回合" });
   }
   if (!durationEffects.has(value.type) && value.duration != null) {
     context.addIssue({ code: "custom", path: ["duration"], message: "当前技能类型不需要持续回合" });

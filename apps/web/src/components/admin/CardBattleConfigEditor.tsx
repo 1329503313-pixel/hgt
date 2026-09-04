@@ -23,12 +23,14 @@ const effectLabels: Record<CardBattleEffectType, string> = {
   energy_lowest_ally: "恢复能量最低的友军能量", heal_all_allies: "恢复全体友军生命值", energy_all_allies: "恢复全体友军能量",
   defense_self: "增加自身防御力", defense_all_allies: "增加全体友军防御力", speed_self: "增加自身速度",
   speed_all_allies: "增加全体友军速度", max_hp_self: "增加自身生命值上限", max_hp_all_allies: "增加全体友军生命值上限",
-  attack_self: "增加自己攻击力", attack_all_allies: "增加全体友军攻击力", revive_self: "复活自己", revive_ally_1: "复活一名友军",
+  attack_self: "增加自己攻击力", attack_all_allies: "增加全体友军攻击力",
+  attack_skill_damage_self: "增加自己攻击力和技能伤害", attack_skill_damage_all_allies: "增加全体友军攻击力和技能伤害",
+  revive_self: "复活自己", revive_ally_1: "复活一名友军",
   revive_ally_2: "复活两名友军", revive_ally_3: "复活三名友军", revive_ally_4: "复活四名友军", revive_all_allies: "复活所有己方卡牌",
 };
 
 const numericEffects = new Set<CardBattleEffectType>(Object.keys(effectLabels).filter((key) => !key.startsWith("revive_")) as CardBattleEffectType[]);
-const durationEffects = new Set<CardBattleEffectType>(["attack_self", "attack_all_allies", "defense_self", "defense_all_allies", "speed_self", "speed_all_allies"]);
+const durationEffects = new Set<CardBattleEffectType>(["attack_self", "attack_all_allies", "attack_skill_damage_self", "attack_skill_damage_all_allies", "defense_self", "defense_all_allies", "speed_self", "speed_all_allies"]);
 const thresholdConditions = new Set<CardBattleCondition>(["self_hp_below_percent", "self_hp_below_percent_energy_full"]);
 const selfDeathConditions = new Set<CardBattleCondition>(["self_death", "self_death_energy_full"]);
 
@@ -73,7 +75,7 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
           <label><span className="text-xs font-bold">技能条件</span><select className="field mt-1" value={effect.condition} onChange={(event) => { const condition = event.target.value as CardBattleCondition; updateEffect(index, { condition, conditionValue: thresholdConditions.has(condition) ? (effect.conditionValue ?? 50) : null, ...(effect.type === "revive_self" && !selfDeathConditions.has(condition) ? { type: "revive_ally_1" as const } : {}) }); }}>{Object.entries(conditionLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           {thresholdConditions.has(effect.condition) && <label><span className="text-xs font-bold">生命值阈值（%）</span><input type="number" min="1" max="100" className="field mt-1" value={effect.conditionValue ?? 50} onChange={(event) => updateEffect(index, { conditionValue: Math.min(100, numberValue(event.target.value, 1)) })} /></label>}
           <label><span className="text-xs font-bold">技能类型</span><select className="field mt-1" value={effect.type} onChange={(event) => { const type = event.target.value as CardBattleEffectType; updateEffect(index, { type, value: numericEffects.has(type) ? (effect.value ?? 1) : null, duration: durationEffects.has(type) ? (effect.duration ?? 1) : null }); }}>{Object.entries(effectLabels).map(([value, label]) => <option key={value} value={value} disabled={value === "revive_self" && !selfDeathConditions.has(effect.condition)}>{label}</option>)}</select>{!selfDeathConditions.has(effect.condition) && <span className="mt-1 block text-[11px] leading-4 text-muted">“复活自己”仅在本卡片死亡条件下可选，避免技能空放并清空能量。</span>}</label>
-          {numericEffects.has(effect.type) && <label><span className="text-xs font-bold">技能数值</span><input type="number" min="1" className="field mt-1" value={effect.value ?? 1} onChange={(event) => updateEffect(index, { value: numberValue(event.target.value, 1) })} /></label>}
+          {numericEffects.has(effect.type) && <label><span className="text-xs font-bold">技能数值</span><input type="number" min="1" className="field mt-1" value={effect.value ?? 1} onChange={(event) => updateEffect(index, { value: numberValue(event.target.value, 1) })} />{effect.type.startsWith("attack_skill_damage_") && <span className="mt-1 block text-[11px] leading-4 text-muted">该数值同时增加普通攻击力与攻击性技能伤害。</span>}</label>}
           {durationEffects.has(effect.type) && <label><span className="text-xs font-bold">持续回合（本回合算 1）</span><input type="number" min="1" max="30" className="field mt-1" value={effect.duration ?? 1} onChange={(event) => updateEffect(index, { duration: Math.min(30, numberValue(event.target.value, 1)) })} /></label>}
         </div>
       </section>)}

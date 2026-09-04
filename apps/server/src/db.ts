@@ -2809,7 +2809,14 @@ export async function initDatabase() {
         REFERENCES asset_card_battle_tiers(card_id, star_level) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
-  // 历史史诗/传说卡自动获得安全默认值；技能保持为空。
+  // 史诗卡不参与卡牌对战，清理旧版本曾生成的战斗配置。
+  await pool.query(`
+    DELETE battle_tiers
+    FROM asset_card_battle_tiers battle_tiers
+    JOIN asset_cards cards ON cards.id = battle_tiers.card_id
+    WHERE cards.rarity <> 'legend'
+  `);
+  // 历史传说卡自动获得安全默认值；技能保持为空。
   await pool.query(`
     INSERT IGNORE INTO asset_card_battle_tiers
       (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear)
@@ -2822,7 +2829,7 @@ export async function initDatabase() {
       UNION ALL SELECT 2, 2000, 1000, 200, 200
       UNION ALL SELECT 3, 3000, 1500, 300, 300
     ) defaults
-    WHERE cards.rarity IN ('epic','legend')
+    WHERE cards.rarity = 'legend'
   `);
 
   await pool.query(`

@@ -42,6 +42,8 @@ export const cardBattleEffectCodes = [
   "max_hp_all_allies",
   "attack_self",
   "attack_all_allies",
+  "attack_skill_damage_self",
+  "attack_skill_damage_all_allies",
   "revive_self",
   "revive_ally_1",
   "revive_ally_2",
@@ -81,7 +83,7 @@ export type CardBattleDeckCard = {
   cardId: string;
   name: string;
   imageUrl: string;
-  rarity: "epic" | "legend";
+  rarity: "legend";
   starLevel: 0 | 1 | 2 | 3;
   slot: 1 | 2 | 3 | 4 | 5;
   tier: CardBattleTier;
@@ -157,7 +159,7 @@ export type CardBattleResult = {
   playbackDurationMs: number;
 };
 
-type Buff = { stat: "attack" | "defense" | "speed"; value: number; expiresAfterRound: number };
+type Buff = { stat: "attack" | "defense" | "speed" | "skillDamage"; value: number; expiresAfterRound: number };
 type RuntimeCard = CardBattleDeckCard & {
   userId: string;
   seat: 1 | 2;
@@ -218,6 +220,11 @@ function effectiveStat(card: RuntimeCard, stat: "attack" | "defense" | "speed") 
   return Math.max(0, card.tier[stat] + card.buffs.filter((buff) => buff.stat === stat).reduce((sum, buff) => sum + buff.value, 0));
 }
 
+function effectiveSkillDamage(card: RuntimeCard, baseDamage: number) {
+  const bonus = card.buffs.filter((buff) => buff.stat === "skillDamage").reduce((sum, buff) => sum + buff.value, 0);
+  return Math.max(0, baseDamage + bonus);
+}
+
 function publicState(card: RuntimeCard): CardBattlePublicCardState {
   return {
     instanceId: card.instanceId,
@@ -263,6 +270,7 @@ function visualForEffect(type: CardBattleEffectCode): CardBattleEvent["visual"] 
 }
 
 function effectLabel(type: CardBattleEffectCode, value: number) {
+  if (type.startsWith("attack_skill_damage_")) return `攻击与技能伤害 +${value}`;
   if (type.startsWith("attack_")) return `攻击 +${value}`;
   if (type.startsWith("defense_")) return `防御 +${value}`;
   if (type.startsWith("speed_")) return `速度 +${value}`;
@@ -347,7 +355,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       const count = Number(type.slice(-1));
       return shuffled(foes, random).slice(0, count);
     }
-    if (["heal_self", "energy_self", "defense_self", "speed_self", "max_hp_self", "attack_self"].includes(type)) return actor.alive ? [actor] : [];
+    if (["heal_self", "energy_self", "defense_self", "speed_self", "max_hp_self", "attack_self", "attack_skill_damage_self"].includes(type)) return actor.alive ? [actor] : [];
     if (type === "heal_lowest_ally") {
       const minimum = Math.min(...livingAllies.map((card) => card.hp));
       const target = randomOne(livingAllies.filter((card) => card.hp === minimum));
@@ -358,7 +366,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       const target = randomOne(livingAllies.filter((card) => card.energy === minimum));
       return target ? [target] : [];
     }
-    if (["heal_all_allies", "energy_all_allies", "defense_all_allies", "speed_all_allies", "max_hp_all_allies", "attack_all_allies"].includes(type)) return livingAllies;
+    if (["heal_all_allies", "energy_all_allies", "defense_all_allies", "speed_all_allies", "max_hp_all_allies", "attack_all_allies", "attack_skill_damage_all_allies"].includes(type)) return livingAllies;
     if (type === "revive_self") return actor.alive ? [] : [actor];
     const deadOwnCards = allies(actor, false).filter((card) => !card.alive);
     const deadAllies = deadOwnCards.filter((card) => card.instanceId !== actor.instanceId);
@@ -418,7 +426,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       gainEnergy(actor, 10);
       for (const target of targets) {
         const beforeRatio = target.maxHp > 0 ? target.hp / target.maxHp : 0;
-        const damage = Math.min(target.hp, Math.max(0, amount - effectiveStat(target, "defense")));
+        const damage = Math.min(target.hp, Math.max(0, effectiveSkillDamage(actor, amount) - effectiveStat(target, "defense")));
         if (damage > 0) {
           target.hp -= damage;
           actor.damageDealt += damage;
@@ -450,6 +458,10 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         if (effect.type.startsWith("max_hp_")) {
           target.maxHp += amount;
           target.hp += amount;
+        } else if (effect.type.startsWith("attack_skill_damage_")) {
+          const expiresAfterRound = round + Math.max(1, effect.duration ?? 1) - 1;
+          target.buffs.push({ stat: "attack", value: amount, expiresAfterRound });
+          target.buffs.push({ stat: "skillDamage", value: amount, expiresAfterRound });
         } else {
           const stat = effect.type.startsWith("attack_") ? "attack" : effect.type.startsWith("defense_") ? "defense" : "speed";
           target.buffs.push({ stat, value: amount, expiresAfterRound: round + Math.max(1, effect.duration ?? 1) - 1 });

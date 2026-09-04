@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Eye, LogOut, Menu, Send, Shield, Smile, Sparkles, Swords, X, Zap } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Check, ChevronDown, Eye, GripVertical, LogOut, Menu, Send, Share2, Shield, Smile, Sparkles, Swords, Users, X, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { reorderCardBattleLineup } from "../shared/cardBattleLineup";
 import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleEvent, OnlineCardBattlePlayback, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
 import { Modal } from "./Modal";
 import { StickerKeyboard } from "./StickerKeyboard";
@@ -14,7 +15,14 @@ type Props = {
   stickersLoading: boolean;
   onReload: () => Promise<unknown>;
   onReloadMessages: () => Promise<unknown>;
+  onOpenInvite: () => void;
+  onOpenMembers: () => void;
   showToast: (message: string) => void;
+};
+
+type ChatBubble = {
+  message: OnlineSoupMessage;
+  expiresAt: number;
 };
 
 function hpTone(hp: number, maxHp: number) {
@@ -25,7 +33,7 @@ function hpTone(hp: number, maxHp: number) {
   return "bg-red-500";
 }
 
-function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selectable }: {
+function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selectable, drag }: {
   card: OnlineCardBattleCard | null;
   state: OnlineCardBattleCardState | null;
   cardBack: boolean;
@@ -33,6 +41,17 @@ function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selecta
   activeEvent: OnlineCardBattleEvent | null;
   onClick?: () => void;
   selectable?: boolean;
+  drag?: {
+    slot: number;
+    draggable: boolean;
+    dragging: boolean;
+    dropTarget: boolean;
+    onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+    onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+    onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+    onPointerCancel: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+    onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  };
 }) {
   const rootRef = useRef<HTMLElement | null>(null);
   const isActiveActor = Boolean(state && activeEvent?.actorId === state.instanceId);
@@ -78,14 +97,32 @@ function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selecta
     {activeEffect?.label && !["damage", "heal"].includes(activeEvent?.visual ?? "") && <span className={`card-battle-number absolute left-1/2 top-1/4 z-40 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-black ${activeEvent?.visual === "energy" ? "bg-cyan-500 text-white" : activeEvent?.visual === "revive" ? "bg-emerald-500 text-white" : "bg-amber-400 text-slate-950"}`}>{activeEffect.label}</span>}
     {state && !state.alive && <div className="absolute inset-0 z-30 grid place-items-center rounded-[inherit] bg-slate-950/75 text-[10px] font-black text-slate-300">已下场</div>}
   </>;
-  const classes = `card-battle-card relative aspect-[5/7] w-[clamp(48px,min(15vw,8.5dvh),92px)] overflow-visible rounded-lg border border-white/20 bg-slate-900 shadow-lg ${isActor ? `card-battle-attacker card-battle-attacker-${seat}` : ""} ${effectClass} ${state && !state.alive ? "card-battle-defeated" : ""} ${selectable ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" : ""}`;
+  const classes = `card-battle-card relative aspect-[5/7] w-[clamp(48px,min(15vw,8.5dvh),92px)] overflow-visible rounded-lg border border-white/20 bg-slate-900 shadow-lg ${isActor ? `card-battle-attacker card-battle-attacker-${seat}` : ""} ${effectClass} ${state && !state.alive ? "card-battle-defeated" : ""} ${selectable ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" : ""} ${drag?.draggable ? "touch-none select-none" : ""} ${drag?.dragging ? "z-50 scale-105 opacity-75 ring-2 ring-cyan-300" : ""} ${drag?.dropTarget ? "z-40 ring-2 ring-amber-300" : ""}`;
   const setRoot = (element: HTMLElement | null) => { rootRef.current = element; };
   return selectable
-    ? <button ref={setRoot} data-battle-instance={state?.instanceId} type="button" className={classes} onClick={onClick} aria-label={card ? `更换${card.name}` : "选择卡牌"}>{content}</button>
+    ? <button
+        ref={setRoot}
+        data-battle-instance={state?.instanceId}
+        data-card-battle-slot={drag?.slot}
+        type="button"
+        className={classes}
+        onClick={onClick}
+        onPointerDown={drag?.draggable ? drag.onPointerDown : undefined}
+        onPointerMove={drag?.draggable ? drag.onPointerMove : undefined}
+        onPointerUp={drag?.draggable ? drag.onPointerUp : undefined}
+        onPointerCancel={drag?.draggable ? drag.onPointerCancel : undefined}
+        onKeyDown={drag?.draggable ? drag.onKeyDown : undefined}
+        aria-keyshortcuts={drag?.draggable ? "Alt+ArrowLeft Alt+ArrowRight" : undefined}
+        aria-label={card ? `更换${card.name}，按住拖动可交换位置` : "选择卡牌，也可作为换位目标"}
+        title={drag?.draggable ? "拖动到其他卡位交换位置；也可按 Alt+左右方向键换位" : undefined}
+      >
+        {content}
+        {drag?.draggable && <span className="pointer-events-none absolute right-0.5 top-4 z-20 grid h-5 w-5 place-items-center rounded bg-slate-950/65 text-white/80" aria-hidden="true"><GripVertical size={13} /></span>}
+      </button>
     : <div ref={setRoot} data-battle-instance={state?.instanceId} className={classes}>{content}</div>;
 }
 
-function HalfArena({ seat, battleSeat, states, activeEvent, isOwn, position, canSelect, onPick }: {
+function HalfArena({ seat, battleSeat, states, activeEvent, isOwn, position, canSelect, onPick, onReorder }: {
   seat: 1 | 2;
   battleSeat: NonNullable<OnlineSoupSnapshot["room"]["cardBattle"]>["seats"][number];
   states: OnlineCardBattleCardState[];
@@ -94,19 +131,112 @@ function HalfArena({ seat, battleSeat, states, activeEvent, isOwn, position, can
   position: "top" | "bottom";
   canSelect: boolean;
   onPick: (slot: number) => void;
+  onReorder: (fromSlot: number, toSlot: number) => Promise<boolean>;
 }) {
+  const [dragSlot, setDragSlot] = useState<number | null>(null);
+  const [dropSlot, setDropSlot] = useState<number | null>(null);
+  const [reorderAnnouncement, setReorderAnnouncement] = useState("");
+  const pointerDragRef = useRef<{ pointerId: number; sourceSlot: number; startX: number; startY: number; dragging: boolean } | null>(null);
+  const dropSlotRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+
+  useEffect(() => {
+    if (canSelect) return;
+    pointerDragRef.current = null;
+    dropSlotRef.current = null;
+    setDragSlot(null);
+    setDropSlot(null);
+  }, [canSelect]);
+
   const slot = (slotNumber: number) => battleSeat.lineup.find((item) => item.slot === slotNumber) ?? { slot: slotNumber, card: null, cardBack: false };
   const state = (slotNumber: number) => states.find((item) => item.seat === seat && item.slot === slotNumber) ?? null;
+  const resetDrag = () => {
+    pointerDragRef.current = null;
+    dropSlotRef.current = null;
+    setDragSlot(null);
+    setDropSlot(null);
+  };
+  const commitReorder = async (fromSlot: number, toSlot: number) => {
+    if (fromSlot === toSlot) return;
+    if (await onReorder(fromSlot, toSlot)) setReorderAnnouncement(`已交换第 ${fromSlot} 和第 ${toSlot} 个卡位`);
+  };
+  const pointerDown = (slotNumber: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    pointerDragRef.current = { pointerId: event.pointerId, sourceSlot: slotNumber, startX: event.clientX, startY: event.clientY, dragging: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const pointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const interaction = pointerDragRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    if (!interaction.dragging && Math.hypot(event.clientX - interaction.startX, event.clientY - interaction.startY) < 10) return;
+    if (!interaction.dragging) {
+      interaction.dragging = true;
+      setDragSlot(interaction.sourceSlot);
+    }
+    event.preventDefault();
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-card-battle-slot]");
+    const targetSlot = target ? Number(target.dataset.cardBattleSlot) : null;
+    const validTarget = targetSlot && targetSlot >= 1 && targetSlot <= 5 ? targetSlot : null;
+    dropSlotRef.current = validTarget;
+    setDropSlot(validTarget);
+  };
+  const finishPointer = (event: ReactPointerEvent<HTMLButtonElement>, cancelled = false) => {
+    const interaction = pointerDragRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const targetSlot = dropSlotRef.current;
+    const dragged = interaction.dragging;
+    const sourceSlot = interaction.sourceSlot;
+    resetDrag();
+    if (!dragged || cancelled) return;
+    event.preventDefault();
+    suppressClickRef.current = true;
+    window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+    if (targetSlot) void commitReorder(sourceSlot, targetSlot);
+  };
+  const keyboardReorder = (slotNumber: number, event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!event.altKey || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    const targetSlot = slotNumber + (event.key === "ArrowLeft" ? -1 : 1);
+    if (targetSlot < 1 || targetSlot > 5) return;
+    event.preventDefault();
+    void commitReorder(slotNumber, targetSlot);
+  };
   const row = (slots: number[]) => <div className="flex items-center justify-center gap-[clamp(6px,2vw,18px)]">{slots.map((slotNumber) => {
     const item = slot(slotNumber);
-    return <BattleCard key={slotNumber} card={item.card} cardBack={item.cardBack} state={state(slotNumber)} seat={position === "bottom" ? 1 : 2} activeEvent={activeEvent} selectable={isOwn && canSelect} onClick={() => onPick(slotNumber)} />;
+    const draggable = Boolean(item.card && isOwn && canSelect);
+    return <BattleCard
+      key={slotNumber}
+      card={item.card}
+      cardBack={item.cardBack}
+      state={state(slotNumber)}
+      seat={position === "bottom" ? 1 : 2}
+      activeEvent={activeEvent}
+      selectable={isOwn && canSelect}
+      onClick={() => {
+        if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+        onPick(slotNumber);
+      }}
+      drag={isOwn && canSelect ? {
+        slot: slotNumber,
+        draggable,
+        dragging: dragSlot === slotNumber,
+        dropTarget: dropSlot === slotNumber && dragSlot !== slotNumber,
+        onPointerDown: (event) => pointerDown(slotNumber, event),
+        onPointerMove: pointerMove,
+        onPointerUp: (event) => finishPointer(event),
+        onPointerCancel: (event) => finishPointer(event, true),
+        onKeyDown: (event) => keyboardReorder(slotNumber, event),
+      } : undefined}
+    />;
   })}</div>;
   return <section className={`relative flex min-h-0 flex-1 flex-col justify-center gap-2 px-2 py-2 ${isOwn ? "bg-cyan-950/20" : "bg-violet-950/15"}`} aria-label={`${battleSeat.user?.nickname ?? `席位${seat}`}的半区`}>
     <div className="absolute left-3 top-2 z-10 flex items-center gap-2 rounded-full bg-slate-950/65 px-2.5 py-1 text-[10px] font-bold text-white backdrop-blur-sm">
       {battleSeat.user?.avatar ? <img className="h-5 w-5 rounded-full object-cover" src={battleSeat.user.avatar} alt="" /> : <span className="grid h-5 w-5 place-items-center rounded-full bg-cyan-500 text-[9px]">{battleSeat.user?.nickname.slice(0, 1) ?? seat}</span>}
       <span>{battleSeat.user?.nickname ?? "等待玩家"}</span>{battleSeat.ready && <span className="text-emerald-300">已准备</span>}{isOwn && <span className="text-cyan-300">我的半区</span>}
     </div>
+    {isOwn && canSelect && <div className="pointer-events-none absolute right-3 top-2 z-10 flex items-center gap-1 rounded-full bg-slate-950/65 px-2.5 py-1 text-[10px] font-bold text-cyan-100 backdrop-blur-sm" aria-hidden="true"><GripVertical size={12} />拖动换位</div>}
     {position === "top" ? <>{row([3, 4, 5])}{row([1, 2])}</> : <>{row([1, 2])}{row([3, 4, 5])}</>}
+    <span className="sr-only" aria-live="polite">{reorderAnnouncement}</span>
   </section>;
 }
 
@@ -122,7 +252,7 @@ function Settlement({ battle, onClose }: { battle: NonNullable<OnlineSoupSnapsho
   </div>;
 }
 
-export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLoading, onReload, onReloadMessages, showToast }: Props) {
+export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLoading, onReload, onReloadMessages, onOpenInvite, onOpenMembers, showToast }: Props) {
   const navigate = useNavigate();
   const battle = snapshot.room.cardBattle!;
   const [eligibleCards, setEligibleCards] = useState<OnlineCardBattleCard[]>([]);
@@ -134,7 +264,8 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const [closeOpen, setCloseOpen] = useState(false);
   const [content, setContent] = useState("");
   const [stickersOpen, setStickersOpen] = useState(false);
-  const [now, setNow] = useState(Date.now());
+  const [chatBubbles, setChatBubbles] = useState<ChatBubble[]>([]);
+  const [optimisticOwnIds, setOptimisticOwnIds] = useState<Array<string | null> | null>(null);
   const [playback, setPlayback] = useState<OnlineCardBattlePlayback | null>(battle.game?.playback ?? null);
   const [cardStates, setCardStates] = useState<OnlineCardBattleCardState[]>(battle.game?.playback.states ?? []);
   const [activeEvent, setActiveEvent] = useState<OnlineCardBattleEvent | null>(null);
@@ -144,6 +275,8 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const playbackRef = useRef<OnlineCardBattlePlayback | null>(playback);
   const onReloadRef = useRef(onReload);
   const showToastRef = useRef(showToast);
+  const bubbleRoomIdRef = useRef(roomId);
+  const seenBubbleIdsRef = useRef(new Set(snapshot.messages.map((message) => message.id)));
   const allStickers = useMemo(() => stickerSeries.flatMap((series) => series.stickers), [stickerSeries]);
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
 
@@ -152,9 +285,30 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   useEffect(() => { showToastRef.current = showToast; }, [showToast]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (bubbleRoomIdRef.current !== roomId) {
+      bubbleRoomIdRef.current = roomId;
+      seenBubbleIdsRef.current = new Set(snapshot.messages.map((message) => message.id));
+      setChatBubbles([]);
+      return;
+    }
+    const incoming = snapshot.messages.filter((message) => {
+      if (seenBubbleIdsRef.current.has(message.id)) return false;
+      seenBubbleIdsRef.current.add(message.id);
+      return !message.recalledAt && (message.type === "discussion" || message.type === "sticker");
+    });
+    if (!incoming.length) return;
+    const expiresAt = Date.now() + 8000;
+    setChatBubbles((current) => [...current, ...incoming.map((message) => ({ message, expiresAt }))].slice(-6));
+  }, [roomId, snapshot.messages]);
+  useEffect(() => {
+    if (!chatBubbles.length) return;
+    const delay = Math.max(0, Math.min(...chatBubbles.map((bubble) => bubble.expiresAt)) - Date.now());
+    const timer = window.setTimeout(() => {
+      const currentTime = Date.now();
+      setChatBubbles((current) => current.filter((bubble) => bubble.expiresAt > currentTime));
+    }, delay + 20);
+    return () => window.clearTimeout(timer);
+  }, [chatBubbles]);
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === "hidden" && activeEvent) {
@@ -228,8 +382,18 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   }, [battle.game?.id, playback?.activeEvent?.sequence, playback?.complete, playback?.completedSequence, roomId, visibilityEpoch]);
 
   const currentSeat = battle.seats.find((seat) => seat.seat === battle.me.seat) ?? null;
-  const ownIds = currentSeat?.lineup.map((slot) => slot.card?.id ?? null) ?? [];
+  const serverOwnIds = currentSeat?.lineup.map((slot) => slot.card?.id ?? null) ?? [];
+  const serverOwnIdsKey = serverOwnIds.map((cardId) => cardId ?? "").join("|");
+  const ownIds = optimisticOwnIds ?? serverOwnIds;
   const animationComplete = Boolean(battle.game && playback?.complete);
+  useEffect(() => {
+    if (!optimisticOwnIds) return;
+    const optimisticKey = optimisticOwnIds.map((cardId) => cardId ?? "").join("|");
+    if (!battle.me.seat || optimisticKey === serverOwnIdsKey) setOptimisticOwnIds(null);
+  }, [battle.me.seat, optimisticOwnIds, serverOwnIdsKey]);
+  const ownCardsById = new Map<string, OnlineCardBattleCard>();
+  for (const card of eligibleCards) ownCardsById.set(card.id, card);
+  for (const item of currentSeat?.lineup ?? []) if (item.card) ownCardsById.set(item.card.id, item.card);
   const displaySeat = (seatNumber: 1 | 2) => {
     const current = battle.seats.find((seat) => seat.seat === seatNumber)!;
     const frozen = battle.game?.lineups.find((lineup) => lineup.seat === seatNumber);
@@ -238,6 +402,14 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       user: { id: frozen.userId, nickname: frozen.nickname, avatar: null },
       ready: true,
       lineup: frozen.cards.map((card, index) => ({ slot: index + 1, card, cardBack: false })),
+    };
+    if (seatNumber === battle.me.seat && optimisticOwnIds) return {
+      ...current,
+      lineup: optimisticOwnIds.map((cardId, index) => ({
+        slot: index + 1,
+        card: cardId ? ownCardsById.get(cardId) ?? null : null,
+        cardBack: false,
+      })),
     };
     return current;
   };
@@ -249,13 +421,12 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   // replaying it. Keep that client locked until every mandatory animation has
   // completed, otherwise changing the lineup would effectively skip playback.
   const canConfigure = battle.phase !== "playing" && (!battle.game || animationComplete);
-  const recentMessages = snapshot.messages.filter((message) => !message.recalledAt && ["discussion", "sticker"].includes(message.type) && now - new Date(message.createdAt).getTime() < 8000).slice(-6);
 
   async function mutation(path: string, body?: unknown) {
-    if (saving) return;
+    if (saving) return false;
     setSaving(true);
-    try { await api(`/api/online-soup/rooms/${roomId}/${path}`, { method: path === "card-battle/lineup" ? "PUT" : "POST", ...(body === undefined ? {} : { body }) }); await onReload(); }
-    catch (error) { showToast(error instanceof Error ? error.message : "操作失败"); }
+    try { await api(`/api/online-soup/rooms/${roomId}/${path}`, { method: path === "card-battle/lineup" ? "PUT" : "POST", ...(body === undefined ? {} : { body }) }); await onReload(); return true; }
+    catch (error) { showToast(error instanceof Error ? error.message : "操作失败"); return false; }
     finally { setSaving(false); }
   }
   async function chooseCard(cardId: string) {
@@ -265,7 +436,17 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     if (duplicate >= 0) next[duplicate] = null;
     next[pickSlot - 1] = cardId;
     setPickSlot(null);
-    await mutation("card-battle/lineup", { cardIds: next });
+    setOptimisticOwnIds(next);
+    if (!await mutation("card-battle/lineup", { cardIds: next })) setOptimisticOwnIds(null);
+  }
+  async function reorderCards(fromSlot: number, toSlot: number) {
+    if (!canConfigure || !battle.me.seat || currentSeat?.ready || saving) return false;
+    const next = reorderCardBattleLineup(ownIds, fromSlot, toSlot);
+    if (next.every((cardId, index) => cardId === (ownIds[index] ?? null))) return false;
+    setOptimisticOwnIds(next);
+    const saved = await mutation("card-battle/lineup", { cardIds: next });
+    if (!saved) setOptimisticOwnIds(null);
+    return saved;
   }
   async function sendMessage() {
     const value = content.trim();
@@ -292,6 +473,8 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       <UnifiedBackButton compactOnMobile onClick={() => setLeaveOpen(true)} />
       <div className="min-w-0 flex-1"><h1 className="truncate text-sm font-black">{snapshot.room.name}</h1><p className="truncate text-[10px] text-slate-400">房间号 {snapshot.room.code} · 卡牌对战 · 1v1 · {!animationComplete && battle.game ? `第 ${activeEvent?.round ?? playback?.activeEvent?.round ?? 1} 回合` : battle.phase === "ended" ? "本局结束" : "准备中"}</p></div>
       <span className="hidden rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-slate-200 sm:inline">{battle.me.seat ? `对战席 ${battle.me.seat}` : "观战"}</span>
+      <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 text-cyan-100 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" aria-label="分享房间" title="分享房间" onClick={() => { setMenuOpen(false); onOpenInvite(); }}><Share2 size={19} /></button>
+      <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 text-cyan-100 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" aria-label={`房间成员，共 ${snapshot.members.length} 人`} title={`房间成员 · ${snapshot.members.length} 人`} onClick={() => { setMenuOpen(false); onOpenMembers(); }}><span className="relative grid h-7 w-7 place-items-center"><Users size={19} /><span className="absolute -right-1.5 -top-1.5 grid min-h-4 min-w-4 place-items-center rounded-full bg-cyan-500 px-1 text-[10px] font-black leading-4 text-slate-950 ring-2 ring-slate-950">{snapshot.members.length}</span></span></button>
       <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 hover:bg-white/15" aria-label="更多操作" onClick={() => setMenuOpen((open) => !open)}><Menu size={19} /></button>
       {menuOpen && <div className="absolute right-3 top-[calc(100%+8px)] z-[110] w-48 overflow-hidden rounded-xl border border-white/10 bg-slate-900 p-1.5 shadow-2xl">
         {snapshot.me.isHost && canConfigure && <button className="card-battle-menu-item text-cyan-300" disabled={saving || battle.seats.some((seat) => !seat.user || !seat.ready)} onClick={() => { setMenuOpen(false); void mutation("start"); }}><Swords size={16} />开始游戏</button>}
@@ -304,17 +487,25 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
 
     <main className="relative min-h-0 flex-1 overflow-hidden">
       <div className={`flex h-full min-h-0 flex-col ${battle.me.seat && canConfigure ? "pb-[124px]" : "pb-[68px]"}`}>
-        <HalfArena seat={topSeatNumber} battleSeat={topSeat} states={cardStates} activeEvent={activeEvent} isOwn={false} position="top" canSelect={false} onPick={() => undefined} />
+        <HalfArena seat={topSeatNumber} battleSeat={topSeat} states={cardStates} activeEvent={activeEvent} isOwn={false} position="top" canSelect={false} onPick={() => undefined} onReorder={async () => false} />
         <div className="relative z-30 flex h-8 shrink-0 items-center justify-center border-y border-cyan-300/30 bg-slate-950/90 text-[10px] font-black uppercase tracking-[.2em] text-cyan-200"><span>{activeEvent?.text ?? (battle.phase === "playing" ? "自动战斗中 · 动画不可跳过" : "前排 2 张 · 后排 3 张")}</span></div>
-        <HalfArena seat={bottomSeatNumber} battleSeat={bottomSeat} states={cardStates} activeEvent={activeEvent} isOwn={Boolean(battle.me.seat)} position="bottom" canSelect={canConfigure && Boolean(battle.me.seat) && !currentSeat?.ready} onPick={setPickSlot} />
+        <HalfArena seat={bottomSeatNumber} battleSeat={bottomSeat} states={cardStates} activeEvent={activeEvent} isOwn={Boolean(battle.me.seat)} position="bottom" canSelect={canConfigure && Boolean(battle.me.seat) && !currentSeat?.ready && !saving} onPick={setPickSlot} onReorder={reorderCards} />
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-16 z-[60] flex max-h-[50%] flex-col justify-end gap-1.5 overflow-hidden px-3 pb-2" aria-live="polite">
-        {recentMessages.map((message) => <div key={message.id} className="card-battle-chat-bubble max-w-[82%] self-start rounded-2xl bg-slate-950/75 px-3 py-1.5 text-xs text-white shadow-lg backdrop-blur-md"><strong className="mr-1 text-cyan-300">{message.senderName ?? "系统"}</strong>{message.type === "sticker" ? (() => { const sticker = message.stickerId ? stickersById.get(message.stickerId) : null; return sticker ? <img className="mt-1 h-14 w-14 object-contain" src={sticker.animatedUrl || sticker.staticUrl} alt={sticker.name} /> : "[表情]"; })() : message.content}</div>)}
+      <div
+        className="pointer-events-none absolute inset-x-0 z-[60] flex h-[25%] max-h-60 flex-col justify-end gap-1.5 overflow-hidden px-3 pb-2 transition-[bottom] duration-200"
+        style={{ bottom: `calc(${battle.me.seat && canConfigure ? 124 : 68}px + ${stickersOpen ? "15.5rem" : "0px"})` }}
+        aria-live="polite"
+        aria-label="实时聊天气泡"
+      >
+        {chatBubbles.map(({ message }) => {
+          const mine = message.senderId === battle.me.userId;
+          return <div key={message.id} className={`card-battle-chat-bubble max-w-[82%] rounded-2xl px-3 py-1.5 text-xs text-white shadow-lg backdrop-blur-md ${mine ? "self-end bg-cyan-700/85" : "self-start bg-slate-950/80"}`}><strong className={`mr-1 ${mine ? "text-cyan-50" : "text-cyan-300"}`}>{message.senderName ?? "系统"}</strong>{message.type === "sticker" ? (() => { const sticker = message.stickerId ? stickersById.get(message.stickerId) : null; return sticker ? <img className="mt-1 h-14 w-14 object-contain" src={sticker.animatedUrl || sticker.staticUrl} alt={sticker.name} /> : "[表情]"; })() : message.content}</div>;
+        })}
       </div>
 
       <div className="absolute inset-x-0 bottom-0 z-[80] border-t border-white/10 bg-slate-950/90 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl">
-        {battle.me.seat && canConfigure && <div className="mb-2 flex items-center gap-2"><button type="button" className={`min-h-11 flex-1 rounded-xl px-4 text-sm font-black ${currentSeat?.ready ? "bg-amber-400 text-slate-950" : "bg-emerald-500 text-white"}`} disabled={saving || ownIds.filter(Boolean).length !== 5} onClick={() => void mutation("card-battle/ready", { ready: !currentSeat?.ready })}>{currentSeat?.ready ? "取消准备" : ownIds.filter(Boolean).length === 5 ? "准备完成" : `还需选择 ${5 - ownIds.filter(Boolean).length} 张`}</button></div>}
+        {battle.me.seat && canConfigure && <div className="mb-2 flex items-center gap-2"><button type="button" className={`min-h-11 flex-1 rounded-xl px-4 text-sm font-black ${currentSeat?.ready ? "bg-amber-400 text-slate-950" : "bg-emerald-500 text-white"}`} disabled={saving || ownIds.filter(Boolean).length !== 5} onClick={() => void mutation("card-battle/ready", { ready: !currentSeat?.ready })}>{currentSeat?.ready ? "取消准备" : ownIds.filter(Boolean).length === 5 ? "准备" : `还需选择 ${5 - ownIds.filter(Boolean).length} 张`}</button></div>}
         <div className="flex items-end gap-2"><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-xl bg-white/10 text-cyan-200" onClick={() => setStickersOpen((open) => !open)} aria-label="发送表情"><Smile size={20} /></button><textarea rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} className="min-h-11 max-h-24 flex-1 resize-none rounded-xl border border-white/10 bg-white/10 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400" placeholder="聊天或发表情…" /><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-xl bg-cyan-500 text-slate-950 disabled:opacity-40" disabled={!content.trim() || saving} onClick={() => void sendMessage()} aria-label="发送消息"><Send size={18} /></button></div>
         {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={saving} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="mt-2 max-h-60 overflow-y-auto rounded-xl p-2 text-slate-900" />}
       </div>
@@ -322,7 +513,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       {animationComplete && battle.game?.settlement && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} />}
     </main>
 
-    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗、传说卡。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{eligibleCards.map((card) => { const selected = ownIds.includes(card.id); return <button key={card.id} type="button" className={`relative overflow-hidden rounded-xl border-2 text-left ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line"}`} onClick={() => void chooseCard(card.id)}><img className="aspect-[5/7] w-full object-cover" src={card.imageUrl} alt={card.name} /><div className="p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-1 flex gap-2 text-[10px] text-muted"><span>攻 {card.stats.attack}</span><span><Shield className="inline" size={10} /> {card.stats.defense}</span><span><Zap className="inline" size={10} /> {card.stats.speed}</span></p></div>{selected && <span className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full bg-cyan-500 text-white"><Check size={14} /></span>}</button>; })}</div>{eligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">当前没有可参战卡牌</p>}</Modal>}
+    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的传说卡。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{eligibleCards.map((card) => { const selected = ownIds.includes(card.id); return <button key={card.id} type="button" className={`relative overflow-hidden rounded-xl border-2 text-left ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line"}`} onClick={() => void chooseCard(card.id)}><img className="aspect-[5/7] w-full object-cover" src={card.imageUrl} alt={card.name} /><div className="p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-1 flex gap-2 text-[10px] text-muted"><span>攻 {card.stats.attack}</span><span><Shield className="inline" size={10} /> {card.stats.defense}</span><span><Zap className="inline" size={10} /> {card.stats.speed}</span></p></div>{selected && <span className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full bg-cyan-500 text-white"><Check size={14} /></span>}</button>; })}</div>{eligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">当前没有可参战的传说卡</p>}</Modal>}
     {modeOpen && <Modal onClose={() => setModeOpen(false)}><div><h2 className="text-xl font-black text-ink">选择玩法</h2><button type="button" className="mt-4 flex min-h-14 w-full items-center justify-between rounded-xl border-2 border-primary bg-blue-50 px-4 text-left text-primary"><span><strong className="block">1v1</strong><span className="text-xs">双方各选择五张卡牌自动战斗</span></span><Check /></button><p className="mt-3 text-xs text-muted">暂时只开放 1v1，后续玩法不会影响本局规则。</p></div></Modal>}
     {leaveOpen && <Modal onClose={() => setLeaveOpen(false)}><div><h2 className="text-xl font-black text-ink">退出房间？</h2><p className="mt-2 text-sm leading-6 text-muted">对局进行中退出不会中断服务端战斗；重新进入后会从尚未播放的动画继续。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setLeaveOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(false)}>确认退出</button></div></div></Modal>}
     {closeOpen && <Modal onClose={() => setCloseOpen(false)}><div><h2 className="text-xl font-black text-ink">关闭房间？</h2><p className="mt-2 text-sm leading-6 text-muted">房间关闭后所有成员退出；进行中的对局会标记为中止，不生成胜负结算。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setCloseOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(true)}>关闭房间</button></div></div></Modal>}

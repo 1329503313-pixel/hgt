@@ -60,14 +60,16 @@
 @keyframes card-battle-yellow { 0%,100% { filter: brightness(1); box-shadow: 0 0 0 rgb(250 204 21 / 0); } 45% { filter: brightness(1.22); box-shadow: 0 0 28px 8px rgb(250 204 21 / .72); } }
 @keyframes card-battle-blue { 0%,100% { filter: brightness(1); box-shadow: 0 0 0 rgb(34 211 238 / 0); } 45% { filter: brightness(1.18); box-shadow: 0 0 28px 8px rgb(34 211 238 / .7); } }
 @keyframes card-battle-number { 0% { opacity: 0; transform: translate(-50%, 8px) scale(.8); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.12); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -22px) scale(1); } }
-@keyframes card-battle-chat-life { 0% { opacity: 0; transform: translateY(6px); } 8%,75% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; } }
+@keyframes card-battle-chat-life { 0% { opacity: 0; transform: translateY(6px); } 3%,78% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .card-battle-attacker-1, .card-battle-attacker-2 { animation-name: card-battle-attack-reduced; }
   .card-battle-hit { animation-name: card-battle-hit-reduced; }
+  .card-battle-chat-bubble { animation-name: card-battle-chat-life-reduced; }
   .card-battle-number, .card-battle-fx-green, .card-battle-fx-yellow, .card-battle-fx-blue, .card-battle-chat-bubble { animation-timing-function: linear; }
 }
 @keyframes card-battle-attack-reduced { 0%,100% { opacity: 1; filter: brightness(1); } 45%,70% { opacity: .72; filter: brightness(1.35); } }
 @keyframes card-battle-hit-reduced { 0%,100% { opacity: 1; filter: brightness(1); } 35%,70% { opacity: .65; filter: brightness(1.55); } }
+@keyframes card-battle-chat-life-reduced { 0% { opacity: 0; } 3%,78% { opacity: 1; } 100% { opacity: 0; } }
 
 @media (prefers-reduced-motion: no-preference) {
   .pwa-install-card {

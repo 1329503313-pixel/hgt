@@ -9,7 +9,7 @@ import {
   defaultCardBattleTiers,
 } from "./cardBattleConfig.js";
 
-test("历史史诗和传说卡的四层默认战斗值完全符合产品约定", () => {
+test("历史传说卡的四层默认战斗值完全符合产品约定", () => {
   assert.deepEqual(defaultCardBattleTiers().map(({ maxHp, attack, defense, speed, energyRequired, canAttackRear }) => (
     { maxHp, attack, defense, speed, energyRequired, canAttackRear }
   )), [
@@ -38,6 +38,9 @@ test("生命阈值、数值效果和临时增益分别强制所需字段", () =>
   assert.equal(cardBattleEffectNeedsValue("attack_self"), true);
   assert.equal(cardBattleEffectNeedsValue("revive_all_allies"), false);
   assert.equal(cardBattleEffectNeedsDuration("attack_all_allies"), true);
+  assert.equal(cardBattleEffectNeedsValue("attack_skill_damage_self"), true);
+  assert.equal(cardBattleEffectNeedsDuration("attack_skill_damage_self"), true);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...base, type: "attack_skill_damage_all_allies", duration: 2 }).success, true);
   assert.equal(cardBattleEffectNeedsDuration("max_hp_all_allies"), false);
 });
 

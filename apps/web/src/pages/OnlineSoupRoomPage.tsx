@@ -1668,15 +1668,59 @@ export default function OnlineSoupRoomPage() {
     </Modal>}
   </div>;
 
-  if (snapshot.room.contentType === "card_battle" && snapshot.room.cardBattle) return <CardBattleRoomView
-    roomId={roomId}
-    snapshot={snapshot}
-    stickerSeries={stickerSeries}
-    stickersLoading={stickersLoading}
-    onReload={loadState}
-    onReloadMessages={() => load(true)}
-    showToast={showToast}
-  />;
+  if (snapshot.room.contentType === "card_battle" && snapshot.room.cardBattle) {
+    const memberById = new Map(snapshot.members.map((member) => [member.id, member]));
+    const battleSeatUserIds = new Set(snapshot.room.cardBattle.seats.flatMap((seat) => seat.user ? [seat.user.id] : []));
+    const spectatorMembers = snapshot.members.filter((member) => !battleSeatUserIds.has(member.id));
+    const occupiedBattleSeats = snapshot.room.cardBattle.seats.filter((seat) => seat.user).length;
+    return <>
+      <CardBattleRoomView
+        roomId={roomId}
+        snapshot={snapshot}
+        stickerSeries={stickerSeries}
+        stickersLoading={stickersLoading}
+        onReload={loadState}
+        onReloadMessages={() => load(true)}
+        onOpenInvite={() => setInviteOpen(true)}
+        onOpenMembers={() => setMembersOpen(true)}
+        showToast={showToast}
+      />
+      {membersOpen && <Modal onClose={() => setMembersOpen(false)}>
+        <div className="space-y-4">
+          <div className="pr-10">
+            <h2 className="text-xl font-black text-ink">房间成员</h2>
+            <p className="mt-1 text-xs font-bold text-muted">对战席 {occupiedBattleSeats}/2 · 观战席 {spectatorMembers.length}</p>
+          </div>
+          <section>
+            <p className="mb-2 text-xs font-bold text-muted">对战席 {occupiedBattleSeats}/2</p>
+            <div className="space-y-2">
+              {snapshot.room.cardBattle.seats.map((seat) => {
+                const member = seat.user ? memberById.get(seat.user.id) : null;
+                return <div key={seat.seat} className="rounded-xl border border-line bg-white p-2">
+                  <p className="mb-1.5 px-1 text-[11px] font-black text-primary">{seat.seat} 号对战席</p>
+                  {member
+                    ? <MemberRow member={member} displayName={member.nickname} onOpenProfile={openMemberProfile} />
+                    : <div className="grid min-h-14 place-items-center rounded-lg bg-slate-50 text-sm font-bold text-muted">等待玩家进入对战席</div>}
+                </div>;
+              })}
+            </div>
+          </section>
+          <section>
+            <p className="mb-2 text-xs font-bold text-muted">观战席 {spectatorMembers.length}</p>
+            <div className="space-y-2">
+              {spectatorMembers.map((member) => <MemberRow key={member.id} member={member} displayName={member.nickname} onOpenProfile={openMemberProfile} />)}
+              {spectatorMembers.length === 0 && <div className="grid min-h-14 place-items-center rounded-xl bg-slate-50 text-sm font-bold text-muted">暂无观战成员</div>}
+            </div>
+          </section>
+          <button className="flex min-h-14 w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}>
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span>
+            <span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span>
+          </button>
+        </div>
+      </Modal>}
+      {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
+    </>;
+  }
 
   const activeImpostorActionPrompt = impostorMode && snapshot.room.impostorGame
     ? snapshot.room.impostorGame.phase === "day_ready"
