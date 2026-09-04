@@ -6,12 +6,25 @@ export type CardBattleEffectType = "damage_single" | "damage_rear" | "damage_ran
 export type CardBattleSkillEffect = { id?: string; order: number; condition: CardBattleCondition; conditionValue: number | null; type: CardBattleEffectType; value: number | null; duration: number | null };
 export type CardBattleTier = { starLevel: 0 | 1 | 2 | 3; maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; canAttackRear: boolean; skillName: string; skillDescription: string; effects: CardBattleSkillEffect[] };
 
-export const DEFAULT_CARD_BATTLE_TIERS: CardBattleTier[] = [
+export const DEFAULT_EPIC_CARD_BATTLE_TIERS: CardBattleTier[] = [
+  { starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 1, maxHp: 1200, attack: 375, defense: 60, speed: 95, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 2, maxHp: 1500, attack: 500, defense: 90, speed: 110, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 3, maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+];
+
+export const DEFAULT_LEGEND_CARD_BATTLE_TIERS: CardBattleTier[] = [
   { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
   { starLevel: 1, maxHp: 1500, attack: 750, defense: 150, speed: 150, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
   { starLevel: 2, maxHp: 2000, attack: 1000, defense: 200, speed: 200, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
   { starLevel: 3, maxHp: 3000, attack: 1500, defense: 300, speed: 300, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
 ];
+
+export const DEFAULT_CARD_BATTLE_TIERS = DEFAULT_LEGEND_CARD_BATTLE_TIERS;
+
+export function defaultCardBattleTiersForRarity(rarity: "epic" | "legend") {
+  return rarity === "epic" ? DEFAULT_EPIC_CARD_BATTLE_TIERS : DEFAULT_LEGEND_CARD_BATTLE_TIERS;
+}
 
 export type AssetCard = {
   id: string;

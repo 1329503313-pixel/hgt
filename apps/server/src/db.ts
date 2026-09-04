@@ -2809,14 +2809,29 @@ export async function initDatabase() {
         REFERENCES asset_card_battle_tiers(card_id, star_level) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
-  // 史诗卡不参与卡牌对战，清理旧版本曾生成的战斗配置。
+  // 普通与稀有卡不参与卡牌对战；史诗与传说卡保留战斗配置。
   await pool.query(`
     DELETE battle_tiers
     FROM asset_card_battle_tiers battle_tiers
     JOIN asset_cards cards ON cards.id = battle_tiers.card_id
-    WHERE cards.rarity <> 'legend'
+    WHERE cards.rarity NOT IN ('epic', 'legend')
   `);
-  // 历史传说卡自动获得安全默认值；技能保持为空。
+  // 历史史诗卡自动获得史诗默认值；技能保持为空。
+  await pool.query(`
+    INSERT IGNORE INTO asset_card_battle_tiers
+      (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear)
+    SELECT cards.id, defaults.star_level, defaults.max_hp, defaults.attack_value,
+      defaults.defense_value, defaults.speed_value, 40, 0
+    FROM asset_cards cards
+    JOIN (
+      SELECT 0 AS star_level, 800 AS max_hp, 250 AS attack_value, 30 AS defense_value, 80 AS speed_value
+      UNION ALL SELECT 1, 1200, 375, 60, 95
+      UNION ALL SELECT 2, 1500, 500, 90, 110
+      UNION ALL SELECT 3, 1900, 625, 120, 125
+    ) defaults
+    WHERE cards.rarity = 'epic'
+  `);
+  // 历史传说卡自动获得传说默认值；技能保持为空。
   await pool.query(`
     INSERT IGNORE INTO asset_card_battle_tiers
       (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear)
@@ -2830,6 +2845,22 @@ export async function initDatabase() {
       UNION ALL SELECT 3, 3000, 1500, 300, 300
     ) defaults
     WHERE cards.rarity = 'legend'
+  `);
+  // 技能名称为卡牌级字段：优先沿用低星级已有名称并同步到四个星级。
+  await pool.query(`
+    UPDATE asset_card_battle_tiers tiers
+    JOIN (
+      SELECT card_id, COALESCE(
+        MAX(CASE WHEN star_level = 0 THEN NULLIF(TRIM(skill_name), '') END),
+        MAX(CASE WHEN star_level = 1 THEN NULLIF(TRIM(skill_name), '') END),
+        MAX(CASE WHEN star_level = 2 THEN NULLIF(TRIM(skill_name), '') END),
+        MAX(CASE WHEN star_level = 3 THEN NULLIF(TRIM(skill_name), '') END)
+      ) AS shared_skill_name
+      FROM asset_card_battle_tiers
+      GROUP BY card_id
+    ) shared ON shared.card_id = tiers.card_id
+    SET tiers.skill_name = shared.shared_skill_name
+    WHERE NOT (tiers.skill_name <=> shared.shared_skill_name)
   `);
 
   await pool.query(`

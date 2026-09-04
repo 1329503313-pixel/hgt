@@ -47,6 +47,7 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
 }) {
   const tier = tiers.find((item) => item.starLevel === activeStar) ?? tiers[0];
   const updateTier = (changes: Partial<CardBattleTier>) => onChange(tiers.map((item) => item.starLevel === activeStar ? { ...item, ...changes } : item));
+  const updateSharedSkillName = (skillName: string) => onChange(tiers.map((item) => ({ ...item, skillName })));
   const updateEffect = (index: number, changes: Partial<CardBattleTier["effects"][number]>) => updateTier({
     effects: tier.effects.map((effect, effectIndex) => effectIndex === index ? { ...effect, ...changes } : effect),
   });
@@ -64,7 +65,7 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
       <label className="flex min-h-11 items-center gap-3 self-end rounded-xl border border-violet-200 bg-white px-3"><input type="checkbox" checked={tier.canAttackRear} onChange={(event) => updateTier({ canAttackRear: event.target.checked })} /><span className="text-xs font-bold">普通攻击可攻击后排</span></label>
     </div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
-      <label><span className="text-xs font-bold">技能名称（可空）</span><input maxLength={50} className="field mt-1" value={tier.skillName} onChange={(event) => updateTier({ skillName: event.target.value })} /></label>
+      <label><span className="text-xs font-bold">技能名称（四星共用，可空）</span><input maxLength={50} className="field mt-1" value={tier.skillName} onChange={(event) => updateSharedSkillName(event.target.value)} /><span className="mt-1 block text-[11px] leading-5 text-muted">修改后同步到全部星级；技能描述、条件和效果仍按星级独立配置。</span></label>
       <label><span className="text-xs font-bold">技能描述（可空）</span><textarea maxLength={500} className="field mt-1 min-h-20" value={tier.skillDescription} onChange={(event) => updateTier({ skillDescription: event.target.value })} /></label>
     </div>
     <div className="mt-4 flex items-center justify-between gap-3"><div><h4 className="text-sm font-black text-ink">技能条件与效果</h4><p className="text-[11px] text-muted">多行按从上到下顺序独立结算。</p></div><button type="button" className="btn btn-secondary min-h-11 px-3 text-xs" onClick={() => updateTier({ effects: [...tier.effects, { order: tier.effects.length, condition: "energy_full", conditionValue: null, type: "damage_single", value: 1, duration: null }] })}><Plus size={15} />新增条件</button></div>

@@ -9,7 +9,7 @@ import type { Collectible } from "../../shared/collectibles";
 import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
 import { CardBattleConfigEditor } from "./CardBattleConfigEditor";
-import { DEFAULT_CARD_BATTLE_TIERS, type CardBattleTier } from "../../shared/digitalAssets";
+import { defaultCardBattleTiersForRarity, type CardBattleTier } from "../../shared/digitalAssets";
 
 type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[]; battleConfigured: boolean };
 type AdminPack = {
@@ -26,7 +26,8 @@ type CardForm = {
   cardNo: string; name: string; rarity: AssetRarity; imageUrl: string; story: string; status: string; packIds: string[];
   motionMp4Url: string | null; motionWebmUrl: string | null; motionPosterUrl: string | null; battleTiers: CardBattleTier[] | null;
 };
-const freshBattleTiers = () => DEFAULT_CARD_BATTLE_TIERS.map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) }));
+const isBattleRarity = (rarity: AssetRarity): rarity is "epic" | "legend" => rarity === "epic" || rarity === "legend";
+const freshBattleTiers = (rarity: "epic" | "legend") => defaultCardBattleTiersForRarity(rarity).map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) }));
 const blankCard: CardForm = {
   cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "active", packIds: [] as string[],
   motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null, battleTiers: null,
@@ -216,7 +217,7 @@ export function DigitalAssetManagement() {
         cardNo: nextCardNo(latestCard.cardNo),
         rarity: latestCard.rarity,
         packIds: [...latestCard.packIds],
-        battleTiers: latestCard.rarity === "legend" ? freshBattleTiers() : null,
+        battleTiers: isBattleRarity(latestCard.rarity) ? freshBattleTiers(latestCard.rarity) : null,
       } : blankCard);
       setActiveBattleStar(0);
       setPackKeyword("");
@@ -614,10 +615,10 @@ export function DigitalAssetManagement() {
           </div>
           <label><span className="text-sm font-bold">卡片编号</span><input className="field mt-1" value={cardForm.cardNo} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => setCardForm({ ...cardForm, cardNo: e.target.value })} /></label>
           <label><span className="text-sm font-bold">名称</span><input className="field mt-1" value={cardForm.name} onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })} /></label>
-          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleTiers: rarity === "legend" ? (cardForm.battleTiers ?? freshBattleTiers()) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleTiers: isBattleRarity(rarity) ? (rarity === cardForm.rarity ? cardForm.battleTiers : freshBattleTiers(rarity)) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label><span className="text-sm font-bold">状态</span><select className="field mt-1" value={cardForm.status} onChange={(e) => setCardForm({ ...cardForm, status: e.target.value })}><option value="inactive">停用</option><option value="active">启用</option></select></label>
           <label className="sm:col-span-2"><span className="text-sm font-bold">卡片故事</span><textarea className="field mt-1 min-h-32" value={cardForm.story} onChange={(e) => setCardForm({ ...cardForm, story: e.target.value })} /></label>
-          {cardForm.rarity === "legend" && cardForm.battleTiers && <CardBattleConfigEditor tiers={cardForm.battleTiers} activeStar={activeBattleStar} onActiveStar={setActiveBattleStar} onChange={(battleTiers) => setCardForm((current) => ({ ...current, battleTiers }))} />}
+          {isBattleRarity(cardForm.rarity) && cardForm.battleTiers && <CardBattleConfigEditor tiers={cardForm.battleTiers} activeStar={activeBattleStar} onActiveStar={setActiveBattleStar} onChange={(battleTiers) => setCardForm((current) => ({ ...current, battleTiers }))} />}
           <fieldset className="sm:col-span-2">
             <div className="flex items-center justify-between gap-3"><legend className="text-sm font-bold">卡包 <span className="text-red-500">*</span></legend><span className={`text-xs ${cardForm.packIds.length ? "text-muted" : "font-bold text-red-500"}`}>已选 {cardForm.packIds.length} 个</span></div>
             <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px]">

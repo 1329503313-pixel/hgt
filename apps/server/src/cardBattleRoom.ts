@@ -167,7 +167,7 @@ export async function eligibleCardCount(userId: string, db: mysql.Pool | mysql.P
      FROM user_asset_cards owned
      JOIN asset_cards cards ON cards.id = owned.card_id
      JOIN asset_card_battle_tiers tiers ON tiers.card_id = cards.id AND tiers.star_level = owned.star_level
-     WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity = 'legend'`,
+     WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend')`,
     [userId],
   );
   return Number(row?.total ?? 0);
@@ -206,7 +206,7 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
      FROM user_asset_cards owned
      JOIN asset_cards cards ON cards.id = owned.card_id
      JOIN asset_card_battle_tiers tiers ON tiers.card_id = cards.id AND tiers.star_level = owned.star_level
-     WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity = 'legend'
+     WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend')
      ORDER BY cards.card_no ASC`,
     [userId],
   );
@@ -214,7 +214,7 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
     id: String(row.id),
     cardNo: String(row.card_no),
     name: String(row.name),
-    rarity: "legend" as const,
+    rarity: String(row.rarity) as "epic" | "legend",
     starLevel: Number(row.star_level),
     imageUrl: `/api/media/assets/cards/${encodeURIComponent(String(row.id))}/thumbnail?v=${new Date(row.updated_at).getTime()}`,
     stats: {
@@ -241,7 +241,7 @@ export async function saveCardBattleLineup(roomId: string, userId: string, cardI
       `SELECT cards.id FROM user_asset_cards owned
        JOIN asset_cards cards ON cards.id = owned.card_id
        JOIN asset_card_battle_tiers tiers ON tiers.card_id = cards.id AND tiers.star_level = owned.star_level
-       WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity = 'legend'
+       WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend')
          AND cards.id IN (${selectedIds.map(() => "?").join(",")})`,
       [userId, ...selectedIds],
     );
@@ -266,7 +266,7 @@ export async function setCardBattleReady(roomId: string, userId: string, ready: 
     const [eligible] = await db.query<mysql.RowDataPacket[]>(
       `SELECT cards.id FROM user_asset_cards owned JOIN asset_cards cards ON cards.id = owned.card_id
        JOIN asset_card_battle_tiers tiers ON tiers.card_id = cards.id AND tiers.star_level = owned.star_level
-       WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity = 'legend'
+       WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend')
          AND cards.id IN (${selectedIds.map(() => "?").join(",")})`,
       [userId, ...selectedIds],
     );
@@ -282,7 +282,7 @@ async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId:
   const [[row]] = await db.query<mysql.RowDataPacket[]>(
     `SELECT cards.id, cards.name, cards.rarity, cards.updated_at, owned.star_level
      FROM user_asset_cards owned JOIN asset_cards cards ON cards.id = owned.card_id
-     WHERE owned.user_id = ? AND cards.id = ? AND cards.status = 'active' AND cards.rarity = 'legend' LIMIT 1`,
+     WHERE owned.user_id = ? AND cards.id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend') LIMIT 1`,
     [userId, cardId],
   );
   if (!row) throw new CardBattleRoomRuleError("阵容中有卡牌已停用或不再可用，请重新选择");
@@ -295,7 +295,7 @@ async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId:
     cardId,
     name: String(row.name),
     imageUrl: `/api/media/assets/cards/${encodeURIComponent(cardId)}/thumbnail?v=${new Date(row.updated_at).getTime()}`,
-    rarity: "legend",
+    rarity: String(row.rarity) as "epic" | "legend",
     starLevel,
     slot: slot as 1 | 2 | 3 | 4 | 5,
     tier,

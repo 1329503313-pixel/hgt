@@ -9,22 +9,29 @@ const lobby = readFileSync(new URL("../src/pages/OnlineSoupLobbyPage.tsx", impor
 const roomPage = readFileSync(new URL("../src/pages/OnlineSoupRoomPage.tsx", import.meta.url), "utf8");
 const assetAdmin = readFileSync(new URL("../src/components/admin/DigitalAssetManagement.tsx", import.meta.url), "utf8");
 const battleConfigEditor = readFileSync(new URL("../src/components/admin/CardBattleConfigEditor.tsx", import.meta.url), "utf8");
+const assetTypes = readFileSync(new URL("../src/shared/digitalAssets.ts", import.meta.url), "utf8");
 
 test("大厅提供卡牌对战且玩家与观战身份由服务端自动分配", () => {
   assert.match(lobby, /contentType: "card_battle"/);
   assert.match(lobby, /卡牌对战/);
   assert.match(lobby, /join-auto/);
-  assert.match(lobby, /至少五张启用中的传说卡/);
-  assert.doesNotMatch(lobby, /史诗或传说卡/);
-  assert.match(view, /只展示你拥有且当前启用的传说卡/);
-  assert.doesNotMatch(view, /当前启用的史诗、传说卡/);
+  assert.match(lobby, /至少五张启用中的史诗或传说卡/);
+  assert.match(view, /只展示你拥有且当前启用的史诗或传说卡/);
 });
 
-test("管理后台只为传说卡展示并初始化战斗配置", () => {
-  assert.match(assetAdmin, /latestCard\.rarity === "legend" \? freshBattleTiers\(\) : null/);
-  assert.match(assetAdmin, /battleTiers: rarity === "legend" \?/);
-  assert.match(assetAdmin, /cardForm\.rarity === "legend" && cardForm\.battleTiers/);
-  assert.doesNotMatch(assetAdmin, /\["epic", "legend"\]\.includes\([^\n]*(?:battleTiers|cardForm\.rarity)/);
+test("管理后台为史诗和传说卡展示配置，并按品质初始化默认值", () => {
+  assert.match(assetAdmin, /const isBattleRarity = \(rarity: AssetRarity\).*rarity === "epic" \|\| rarity === "legend"/);
+  assert.match(assetAdmin, /freshBattleTiers\(latestCard\.rarity\)/);
+  assert.match(assetAdmin, /freshBattleTiers\(rarity\)/);
+  assert.match(assetAdmin, /isBattleRarity\(cardForm\.rarity\) && cardForm\.battleTiers/);
+  assert.match(assetTypes, /maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40/);
+  assert.match(assetTypes, /maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40/);
+});
+
+test("技能名称在四个星级联动，其他技能配置仍按当前星级编辑", () => {
+  assert.match(battleConfigEditor, /updateSharedSkillName = \(skillName: string\) => onChange\(tiers\.map/);
+  assert.match(battleConfigEditor, /onChange=\{\(event\) => updateSharedSkillName\(event\.target\.value\)\}/);
+  assert.match(battleConfigEditor, /技能描述、条件和效果仍按星级独立配置/);
 });
 
 test("管理后台提供攻击力与攻击性技能伤害的自身和全体增益配置", () => {
@@ -57,7 +64,17 @@ test("对战画面遵守前后排、生命色阶、聊天自底向上堆叠和�
   assert.match(view, /flex h-\[25%\].*flex-col justify-end/s);
   assert.match(view, /chatBubbles\.map/);
   assert.match(view, /seenBubbleIdsRef/);
+  assert.match(view, /const result = await api<\{ id: string \}>/);
+  assert.match(view, /enqueueChatBubbles\(\[\{ id: result\.id, senderId: battle\.me\.userId/);
+  assert.match(roomPage, /onReloadMessages=\{loadNewMessages\}/);
   assert.match(styles, /card-battle-chat-life 8s/);
+});
+
+test("房主开始战斗按钮与准备按钮并列，且双方准备后才启用", () => {
+  assert.match(view, /const bothPlayersReady = battle\.seats\.length === 2 && battle\.seats\.every/);
+  assert.match(view, /disabled=\{saving \|\| !bothPlayersReady\}/);
+  assert.match(view, />开始战斗<\/button>/);
+  assert.doesNotMatch(view, /card-battle-menu-item[^\n]*开始游戏/);
 });
 
 test("卡牌对战复用房间邀请并提供区分对战席与观战席的成员入口", () => {

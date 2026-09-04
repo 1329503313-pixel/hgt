@@ -153,12 +153,13 @@ const cardSchemaObject = z.object({
   packIds: z.array(z.string().trim().min(1).max(64)).min(1, "卡牌必须至少绑定一个卡包").max(500).transform((ids) => [...new Set(ids)]).optional().default([]),
   battleTiers: cardBattleTiersSchema.nullable().optional(),
 });
+const cardRaritySupportsBattle = (rarity: string) => rarity === "epic" || rarity === "legend";
 const cardSchema = cardSchemaObject.superRefine((value, context) => {
-  if (value.rarity === "legend" && !value.battleTiers) {
-    context.addIssue({ code: "custom", path: ["battleTiers"], message: "传说卡必须完整配置 0-3 星战斗属性" });
+  if (cardRaritySupportsBattle(value.rarity) && !value.battleTiers) {
+    context.addIssue({ code: "custom", path: ["battleTiers"], message: "史诗或传说卡必须完整配置 0-3 星战斗属性" });
   }
-  if (value.rarity !== "legend" && value.battleTiers) {
-    context.addIssue({ code: "custom", path: ["battleTiers"], message: "仅传说卡可配置战斗属性" });
+  if (!cardRaritySupportsBattle(value.rarity) && value.battleTiers) {
+    context.addIssue({ code: "custom", path: ["battleTiers"], message: "仅史诗或传说卡可配置战斗属性" });
   }
 });
 const cardPatchSchema = cardSchemaObject.partial();
@@ -1656,7 +1657,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       const cardId = String(row.card_id);
       packIdsByCard.set(cardId, [...(packIdsByCard.get(cardId) ?? []), String(row.pack_id)]);
     }
-    res.json({ cards: rows.map((row) => ({ ...cardPayload(row, true), createdAt: iso(row.created_at), packIds: packIdsByCard.get(String(row.id)) ?? [], ownerCount: Number(row.owner_count), totalDrawn: Number(row.total_drawn), starCounts: [0, 1, 2, 3].map((star) => Number(row[`star_${star}_count`])), battleConfigured: String(row.rarity) === "legend" && Number(row.battle_tier_count) === 4 })) });
+    res.json({ cards: rows.map((row) => ({ ...cardPayload(row, true), createdAt: iso(row.created_at), packIds: packIdsByCard.get(String(row.id)) ?? [], ownerCount: Number(row.owner_count), totalDrawn: Number(row.total_drawn), starCounts: [0, 1, 2, 3].map((star) => Number(row[`star_${star}_count`])), battleConfigured: cardRaritySupportsBattle(String(row.rarity)) && Number(row.battle_tier_count) === 4 })) });
   });
 
   app.get("/api/admin/asset-cards/:id", async (req, res) => {
@@ -1666,7 +1667,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       pool.query<mysql.RowDataPacket[]>("SELECT pack_id FROM asset_pack_cards WHERE card_id = ?", [req.params.id]).then(([rows]) => rows)
     ]);
     if (!row) return sendError(res, 404, "卡片不存在");
-    const battleTiers = String(row.rarity) === "legend" ? await loadCardBattleTiers(String(row.id)) : null;
+    const battleTiers = cardRaritySupportsBattle(String(row.rarity)) ? await loadCardBattleTiers(String(row.id)) : null;
     res.json({ card: { ...cardPayload(row, true), packIds: packRows.map((item: mysql.RowDataPacket) => String(item.pack_id)), battleTiers } });
   });
 
@@ -1791,12 +1792,12 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (Number(usage.count) > 0 && changesProtectedField) return sendError(res, 409, "已有用户获得的卡片不能修改编号或品质");
     const finalRarity = String(parsed.data.rarity ?? current.rarity);
     const { packIds, battleTiers, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
-    if (finalRarity === "legend") {
-      if (battleTiers === null) return sendError(res, 400, "传说卡必须保留完整战斗配置");
-      if (battleTiers === undefined && String(current.rarity) !== "legend") {
-        return sendError(res, 400, "传说卡必须完整配置 0-3 星战斗属性");
+    if (cardRaritySupportsBattle(finalRarity)) {
+      if (battleTiers === null) return sendError(res, 400, "史诗或传说卡必须保留完整战斗配置");
+      if (battleTiers === undefined && !cardRaritySupportsBattle(String(current.rarity))) {
+        return sendError(res, 400, "史诗或传说卡必须完整配置 0-3 星战斗属性");
       }
-    } else if (battleTiers) return sendError(res, 400, "仅传说卡可配置战斗属性");
+    } else if (battleTiers) return sendError(res, 400, "仅史诗或传说卡可配置战斗属性");
     const changes: Record<string, unknown> = { ...parsedChanges };
     if (typeof changes.imageUrl === "string") {
       const optimizedImages = await optimizedAssetImages(String(changes.imageUrl), req.params.id, 1200, 360);
@@ -1815,7 +1816,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         );
       }
       if (battleTiers) await saveCardBattleTiers(req.params.id, battleTiers, connection);
-      if (finalRarity !== "legend") {
+      if (!cardRaritySupportsBattle(finalRarity)) {
         await connection.query("DELETE FROM asset_card_battle_tiers WHERE card_id = ?", [req.params.id]);
       }
       if (packIds !== undefined) await syncCardPacks(req.params.id, packIds, connection);

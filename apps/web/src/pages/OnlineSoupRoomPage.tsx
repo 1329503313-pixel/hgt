@@ -1680,7 +1680,7 @@ export default function OnlineSoupRoomPage() {
         stickerSeries={stickerSeries}
         stickersLoading={stickersLoading}
         onReload={loadState}
-        onReloadMessages={() => load(true)}
+        onReloadMessages={loadNewMessages}
         onOpenInvite={() => setInviteOpen(true)}
         onOpenMembers={() => setMembersOpen(true)}
         showToast={showToast}

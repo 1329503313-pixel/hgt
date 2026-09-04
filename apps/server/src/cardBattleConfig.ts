@@ -74,6 +74,9 @@ export const cardBattleTiersSchema = z.array(cardBattleTierSchema).length(4).sup
   if (stars.size !== 4 || ![0, 1, 2, 3].every((star) => stars.has(star as 0 | 1 | 2 | 3))) {
     context.addIssue({ code: "custom", message: "必须完整配置 0-3 星四层战斗数值" });
   }
+  if (new Set(tiers.map((tier) => tier.skillName.trim())).size > 1) {
+    context.addIssue({ code: "custom", path: [0, "skillName"], message: "0-3 星必须使用同一个技能名称" });
+  }
   for (const [tierIndex, tier] of tiers.entries()) {
     const orders = new Set<number>();
     for (const [effectIndex, effect] of tier.effects.entries()) {
@@ -83,7 +86,12 @@ export const cardBattleTiersSchema = z.array(cardBattleTierSchema).length(4).sup
   }
 });
 
-export const defaultCardBattleTiers = (): CardBattleTier[] => [
+export const defaultCardBattleTiers = (rarity: "epic" | "legend" = "legend"): CardBattleTier[] => rarity === "epic" ? [
+  { starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 1, maxHp: 1200, attack: 375, defense: 60, speed: 95, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 2, maxHp: 1500, attack: 500, defense: 90, speed: 110, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 3, maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
+] : [
   { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
   { starLevel: 1, maxHp: 1500, attack: 750, defense: 150, speed: 150, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
   { starLevel: 2, maxHp: 2000, attack: 1000, defense: 200, speed: 200, energyRequired: 50, canAttackRear: false, skillName: "", skillDescription: "", effects: [] },
@@ -127,6 +135,7 @@ export async function loadCardBattleTiers(cardId: string, db: mysql.Pool | mysql
 }
 
 export async function saveCardBattleTiers(cardId: string, tiers: CardBattleTierInput[], db: mysql.PoolConnection) {
+  const sharedSkillName = tiers[0]?.skillName.trim() || null;
   await db.query("DELETE FROM asset_card_battle_effects WHERE card_id = ?", [cardId]);
   await db.query("DELETE FROM asset_card_battle_tiers WHERE card_id = ?", [cardId]);
   for (const tier of [...tiers].sort((left, right) => left.starLevel - right.starLevel)) {
@@ -135,7 +144,7 @@ export async function saveCardBattleTiers(cardId: string, tiers: CardBattleTierI
         (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear, skill_name, skill_description)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [cardId, tier.starLevel, tier.maxHp, tier.attack, tier.defense, tier.speed, tier.energyRequired,
-        tier.canAttackRear ? 1 : 0, tier.skillName || null, tier.skillDescription || null],
+        tier.canAttackRear ? 1 : 0, sharedSkillName, tier.skillDescription || null],
     );
     for (const [index, effect] of [...tier.effects].sort((left, right) => left.order - right.order).entries()) {
       await db.query(

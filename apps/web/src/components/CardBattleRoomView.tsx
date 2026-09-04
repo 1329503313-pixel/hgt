@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Check, ChevronDown, Eye, GripVertical, LogOut, Menu, Send, Share2, Shield, Smile, Sparkles, Swords, Users, X, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -20,8 +20,10 @@ type Props = {
   showToast: (message: string) => void;
 };
 
+type CardBattleChatMessage = Pick<OnlineSoupMessage, "id" | "senderId" | "senderName" | "type" | "content" | "stickerId" | "recalledAt">;
+
 type ChatBubble = {
-  message: OnlineSoupMessage;
+  message: CardBattleChatMessage;
   expiresAt: number;
 };
 
@@ -279,6 +281,16 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const seenBubbleIdsRef = useRef(new Set(snapshot.messages.map((message) => message.id)));
   const allStickers = useMemo(() => stickerSeries.flatMap((series) => series.stickers), [stickerSeries]);
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
+  const enqueueChatBubbles = useCallback((messages: CardBattleChatMessage[]) => {
+    const incoming = messages.filter((message) => {
+      if (seenBubbleIdsRef.current.has(message.id)) return false;
+      seenBubbleIdsRef.current.add(message.id);
+      return !message.recalledAt && (message.type === "discussion" || message.type === "sticker");
+    });
+    if (!incoming.length) return;
+    const expiresAt = Date.now() + 8000;
+    setChatBubbles((current) => [...current, ...incoming.map((message) => ({ message, expiresAt }))].slice(-6));
+  }, []);
 
   useEffect(() => { playbackRef.current = playback; }, [playback]);
   useEffect(() => { onReloadRef.current = onReload; }, [onReload]);
@@ -291,15 +303,8 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       setChatBubbles([]);
       return;
     }
-    const incoming = snapshot.messages.filter((message) => {
-      if (seenBubbleIdsRef.current.has(message.id)) return false;
-      seenBubbleIdsRef.current.add(message.id);
-      return !message.recalledAt && (message.type === "discussion" || message.type === "sticker");
-    });
-    if (!incoming.length) return;
-    const expiresAt = Date.now() + 8000;
-    setChatBubbles((current) => [...current, ...incoming.map((message) => ({ message, expiresAt }))].slice(-6));
-  }, [roomId, snapshot.messages]);
+    enqueueChatBubbles(snapshot.messages);
+  }, [enqueueChatBubbles, roomId, snapshot.messages]);
   useEffect(() => {
     if (!chatBubbles.length) return;
     const delay = Math.max(0, Math.min(...chatBubbles.map((bubble) => bubble.expiresAt)) - Date.now());
@@ -421,6 +426,8 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   // replaying it. Keep that client locked until every mandatory animation has
   // completed, otherwise changing the lineup would effectively skip playback.
   const canConfigure = battle.phase !== "playing" && (!battle.game || animationComplete);
+  const bothPlayersReady = battle.seats.length === 2 && battle.seats.every((seat) => Boolean(seat.user && seat.ready));
+  const showBattleControls = canConfigure && (Boolean(battle.me.seat) || snapshot.me.isHost);
 
   async function mutation(path: string, body?: unknown) {
     if (saving) return false;
@@ -452,13 +459,23 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     const value = content.trim();
     if (!value || saving) return;
     setSaving(true);
-    try { await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: "discussion", content: value } }); setContent(""); await onReloadMessages(); }
+    try {
+      const result = await api<{ id: string }>(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: "discussion", content: value } });
+      enqueueChatBubbles([{ id: result.id, senderId: battle.me.userId, senderName: snapshot.members.find((member) => member.id === battle.me.userId)?.nickname ?? "我", type: "discussion", content: value, stickerId: null, recalledAt: null }]);
+      setContent("");
+      await onReloadMessages().catch(() => undefined);
+    }
     catch (error) { showToast(error instanceof Error ? error.message : "消息发送失败"); }
     finally { setSaving(false); }
   }
   async function sendSticker(sticker: StickerAsset) {
     setSaving(true);
-    try { await api(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: "sticker", stickerId: sticker.id } }); setStickersOpen(false); await onReloadMessages(); }
+    try {
+      const result = await api<{ id: string }>(`/api/online-soup/rooms/${roomId}/messages`, { method: "POST", body: { type: "sticker", stickerId: sticker.id } });
+      enqueueChatBubbles([{ id: result.id, senderId: battle.me.userId, senderName: snapshot.members.find((member) => member.id === battle.me.userId)?.nickname ?? "我", type: "sticker", content: "", stickerId: sticker.id, recalledAt: null }]);
+      setStickersOpen(false);
+      await onReloadMessages().catch(() => undefined);
+    }
     catch (error) { showToast(error instanceof Error ? error.message : "表情发送失败"); }
     finally { setSaving(false); }
   }
@@ -477,7 +494,6 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 text-cyan-100 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" aria-label={`房间成员，共 ${snapshot.members.length} 人`} title={`房间成员 · ${snapshot.members.length} 人`} onClick={() => { setMenuOpen(false); onOpenMembers(); }}><span className="relative grid h-7 w-7 place-items-center"><Users size={19} /><span className="absolute -right-1.5 -top-1.5 grid min-h-4 min-w-4 place-items-center rounded-full bg-cyan-500 px-1 text-[10px] font-black leading-4 text-slate-950 ring-2 ring-slate-950">{snapshot.members.length}</span></span></button>
       <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 hover:bg-white/15" aria-label="更多操作" onClick={() => setMenuOpen((open) => !open)}><Menu size={19} /></button>
       {menuOpen && <div className="absolute right-3 top-[calc(100%+8px)] z-[110] w-48 overflow-hidden rounded-xl border border-white/10 bg-slate-900 p-1.5 shadow-2xl">
-        {snapshot.me.isHost && canConfigure && <button className="card-battle-menu-item text-cyan-300" disabled={saving || battle.seats.some((seat) => !seat.user || !seat.ready)} onClick={() => { setMenuOpen(false); void mutation("start"); }}><Swords size={16} />开始游戏</button>}
         {snapshot.me.isHost && <button className="card-battle-menu-item" onClick={() => { setMenuOpen(false); setModeOpen(true); }}><ChevronDown size={16} />选择玩法</button>}
         {canConfigure && <button className="card-battle-menu-item" disabled={saving || (!battle.me.seat && battle.seats.every((seat) => seat.user !== null))} onClick={() => { setMenuOpen(false); void mutation("card-battle/member-role", { role: battle.me.seat ? "spectator" : "player" }); }}>{battle.me.seat ? <Eye size={16} /> : <Swords size={16} />}{battle.me.seat ? "切换观战" : "切换对战"}</button>}
         {snapshot.me.isHost && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); setCloseOpen(true); }}><X size={16} />关闭房间</button>}
@@ -486,7 +502,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     </header>
 
     <main className="relative min-h-0 flex-1 overflow-hidden">
-      <div className={`flex h-full min-h-0 flex-col ${battle.me.seat && canConfigure ? "pb-[124px]" : "pb-[68px]"}`}>
+      <div className={`flex h-full min-h-0 flex-col ${showBattleControls ? "pb-[124px]" : "pb-[68px]"}`}>
         <HalfArena seat={topSeatNumber} battleSeat={topSeat} states={cardStates} activeEvent={activeEvent} isOwn={false} position="top" canSelect={false} onPick={() => undefined} onReorder={async () => false} />
         <div className="relative z-30 flex h-8 shrink-0 items-center justify-center border-y border-cyan-300/30 bg-slate-950/90 text-[10px] font-black uppercase tracking-[.2em] text-cyan-200"><span>{activeEvent?.text ?? (battle.phase === "playing" ? "自动战斗中 · 动画不可跳过" : "前排 2 张 · 后排 3 张")}</span></div>
         <HalfArena seat={bottomSeatNumber} battleSeat={bottomSeat} states={cardStates} activeEvent={activeEvent} isOwn={Boolean(battle.me.seat)} position="bottom" canSelect={canConfigure && Boolean(battle.me.seat) && !currentSeat?.ready && !saving} onPick={setPickSlot} onReorder={reorderCards} />
@@ -494,7 +510,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
 
       <div
         className="pointer-events-none absolute inset-x-0 z-[60] flex h-[25%] max-h-60 flex-col justify-end gap-1.5 overflow-hidden px-3 pb-2 transition-[bottom] duration-200"
-        style={{ bottom: `calc(${battle.me.seat && canConfigure ? 124 : 68}px + ${stickersOpen ? "15.5rem" : "0px"})` }}
+        style={{ bottom: `calc(${showBattleControls ? 124 : 68}px + ${stickersOpen ? "15.5rem" : "0px"})` }}
         aria-live="polite"
         aria-label="实时聊天气泡"
       >
@@ -505,7 +521,10 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       </div>
 
       <div className="absolute inset-x-0 bottom-0 z-[80] border-t border-white/10 bg-slate-950/90 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl">
-        {battle.me.seat && canConfigure && <div className="mb-2 flex items-center gap-2"><button type="button" className={`min-h-11 flex-1 rounded-xl px-4 text-sm font-black ${currentSeat?.ready ? "bg-amber-400 text-slate-950" : "bg-emerald-500 text-white"}`} disabled={saving || ownIds.filter(Boolean).length !== 5} onClick={() => void mutation("card-battle/ready", { ready: !currentSeat?.ready })}>{currentSeat?.ready ? "取消准备" : ownIds.filter(Boolean).length === 5 ? "准备" : `还需选择 ${5 - ownIds.filter(Boolean).length} 张`}</button></div>}
+        {showBattleControls && <div className="mb-2 flex items-center gap-2">
+          {battle.me.seat && <button type="button" className={`min-h-11 flex-1 rounded-xl px-4 text-sm font-black ${currentSeat?.ready ? "bg-amber-400 text-slate-950" : "bg-emerald-500 text-white"}`} disabled={saving || ownIds.filter(Boolean).length !== 5} onClick={() => void mutation("card-battle/ready", { ready: !currentSeat?.ready })}>{currentSeat?.ready ? "取消准备" : ownIds.filter(Boolean).length === 5 ? "准备" : `还需选择 ${5 - ownIds.filter(Boolean).length} 张`}</button>}
+          {snapshot.me.isHost && <button type="button" className="min-h-11 flex-1 rounded-xl bg-cyan-400 px-4 text-sm font-black text-slate-950 transition enabled:hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400" disabled={saving || !bothPlayersReady} title={bothPlayersReady ? "双方已准备，可以开始战斗" : "双方均准备后才能开始战斗"} onClick={() => void mutation("start")}><Swords className="mr-1.5 inline" size={16} />开始战斗</button>}
+        </div>}
         <div className="flex items-end gap-2"><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-xl bg-white/10 text-cyan-200" onClick={() => setStickersOpen((open) => !open)} aria-label="发送表情"><Smile size={20} /></button><textarea rows={1} maxLength={1000} value={content} onChange={(event) => setContent(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} className="min-h-11 max-h-24 flex-1 resize-none rounded-xl border border-white/10 bg-white/10 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400" placeholder="聊天或发表情…" /><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-xl bg-cyan-500 text-slate-950 disabled:opacity-40" disabled={!content.trim() || saving} onClick={() => void sendMessage()} aria-label="发送消息"><Send size={18} /></button></div>
         {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={saving} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="mt-2 max-h-60 overflow-y-auto rounded-xl p-2 text-slate-900" />}
       </div>
@@ -513,7 +532,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       {animationComplete && battle.game?.settlement && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} />}
     </main>
 
-    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的传说卡。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{eligibleCards.map((card) => { const selected = ownIds.includes(card.id); return <button key={card.id} type="button" className={`relative overflow-hidden rounded-xl border-2 text-left ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line"}`} onClick={() => void chooseCard(card.id)}><img className="aspect-[5/7] w-full object-cover" src={card.imageUrl} alt={card.name} /><div className="p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-1 flex gap-2 text-[10px] text-muted"><span>攻 {card.stats.attack}</span><span><Shield className="inline" size={10} /> {card.stats.defense}</span><span><Zap className="inline" size={10} /> {card.stats.speed}</span></p></div>{selected && <span className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full bg-cyan-500 text-white"><Check size={14} /></span>}</button>; })}</div>{eligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">当前没有可参战的传说卡</p>}</Modal>}
+    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{eligibleCards.map((card) => { const selected = ownIds.includes(card.id); return <button key={card.id} type="button" className={`relative overflow-hidden rounded-xl border-2 text-left ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line"}`} onClick={() => void chooseCard(card.id)}><img className="aspect-[5/7] w-full object-cover" src={card.imageUrl} alt={card.name} /><div className="p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-1 flex gap-2 text-[10px] text-muted"><span>攻 {card.stats.attack}</span><span><Shield className="inline" size={10} /> {card.stats.defense}</span><span><Zap className="inline" size={10} /> {card.stats.speed}</span></p></div>{selected && <span className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full bg-cyan-500 text-white"><Check size={14} /></span>}</button>; })}</div>{eligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">当前没有可参战的史诗或传说卡</p>}</Modal>}
     {modeOpen && <Modal onClose={() => setModeOpen(false)}><div><h2 className="text-xl font-black text-ink">选择玩法</h2><button type="button" className="mt-4 flex min-h-14 w-full items-center justify-between rounded-xl border-2 border-primary bg-blue-50 px-4 text-left text-primary"><span><strong className="block">1v1</strong><span className="text-xs">双方各选择五张卡牌自动战斗</span></span><Check /></button><p className="mt-3 text-xs text-muted">暂时只开放 1v1，后续玩法不会影响本局规则。</p></div></Modal>}
     {leaveOpen && <Modal onClose={() => setLeaveOpen(false)}><div><h2 className="text-xl font-black text-ink">退出房间？</h2><p className="mt-2 text-sm leading-6 text-muted">对局进行中退出不会中断服务端战斗；重新进入后会从尚未播放的动画继续。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setLeaveOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(false)}>确认退出</button></div></div></Modal>}
     {closeOpen && <Modal onClose={() => setCloseOpen(false)}><div><h2 className="text-xl font-black text-ink">关闭房间？</h2><p className="mt-2 text-sm leading-6 text-muted">房间关闭后所有成员退出；进行中的对局会标记为中止，不生成胜负结算。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setCloseOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(true)}>关闭房间</button></div></div></Modal>}

@@ -21,10 +21,32 @@ test("历史传说卡的四层默认战斗值完全符合产品约定", () => {
   assert.equal(cardBattleTiersSchema.safeParse(defaultCardBattleTiers()).success, true);
 });
 
+test("史诗卡的四层默认战斗值完全符合产品约定", () => {
+  assert.deepEqual(defaultCardBattleTiers("epic").map(({ maxHp, attack, defense, speed, energyRequired, canAttackRear }) => (
+    { maxHp, attack, defense, speed, energyRequired, canAttackRear }
+  )), [
+    { maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40, canAttackRear: false },
+    { maxHp: 1200, attack: 375, defense: 60, speed: 95, energyRequired: 40, canAttackRear: false },
+    { maxHp: 1500, attack: 500, defense: 90, speed: 110, energyRequired: 40, canAttackRear: false },
+    { maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40, canAttackRear: false },
+  ]);
+  assert.equal(cardBattleTiersSchema.safeParse(defaultCardBattleTiers("epic")).success, true);
+});
+
 test("四个星级必须齐全且不能重复", () => {
   const tiers = defaultCardBattleTiers();
   assert.equal(cardBattleTiersSchema.safeParse(tiers.slice(0, 3)).success, false);
   assert.equal(cardBattleTiersSchema.safeParse([...tiers.slice(0, 3), { ...tiers[2]!, effects: [] }]).success, false);
+});
+
+test("四个星级共用技能名称，但技能描述和效果保持独立", () => {
+  const tiers = defaultCardBattleTiers().map((tier) => ({
+    ...tier,
+    skillName: "星潮",
+    skillDescription: `${tier.starLevel} 星描述`,
+  }));
+  assert.equal(cardBattleTiersSchema.safeParse(tiers).success, true);
+  assert.equal(cardBattleTiersSchema.safeParse(tiers.map((tier) => tier.starLevel === 2 ? { ...tier, skillName: "另一个名字" } : tier)).success, false);
 });
 
 test("生命阈值、数值效果和临时增益分别强制所需字段", () => {

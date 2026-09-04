@@ -83,7 +83,7 @@ export type CardBattleDeckCard = {
   cardId: string;
   name: string;
   imageUrl: string;
-  rarity: "legend";
+  rarity: "epic" | "legend";
   starLevel: 0 | 1 | 2 | 3;
   slot: 1 | 2 | 3 | 4 | 5;
   tier: CardBattleTier;

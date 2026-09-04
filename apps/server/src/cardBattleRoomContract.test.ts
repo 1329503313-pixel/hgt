@@ -9,17 +9,17 @@ const routesSource = readFileSync(new URL("./onlineSoup.ts", import.meta.url), "
 const dbSource = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 const digitalAssetsSource = readFileSync(new URL("./digitalAssets.ts", import.meta.url), "utf8");
 
-test("参战资格和后台战斗配置均仅允许传说卡", () => {
-  assert.equal((roomSource.match(/cards\.rarity = 'legend'/g) ?? []).length, 5);
-  assert.doesNotMatch(roomSource, /cards\.rarity IN \('epic','legend'\)/);
-  assert.match(routesSource, /至少拥有五张启用中的传说卡才能进入对战席/);
-  assert.doesNotMatch(routesSource, /至少拥有五张启用中的史诗或传说卡才能进入对战席/);
-  assert.match(digitalAssetsSource, /value\.rarity === "legend" && !value\.battleTiers/);
-  assert.match(digitalAssetsSource, /value\.rarity !== "legend" && value\.battleTiers/);
-  assert.match(digitalAssetsSource, /String\(row\.rarity\) === "legend" \? await loadCardBattleTiers/);
-  assert.match(digitalAssetsSource, /if \(finalRarity !== "legend"\) \{\s*await connection\.query\("DELETE FROM asset_card_battle_tiers/s);
-  assert.match(dbSource, /DELETE battle_tiers[\s\S]*WHERE cards\.rarity <> 'legend'/);
-  assert.match(dbSource, /INSERT IGNORE INTO asset_card_battle_tiers[\s\S]*WHERE cards\.rarity = 'legend'/);
+test("参战资格和后台战斗配置同时允许史诗与传说卡", () => {
+  assert.equal((roomSource.match(/cards\.rarity IN \('epic','legend'\)/g) ?? []).length, 5);
+  assert.doesNotMatch(roomSource, /cards\.rarity = 'legend'/);
+  assert.match(routesSource, /至少拥有五张启用中的史诗或传说卡才能进入对战席/);
+  assert.match(digitalAssetsSource, /const cardRaritySupportsBattle = \(rarity: string\) => rarity === "epic" \|\| rarity === "legend"/);
+  assert.match(digitalAssetsSource, /cardRaritySupportsBattle\(String\(row\.rarity\)\) \? await loadCardBattleTiers/);
+  assert.match(digitalAssetsSource, /if \(!cardRaritySupportsBattle\(finalRarity\)\) \{\s*await connection\.query\("DELETE FROM asset_card_battle_tiers/s);
+  assert.match(dbSource, /DELETE battle_tiers[\s\S]*WHERE cards\.rarity NOT IN \('epic', 'legend'\)/);
+  assert.match(dbSource, /800 AS max_hp, 250 AS attack_value, 30 AS defense_value, 80 AS speed_value[\s\S]*WHERE cards\.rarity = 'epic'/);
+  assert.match(dbSource, /defaults\.speed_value, 40, 0[\s\S]*WHERE cards\.rarity = 'epic'/);
+  assert.match(dbSource, /WHERE cards\.rarity = 'legend'/);
 });
 
 test("备战阶段只公开本人新阵容，对手新阵容不会沿用上一局公开状态", () => {
