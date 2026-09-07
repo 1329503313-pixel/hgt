@@ -152,6 +152,7 @@ export default function DetailPage() {
       removeSessionCachePrefix("hgt:user-profile:");
       removeSessionCachePrefix("hgt:mine:list:v2:");
       removeSessionCachePrefix("hgt:mine:legacy-list:");
+      if (user) void refreshMineContentCache(user.id, "published").catch(() => {});
       showToast(data.isProfilePinned ? "置顶成功" : "取消置顶成功");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "操作失败，请稍后重试");

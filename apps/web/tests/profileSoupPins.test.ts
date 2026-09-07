@@ -23,7 +23,14 @@ test("我的收藏和点赞栏不展示其他作者的主页置顶标识", () =>
   assert.match(minePage, /showProfilePins=\{activeTab === "published"\}/);
 });
 
-test("我的作品只展示置顶状态，不新增置顶操作或改变排序", () => {
+test("我的作品只展示置顶状态，置顶操作仍集中在作品详情", () => {
   assert.doesNotMatch(mySoupsPage, /profile-pin/);
   assert.doesNotMatch(mySoupsPage, /sort\s*\(/);
+});
+
+test("详情页置顶后刷新我的发布缓存", () => {
+  assert.match(
+    readFileSync(new URL("../src/pages/DetailPage.tsx", import.meta.url), "utf8"),
+    /refreshMineContentCache\(user\.id, "published"\)/,
+  );
 });

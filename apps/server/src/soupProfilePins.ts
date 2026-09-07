@@ -1,6 +1,6 @@
 export const PROFILE_SOUP_PIN_LIMIT = 4;
-export const PROFILE_SOUP_ORDER_SQL = "s.profile_pinned_at IS NOT NULL DESC, s.created_at DESC, s.id DESC";
-export const MY_SOUP_ORDER_SQL = "s.created_at DESC, s.id DESC";
+export const PROFILE_SOUP_ORDER_SQL = "s.profile_pinned_at IS NOT NULL DESC, s.profile_pinned_at DESC, s.created_at DESC, s.id DESC";
+export const MY_SOUP_ORDER_SQL = PROFILE_SOUP_ORDER_SQL;
 
 export type ProfilePinnedSoup = {
   id: unknown;

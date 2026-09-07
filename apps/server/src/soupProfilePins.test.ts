@@ -29,14 +29,14 @@ test("不足四个置顶作品时不淘汰，异常超限时恢复到三项后�
   ]), ["a", "b"]);
 });
 
-test("个人主页先展示置顶作品且置顶组按发布时间倒序", () => {
+test("个人主页先展示置顶作品且最近置顶的作品排在置顶组首位", () => {
   assert.equal(
     PROFILE_SOUP_ORDER_SQL,
-    "s.profile_pinned_at IS NOT NULL DESC, s.created_at DESC, s.id DESC",
+    "s.profile_pinned_at IS NOT NULL DESC, s.profile_pinned_at DESC, s.created_at DESC, s.id DESC",
   );
 });
 
-test("我的作品及其他非主页列表不应用主页置顶排序", () => {
-  assert.equal(MY_SOUP_ORDER_SQL, "s.created_at DESC, s.id DESC");
-  assert.doesNotMatch(MY_SOUP_ORDER_SQL, /profile_pinned_at/);
+test("我的作品与用户主页使用一致的置顶排序", () => {
+  assert.equal(MY_SOUP_ORDER_SQL, PROFILE_SOUP_ORDER_SQL);
+  assert.match(MY_SOUP_ORDER_SQL, /profile_pinned_at/);
 });

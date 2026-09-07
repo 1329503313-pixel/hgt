@@ -52,6 +52,7 @@ test("7日排行榜货币与礼物奖励符合名次梯度", () => {
   assert.deepEqual(rankingRewardFor("weekly", "collection", 3), { type: "gift", giftName: "智慧水晶球", quantity: 2 });
   assert.deepEqual(rankingRewardFor("weekly", "collectible", 3), { type: "gift", giftName: "智慧水晶球", quantity: 2 });
   assert.deepEqual(rankingRewardFor("weekly", "draws", 5), { type: "gift", giftName: "神秘钥匙", quantity: 3 });
+  assert.deepEqual(rankingRewardFor("weekly", "card_battle", 1), { type: "gift", giftName: "月亮小船", quantity: 1 });
   assert.deepEqual(rankingRewardFor("weekly", "achievement", 10), { type: "gift", giftName: "神秘钥匙", quantity: 2 });
 });
 
@@ -64,6 +65,7 @@ test("30日排行榜货币与礼物奖励符合名次梯度", () => {
   assert.deepEqual(rankingRewardFor("monthly", "collection", 3), { type: "gift", giftName: "月亮小船", quantity: 2 });
   assert.deepEqual(rankingRewardFor("monthly", "collectible", 3), { type: "gift", giftName: "月亮小船", quantity: 2 });
   assert.deepEqual(rankingRewardFor("monthly", "draws", 5), { type: "gift", giftName: "月亮小船", quantity: 1 });
+  assert.deepEqual(rankingRewardFor("monthly", "card_battle", 1), { type: "gift", giftName: "深海明珠", quantity: 1 });
   assert.deepEqual(rankingRewardFor("monthly", "achievement", 10), { type: "gift", giftName: "月亮小船", quantity: 1 });
   assert.equal(rankingRewardFor("monthly", "level", 11), null);
 });
@@ -93,12 +95,12 @@ test("同一次排行榜结算汇总为一条通知", () => {
   assert.equal(mergedRankingRewardNotificationReadState([1, 0]), false);
 });
 
-test("30日榜第一名按七个榜单获得对应限时徽章", () => {
+test("30日榜第一名按八个榜单获得对应限时徽章", () => {
   const standings = Object.fromEntries([
-    "achievement", "level", "collection", "collectible", "charm", "generosity", "draws"
+    "achievement", "level", "collection", "collectible", "charm", "generosity", "draws", "card_battle"
   ].map((board, index) => [board, [{ userId: `winner-${index}`, value: 100 - index, rank: 1 }]]));
   const winners = monthlyTimedBadgeWinners(standings as unknown as Parameters<typeof monthlyTimedBadgeWinners>[0]);
-  assert.equal(winners.length, 7);
+  assert.equal(winners.length, 8);
   assert.deepEqual(winners.map(({ board, winner }) => [board, winner.userId]), [
     ["achievement", "winner-0"],
     ["level", "winner-1"],
@@ -106,17 +108,18 @@ test("30日榜第一名按七个榜单获得对应限时徽章", () => {
     ["collectible", "winner-3"],
     ["draws", "winner-6"],
     ["charm", "winner-4"],
-    ["generosity", "winner-5"]
+    ["generosity", "winner-5"],
+    ["card_battle", "winner-7"]
   ]);
   assert.ok(TIMED_RANKING_BADGE_LIST.every((badge) => badge.achievementPoints === 0 && badge.tier === "epic"));
   assert.deepEqual(TIMED_RANKING_BADGE_LIST.map((badge) => badge.name), [
-    "荣誉载身", "独自升级", "JOKER", "收藏大师", "一发入魂", "魅力四射", "慷慨新贵"
+    "荣誉载身", "独自升级", "JOKER", "收藏大师", "一发入魂", "魅力四射", "慷慨新贵", "游戏王"
   ]);
 });
 
 test("没有正值入榜用户的榜单不发限时徽章", () => {
   const standings = Object.fromEntries([
-    "achievement", "level", "collection", "collectible", "charm", "generosity", "draws"
+    "achievement", "level", "collection", "collectible", "charm", "generosity", "draws", "card_battle"
   ].map((board) => [board, []]));
   assert.deepEqual(
     monthlyTimedBadgeWinners(standings as unknown as Parameters<typeof monthlyTimedBadgeWinners>[0]),

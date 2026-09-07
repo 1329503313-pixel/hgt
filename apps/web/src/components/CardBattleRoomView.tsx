@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { Check, ChevronDown, Eye, GripVertical, LogOut, Menu, Send, Share2, Smile, Sparkles, Swords, Users, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { ArrowUpDown, Check, ChevronDown, Eye, GripVertical, Layers, LogOut, Menu, Pencil, Save, Search, Send, Share2, Smile, Sparkles, Swords, Users, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { reorderCardBattleLineup } from "../shared/cardBattleLineup";
 import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
-import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleEvent, OnlineCardBattlePlayback, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
+import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleDeck, OnlineCardBattleEvent, OnlineCardBattlePlayback, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
 import { AssetMotionMedia } from "./AssetCardVisual";
 import { Modal } from "./Modal";
 import { StickerKeyboard } from "./StickerKeyboard";
@@ -28,6 +28,11 @@ type ChatBubble = {
   message: CardBattleChatMessage;
   expiresAt: number;
 };
+
+type CardSort = "number" | "star" | "power";
+type DeckEditorState = { id: string | null; name: string; cardIds: string[]; replaceWithCurrent: boolean };
+
+const combatPowerFormatter = new Intl.NumberFormat("zh-CN");
 
 function hpTone(hp: number, maxHp: number) {
   const ratio = hp / Math.max(1, maxHp);
@@ -96,6 +101,7 @@ function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selecta
     };
   }, [activeEvent?.sequence, isActor]);
   const content = <>
+    {card && !cardBack && activeEvent?.kind === "skill" && isActiveActor && activeEvent.skillName && <span className="card-battle-skill-name pointer-events-none absolute inset-x-[-8px] -top-6 z-[85] truncate rounded-full border border-amber-200/70 bg-amber-400 px-2 py-1 text-center text-[9px] font-black text-slate-950 shadow-lg" title={activeEvent.skillName}>{activeEvent.skillName}</span>}
     <div className="absolute inset-x-1 top-1 z-20 h-1.5 overflow-hidden rounded-full bg-slate-950/40" aria-label={state ? `生命比例 ${Math.round(state.hp / Math.max(1, state.maxHp) * 100)}%` : undefined}>
       <span className={`block h-full transition-[width,background-color] duration-300 ${state ? hpTone(state.hp, state.maxHp) : "bg-emerald-500"}`} style={{ width: `${state ? Math.max(0, state.hp / Math.max(1, state.maxHp) * 100) : 100}%` }} />
     </div>
@@ -104,7 +110,7 @@ function BattleCard({ card, state, cardBack, seat, activeEvent, onClick, selecta
       ? <AssetMotionMedia card={{ ...card, thumbnailUrl: card.imageUrl }} className="h-full w-full rounded-[inherit] object-cover" />
       : <img src={card.imageUrl} alt={card.name} className="h-full w-full rounded-[inherit] object-cover" draggable={false} />
       : <div className="grid h-full place-items-center rounded-[inherit] border border-dashed border-white/25 bg-white/5 text-center text-[10px] font-bold text-white/45">选择<br />卡牌</div>}
-    {card && !cardBack && <><span className="absolute inset-x-1 bottom-1 z-10 truncate rounded bg-slate-950/70 px-1 py-0.5 text-center text-[9px] font-black text-white">{card.name} · {card.starLevel}★</span></>}
+    {card && !cardBack && <><span className="absolute right-1 top-4 z-20 rounded bg-amber-400/95 px-1 py-0.5 text-[8px] font-black text-slate-950 shadow">战力 {combatPowerFormatter.format(card.combatPower)}</span><span className="absolute inset-x-1 bottom-1 z-10 truncate rounded bg-slate-950/70 px-1 py-0.5 text-center text-[9px] font-black text-white">{card.name} · {card.starLevel}★</span></>}
     {activeEffect && activeEvent?.visual === "damage" && <span className={`card-battle-number absolute left-1/2 top-1/3 z-40 -translate-x-1/2 text-lg font-black ${activeEffect.blocked ? "text-slate-100" : "text-red-300"}`}>{activeEffect.blocked ? "格挡" : activeEffect.amount}</span>}
     {activeEffect && activeEvent?.visual === "heal" && <span className="card-battle-number absolute left-1/2 top-0 z-40 -translate-x-1/2 text-lg font-black text-emerald-300">+{activeEffect.amount ?? 0}</span>}
     {activeEffect?.label && !["damage", "heal"].includes(activeEvent?.visual ?? "") && <span className={`card-battle-number absolute left-1/2 top-1/4 z-40 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-black ${activeEvent?.visual === "energy" ? "bg-cyan-500 text-white" : activeEvent?.visual === "revive" ? "bg-emerald-500 text-white" : "bg-amber-400 text-slate-950"}`}>{activeEffect.label}</span>}
@@ -253,14 +259,25 @@ function HalfArena({ seat, battleSeat, states, activeEvent, isOwn, position, can
   </section>;
 }
 
-function Settlement({ battle, onClose }: { battle: NonNullable<OnlineSoupSnapshot["room"]["cardBattle"]>; onClose: () => void }) {
+function Settlement({ battle, onClose, onConfirmRankingWin, confirming }: {
+  battle: NonNullable<OnlineSoupSnapshot["room"]["cardBattle"]>;
+  onClose: () => void;
+  onConfirmRankingWin: () => void;
+  confirming: boolean;
+}) {
   const settlement = battle.game?.settlement;
   if (!settlement) return null;
+  const rankingWon = Boolean(battle.rankingChallenge && settlement.players.find((player) => player.seat === settlement.winnerSeat)?.userId === battle.me.userId);
   return <div className="absolute inset-0 z-[90] grid place-items-center bg-slate-950/80 p-3 backdrop-blur-sm">
     <div className="relative max-h-[88dvh] w-full max-w-xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-4 text-white shadow-2xl">
-      <button type="button" className="absolute right-2 top-2 grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 hover:bg-white/15" onClick={onClose} aria-label="关闭结算"><X size={18} /></button>
+      {!rankingWon && <button type="button" className="absolute right-2 top-2 grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 hover:bg-white/15" onClick={onClose} aria-label="关闭结算"><X size={18} /></button>}
       <div className="pr-10 text-center"><Sparkles className="mx-auto text-amber-300" /><h2 className="mt-1 text-2xl font-black">{settlement.winnerSeat ? `${settlement.players.find((player) => player.seat === settlement.winnerSeat)?.nickname ?? "玩家"} 获胜` : "本局平局"}</h2><p className="mt-1 text-xs text-slate-300">共 {settlement.rounds} 回合 · {settlement.endReason === "round_limit" ? "达到30回合上限" : settlement.endReason === "safety_limit" ? "连锁安全保护" : "卡牌全部下场"}</p></div>
       <div className="mt-4 space-y-4">{[...settlement.players].sort((left, right) => settlement.winnerSeat === left.seat ? -1 : settlement.winnerSeat === right.seat ? 1 : left.seat - right.seat).map((player) => <section key={player.userId} className={`rounded-xl border p-3 ${settlement.winnerSeat === player.seat ? "border-amber-300/50 bg-amber-400/10" : "border-white/10 bg-white/5"}`}><h3 className="font-black">{settlement.winnerSeat === player.seat ? "胜利玩家" : settlement.winnerSeat ? "失败玩家" : `玩家 ${player.seat}`}：{player.nickname}</h3><div className="mt-2 space-y-1">{player.cards.map((card) => <div key={card.slot} className="grid grid-cols-[28px_minmax(0,1fr)_auto_auto] gap-2 text-xs"><span className="text-slate-400">{card.slot}</span><span className="truncate font-bold">{card.name}</span><span className="text-red-300">造成 {card.damageDealt}</span><span className="text-amber-200">承受 {card.damageTaken}</span></div>)}</div></section>)}</div>
+      {battle.rankingChallenge && <div className="mt-4">
+        {rankingWon
+          ? <button type="button" className="min-h-12 w-full rounded-xl bg-amber-400 px-4 text-sm font-black text-slate-950 disabled:opacity-60" disabled={confirming} onClick={onConfirmRankingWin}>{confirming ? "确认中…" : `确认胜利并占据第 ${battle.rankingChallenge.targetRank} 名`}</button>
+          : <button type="button" className="min-h-12 w-full rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15" onClick={onClose}>返回调整卡组并重新准备</button>}
+      </div>}
     </div>
   </div>;
 }
@@ -270,6 +287,13 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const battle = snapshot.room.cardBattle!;
   const [eligibleCards, setEligibleCards] = useState<OnlineCardBattleCard[]>([]);
   const [pickSlot, setPickSlot] = useState<number | null>(null);
+  const [cardQuery, setCardQuery] = useState("");
+  const [cardSort, setCardSort] = useState<CardSort>("number");
+  const [sortDescending, setSortDescending] = useState(false);
+  const [decksOpen, setDecksOpen] = useState(false);
+  const [decks, setDecks] = useState<OnlineCardBattleDeck[]>([]);
+  const [decksLoading, setDecksLoading] = useState(false);
+  const [deckEditor, setDeckEditor] = useState<DeckEditorState | null>(null);
   const [saving, setSaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
@@ -284,6 +308,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const [activeEvent, setActiveEvent] = useState<OnlineCardBattleEvent | null>(null);
   const [visibilityEpoch, setVisibilityEpoch] = useState(0);
   const [settlementDismissedGameId, setSettlementDismissedGameId] = useState<string | null>(null);
+  const [confirmingRankingWin, setConfirmingRankingWin] = useState(false);
   const gameIdRef = useRef<string | null>(null);
   const playbackRef = useRef<OnlineCardBattlePlayback | null>(playback);
   const onReloadRef = useRef(onReload);
@@ -292,6 +317,22 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const seenBubbleIdsRef = useRef(new Set(snapshot.messages.map((message) => message.id)));
   const allStickers = useMemo(() => stickerSeries.flatMap((series) => series.stickers), [stickerSeries]);
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
+  const visibleEligibleCards = useMemo(() => {
+    const query = cardQuery.trim().toLocaleLowerCase("zh-CN");
+    const roleSearch = (card: OnlineCardBattleCard) => CARD_BATTLE_ROLE_LABELS[card.battleRole].toLocaleLowerCase("zh-CN");
+    const filtered = query
+      ? eligibleCards.filter((card) => `${card.name} ${card.cardNo} ${roleSearch(card)}`.toLocaleLowerCase("zh-CN").includes(query))
+      : eligibleCards;
+    const direction = sortDescending ? -1 : 1;
+    return [...filtered].sort((left, right) => {
+      const compared = cardSort === "star"
+        ? left.starLevel - right.starLevel
+        : cardSort === "power"
+          ? left.combatPower - right.combatPower
+          : left.cardNo.localeCompare(right.cardNo, "zh-CN", { numeric: true });
+      return compared * direction || left.name.localeCompare(right.name, "zh-CN");
+    });
+  }, [cardQuery, cardSort, eligibleCards, sortDescending]);
   const enqueueChatBubbles = useCallback((messages: CardBattleChatMessage[]) => {
     const incoming = messages.filter((message) => {
       if (seenBubbleIdsRef.current.has(message.id)) return false;
@@ -341,6 +382,16 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     void api<{ cards: OnlineCardBattleCard[] }>(`/api/online-soup/rooms/${roomId}/card-battle/eligible-cards`, { bypassCache: true })
       .then((data) => setEligibleCards(data.cards)).catch((error) => showToast(error instanceof Error ? error.message : "可参战卡牌加载失败"));
   }, [battle.me.seat, roomId, showToast]);
+  useEffect(() => {
+    if (!decksOpen || !battle.me.seat) return;
+    let cancelled = false;
+    setDecksLoading(true);
+    void api<{ decks: OnlineCardBattleDeck[] }>(`/api/online-soup/rooms/${roomId}/card-battle/decks`, { bypassCache: true })
+      .then((data) => { if (!cancelled) setDecks(data.decks); })
+      .catch((error) => { if (!cancelled) showToast(error instanceof Error ? error.message : "卡组加载失败"); })
+      .finally(() => { if (!cancelled) setDecksLoading(false); });
+    return () => { cancelled = true; };
+  }, [battle.me.seat, decksOpen, roomId, showToast]);
 
   useEffect(() => {
     const game = battle.game;
@@ -457,6 +508,41 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     setOptimisticOwnIds(next);
     if (!await mutation("card-battle/lineup", { cardIds: next })) setOptimisticOwnIds(null);
   }
+  async function applyDeck(deck: OnlineCardBattleDeck) {
+    if (saving || deck.cardIds.length !== 5 || deck.cardIds.some((cardId) => !eligibleCards.some((card) => card.id === cardId))) {
+      showToast("该卡组中有卡牌已不可参战，请用当前阵容更新卡组");
+      return;
+    }
+    const next = [...deck.cardIds];
+    setOptimisticOwnIds(next);
+    const saved = await mutation("card-battle/lineup", { cardIds: next });
+    if (!saved) setOptimisticOwnIds(null);
+    else {
+      setDecksOpen(false);
+      setDeckEditor(null);
+      showToast(`已选择卡组“${deck.name}”`);
+    }
+  }
+  async function saveDeck(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!deckEditor || saving) return;
+    const name = deckEditor.name.trim();
+    if (!name) { showToast("请输入卡组名称"); return; }
+    const currentCardIds = ownIds.filter((cardId): cardId is string => Boolean(cardId));
+    const cardIds = deckEditor.id && !deckEditor.replaceWithCurrent ? deckEditor.cardIds : currentCardIds;
+    if (cardIds.length !== 5) { showToast("必须选满五张卡牌才能保存卡组"); return; }
+    setSaving(true);
+    try {
+      const response = await api<{ deck: OnlineCardBattleDeck }>(
+        `/api/online-soup/rooms/${roomId}/card-battle/decks${deckEditor.id ? `/${deckEditor.id}` : ""}`,
+        { method: deckEditor.id ? "PATCH" : "POST", body: { name, cardIds: deckEditor.id && !deckEditor.replaceWithCurrent ? undefined : cardIds } },
+      );
+      setDecks((current) => [response.deck, ...current.filter((deck) => deck.id !== response.deck.id)]);
+      setDeckEditor(null);
+      showToast(deckEditor.id ? "卡组已更新" : "当前卡组已保存");
+    } catch (error) { showToast(error instanceof Error ? error.message : "卡组保存失败"); }
+    finally { setSaving(false); }
+  }
   async function reorderCards(fromSlot: number, toSlot: number) {
     if (!canConfigure || !battle.me.seat || currentSeat?.ready || saving) return false;
     const next = reorderCardBattleLineup(ownIds, fromSlot, toSlot);
@@ -492,22 +578,38 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   }
   async function leaveRoom(close = false) {
     setSaving(true);
-    try { await api(`/api/online-soup/rooms/${roomId}/${close ? "close" : "leave"}`, { method: "POST" }); navigate("/online-soup", { replace: true }); }
+    try { await api(`/api/online-soup/rooms/${roomId}/${close ? "close" : "leave"}`, { method: "POST" }); navigate(battle.rankingChallenge ? "/rankings" : "/online-soup", { replace: true, ...(battle.rankingChallenge ? { state: { tab: "card_battle" } } : {}) }); }
     catch (error) { showToast(error instanceof Error ? error.message : "退出失败"); setSaving(false); }
+  }
+  async function confirmRankingWin() {
+    if (!battle.rankingChallenge || confirmingRankingWin) return;
+    setConfirmingRankingWin(true);
+    try {
+      await api(`/api/online-soup/rooms/${roomId}/card-battle/ranking/confirm-win`, { method: "POST" });
+      showToast(`打榜成功，已占据第 ${battle.rankingChallenge.targetRank} 名`);
+      navigate("/rankings", { replace: true, state: { tab: "card_battle" } });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "胜利确认失败");
+      if (error instanceof ApiError && error.code === "RANK_CHANGED") {
+        navigate("/rankings", { replace: true, state: { tab: "card_battle" } });
+        return;
+      }
+      setConfirmingRankingWin(false);
+    }
   }
 
   return <div className="card-battle-room flex h-[100dvh] flex-col overflow-hidden bg-[#071426] text-white">
     <header className="relative z-[100] flex min-h-14 shrink-0 items-center gap-3 border-b border-white/10 bg-slate-950/90 px-3 backdrop-blur-xl">
       <UnifiedBackButton compactOnMobile onClick={() => setLeaveOpen(true)} />
-      <div className="min-w-0 flex-1"><h1 className="truncate text-sm font-black">{snapshot.room.name}</h1><p className="truncate text-[10px] text-slate-400">房间号 {snapshot.room.code} · 卡牌对战 · 1v1 · {!animationComplete && battle.game ? `第 ${activeEvent?.round ?? playback?.activeEvent?.round ?? 1} 回合` : battle.phase === "ended" ? "本局结束" : "准备中"}</p></div>
+      <div className="min-w-0 flex-1"><h1 className="truncate text-sm font-black">{snapshot.room.name}</h1><p className="truncate text-[10px] text-slate-400">{battle.rankingChallenge ? `私密打榜 · 目标第 ${battle.rankingChallenge.targetRank} 名` : `房间号 ${snapshot.room.code} · 卡牌对战 · 1v1`} · {!animationComplete && battle.game ? `第 ${activeEvent?.round ?? playback?.activeEvent?.round ?? 1} 回合` : battle.phase === "ended" ? "本局结束" : "准备中"}</p></div>
       <span className="hidden rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-slate-200 sm:inline">{battle.me.seat ? `对战席 ${battle.me.seat}` : "观战"}</span>
-      <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 text-cyan-100 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" aria-label="分享房间" title="分享房间" onClick={() => { setMenuOpen(false); onOpenInvite(); }}><Share2 size={19} /></button>
+      {!battle.rankingChallenge && <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 text-cyan-100 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" aria-label="分享房间" title="分享房间" onClick={() => { setMenuOpen(false); onOpenInvite(); }}><Share2 size={19} /></button>}
       <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 text-cyan-100 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" aria-label={`房间成员，共 ${snapshot.members.length} 人`} title={`房间成员 · ${snapshot.members.length} 人`} onClick={() => { setMenuOpen(false); onOpenMembers(); }}><span className="relative grid h-7 w-7 place-items-center"><Users size={19} /><span className="absolute -right-1.5 -top-1.5 grid min-h-4 min-w-4 place-items-center rounded-full bg-cyan-500 px-1 text-[10px] font-black leading-4 text-slate-950 ring-2 ring-slate-950">{snapshot.members.length}</span></span></button>
       <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 hover:bg-white/15" aria-label="更多操作" onClick={() => setMenuOpen((open) => !open)}><Menu size={19} /></button>
       {menuOpen && <div className="absolute right-3 top-[calc(100%+8px)] z-[110] w-48 overflow-hidden rounded-xl border border-white/10 bg-slate-900 p-1.5 shadow-2xl">
-        {snapshot.me.isHost && <button className="card-battle-menu-item" onClick={() => { setMenuOpen(false); setModeOpen(true); }}><ChevronDown size={16} />选择玩法</button>}
-        {canConfigure && <button className="card-battle-menu-item" disabled={saving || (!battle.me.seat && battle.seats.every((seat) => seat.user !== null))} onClick={() => { setMenuOpen(false); void mutation("card-battle/member-role", { role: battle.me.seat ? "spectator" : "player" }); }}>{battle.me.seat ? <Eye size={16} /> : <Swords size={16} />}{battle.me.seat ? "切换观战" : "切换对战"}</button>}
-        {snapshot.me.isHost && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); setCloseOpen(true); }}><X size={16} />关闭房间</button>}
+        {snapshot.me.isHost && !battle.rankingChallenge && <button className="card-battle-menu-item" onClick={() => { setMenuOpen(false); setModeOpen(true); }}><ChevronDown size={16} />选择玩法</button>}
+        {canConfigure && !battle.rankingChallenge && <button className="card-battle-menu-item" disabled={saving || (!battle.me.seat && battle.seats.every((seat) => seat.user !== null))} onClick={() => { setMenuOpen(false); void mutation("card-battle/member-role", { role: battle.me.seat ? "spectator" : "player" }); }}>{battle.me.seat ? <Eye size={16} /> : <Swords size={16} />}{battle.me.seat ? "切换观战" : "切换对战"}</button>}
+        {snapshot.me.isHost && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); battle.rankingChallenge ? setLeaveOpen(true) : setCloseOpen(true); }}>{battle.rankingChallenge ? <LogOut size={16} /> : <X size={16} />}{battle.rankingChallenge ? "退出打榜" : "关闭房间"}</button>}
         {!snapshot.me.isHost && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); setLeaveOpen(true); }}><LogOut size={16} />退出房间</button>}
       </div>}
     </header>
@@ -533,6 +635,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
 
       <div className="absolute inset-x-0 bottom-0 z-[80] border-t border-white/10 bg-slate-950/90 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl">
         {showBattleControls && <div className="mb-2 flex items-center gap-2">
+          {battle.me.seat && <button type="button" className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-cyan-300/25 bg-white/10 px-2 text-xs font-black text-cyan-100 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-40" disabled={saving || currentSeat?.ready} onClick={() => { setDeckEditor(null); setDecksOpen(true); }}><Layers size={16} />选择卡组</button>}
           {battle.me.seat && <button type="button" className={`min-h-11 flex-1 rounded-xl px-4 text-sm font-black ${currentSeat?.ready ? "bg-amber-400 text-slate-950" : "bg-emerald-500 text-white"}`} disabled={saving || ownIds.filter(Boolean).length !== 5} onClick={() => void mutation("card-battle/ready", { ready: !currentSeat?.ready })}>{currentSeat?.ready ? "取消准备" : ownIds.filter(Boolean).length === 5 ? "准备" : `还需选择 ${5 - ownIds.filter(Boolean).length} 张`}</button>}
           {snapshot.me.isHost && <button type="button" className="min-h-11 flex-1 rounded-xl bg-cyan-400 px-4 text-sm font-black text-slate-950 transition enabled:hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400" disabled={saving || !bothPlayersReady} title={bothPlayersReady ? "双方已准备，可以开始战斗" : "双方均准备后才能开始战斗"} onClick={() => void mutation("start")}><Swords className="mr-1.5 inline" size={16} />开始战斗</button>}
         </div>}
@@ -540,21 +643,58 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
         {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={saving} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="mt-2 max-h-60 overflow-y-auto rounded-xl p-2 text-slate-900" />}
       </div>
 
-      {animationComplete && battle.game?.settlement && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} />}
+      {animationComplete && battle.game?.settlement && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} onConfirmRankingWin={() => void confirmRankingWin()} confirming={confirmingRankingWin} />}
     </main>
 
-    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}><div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡；已上场卡展示技能信息。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{eligibleCards.map((card) => {
-      const selected = ownIds.includes(card.id);
-      return <button key={card.id} type="button" aria-pressed={selected} aria-label={`${card.name}，${card.starLevel}星，${CARD_BATTLE_ROLE_LABELS[card.battleRole]}${selected ? "，已上场" : ""}`} className={`relative overflow-hidden rounded-xl border-2 bg-white text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line hover:border-cyan-300"}`} onClick={() => void chooseCard(card.id)}>
-        <div className="relative aspect-[5/7] overflow-hidden bg-slate-100"><img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} loading="lazy" decoding="async" />{!selected && <span className={`absolute left-2 top-2 rounded-full border px-2 py-1 text-[10px] font-black shadow-md backdrop-blur-sm ${battleRoleTone(card.battleRole)}`}>{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span>}</div>
-        <div className="min-h-[108px] p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p>{selected
-          ? <div className="mt-2"><p className="truncate text-[11px] font-black text-cyan-700">{card.skillName || "未配置技能"}</p><p className="mt-1 line-clamp-3 text-[10px] leading-4 text-muted">{card.skillDescription || "暂无技能说明"}</p></div>
-          : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] leading-4 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div></dl>}
-        </div>{selected && <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-cyan-500 text-white shadow-md" aria-hidden="true"><Check size={15} /></span>}
-      </button>;
-    })}</div>{eligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">当前没有可参战的史诗或传说卡</p>}</Modal>}
+    {decksOpen && <Modal full onClose={() => { setDecksOpen(false); setDeckEditor(null); }}>
+      {deckEditor ? <form onSubmit={saveDeck}>
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">{deckEditor.id ? "编辑卡组" : "保存当前卡组"}</h2><p className="mt-1 text-xs text-muted">卡组会保存五张卡牌及其当前卡位。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setDeckEditor(null)} aria-label="返回卡组列表"><X size={18} /></button></div>
+        <label className="mt-5 block"><span className="text-sm font-black text-ink">卡组名称</span><input className="field mt-2 min-h-11 w-full" maxLength={30} value={deckEditor.name} onChange={(event) => setDeckEditor((current) => current ? { ...current, name: event.target.value } : current)} placeholder="例如：高速反击队" autoFocus /><span className="mt-1 block text-right text-[10px] text-muted">{deckEditor.name.length}/30</span></label>
+        {deckEditor.id && ownIds.filter(Boolean).length === 5 && <button type="button" aria-pressed={deckEditor.replaceWithCurrent} onClick={() => setDeckEditor((current) => current ? { ...current, replaceWithCurrent: !current.replaceWithCurrent } : current)} className={`mt-3 flex min-h-11 w-full items-center justify-between rounded-xl border px-3 text-left text-xs font-bold transition ${deckEditor.replaceWithCurrent ? "border-cyan-400 bg-cyan-50 text-cyan-800" : "border-line bg-white text-muted"}`}><span><strong className="block text-ink">用当前阵容覆盖卡组</strong><span>同时更新五张卡牌及其位置</span></span>{deckEditor.replaceWithCurrent && <Check size={18} />}</button>}
+        <div className="mt-4"><h3 className="text-sm font-black text-ink">{deckEditor.id && !deckEditor.replaceWithCurrent ? "已保存的卡位" : "将保存的卡位"}</h3><div className="mt-2 grid grid-cols-5 gap-2">{(deckEditor.id && !deckEditor.replaceWithCurrent ? deckEditor.cardIds : ownIds).map((cardId, index) => {
+          const card = cardId ? ownCardsById.get(cardId) : null;
+          return <div key={`${cardId ?? "empty"}-${index}`} className="min-w-0 text-center"><div className="relative aspect-[5/7] overflow-hidden rounded-lg border border-line bg-slate-100">{card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" /> : <span className="grid h-full place-items-center text-[9px] font-bold text-slate-400">不可用</span>}<span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-950/75 text-[9px] font-black text-white">{index + 1}</span></div><p className="mt-1 truncate text-[9px] font-bold text-muted">{card?.name ?? "未知卡牌"}</p></div>;
+        })}</div></div>
+        <div className="mt-6 grid grid-cols-2 gap-2"><button type="button" className="btn btn-secondary" onClick={() => setDeckEditor(null)}>取消</button><button type="submit" className="btn btn-primary inline-flex items-center justify-center gap-1.5" disabled={saving || !deckEditor.name.trim()}><Save size={16} />{saving ? "保存中…" : "保存卡组"}</button></div>
+      </form> : <>
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择卡组</h2><p className="mt-1 text-xs text-muted">使用卡组会按保存时的位置替换当前五个卡位。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setDecksOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <button type="button" className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 text-sm font-black text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" disabled={saving || ownIds.filter(Boolean).length !== 5} onClick={() => setDeckEditor({ id: null, name: `我的卡组 ${decks.length + 1}`, cardIds: ownIds.filter((cardId): cardId is string => Boolean(cardId)), replaceWithCurrent: true })}><Save size={17} />保存当前卡组</button>
+        {ownIds.filter(Boolean).length !== 5 && <p className="mt-2 text-center text-xs text-muted">选满五张卡牌后即可保存当前卡组</p>}
+        <div className="mt-5 space-y-3">{decks.map((deck) => {
+          const availableCards = deck.cardIds.map((cardId) => ownCardsById.get(cardId) ?? null);
+          const available = deck.cardIds.length === 5 && availableCards.every(Boolean);
+          const totalPower = availableCards.reduce((sum, card) => sum + (card?.combatPower ?? 0), 0);
+          return <article key={deck.id} className="rounded-2xl border border-line bg-white p-3 shadow-sm"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-black text-ink">{deck.name}</h3><p className={`mt-1 text-[11px] font-bold ${available ? "text-amber-600" : "text-red-600"}`}>{available ? `总战力 ${combatPowerFormatter.format(totalPower)}` : "含有当前不可用的卡牌"}</p></div><button type="button" className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-line px-3 text-xs font-black text-muted hover:bg-slate-50" onClick={() => setDeckEditor({ id: deck.id, name: deck.name, cardIds: deck.cardIds, replaceWithCurrent: false })}><Pencil size={14} />编辑</button></div>
+            <div className="mt-3 grid grid-cols-5 gap-2">{availableCards.map((card, index) => <div key={`${deck.cardIds[index] ?? "empty"}-${index}`} className="min-w-0 text-center"><div className="relative aspect-[5/7] overflow-hidden rounded-lg border border-line bg-slate-100">{card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" loading="lazy" /> : <span className="grid h-full place-items-center text-[9px] font-bold text-slate-400">不可用</span>}<span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-950/75 text-[9px] font-black text-white">{index + 1}</span></div><p className="mt-1 truncate text-[9px] font-bold text-muted">{card?.name ?? "未知卡牌"}</p></div>)}</div>
+            <button type="button" className="mt-3 min-h-11 w-full rounded-xl bg-slate-900 px-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" disabled={saving || !available} onClick={() => void applyDeck(deck)}>使用此卡组</button>
+          </article>;
+        })}</div>
+        {decksLoading && <p className="py-10 text-center text-sm text-muted" role="status">卡组加载中…</p>}
+        {!decksLoading && decks.length === 0 && <div className="py-10 text-center"><Layers className="mx-auto text-slate-300" size={36} /><p className="mt-3 text-sm font-bold text-muted">还没有保存的卡组</p></div>}
+      </>}
+    </Modal>}
+    {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}>
+      <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡；支持搜索和排序。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px_44px]">
+        <label className="relative block"><span className="sr-only">搜索卡牌</span><Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><input type="search" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} className="field min-h-11 w-full pl-10" placeholder="搜索卡牌名称、序号或定位" autoFocus /></label>
+        <label><span className="sr-only">卡牌排序方式</span><select value={cardSort} onChange={(event) => { const next = event.target.value as CardSort; setCardSort(next); setSortDescending(next !== "number"); }} className="field min-h-11 w-full"><option value="number">按序号排序</option><option value="star">按星级排序</option><option value="power">按战力排序</option></select></label>
+        <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-line bg-white text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" onClick={() => setSortDescending((value) => !value)} aria-label={sortDescending ? "当前降序，点击切换为升序" : "当前升序，点击切换为降序"} title={sortDescending ? "降序" : "升序"}><ArrowUpDown size={18} /></button>
+      </div>
+      <p className="mt-3 text-xs font-bold text-muted" aria-live="polite">共 {visibleEligibleCards.length} 张卡牌</p>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{visibleEligibleCards.map((card) => {
+        const selected = ownIds.includes(card.id);
+        return <button key={card.id} type="button" aria-pressed={selected} aria-label={`${card.name}，${card.starLevel}星，战力${card.combatPower}，${CARD_BATTLE_ROLE_LABELS[card.battleRole]}${selected ? "，已上场" : ""}`} className={`relative overflow-hidden rounded-xl border-2 bg-white text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line hover:border-cyan-300"}`} onClick={() => void chooseCard(card.id)}>
+          <div className="relative aspect-[5/7] overflow-hidden bg-slate-100"><img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} loading="lazy" decoding="async" />{!selected && <span className={`absolute left-2 top-2 rounded-full border px-2 py-1 text-[10px] font-black shadow-md backdrop-blur-sm ${battleRoleTone(card.battleRole)}`}>{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span>}<span className="absolute bottom-2 right-2 rounded-full bg-amber-400 px-2 py-1 text-[10px] font-black text-slate-950 shadow-md">战力 {combatPowerFormatter.format(card.combatPower)}</span></div>
+          <div className="min-h-[128px] p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">序号 {card.cardNo}</p>{selected
+            ? <div className="mt-2"><p className="truncate text-[11px] font-black text-cyan-700">{card.skillName || "未配置技能"}</p><p className="mt-1 line-clamp-3 text-[10px] leading-4 text-muted">{card.skillDescription || "暂无技能说明"}</p></div>
+            : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] leading-4 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div></dl>}
+          </div>{selected && <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-cyan-500 text-white shadow-md" aria-hidden="true"><Check size={15} /></span>}
+        </button>;
+      })}</div>
+      {visibleEligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">{eligibleCards.length ? "没有找到匹配的卡牌" : "当前没有可参战的史诗或传说卡"}</p>}
+    </Modal>}
     {modeOpen && <Modal onClose={() => setModeOpen(false)}><div><h2 className="text-xl font-black text-ink">选择玩法</h2><button type="button" className="mt-4 flex min-h-14 w-full items-center justify-between rounded-xl border-2 border-primary bg-blue-50 px-4 text-left text-primary"><span><strong className="block">1v1</strong><span className="text-xs">双方各选择五张卡牌自动战斗</span></span><Check /></button><p className="mt-3 text-xs text-muted">暂时只开放 1v1，后续玩法不会影响本局规则。</p></div></Modal>}
-    {leaveOpen && <Modal onClose={() => setLeaveOpen(false)}><div><h2 className="text-xl font-black text-ink">退出房间？</h2><p className="mt-2 text-sm leading-6 text-muted">对局进行中退出不会中断服务端战斗；重新进入后会从尚未播放的动画继续。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setLeaveOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(false)}>确认退出</button></div></div></Modal>}
+    {leaveOpen && <Modal onClose={() => setLeaveOpen(false)}><div><h2 className="text-xl font-black text-ink">{battle.rankingChallenge ? "退出打榜？" : "退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{battle.rankingChallenge ? "退出后临时打榜房间会立即解散，本次挑战不会改变榜单。" : "对局进行中退出不会中断服务端战斗；重新进入后会从尚未播放的动画继续。"}</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setLeaveOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(false)}>确认退出</button></div></div></Modal>}
     {closeOpen && <Modal onClose={() => setCloseOpen(false)}><div><h2 className="text-xl font-black text-ink">关闭房间？</h2><p className="mt-2 text-sm leading-6 text-muted">房间关闭后所有成员退出；进行中的对局会标记为中止，不生成胜负结算。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setCloseOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(true)}>关闭房间</button></div></div></Modal>}
   </div>;
 }

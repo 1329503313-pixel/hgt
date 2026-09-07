@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Crown, Dices, Flame, GalleryVerticalEnd, Gem, Gift, Heart, Medal, Sparkles, TrendingUp, Trophy } from "lucide-react";
+import { Crown, Dices, Flame, GalleryVerticalEnd, Gem, Gift, Heart, Medal, Sparkles, Swords, TrendingUp, Trophy } from "lucide-react";
 import { api } from "../api";
 import { LevelBadge } from "../components/LevelBadge";
 import { VipIdentity } from "../components/VipIdentity";
@@ -9,6 +9,7 @@ import { MineBackButton } from "../components/MineBackButton";
 import { useApp } from "../context/AppContext";
 import { ListSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
+import { CardBattleRankingBoard } from "../components/CardBattleRankingBoard";
 
 type HotSoupRank = {
   rank: number;
@@ -111,8 +112,8 @@ type RankingsResponse = {
   drawOwn: DrawUserRank | null;
 };
 
-type RankingTab = "soups" | "users" | "level" | "charm" | "generosity" | "collection" | "collectible" | "draws";
-type RankingGroup = "content" | "user";
+type RankingTab = "soups" | "users" | "level" | "charm" | "generosity" | "collection" | "collectible" | "draws" | "card_battle";
+type RankingGroup = "content" | "user" | "game";
 type RankingPeriod = "7d" | "30d" | "all";
 
 function RankMark({ rank, className = "" }: { rank: number; className?: string }) {
@@ -129,9 +130,9 @@ function RankMark({ rank, className = "" }: { rank: number; className?: string }
 export default function RankingsPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, loadingUser, openAuth } = useApp();
+  const { user, loadingUser, openAuth, showToast } = useApp();
   const requestedTab = (location.state as { tab?: string } | null)?.tab;
-  const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "charm" || requestedTab === "generosity" || requestedTab === "collection" || requestedTab === "collectible" || requestedTab === "draws" ? requestedTab : "soups";
+  const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "charm" || requestedTab === "generosity" || requestedTab === "collection" || requestedTab === "collectible" || requestedTab === "draws" || requestedTab === "card_battle" ? requestedTab : "soups";
   const [tab, setTab] = useState<RankingTab>(initialTab);
   const [period, setPeriod] = useState<RankingPeriod>("7d");
   const [data, setData] = useState<RankingsResponse | null>(null);
@@ -274,6 +275,15 @@ export default function RankingsPage() {
       description: "记录用户送出礼物贡献的魅力价值",
       icon: Gift,
       tone: "is-generosity"
+    },
+    {
+      key: "card_battle",
+      group: "game",
+      label: "卡牌对战榜",
+      shortLabel: "卡牌对战",
+      description: "通过 1v1 私密挑战争夺固定榜位",
+      icon: Swords,
+      tone: "is-card-battle"
     }
   ];
 
@@ -304,7 +314,7 @@ export default function RankingsPage() {
 
   function selectGroup(group: RankingGroup) {
     if (group === activeGroup) return;
-    setTab(group === "content" ? "soups" : "users");
+    setTab(group === "content" ? "soups" : group === "user" ? "users" : "card_battle");
   }
 
   const rankingRewardSummary = (() => {
@@ -332,7 +342,7 @@ export default function RankingsPage() {
             <p className="hidden text-xs font-black tracking-[0.16em] text-primary lg:block">LEADERBOARDS</p>
             <h2 className="font-black text-ink lg:mt-1 lg:text-xl">选择排行榜</h2>
           </div>
-          <p>{usesCurrentCollectibleValue ? "收藏品榜展示当前持有总价值" : period === "all" ? "展示累计总值" : `展示最近${periodLabel}内增长的数值`}，各榜单取前 10 名</p>
+          <p>{activeGroup === "game" ? "卡牌对战榜展示固定榜位，默认前 10 名，可展开至前 100 名" : `${usesCurrentCollectibleValue ? "收藏品榜展示当前持有总价值" : period === "all" ? "展示累计总值" : `展示最近${periodLabel}内增长的数值`}，各榜单取前 10 名`}</p>
         </div>
 
         <div className="rankings-filter-grid">
@@ -341,6 +351,7 @@ export default function RankingsPage() {
             <div className="rankings-segmented" aria-label="排行榜对象">
               <button type="button" className={activeGroup === "content" ? "is-active" : ""} onClick={() => selectGroup("content")} aria-pressed={activeGroup === "content"}>作品榜</button>
               <button type="button" className={activeGroup === "user" ? "is-active" : ""} onClick={() => selectGroup("user")} aria-pressed={activeGroup === "user"}>用户榜</button>
+              <button type="button" className={activeGroup === "game" ? "is-active" : ""} onClick={() => selectGroup("game")} aria-pressed={activeGroup === "game"}>游戏榜</button>
             </div>
           </div>
 
@@ -362,7 +373,7 @@ export default function RankingsPage() {
           <div className="rankings-filter-group">
             <span className="rankings-filter-label">统计周期</span>
             <div className="rankings-segmented" aria-label="排行榜时间范围">
-              {([
+              {activeGroup === "game" ? <button type="button" className="is-active" disabled aria-pressed="true">当前榜位</button> : ([
                 ["7d", "7日"],
                 ["30d", "30日"],
                 ["all", "永久"]
@@ -374,7 +385,7 @@ export default function RankingsPage() {
         </div>
       </div>
 
-      <div className="rankings-workspace">
+      {tab === "card_battle" ? <CardBattleRankingBoard currentUserId={user.id} showToast={showToast} /> : <div className="rankings-workspace">
         <aside className={`rankings-spotlight hidden lg:flex ${activeCategory.tone}`}>
           <div className="rankings-spotlight-heading">
             <span><Crown size={19} /></span>
@@ -572,7 +583,7 @@ export default function RankingsPage() {
           </div>
         )}
       </div>
-      </div>
+      </div>}
     </section>
   );
 }

@@ -10,7 +10,7 @@ import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES_SQL, CURRENT_COLLECTIBLE_HOLDINGS_SQ
 import { TIMED_RANKING_BADGES, type TimedRankingBadgeBoard } from "./timedRankingBadges.js";
 
 export type RankingRewardPeriod = "weekly" | "monthly";
-export type RankingRewardBoard = "achievement" | "level" | "collection" | "collectible" | "charm" | "generosity" | "draws";
+export type RankingRewardBoard = "achievement" | "level" | "collection" | "collectible" | "charm" | "generosity" | "draws" | "card_battle";
 
 type CurrencyReward = { type: "currency"; experience: number; shell: number };
 type GiftReward = { type: "gift"; giftName: "月亮小船" | "智慧水晶球" | "神秘钥匙" | "深海明珠"; quantity: number };
@@ -18,7 +18,7 @@ export type RankingReward = CurrencyReward | GiftReward;
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
-const BOARD_ORDER: RankingRewardBoard[] = ["achievement", "level", "collection", "collectible", "charm", "generosity", "draws"];
+const BOARD_ORDER: RankingRewardBoard[] = ["achievement", "level", "collection", "collectible", "charm", "generosity", "draws", "card_battle"];
 export const RANKING_REWARD_BOARD_LABELS: Record<RankingRewardBoard, string> = {
   achievement: "成就榜",
   level: "等级榜",
@@ -26,7 +26,8 @@ export const RANKING_REWARD_BOARD_LABELS: Record<RankingRewardBoard, string> = {
   collectible: "收藏品榜",
   charm: "魅力榜",
   generosity: "慷慨榜",
-  draws: "抽卡榜"
+  draws: "抽卡榜",
+  card_battle: "卡牌对战榜"
 };
 const RANKING_GIFT_BINDING_KEYS: Record<GiftReward["giftName"], RewardGiftBindingKey> = {
   神秘钥匙: "ranking:mystery_key",
@@ -183,7 +184,7 @@ async function rankingStandings(
   periodStart: Date,
   periodEnd: Date
 ): Promise<Standings> {
-  const [achievementRows, levelRows, charmRows, generosityRows, collectionRows, collectibleRows, drawRows] = await Promise.all([
+  const [achievementRows, levelRows, charmRows, generosityRows, collectionRows, collectibleRows, drawRows, cardBattleRows] = await Promise.all([
     connection.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.created_at, ubu.badge_key, ubu.unlocked_at,
          lb.achievement_points AS legendary_points
@@ -285,6 +286,15 @@ async function rankingStandings(
          AND users.role IN ('user', 'vip', 'backoffice_admin')
        GROUP BY events.user_id, users.created_at`,
       [periodStart, periodEnd]
+    ).then(([rows]) => rows),
+    connection.query<mysql.RowDataPacket[]>(
+      `SELECT entries.user_id AS id, users.created_at, entries.total_power AS metric_value,
+         entries.achieved_at AS reached_at, entries.rank_position
+       FROM card_battle_ranking_entries entries
+       JOIN users ON users.id = entries.user_id
+       WHERE users.role IN ('user', 'vip', 'backoffice_admin')
+       ORDER BY entries.rank_position
+       LIMIT 10`
     ).then(([rows]) => rows)
   ]);
 
@@ -324,7 +334,12 @@ async function rankingStandings(
     collectible: rankRows(collectibleRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
     charm: rankRows(charmRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
     generosity: rankRows(generosityRows, (row) => new Date(row.reached_at ?? row.created_at).getTime()),
-    draws: rankRows(drawRows, (row) => new Date(row.reached_at).getTime())
+    draws: rankRows(drawRows, (row) => new Date(row.reached_at).getTime()),
+    card_battle: cardBattleRows.map((row) => ({
+      userId: String(row.id),
+      rank: Number(row.rank_position),
+      value: Math.max(0, Math.floor(Number(row.metric_value ?? 0))),
+    }))
   };
 }
 

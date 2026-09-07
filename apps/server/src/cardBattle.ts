@@ -4,6 +4,16 @@ export const CARD_BATTLE_MAX_TRIGGER_EFFECTS = 100;
 export const CARD_BATTLE_MAX_EVENTS = 400;
 export const CARD_BATTLE_MAX_PLAYBACK_MS = 7 * 60_000;
 
+export function calculateCardBattlePower(stats: {
+  maxHp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  energyRequired: number;
+}) {
+  return stats.maxHp + stats.attack * 3 + stats.defense * 4 + stats.speed * 7 - stats.energyRequired * 10;
+}
+
 export const cardBattleRoleCodes = ["damage", "tank", "support"] as const;
 export type CardBattleRole = typeof cardBattleRoleCodes[number];
 

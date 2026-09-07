@@ -194,7 +194,7 @@ export type RankingRewardSettlementDetail = {
   periodEnd: string;
   completedAt: string;
   grants: Array<{
-    board: "achievement" | "level" | "collection" | "collectible" | "charm" | "generosity" | "draws";
+    board: "achievement" | "level" | "collection" | "collectible" | "charm" | "generosity" | "draws" | "card_battle";
     boardLabel: string;
     rank: number;
     metricValue: number;
@@ -587,12 +587,27 @@ export type OnlineCardBattleCard = {
   motionWebmUrl: string | null;
   motionPosterUrl: string | null;
   stats: { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; canAttackRear: boolean };
+  combatPower: number;
   skillName: string;
   skillDescription: string;
+};
+export type OnlineCardBattleDeck = {
+  id: string;
+  name: string;
+  cardIds: string[];
+  createdAt: string | null;
+  updatedAt: string | null;
 };
 export type OnlineCardBattleState = {
   mode: "1v1";
   phase: "preparing" | "playing" | "ended" | "aborted";
+  rankingChallenge: null | {
+    id: string;
+    challengerUserId: string;
+    defenderUserId: string;
+    targetRank: number;
+    status: "active" | "won" | "abandoned" | "stale";
+  };
   seats: Array<{
     seat: 1 | 2;
     user: { id: string; nickname: string; avatar: string | null } | null;

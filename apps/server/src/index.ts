@@ -6560,7 +6560,7 @@ app.get("/api/ranking-rewards/:settlementId", async (req, res) => {
       AND timed_badges.user_id = grants.user_id
      LEFT JOIN legendary_badges ON legendary_badges.id = timed_badges.badge_id
      WHERE settlements.id = ? AND grants.user_id = ?
-     ORDER BY FIELD(grants.board_type, 'achievement', 'level', 'collection', 'collectible', 'charm', 'generosity', 'draws')`,
+     ORDER BY FIELD(grants.board_type, 'achievement', 'level', 'collection', 'collectible', 'charm', 'generosity', 'draws', 'card_battle')`,
     [req.params.settlementId, user.id]
   );
   if (!rows[0]) return sendError(res, 404, "排行榜奖励结算不存在");

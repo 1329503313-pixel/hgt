@@ -42,6 +42,7 @@
 .card-battle-fx-blue { animation: card-battle-blue 1s ease both; }
 .card-battle-hit, .card-battle-fx-green, .card-battle-fx-yellow, .card-battle-fx-blue { z-index: 74; }
 .card-battle-number { pointer-events: none; animation: card-battle-number 850ms ease-out both; text-shadow: 0 2px 8px rgb(0 0 0 / .85); }
+.card-battle-skill-name { animation: card-battle-skill-name 180ms ease-out both; }
 .card-battle-defeated { filter: saturate(.15) brightness(.65); opacity: .72; }
 .card-battle-chat-bubble { pointer-events: none; animation: card-battle-chat-life 8s linear both; }
 .card-battle-menu-item { display: flex; min-height: 44px; width: 100%; align-items: center; gap: .65rem; border-radius: .625rem; padding: .6rem .75rem; text-align: left; font-size: .8rem; font-weight: 800; transition: background-color 160ms ease; }
@@ -60,11 +61,13 @@
 @keyframes card-battle-yellow { 0%,100% { filter: brightness(1); box-shadow: 0 0 0 rgb(250 204 21 / 0); } 45% { filter: brightness(1.22); box-shadow: 0 0 28px 8px rgb(250 204 21 / .72); } }
 @keyframes card-battle-blue { 0%,100% { filter: brightness(1); box-shadow: 0 0 0 rgb(34 211 238 / 0); } 45% { filter: brightness(1.18); box-shadow: 0 0 28px 8px rgb(34 211 238 / .7); } }
 @keyframes card-battle-number { 0% { opacity: 0; transform: translate(-50%, 8px) scale(.8); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.12); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -22px) scale(1); } }
+@keyframes card-battle-skill-name { from { opacity: 0; transform: translateY(5px) scale(.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes card-battle-chat-life { 0% { opacity: 0; transform: translateY(6px); } 3%,78% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .card-battle-attacker-1, .card-battle-attacker-2 { animation-name: card-battle-attack-reduced; }
   .card-battle-hit { animation-name: card-battle-hit-reduced; }
   .card-battle-chat-bubble { animation-name: card-battle-chat-life-reduced; }
+  .card-battle-skill-name { animation: none; }
   .card-battle-number, .card-battle-fx-green, .card-battle-fx-yellow, .card-battle-fx-blue, .card-battle-chat-bubble { animation-timing-function: linear; }
 }
 @keyframes card-battle-attack-reduced { 0%,100% { opacity: 1; filter: brightness(1); } 45%,70% { opacity: .72; filter: brightness(1.35); } }
@@ -3204,6 +3207,8 @@ textarea {
   .rankings-spotlight.is-draws .rankings-podium-value strong { color: #0891b2 !important; }
   .rankings-spotlight.is-charm .rankings-podium-value strong { color: #e11d48 !important; }
   .rankings-spotlight.is-generosity .rankings-podium-value strong { color: #d97706 !important; }
+  .rankings-spotlight.is-card-battle .rankings-spotlight-heading > span { background: #f3e8ff; color: #7c3aed; }
+  .rankings-spotlight.is-card-battle .rankings-rule-card svg { color: #7c3aed; }
 
   .rankings-rule-card {
     display: flex;

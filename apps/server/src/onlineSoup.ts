@@ -74,15 +74,28 @@ import {
   CardBattleRoomRuleError,
   cardBattleClientState,
   claimCardBattleSeat,
+  createSavedCardBattleDeck,
   eligibleCardCount,
   finalizeCardBattleIfDue,
   isCardBattleRoom,
   loadEligibleBattleCards,
+  loadSavedCardBattleDecks,
   releaseCardBattleSeat,
   saveCardBattleLineup,
   setCardBattleReady,
   startCardBattle,
+  updateSavedCardBattleDeck,
 } from "./cardBattleRoom.js";
+import {
+  abandonCardBattleRankingChallenge,
+  CardBattleRankingRuleError,
+  cardBattleRankingDetail,
+  cardBattleRankingOwnRank,
+  claimEmptyCardBattleRank,
+  confirmCardBattleRankingWin,
+  createCardBattleRankingChallenge,
+  listCardBattleRanking,
+} from "./cardBattleRanking.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type ImpostorMessageEvent =
@@ -391,11 +404,70 @@ async function releaseStaleSeats(roomId?: string, db: mysql.Pool | mysql.PoolCon
     `DELETE battle_seats FROM online_card_battle_seats battle_seats
      JOIN online_soup_rooms rooms ON rooms.id = battle_seats.room_id
      LEFT JOIN online_soup_members members ON members.room_id = battle_seats.room_id AND members.user_id = battle_seats.user_id
-     WHERE rooms.status <> 'playing' AND (members.user_id IS NULL OR members.is_active = 0)
+     WHERE rooms.status <> 'playing' AND rooms.room_scope = 'public'
+       AND (members.user_id IS NULL OR members.is_active = 0)
        ${roomId ? "AND battle_seats.room_id = ?" : ""}`,
     roomId ? [roomId] : [],
   );
 }
+
+function failCardBattleRanking(res: any, error: unknown) {
+  if (error instanceof CardBattleRankingRuleError) return fail(res, 409, error.message, error.code);
+  throw error;
+}
+
+router.get("/card-battle/decks", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  res.json({ decks: await loadSavedCardBattleDecks(user.id) });
+});
+
+router.get("/card-battle/eligible-cards", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  res.json({ cards: await loadEligibleBattleCards(user.id) });
+});
+
+router.get("/card-battle-rankings", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const parsed = z.object({ limit: z.coerce.number().int().refine((value) => value === 10 || value === 100).default(10) }).safeParse(req.query);
+  if (!parsed.success) return fail(res, 400, "榜单数量只能是 10 或 100");
+  const limit = parsed.data.limit as 10 | 100;
+  res.json({ entries: await listCardBattleRanking(limit), ownRank: await cardBattleRankingOwnRank(user.id), limit });
+});
+
+router.get("/card-battle-rankings/:rank", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const parsed = z.coerce.number().int().min(1).max(100).safeParse(req.params.rank);
+  if (!parsed.success) return fail(res, 400, "排名必须在 1 至 100 之间");
+  const entry = await cardBattleRankingDetail(parsed.data);
+  if (!entry) return fail(res, 404, "该排名当前为空", "RANK_EMPTY");
+  res.json({ entry, ownRank: await cardBattleRankingOwnRank(user.id) });
+});
+
+router.post("/card-battle-rankings/:rank/claim", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const rank = z.coerce.number().int().min(1).max(100).safeParse(req.params.rank);
+  const body = z.object({ deckId: z.string().trim().min(1).max(64) }).safeParse(req.body);
+  if (!rank.success || !body.success) return fail(res, 400, "请选择有效排名和已保存卡组");
+  try {
+    res.status(201).json({ entry: await claimEmptyCardBattleRank(user.id, rank.data, body.data.deckId) });
+  } catch (error) { return failCardBattleRanking(res, error); }
+});
+
+router.post("/card-battle-rankings/:rank/challenge", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const rank = z.coerce.number().int().min(1).max(100).safeParse(req.params.rank);
+  const body = z.object({ deckId: z.string().trim().min(1).max(64) }).safeParse(req.body);
+  if (!rank.success || !body.success) return fail(res, 400, "请选择有效排名和已保存卡组");
+  try {
+    res.status(201).json(await createCardBattleRankingChallenge(user.id, rank.data, body.data.deckId));
+  } catch (error) { return failCardBattleRanking(res, error); }
+});
 
 type ActiveHostSuccessor = OnlineSoupHostCandidate & {
   previousRole: "player" | "spectator";
@@ -2177,7 +2249,7 @@ router.get("/rooms", async (req, res) => {
      LEFT JOIN mystery_stories mystery ON mystery.id = r.current_mystery_id
      LEFT JOIN mystery_runs mystery_run ON mystery_run.id = r.current_mystery_run_id
      LEFT JOIN online_soup_members m ON m.room_id = r.id
-     WHERE r.status IN ('preparing','playing','ended')
+     WHERE r.status IN ('preparing','playing','ended') AND r.room_scope = 'public'
      GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 100`,
     [user?.id ?? ""]
   );
@@ -2210,7 +2282,7 @@ router.get("/rooms/lookup/:code", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
   const room = await roomByCode(String(req.params.code).trim());
-  if (!room || room.status === "closed") return fail(res, 404, "未找到该房间");
+  if (!room || room.status === "closed" || String(room.room_scope ?? "public") !== "public") return fail(res, 404, "未找到该房间");
   const [[[count]], existing] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
       "SELECT COUNT(*) AS player_count FROM online_soup_members WHERE room_id = ? AND is_active = 1 AND member_role = 'player'",
@@ -2229,7 +2301,7 @@ router.get("/rooms/lookup/:code", async (req, res) => {
 
 router.get("/rooms/:roomId/invite-preview", async (req, res) => {
   const room = await roomById(req.params.roomId);
-  if (!room || room.status === "closed") return fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED");
+  if (!room || room.status === "closed" || String(room.room_scope ?? "public") !== "public") return fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED");
   const [[counts]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT
        SUM(CASE WHEN member_role = 'player' AND is_active = 1 THEN 1 ELSE 0 END) AS player_count,
@@ -2263,7 +2335,7 @@ router.get("/rooms/:roomId/invite-status", async (req, res) => {
     return fail(res, 403, "游戏房间邀请无效");
   }
   const room = await roomById(req.params.roomId);
-  if (!room) return fail(res, 404, "房间不存在", "ROOM_CLOSED");
+  if (!room || String(room.room_scope ?? "public") !== "public") return fail(res, 404, "房间不存在", "ROOM_CLOSED");
   const [[counts]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT SUM(CASE WHEN member_role = 'player' AND is_active = 1 THEN 1 ELSE 0 END) AS player_count
      FROM online_soup_members WHERE room_id = ?`,
@@ -2290,6 +2362,7 @@ router.get("/rooms/:roomId/invite-status", async (req, res) => {
 router.get("/rooms/:roomId/invite", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
+  if (String(context.room.room_scope ?? "public") !== "public") return fail(res, 403, "打榜房间不允许邀请其他用户");
   res.json({ token: roomInviteToken(context.room.id) });
 });
 
@@ -2319,6 +2392,10 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
     if (existing) {
       await connection.commit();
       return res.json({ roomId: String(room.id), role: String(existing.member_role), joined: false });
+    }
+    if (String(room.room_scope ?? "public") !== "public") {
+      await connection.rollback();
+      return fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED");
     }
 
     const invited = Boolean(parsed.data.inviteToken) && validRoomInviteToken(String(room.id), parsed.data.inviteToken);
@@ -2696,6 +2773,10 @@ router.post("/rooms/:roomId/join", async (req, res) => {
     if (!room || room.status === "closed") { await connection.rollback(); return fail(res, 404, "房间不存在或已关闭"); }
     await releaseStaleSeats(String(room.id), connection);
     const existing = await activeMember(room.id, user.id, connection);
+    if (!existing && String(room.room_scope ?? "public") !== "public") {
+      await connection.rollback();
+      return fail(res, 404, "房间不存在或已关闭", "ROOM_CLOSED");
+    }
     if (!existing && room.host_id !== user.id && room.room_type === "password" && !(await bcrypt.compare(parsed.data.password, String(room.password_hash)))) {
       await connection.rollback(); return fail(res, 403, "房间密码错误");
     }
@@ -2765,6 +2846,47 @@ router.get("/rooms/:roomId/card-battle/eligible-cards", async (req, res) => {
   if (!context) return;
   if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
   res.json({ cards: await loadEligibleBattleCards(context.user.id) });
+});
+
+router.get("/rooms/:roomId/card-battle/decks", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  res.json({ decks: await loadSavedCardBattleDecks(context.user.id) });
+});
+
+router.post("/rooms/:roomId/card-battle/decks", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  const parsed = z.object({
+    name: z.string().trim().min(1, "请输入卡组名称").max(30, "卡组名称最多 30 个字"),
+    cardIds: z.array(z.string().trim().min(1).max(64)).length(5, "卡组必须包含五张卡牌"),
+  }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "卡组信息不正确");
+  try {
+    res.status(201).json({ deck: await createSavedCardBattleDeck(context.user.id, parsed.data.name, parsed.data.cardIds) });
+  } catch (error) {
+    if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
+    throw error;
+  }
+});
+
+router.patch("/rooms/:roomId/card-battle/decks/:deckId", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  const parsed = z.object({
+    name: z.string().trim().min(1, "请输入卡组名称").max(30, "卡组名称最多 30 个字"),
+    cardIds: z.array(z.string().trim().min(1).max(64)).length(5, "卡组必须包含五张卡牌").optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "卡组信息不正确");
+  try {
+    res.json({ deck: await updateSavedCardBattleDeck(context.user.id, req.params.deckId, parsed.data.name, parsed.data.cardIds) });
+  } catch (error) {
+    if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
+    throw error;
+  }
 });
 
 router.put("/rooms/:roomId/card-battle/lineup", async (req, res) => {
@@ -2838,6 +2960,7 @@ router.post("/rooms/:roomId/card-battle/member-role", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
   if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  if (String(context.room.room_scope ?? "public") === "ranking_challenge") return fail(res, 403, "打榜房间不允许切换对战或观战");
   if (context.room.status === "playing") return fail(res, 409, "对局进行中不能切换对战或观战");
   const parsed = z.object({ role: z.enum(["player", "spectator"]) }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "成员身份不正确");
@@ -2877,6 +3000,7 @@ router.patch("/rooms/:roomId/card-battle/mode", async (req, res) => {
   const context = await requireHost(req, res);
   if (!context) return;
   if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  if (String(context.room.room_scope ?? "public") === "ranking_challenge") return fail(res, 403, "打榜房间玩法固定为 1v1");
   const parsed = z.object({ mode: z.literal("1v1") }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "当前仅开放 1v1 玩法");
   res.json({ ok: true, mode: "1v1" });
@@ -2895,6 +3019,17 @@ router.post("/rooms/:roomId/card-battle/playback/ack", async (req, res) => {
     if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
     throw error;
   }
+});
+
+router.post("/rooms/:roomId/card-battle/ranking/confirm-win", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (String(context.room.room_scope ?? "public") !== "ranking_challenge") return fail(res, 409, "当前不是打榜房间");
+  try {
+    const result = await confirmCardBattleRankingWin(context.room.id, context.user.id);
+    res.json({ ok: true, ...result, roomClosed: true });
+    void notifyRoom(context.room.id, "room_closed", { cause: "ranking_win_confirmed" });
+  } catch (error) { return failCardBattleRanking(res, error); }
 });
 
 router.get("/rooms/:roomId/messages", async (req, res) => {
@@ -3334,6 +3469,24 @@ router.patch("/rooms/:roomId/read", async (req, res) => {
 router.post("/rooms/:roomId/leave", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
+  if (String(context.room.room_scope ?? "public") === "ranking_challenge") {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const abandoned = await abandonCardBattleRankingChallenge(context.room.id, context.user.id, connection);
+      if (!abandoned) {
+        await connection.rollback();
+        return fail(res, 409, "打榜房间状态已经变化，请刷新后重试");
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback().catch(() => undefined);
+      throw error;
+    } finally { connection.release(); }
+    res.json({ ok: true, roomClosed: true, hostTransferred: false, hostGracePeriod: false, newHostId: null });
+    void notifyRoom(context.room.id, "room_closed", { cause: "ranking_challenger_exit" });
+    return;
+  }
   if (isImpostorRoom(context.room) && context.room.status === "playing" && context.member?.member_role === "player") {
     await mutateImpostorGame(context.room.id, terminateImpostorGame, context.user.id);
     context.room.status = "ended";

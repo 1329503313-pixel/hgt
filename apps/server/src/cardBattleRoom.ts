@@ -2,7 +2,7 @@ import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
 import { loadCardBattleTiers } from "./cardBattleConfig.js";
-import { CARD_BATTLE_LINEUP_SIZE, simulateCardBattle, type CardBattleDeckCard, type CardBattlePlayerInput, type CardBattleResult } from "./cardBattle.js";
+import { CARD_BATTLE_LINEUP_SIZE, calculateCardBattlePower, simulateCardBattle, type CardBattleDeckCard, type CardBattlePlayerInput, type CardBattleResult } from "./cardBattle.js";
 import { resolveCardBattlePlaybackStates } from "./cardBattlePlayback.js";
 
 export class CardBattleRoomRuleError extends Error {}
@@ -158,16 +158,18 @@ export async function acknowledgeCardBattleEvent(roomId: string, viewerId: strin
 }
 
 function publicFrozenCard(card: CardBattleDeckCard) {
+  const stats = {
+    maxHp: card.tier.maxHp, attack: card.tier.attack, defense: card.tier.defense, speed: card.tier.speed,
+    energyRequired: card.tier.energyRequired, canAttackRear: card.tier.canAttackRear,
+  };
   return {
     id: card.cardId, cardNo: "", name: card.name, rarity: card.rarity, starLevel: card.starLevel,
     battleRole: card.battleRole ?? "damage", imageUrl: card.imageUrl,
     motionMp4Url: card.motionMp4Url ?? null,
     motionWebmUrl: card.motionWebmUrl ?? null,
     motionPosterUrl: card.motionPosterUrl ?? null,
-    stats: {
-      maxHp: card.tier.maxHp, attack: card.tier.attack, defense: card.tier.defense, speed: card.tier.speed,
-      energyRequired: card.tier.energyRequired, canAttackRear: card.tier.canAttackRear,
-    },
+    stats,
+    combatPower: calculateCardBattlePower(stats),
     skillName: card.tier.skillName, skillDescription: card.tier.skillDescription,
   };
 }
@@ -228,6 +230,10 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
   );
   return rows.map((row) => {
     const starLevel = Number(row.star_level);
+    const stats = {
+      maxHp: Number(row.max_hp), attack: Number(row.attack_value), defense: Number(row.defense_value), speed: Number(row.speed_value),
+      energyRequired: Number(row.energy_required), canAttackRear: Boolean(row.can_attack_rear),
+    };
     return {
       id: String(row.id),
       cardNo: String(row.card_no),
@@ -237,14 +243,88 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
       starLevel,
       imageUrl: `/api/media/assets/cards/${encodeURIComponent(String(row.id))}/thumbnail?v=${new Date(row.updated_at).getTime()}`,
       ...battleMotionPayload(row, starLevel),
-      stats: {
-        maxHp: Number(row.max_hp), attack: Number(row.attack_value), defense: Number(row.defense_value), speed: Number(row.speed_value),
-        energyRequired: Number(row.energy_required), canAttackRear: Boolean(row.can_attack_rear),
-      },
+      stats,
+      combatPower: calculateCardBattlePower(stats),
       skillName: String(row.skill_name ?? ""),
       skillDescription: String(row.skill_description ?? ""),
     };
   });
+}
+
+export type SavedCardBattleDeck = {
+  id: string;
+  name: string;
+  cardIds: string[];
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+function savedDeck(row: mysql.RowDataPacket): SavedCardBattleDeck {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    cardIds: parseList(row.lineup_json).filter((cardId): cardId is string => Boolean(cardId)),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+  };
+}
+
+async function validateSavedDeckLineup(userId: string, cardIds: string[], db: mysql.Pool | mysql.PoolConnection) {
+  if (cardIds.length !== CARD_BATTLE_LINEUP_SIZE || new Set(cardIds).size !== CARD_BATTLE_LINEUP_SIZE) {
+    throw new CardBattleRoomRuleError("卡组必须包含五张不同卡牌");
+  }
+  const [eligible] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT cards.id FROM user_asset_cards owned
+     JOIN asset_cards cards ON cards.id = owned.card_id
+     JOIN asset_card_battle_tiers tiers ON tiers.card_id = cards.id AND tiers.star_level = owned.star_level
+     WHERE owned.user_id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend')
+       AND cards.id IN (${cardIds.map(() => "?").join(",")})`,
+    [userId, ...cardIds],
+  );
+  if (eligible.length !== CARD_BATTLE_LINEUP_SIZE) throw new CardBattleRoomRuleError("卡组包含未拥有、已停用或不可参战的卡牌");
+}
+
+export async function loadSavedCardBattleDecks(userId: string, db: mysql.Pool | mysql.PoolConnection = pool) {
+  const [rows] = await db.query<mysql.RowDataPacket[]>(
+    "SELECT * FROM user_card_battle_decks WHERE user_id = ? ORDER BY updated_at DESC, created_at DESC",
+    [userId],
+  );
+  return rows.map(savedDeck);
+}
+
+export async function createSavedCardBattleDeck(userId: string, name: string, cardIds: string[], db: mysql.Pool | mysql.PoolConnection = pool) {
+  await validateSavedDeckLineup(userId, cardIds, db);
+  const id = nanoid();
+  try {
+    await db.query(
+      "INSERT INTO user_card_battle_decks (id, user_id, name, lineup_json) VALUES (?, ?, ?, ?)",
+      [id, userId, name, JSON.stringify(cardIds)],
+    );
+  } catch (error) {
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") throw new CardBattleRoomRuleError("已有同名卡组，请换一个名称");
+    throw error;
+  }
+  const [[row]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM user_card_battle_decks WHERE id = ? AND user_id = ? LIMIT 1", [id, userId]);
+  if (!row) throw new CardBattleRoomRuleError("卡组保存失败");
+  return savedDeck(row);
+}
+
+export async function updateSavedCardBattleDeck(userId: string, deckId: string, name: string, cardIds: string[] | undefined, db: mysql.Pool | mysql.PoolConnection = pool) {
+  if (cardIds) await validateSavedDeckLineup(userId, cardIds, db);
+  try {
+    const [result] = await db.query<mysql.ResultSetHeader>(
+      `UPDATE user_card_battle_decks SET name = ?, lineup_json = COALESCE(?, lineup_json)
+       WHERE id = ? AND user_id = ?`,
+      [name, cardIds ? JSON.stringify(cardIds) : null, deckId, userId],
+    );
+    if (!result.affectedRows) throw new CardBattleRoomRuleError("卡组不存在或已被删除");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") throw new CardBattleRoomRuleError("已有同名卡组，请换一个名称");
+    throw error;
+  }
+  const [[row]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM user_card_battle_decks WHERE id = ? AND user_id = ? LIMIT 1", [deckId, userId]);
+  if (!row) throw new CardBattleRoomRuleError("卡组不存在或已被删除");
+  return savedDeck(row);
 }
 
 export async function saveCardBattleLineup(roomId: string, userId: string, cardIds: Array<string | null>, db: mysql.PoolConnection) {
@@ -326,6 +406,23 @@ async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId:
   };
 }
 
+export async function buildCardBattlePlayerInput(
+  userId: string,
+  nickname: string,
+  seat: 1 | 2,
+  cardIds: string[],
+  db: mysql.PoolConnection,
+): Promise<CardBattlePlayerInput> {
+  if (cardIds.length !== CARD_BATTLE_LINEUP_SIZE || new Set(cardIds).size !== CARD_BATTLE_LINEUP_SIZE) {
+    throw new CardBattleRoomRuleError("卡组必须包含五张不同卡牌");
+  }
+  const cards: CardBattleDeckCard[] = [];
+  for (let index = 0; index < cardIds.length; index += 1) {
+    cards.push(await battleDeckCard(userId, seat, index + 1, cardIds[index]!, db));
+  }
+  return { userId, nickname, seat, cards };
+}
+
 export async function startCardBattle(roomId: string, hostId: string, db: mysql.PoolConnection) {
   const [[room]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT * FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' AND status <> 'closed' LIMIT 1 FOR UPDATE",
@@ -341,6 +438,10 @@ export async function startCardBattle(roomId: string, hostId: string, db: mysql.
   if (seatRows.length !== 2 || seatRows.some((seat) => !Boolean(seat.is_ready) || parseList(seat.lineup_json).length !== CARD_BATTLE_LINEUP_SIZE)) {
     throw new CardBattleRoomRuleError("双方都进入对战席、选满五张卡牌并准备后才能开始");
   }
+  const [[rankingChallenge]] = await db.query<mysql.RowDataPacket[]>(
+    "SELECT defender_id, defender_snapshot_json FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+    [roomId],
+  );
   const [[previousGame]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT id, status, result_json FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
     [roomId],
@@ -348,7 +449,9 @@ export async function startCardBattle(roomId: string, hostId: string, db: mysql.
   if (previousGame && String(previousGame.status) !== "aborted") {
     const previousResult = parseResult(previousGame.result_json);
     if (!previousResult) throw new CardBattleRoomRuleError("上一局战斗记录不可用，暂时不能开始新对局");
-    const requiredViewerIds = [...new Set([hostId, ...seatRows.map((seat) => String(seat.user_id))])];
+    const requiredViewerIds = rankingChallenge
+      ? [hostId]
+      : [...new Set([hostId, ...seatRows.map((seat) => String(seat.user_id))])];
     const [progressRows] = await db.query<mysql.RowDataPacket[]>(
       `SELECT user_id, completed_sequence FROM online_card_battle_playback_progress
        WHERE game_id = ? AND user_id IN (${requiredViewerIds.map(() => "?").join(",")}) FOR UPDATE`,
@@ -363,9 +466,15 @@ export async function startCardBattle(roomId: string, hostId: string, db: mysql.
   for (const row of seatRows) {
     const seat = Number(row.seat_number) as 1 | 2;
     const cardIds = parseList(row.lineup_json);
-    const cards: CardBattleDeckCard[] = [];
-    for (let index = 0; index < cardIds.length; index += 1) cards.push(await battleDeckCard(String(row.user_id), seat, index + 1, cardIds[index]!, db));
-    playerInputs.push({ userId: String(row.user_id), nickname: String(row.nickname), seat, cards });
+    if (rankingChallenge && String(row.user_id) === String(rankingChallenge.defender_id)) {
+      const frozen = parseLineupSnapshot(rankingChallenge.defender_snapshot_json)[0];
+      if (!frozen || frozen.userId !== String(row.user_id) || frozen.seat !== seat || frozen.cards.length !== CARD_BATTLE_LINEUP_SIZE) {
+        throw new CardBattleRoomRuleError("榜单对手阵容快照不可用，请退出后重新发起挑战");
+      }
+      playerInputs.push(frozen);
+    } else {
+      playerInputs.push(await buildCardBattlePlayerInput(String(row.user_id), String(row.nickname), seat, cardIds.filter((cardId): cardId is string => Boolean(cardId)), db));
+    }
   }
   const [[numberRow]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT COALESCE(MAX(game_number), 0) + 1 AS next_number FROM online_card_battles WHERE room_id = ?",
@@ -405,9 +514,20 @@ export async function finalizeCardBattleIfDue(roomId: string) {
     );
     if (!locked || new Date(locked.playback_ends_at).getTime() > Date.now()) { await connection.commit(); return false; }
     await connection.query("UPDATE online_card_battles SET status = 'ended', ended_at = NOW(3) WHERE id = ?", [locked.id]);
-    await connection.query("UPDATE online_card_battle_seats SET is_ready = 0 WHERE room_id = ?", [roomId]);
+    const [[rankingChallenge]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT defender_id FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+      [roomId],
+    );
+    if (rankingChallenge) {
+      await connection.query(
+        "UPDATE online_card_battle_seats SET is_ready = IF(user_id = ?, 1, 0) WHERE room_id = ?",
+        [rankingChallenge.defender_id, roomId],
+      );
+    } else {
+      await connection.query("UPDATE online_card_battle_seats SET is_ready = 0 WHERE room_id = ?", [roomId]);
+    }
     await connection.query("UPDATE online_soup_rooms SET status = 'ended', last_action_at = NOW() WHERE id = ? AND content_type = 'card_battle'", [roomId]);
-    await connection.query(
+    if (!rankingChallenge) await connection.query(
       `DELETE seats FROM online_card_battle_seats seats
        LEFT JOIN online_soup_members members
          ON members.room_id = seats.room_id AND members.user_id = seats.user_id
@@ -435,7 +555,11 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
       [roomId],
     ).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
-      "SELECT status FROM online_soup_rooms WHERE id = ? LIMIT 1",
+      `SELECT rooms.status, challenges.id AS challenge_id, challenges.challenger_id,
+         challenges.defender_id, challenges.target_rank, challenges.status AS challenge_status
+       FROM online_soup_rooms rooms
+       LEFT JOIN card_battle_ranking_challenges challenges ON challenges.room_id = rooms.id
+       WHERE rooms.id = ? LIMIT 1`,
       [roomId],
     ).then(([rows]) => rows),
   ]);
@@ -470,6 +594,7 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
   const eligibleCount = await eligibleCardCount(viewerId);
   const gameStatus = currentGame ? String(currentGame.status) : null;
   const roomStatus = String(roomRows[0]?.status ?? "preparing");
+  const challengeRow = roomRows[0]?.challenge_id ? roomRows[0] : null;
   const phase = roomStatus === "preparing" ? "preparing"
     : roomStatus === "playing" ? "playing"
       : gameStatus === "aborted" ? "aborted"
@@ -482,6 +607,13 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
     phase: phase as "preparing" | "playing" | "ended" | "aborted",
     seats,
     me: { userId: viewerId, seat: mySeat ? Number(mySeat.seat_number) as 1 | 2 : null, eligibleCardCount: eligibleCount },
+    rankingChallenge: challengeRow ? {
+      id: String(challengeRow.challenge_id),
+      challengerUserId: String(challengeRow.challenger_id),
+      defenderUserId: String(challengeRow.defender_id),
+      targetRank: Number(challengeRow.target_rank),
+      status: String(challengeRow.challenge_status) as "active" | "won" | "abandoned" | "stale",
+    } : null,
     game: currentGame && result ? {
       id: String(currentGame.id),
       gameNumber: Number(currentGame.game_number),

@@ -48,6 +48,13 @@ export const TIMED_RANKING_BADGES = {
     requirement: "排行榜慷慨榜30日结算第一",
     iconUrl: "/badges/ranking-generosity-champion-epic.webp",
   },
+  card_battle: {
+    id: "ranking-card-battle-champion",
+    name: "游戏王",
+    description: "我的打牌水平和我的解谜水平一样高",
+    requirement: "卡牌对战榜月结算第一",
+    iconUrl: "/badges/ranking-card-battle-champion-epic.webp",
+  },
 } as const;
 
 export type TimedRankingBadgeBoard = keyof typeof TIMED_RANKING_BADGES;

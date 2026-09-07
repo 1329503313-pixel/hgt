@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CARD_BATTLE_MAX_EVENTS, CARD_BATTLE_MAX_PLAYBACK_MS, CARD_BATTLE_MAX_ROUNDS, simulateCardBattle, type CardBattleDeckCard, type CardBattleSkillEffect } from "./cardBattle.js";
+import { CARD_BATTLE_MAX_EVENTS, CARD_BATTLE_MAX_PLAYBACK_MS, CARD_BATTLE_MAX_ROUNDS, calculateCardBattlePower, simulateCardBattle, type CardBattleDeckCard, type CardBattleSkillEffect } from "./cardBattle.js";
+
+test("卡牌战力按生命、攻击、防御、速度和能量统一计算", () => {
+  assert.equal(calculateCardBattlePower({ maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50 }), 3100);
+});
 
 function card(id: string, slot: 1 | 2 | 3 | 4 | 5, overrides: Partial<CardBattleDeckCard["tier"]> = {}, effects: CardBattleSkillEffect[] = []): CardBattleDeckCard {
   return {

@@ -963,6 +963,7 @@ export async function initDatabase() {
       host_id VARCHAR(64) NOT NULL,
       host_mode ENUM('human','ai') NOT NULL DEFAULT 'human',
       content_type ENUM('soup','mystery','impostor','card_battle') NOT NULL DEFAULT 'soup',
+      room_scope ENUM('public','ranking_challenge') NOT NULL DEFAULT 'public',
       room_type ENUM('public','password') NOT NULL DEFAULT 'public',
       password_hash VARCHAR(128) NULL,
       status ENUM('preparing','playing','ended','closed') NOT NULL DEFAULT 'preparing',
@@ -1583,6 +1584,11 @@ export async function initDatabase() {
     "online_soup_members",
     "muted_until",
     "muted_until DATETIME NULL AFTER last_read_activity_sequence"
+  );
+  await ensureColumn(
+    "online_soup_rooms",
+    "room_scope",
+    "room_scope ENUM('public','ranking_challenge') NOT NULL DEFAULT 'public' AFTER content_type"
   );
   await ensureColumn(
     "online_soup_rooms",
@@ -2882,6 +2888,56 @@ export async function initDatabase() {
       CONSTRAINT chk_online_card_battle_seat CHECK (seat_number IN (1,2)),
       CONSTRAINT fk_online_card_battle_seat_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
       CONSTRAINT fk_online_card_battle_seat_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_card_battle_decks (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      name VARCHAR(30) NOT NULL,
+      lineup_json JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_user_card_battle_deck_name (user_id, name),
+      INDEX idx_user_card_battle_deck_updated (user_id, updated_at),
+      CONSTRAINT fk_user_card_battle_deck_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS card_battle_ranking_entries (
+      rank_position TINYINT UNSIGNED NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      lineup_json JSON NOT NULL,
+      total_power BIGINT NOT NULL DEFAULT 0,
+      achieved_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (rank_position),
+      UNIQUE KEY uq_card_battle_ranking_user (user_id),
+      CONSTRAINT chk_card_battle_ranking_position CHECK (rank_position BETWEEN 1 AND 100),
+      CONSTRAINT fk_card_battle_ranking_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS card_battle_ranking_challenges (
+      id VARCHAR(64) PRIMARY KEY,
+      room_id VARCHAR(64) NOT NULL,
+      challenger_id VARCHAR(64) NOT NULL,
+      defender_id VARCHAR(64) NOT NULL,
+      target_rank TINYINT UNSIGNED NOT NULL,
+      defender_lineup_json JSON NOT NULL,
+      defender_snapshot_json JSON NOT NULL,
+      status ENUM('active','won','abandoned','stale') NOT NULL DEFAULT 'active',
+      confirmed_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_card_battle_ranking_challenge_room (room_id),
+      INDEX idx_card_battle_ranking_challenger_status (challenger_id, status, created_at),
+      INDEX idx_card_battle_ranking_target (target_rank, defender_id, status),
+      CONSTRAINT chk_card_battle_ranking_target CHECK (target_rank BETWEEN 1 AND 100),
+      CONSTRAINT fk_card_battle_ranking_challenge_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE,
+      CONSTRAINT fk_card_battle_ranking_challenger FOREIGN KEY (challenger_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_card_battle_ranking_defender FOREIGN KEY (defender_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await pool.query(`

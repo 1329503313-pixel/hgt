@@ -10,6 +10,8 @@ const roomPage = readFileSync(new URL("../src/pages/OnlineSoupRoomPage.tsx", imp
 const assetAdmin = readFileSync(new URL("../src/components/admin/DigitalAssetManagement.tsx", import.meta.url), "utf8");
 const battleConfigEditor = readFileSync(new URL("../src/components/admin/CardBattleConfigEditor.tsx", import.meta.url), "utf8");
 const assetTypes = readFileSync(new URL("../src/shared/digitalAssets.ts", import.meta.url), "utf8");
+const rankingPage = readFileSync(new URL("../src/pages/RankingsPage.tsx", import.meta.url), "utf8");
+const rankingBoard = readFileSync(new URL("../src/components/CardBattleRankingBoard.tsx", import.meta.url), "utf8");
 
 test("大厅提供卡牌对战且玩家与观战身份由服务端自动分配", () => {
   assert.match(lobby, /contentType: "card_battle"/);
@@ -130,4 +132,40 @@ test("备战卡牌支持鼠标和触控拖动换位并保留点击选卡", () =>
   assert.match(view, /拖动换位/);
   assert.match(view, /\? "准备" : `还需选择/);
   assert.doesNotMatch(view, /准备完成/);
+});
+
+test("选卡支持搜索、三种排序并在选卡和战场展示战力", () => {
+  assert.match(view, /placeholder="搜索卡牌名称、序号或定位"/);
+  for (const sort of ["按序号排序", "按星级排序", "按战力排序"]) assert.match(view, new RegExp(sort));
+  assert.match(view, /card\.combatPower/);
+  assert.match(view, /战力 \{combatPowerFormatter\.format\(card\.combatPower\)\}/);
+});
+
+test("备战支持保存、编辑和按固定位置使用卡组", () => {
+  assert.match(view, />选择卡组<\/button>/);
+  assert.match(view, /保存当前卡组/);
+  assert.match(view, /编辑卡组/);
+  assert.match(view, /用当前阵容覆盖卡组/);
+  assert.match(view, /card-battle\/decks/);
+  assert.match(view, /const next = \[\.\.\.deck\.cardIds\]/);
+});
+
+test("卡牌施放技能时在血条上方展示技能名称", () => {
+  assert.match(view, /activeEvent\?\.kind === "skill" && isActiveActor && activeEvent\.skillName/);
+  assert.match(view, /card-battle-skill-name/);
+  assert.match(styles, /@keyframes card-battle-skill-name/);
+});
+
+test("游戏榜提供固定百名卡牌对战榜、卡组详情和私密打榜入口", () => {
+  assert.match(rankingPage, /group: "game"/);
+  assert.match(rankingPage, />游戏榜<\/button>/);
+  assert.match(rankingPage, /<CardBattleRankingBoard/);
+  assert.match(rankingBoard, /查看更多（展示前 100 名）/);
+  assert.match(rankingBoard, /空位，点击占据/);
+  assert.match(rankingBoard, /卡组总星级/);
+  assert.match(rankingBoard, /卡组总战力/);
+  assert.match(rankingBoard, /使用并打榜/);
+  assert.match(view, /确认胜利并占据第/);
+  assert.match(view, /私密打榜 · 目标第/);
+  assert.match(view, /!battle\.rankingChallenge && <button[^\n]+aria-label="分享房间"/);
 });
