@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown01, ChevronLeft, ChevronRight, GalleryVerticalEnd, Gem, Layers3, Star, X } from "lucide-react";
+import { ArrowDown01, ChevronLeft, ChevronRight, GalleryVerticalEnd, Gem, Layers3, Star, Swords, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { CardCabinet, OwnedAssetCard } from "../shared/digitalAssets";
@@ -255,6 +255,31 @@ export function CardCabinetSection({
                 {detail.starLevel < 3 ? <p className="text-base text-muted"><span className="font-black text-ink">升星进度</span><span className="float-right font-bold text-primary">{detail.duplicateProgress}/{detail.nextStarRequirement}</span></p> : <p className="text-base font-bold text-amber-600">已满星，后续重复卡将自动转化为贝壳。</p>}
               </div>
               {detail.story && <div className="border-t border-line px-5 py-5"><h3 className="text-base font-black">卡片故事</h3><p className="mt-2 whitespace-pre-wrap text-base leading-8 text-muted">{detail.story}</p></div>}
+              {detail.battleTier && <section className="border-t border-line px-5 py-5" aria-labelledby="card-battle-attributes-title">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary" aria-hidden="true"><Swords size={20} /></span>
+                  <div>
+                    <h3 id="card-battle-attributes-title" className="text-base font-black">卡牌对战属性</h3>
+                    <p className="mt-0.5 text-sm text-muted">当前持有的 {detail.starLevel} 星属性</p>
+                  </div>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {[
+                    ["生命值", detail.battleTier.maxHp],
+                    ["攻击", detail.battleTier.attack],
+                    ["防御", detail.battleTier.defense],
+                    ["速度", detail.battleTier.speed],
+                    ["能量", detail.battleTier.energyRequired],
+                  ].map(([label, value]) => <div key={label} className="rounded-xl bg-field px-3 py-3">
+                    <dt className="text-sm font-medium text-muted">{label}</dt>
+                    <dd className="mt-1 font-mono text-lg font-black tabular-nums text-ink">{value}</dd>
+                  </div>)}
+                </dl>
+                <dl className="mt-3 space-y-3 rounded-xl bg-field px-4 py-4">
+                  <div><dt className="text-sm font-bold text-muted">技能</dt><dd className="mt-1 text-base font-black text-ink">{detail.battleTier.skillName || "未配置技能"}</dd></div>
+                  <div><dt className="text-sm font-bold text-muted">技能描述</dt><dd className="mt-1 whitespace-pre-wrap text-base leading-7 text-ink">{detail.battleTier.skillDescription || "暂无技能描述"}</dd></div>
+                </dl>
+              </section>}
             </div>
           </div>
         </div>

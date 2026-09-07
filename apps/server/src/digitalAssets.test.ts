@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import sharp from "sharp";
 import { digitalAssetRules } from "./digitalAssets.js";
 import { GIFT_ICON_SIZE, optimizeGiftIcon } from "./giftImages.js";
+
+const digitalAssetsSource = readFileSync(new URL("./digitalAssets.ts", import.meta.url), "utf8");
 
 test("累计获得数量按1、4、9、19张自动升星", () => {
   assert.deepEqual([1, 3, 4, 8, 9, 18, 19, 20].map(digitalAssetRules.starForTotal), [0, 0, 1, 1, 2, 2, 3, 3]);
@@ -126,6 +129,15 @@ test("普通、稀有、史诗和传说卡均支持动态卡面", () => {
     [true, true, true, true]
   );
   assert.equal(digitalAssetRules.cardRaritySupportsMotion("unknown"), false);
+});
+
+test("收藏柜按当前持有星级返回卡牌对战属性", () => {
+  assert.match(digitalAssetsSource, /LEFT JOIN asset_card_battle_tiers battle_tier/);
+  assert.match(digitalAssetsSource, /battle_tier\.card_id = c\.id AND battle_tier\.star_level = uc\.star_level/);
+  assert.match(digitalAssetsSource, /battleTier: row\.battle_star_level == null \? null/);
+  for (const field of ["maxHp", "attack", "defense", "speed", "energyRequired", "skillName", "skillDescription"]) {
+    assert.match(digitalAssetsSource, new RegExp(`${field}:`));
+  }
 });
 
 test("礼物图标压缩为透明背景正方形 WebP", async () => {

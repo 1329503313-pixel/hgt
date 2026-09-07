@@ -29,10 +29,12 @@ type ChatBubble = {
   expiresAt: number;
 };
 
-type CardSort = "number" | "star" | "power";
+type CardSort = "number" | "rarity" | "star" | "power";
+type CardView = "stats" | "skill";
 type DeckEditorState = { id: string | null; name: string; cardIds: string[]; replaceWithCurrent: boolean };
 
 const combatPowerFormatter = new Intl.NumberFormat("zh-CN");
+const cardRarityRank: Record<OnlineCardBattleCard["rarity"], number> = { epic: 0, legend: 1 };
 
 function hpTone(hp: number, maxHp: number) {
   const ratio = hp / Math.max(1, maxHp);
@@ -290,6 +292,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const [cardQuery, setCardQuery] = useState("");
   const [cardSort, setCardSort] = useState<CardSort>("number");
   const [sortDescending, setSortDescending] = useState(false);
+  const [cardView, setCardView] = useState<CardView>("stats");
   const [decksOpen, setDecksOpen] = useState(false);
   const [decks, setDecks] = useState<OnlineCardBattleDeck[]>([]);
   const [decksLoading, setDecksLoading] = useState(false);
@@ -329,7 +332,9 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
         ? left.starLevel - right.starLevel
         : cardSort === "power"
           ? left.combatPower - right.combatPower
-          : left.cardNo.localeCompare(right.cardNo, "zh-CN", { numeric: true });
+          : cardSort === "rarity"
+            ? cardRarityRank[left.rarity] - cardRarityRank[right.rarity]
+            : left.cardNo.localeCompare(right.cardNo, "zh-CN", { numeric: true });
       return compared * direction || left.name.localeCompare(right.name, "zh-CN");
     });
   }, [cardQuery, cardSort, eligibleCards, sortDescending]);
@@ -674,20 +679,29 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
       </>}
     </Modal>}
     {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}>
-      <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡；支持搜索和排序。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div>
+      <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡；支持搜索、排序和视角切换。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div>
       <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px_44px]">
         <label className="relative block"><span className="sr-only">搜索卡牌</span><Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><input type="search" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} className="field min-h-11 w-full pl-10" placeholder="搜索卡牌名称、序号或定位" autoFocus /></label>
-        <label><span className="sr-only">卡牌排序方式</span><select value={cardSort} onChange={(event) => { const next = event.target.value as CardSort; setCardSort(next); setSortDescending(next !== "number"); }} className="field min-h-11 w-full"><option value="number">按序号排序</option><option value="star">按星级排序</option><option value="power">按战力排序</option></select></label>
+        <label><span className="sr-only">卡牌排序方式</span><select value={cardSort} onChange={(event) => { const next = event.target.value as CardSort; setCardSort(next); setSortDescending(next !== "number"); }} className="field min-h-11 w-full"><option value="number">按序号排序</option><option value="rarity">按品质排序</option><option value="star">按星级排序</option><option value="power">按战力排序</option></select></label>
         <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-line bg-white text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" onClick={() => setSortDescending((value) => !value)} aria-label={sortDescending ? "当前降序，点击切换为升序" : "当前升序，点击切换为降序"} title={sortDescending ? "降序" : "升序"}><ArrowUpDown size={18} /></button>
       </div>
-      <p className="mt-3 text-xs font-bold text-muted" aria-live="polite">共 {visibleEligibleCards.length} 张卡牌</p>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-bold text-muted" aria-live="polite">共 {visibleEligibleCards.length} 张卡牌</p>
+        <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1" role="group" aria-label="卡牌信息视角">
+          <button type="button" aria-pressed={cardView === "stats"} onClick={() => setCardView("stats")} className={`min-h-11 min-w-16 rounded-lg px-3 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${cardView === "stats" ? "bg-white text-cyan-700 shadow-sm" : "text-muted hover:text-ink"}`}>数值</button>
+          <button type="button" aria-pressed={cardView === "skill"} onClick={() => setCardView("skill")} className={`min-h-11 min-w-16 rounded-lg px-3 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${cardView === "skill" ? "bg-white text-cyan-700 shadow-sm" : "text-muted hover:text-ink"}`}>技能</button>
+        </div>
+      </div>
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{visibleEligibleCards.map((card) => {
         const selected = ownIds.includes(card.id);
-        return <button key={card.id} type="button" aria-pressed={selected} aria-label={`${card.name}，${card.starLevel}星，战力${card.combatPower}，${CARD_BATTLE_ROLE_LABELS[card.battleRole]}${selected ? "，已上场" : ""}`} className={`relative overflow-hidden rounded-xl border-2 bg-white text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line hover:border-cyan-300"}`} onClick={() => void chooseCard(card.id)}>
+        const viewLabel = cardView === "stats"
+          ? `生命${card.stats.maxHp}，攻击${card.stats.attack}，防御${card.stats.defense}，速度${card.stats.speed}，能量${card.stats.energyRequired}`
+          : `技能${card.skillName || "未配置技能"}，技能描述${card.skillDescription || "暂无技能说明"}`;
+        return <button key={card.id} type="button" aria-pressed={selected} aria-label={`${card.name}，${card.starLevel}星，战力${card.combatPower}，${CARD_BATTLE_ROLE_LABELS[card.battleRole]}，${viewLabel}${selected ? "，已上场" : ""}`} className={`relative overflow-hidden rounded-xl border-2 bg-white text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line hover:border-cyan-300"}`} onClick={() => void chooseCard(card.id)}>
           <div className="relative aspect-[5/7] overflow-hidden bg-slate-100"><img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} loading="lazy" decoding="async" />{!selected && <span className={`absolute left-2 top-2 rounded-full border px-2 py-1 text-[10px] font-black shadow-md backdrop-blur-sm ${battleRoleTone(card.battleRole)}`}>{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span>}<span className="absolute bottom-2 right-2 rounded-full bg-amber-400 px-2 py-1 text-[10px] font-black text-slate-950 shadow-md">战力 {combatPowerFormatter.format(card.combatPower)}</span></div>
-          <div className="min-h-[128px] p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">序号 {card.cardNo}</p>{selected
-            ? <div className="mt-2"><p className="truncate text-[11px] font-black text-cyan-700">{card.skillName || "未配置技能"}</p><p className="mt-1 line-clamp-3 text-[10px] leading-4 text-muted">{card.skillDescription || "暂无技能说明"}</p></div>
-            : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] leading-4 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div></dl>}
+          <div className="min-h-[128px] p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">序号 {card.cardNo}</p>{cardView === "skill"
+            ? <div className="mt-2"><p className="text-xs font-black leading-5 text-cyan-700">{card.skillName || "未配置技能"}</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted">{card.skillDescription || "暂无技能说明"}</p></div>
+            : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-xs leading-5 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div></dl>}
           </div>{selected && <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-cyan-500 text-white shadow-md" aria-hidden="true"><Check size={15} /></span>}
         </button>;
       })}</div>

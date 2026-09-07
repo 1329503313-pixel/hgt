@@ -12,6 +12,7 @@ const battleConfigEditor = readFileSync(new URL("../src/components/admin/CardBat
 const assetTypes = readFileSync(new URL("../src/shared/digitalAssets.ts", import.meta.url), "utf8");
 const rankingPage = readFileSync(new URL("../src/pages/RankingsPage.tsx", import.meta.url), "utf8");
 const rankingBoard = readFileSync(new URL("../src/components/CardBattleRankingBoard.tsx", import.meta.url), "utf8");
+const cardCabinet = readFileSync(new URL("../src/components/CardCabinetSection.tsx", import.meta.url), "utf8");
 
 test("大厅提供卡牌对战且玩家与观战身份由服务端自动分配", () => {
   assert.match(lobby, /contentType: "card_battle"/);
@@ -30,12 +31,16 @@ test("管理后台为史诗和传说卡展示配置，并按品质初始化默�
   assert.match(assetTypes, /maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40/);
 });
 
-test("管理后台和选卡弹窗展示对战定位、完整属性与已选卡技能", () => {
+test("管理后台和选卡弹窗展示对战定位并支持数值与技能视角", () => {
   assert.match(assetTypes, /CARD_BATTLE_ROLE_LABELS/);
   assert.match(assetAdmin, />对战定位</);
   assert.match(assetAdmin, /仅参与卡牌对战的史诗与传说卡可配置/);
   assert.match(view, /CARD_BATTLE_ROLE_LABELS\[card\.battleRole\]/);
   assert.match(view, /!selected && <span/);
+  assert.match(view, /useState<CardView>\("stats"\)/);
+  assert.match(view, /cardView === "skill"/);
+  assert.match(view, />数值<\/button>/);
+  assert.match(view, />技能<\/button>/);
   for (const label of ["生命", "攻击", "防御", "速度", "能量"]) assert.match(view, new RegExp(`<dt>${label}<\\/dt>`));
   assert.match(view, /card\.skillName \|\| "未配置技能"/);
   assert.match(view, /card\.skillDescription \|\| "暂无技能说明"/);
@@ -134,9 +139,10 @@ test("备战卡牌支持鼠标和触控拖动换位并保留点击选卡", () =>
   assert.doesNotMatch(view, /准备完成/);
 });
 
-test("选卡支持搜索、三种排序并在选卡和战场展示战力", () => {
+test("选卡支持搜索、四种排序并在选卡和战场展示战力", () => {
   assert.match(view, /placeholder="搜索卡牌名称、序号或定位"/);
-  for (const sort of ["按序号排序", "按星级排序", "按战力排序"]) assert.match(view, new RegExp(sort));
+  for (const sort of ["按序号排序", "按品质排序", "按星级排序", "按战力排序"]) assert.match(view, new RegExp(sort));
+  assert.match(view, /cardRarityRank\[left\.rarity\] - cardRarityRank\[right\.rarity\]/);
   assert.match(view, /card\.combatPower/);
   assert.match(view, /战力 \{combatPowerFormatter\.format\(card\.combatPower\)\}/);
 });
@@ -154,6 +160,15 @@ test("卡牌施放技能时在血条上方展示技能名称", () => {
   assert.match(view, /activeEvent\?\.kind === "skill" && isActiveActor && activeEvent\.skillName/);
   assert.match(view, /card-battle-skill-name/);
   assert.match(styles, /@keyframes card-battle-skill-name/);
+});
+
+test("收藏卡详情在底部展示当前星级的对战属性", () => {
+  assert.match(cardCabinet, /detail\.battleTier && <section/);
+  assert.match(cardCabinet, /当前持有的 \{detail\.starLevel\} 星属性/);
+  for (const label of ["生命值", "攻击", "防御", "速度", "能量", "技能", "技能描述"]) {
+    assert.match(cardCabinet, new RegExp(label));
+  }
+  assert.match(cardCabinet, /detail\.battleTier\.skillDescription/);
 });
 
 test("游戏榜提供固定百名卡牌对战榜、卡组详情和私密打榜入口", () => {

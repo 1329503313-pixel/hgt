@@ -951,11 +951,21 @@ async function cabinetPayload(userId: string, compact = false) {
     pool.query<mysql.RowDataPacket[]>(
       `SELECT uc.user_id, uc.card_id, uc.star_level, uc.duplicate_progress, uc.total_obtained,
               uc.collection_value, uc.first_obtained_at, uc.last_obtained_at, uc.display_order,
-              c.id, c.card_no, c.name, c.rarity,
+              c.id, c.card_no, c.name, c.rarity, c.battle_role,
               '' AS image_url, '' AS thumbnail_url,
               c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version,
-              c.story, c.release_at, c.status, c.updated_at
+              c.story, c.release_at, c.status, c.updated_at,
+              battle_tier.star_level AS battle_star_level,
+              battle_tier.max_hp AS battle_max_hp,
+              battle_tier.attack_value AS battle_attack,
+              battle_tier.defense_value AS battle_defense,
+              battle_tier.speed_value AS battle_speed,
+              battle_tier.energy_required AS battle_energy_required,
+              battle_tier.skill_name AS battle_skill_name,
+              battle_tier.skill_description AS battle_skill_description
        FROM user_asset_cards uc INNER JOIN asset_cards c ON c.id = uc.card_id
+       LEFT JOIN asset_card_battle_tiers battle_tier
+         ON battle_tier.card_id = c.id AND battle_tier.star_level = uc.star_level
        WHERE uc.user_id = ? ${compact ? "AND uc.display_order IS NOT NULL ORDER BY uc.display_order ASC LIMIT 8" : "ORDER BY c.card_no ASC"}`,
       [userId]
     ).then(([rows]) => rows),
@@ -985,6 +995,16 @@ async function cabinetPayload(userId: string, compact = false) {
     firstObtainedAt: iso(row.first_obtained_at),
     lastObtainedAt: iso(row.last_obtained_at),
     displayOrder: row.display_order == null ? null : Number(row.display_order),
+    battleTier: row.battle_star_level == null ? null : {
+      starLevel: Number(row.battle_star_level),
+      maxHp: Number(row.battle_max_hp),
+      attack: Number(row.battle_attack),
+      defense: Number(row.battle_defense),
+      speed: Number(row.battle_speed),
+      energyRequired: Number(row.battle_energy_required),
+      skillName: String(row.battle_skill_name ?? ""),
+      skillDescription: String(row.battle_skill_description ?? "")
+    },
     packs: packsByCard.get(String(row.id)) ?? []
   }));
   return {

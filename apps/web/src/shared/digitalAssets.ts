@@ -59,6 +59,7 @@ export type OwnedAssetCard = AssetCard & {
   firstObtainedAt: string | null;
   lastObtainedAt: string | null;
   displayOrder: number | null;
+  battleTier?: Pick<CardBattleTier, "starLevel" | "maxHp" | "attack" | "defense" | "speed" | "energyRequired" | "skillName" | "skillDescription"> | null;
   packs: Array<{ id: string; name: string; packType: AssetPackType; coverUrl: string }>;
 };
 
