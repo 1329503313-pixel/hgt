@@ -33,6 +33,10 @@ export function promoteCardBattleRankingEntries(entries: RankingEntry[], challen
   return shifted.sort((left, right) => left.rank - right.rank);
 }
 
+export function canClaimEmptyCardBattleRank(currentRank: number | null, targetRank: number) {
+  return currentRank === null || targetRank < currentRank;
+}
+
 function parseCardIds(value: unknown) {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
@@ -162,18 +166,32 @@ export async function claimEmptyCardBattleRank(userId: string, rank: number, dec
   try {
     await connection.beginTransaction();
     await assertRankingEligibleUser(userId, connection);
-    const [[slot], [own]] = await Promise.all([
+    const [slotResult, ownResult] = await Promise.all([
       connection.query<mysql.RowDataPacket[]>("SELECT user_id FROM card_battle_ranking_entries WHERE rank_position = ? FOR UPDATE", [rank]),
       connection.query<mysql.RowDataPacket[]>("SELECT rank_position FROM card_battle_ranking_entries WHERE user_id = ? FOR UPDATE", [userId]),
     ]);
-    if (own) throw new CardBattleRankingRuleError("你已经在卡牌对战榜中，不能重复占据空位");
+    const slot = slotResult[0][0];
+    const own = ownResult[0][0];
     if (slot) throw new CardBattleRankingRuleError("该排名已被占据，请刷新榜单", "RANK_OCCUPIED");
+    const currentRank = own ? Number(own.rank_position) : null;
+    if (!canClaimEmptyCardBattleRank(currentRank, rank)) {
+      throw new CardBattleRankingRuleError("已上榜用户只能移动到比当前排名更靠前的空位");
+    }
     const selection = await validatedDeck(userId, deckId, connection);
-    await connection.query(
-      `INSERT INTO card_battle_ranking_entries (rank_position, user_id, lineup_json, total_power)
-       VALUES (?, ?, ?, ?)`,
-      [rank, userId, JSON.stringify(selection.deck.cardIds), selection.totalPower],
-    );
+    if (currentRank === null) {
+      await connection.query(
+        `INSERT INTO card_battle_ranking_entries (rank_position, user_id, lineup_json, total_power)
+         VALUES (?, ?, ?, ?)`,
+        [rank, userId, JSON.stringify(selection.deck.cardIds), selection.totalPower],
+      );
+    } else {
+      await connection.query(
+        `UPDATE card_battle_ranking_entries
+         SET rank_position = ?, lineup_json = ?, total_power = ?, achieved_at = NOW(3)
+         WHERE user_id = ? AND rank_position = ?`,
+        [rank, JSON.stringify(selection.deck.cardIds), selection.totalPower, userId, currentRank],
+      );
+    }
     await connection.commit();
     return cardBattleRankingDetail(rank);
   } catch (error) {

@@ -162,6 +162,8 @@ test("游戏榜提供固定百名卡牌对战榜、卡组详情和私密打榜�
   assert.match(rankingPage, /<CardBattleRankingBoard/);
   assert.match(rankingBoard, /查看更多（展示前 100 名）/);
   assert.match(rankingBoard, /空位，点击占据/);
+  assert.match(rankingBoard, /空位，点击更新占榜/);
+  assert.match(rankingBoard, /entry\.rank >= data\.ownRank/);
   assert.match(rankingBoard, /卡组总星级/);
   assert.match(rankingBoard, /卡组总战力/);
   assert.match(rankingBoard, /使用并打榜/);

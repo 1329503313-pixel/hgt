@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { promoteCardBattleRankingEntries } from "./cardBattleRanking.js";
+import { canClaimEmptyCardBattleRank, promoteCardBattleRankingEntries } from "./cardBattleRanking.js";
 
 const entry = (rank: number, userId: string) => ({
   rank,
@@ -41,4 +41,11 @@ test("第一百名顺延后掉出榜单", () => {
   assert.deepEqual(result.map(({ rank, userId }) => [rank, userId]), [
     [99, "challenger"], [100, "ninety-nine"],
   ]);
+});
+
+test("已上榜用户只能迁移到比当前排名更靠前的空位", () => {
+  assert.equal(canClaimEmptyCardBattleRank(null, 80), true);
+  assert.equal(canClaimEmptyCardBattleRank(80, 20), true);
+  assert.equal(canClaimEmptyCardBattleRank(80, 80), false);
+  assert.equal(canClaimEmptyCardBattleRank(20, 80), false);
 });

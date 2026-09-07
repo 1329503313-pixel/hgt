@@ -90,7 +90,7 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
     try {
       if (deckAction.kind === "claim") {
         await api(`/api/online-soup/card-battle-rankings/${deckAction.rank}/claim`, { method: "POST", body: { deckId: deck.id } });
-        showToast(`已占据卡牌对战榜第 ${deckAction.rank} 名`);
+        showToast(data?.ownRank ? `已更新至卡牌对战榜第 ${deckAction.rank} 名` : `已占据卡牌对战榜第 ${deckAction.rank} 名`);
         setDeckAction(null);
         await load();
       } else {
@@ -122,8 +122,8 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
         ? <button key={entry.rank} type="button" className={`ranking-table-row grid min-h-14 w-full grid-cols-[54px_minmax(0,1fr)_70px_92px] items-center gap-2 border-b border-line/70 px-3 py-3 text-left hover:bg-violet-50/60 sm:grid-cols-[80px_minmax(0,1fr)_110px_150px] ${entry.user.id === currentUserId ? "bg-violet-50" : ""}`} onClick={() => void openDetail(entry.rank)}>
             <strong className="text-sm text-violet-700">第 {entry.rank} 名</strong><VipIdentity nickname={entry.user.nickname} vipLevel={entry.user.vipLevel} vipActive={entry.user.vipActive} className="max-w-full text-sm font-bold text-ink" /><span className="text-right text-xs font-bold text-muted">{entry.starTotal} 星</span><span className="text-right text-sm font-black text-amber-600">{number.format(entry.totalPower)}</span>
           </button>
-        : <button key={entry.rank} type="button" className="ranking-table-row grid min-h-14 w-full grid-cols-[54px_minmax(0,1fr)_70px_92px] items-center gap-2 border-b border-dashed border-line/70 px-3 py-3 text-left hover:bg-cyan-50/60 sm:grid-cols-[80px_minmax(0,1fr)_110px_150px]" onClick={() => data?.ownRank ? showToast(`你已经占据第 ${data.ownRank} 名，只能通过挑战更高名次移动榜位`) : void openDecks({ kind: "claim", rank: entry.rank })}>
-            <strong className="text-sm text-slate-500">第 {entry.rank} 名</strong><span className="inline-flex items-center gap-2 text-sm font-bold text-cyan-700"><ShieldQuestion size={17} />空位，点击占据</span><span className="text-right text-xs text-slate-300">—</span><span className="text-right text-xs text-slate-300">—</span>
+        : <button key={entry.rank} type="button" className="ranking-table-row grid min-h-14 w-full grid-cols-[54px_minmax(0,1fr)_70px_92px] items-center gap-2 border-b border-dashed border-line/70 px-3 py-3 text-left hover:bg-cyan-50/60 sm:grid-cols-[80px_minmax(0,1fr)_110px_150px]" onClick={() => data?.ownRank && entry.rank >= data.ownRank ? showToast(`你当前为第 ${data.ownRank} 名，只能更新到更靠前的空位`) : void openDecks({ kind: "claim", rank: entry.rank })}>
+            <strong className="text-sm text-slate-500">第 {entry.rank} 名</strong><span className="inline-flex items-center gap-2 text-sm font-bold text-cyan-700"><ShieldQuestion size={17} />{data?.ownRank && entry.rank < data.ownRank ? "空位，点击更新占榜" : "空位，点击占据"}</span><span className="text-right text-xs text-slate-300">—</span><span className="text-right text-xs text-slate-300">—</span>
           </button>)}</div>}
       {!loading && !error && !expanded && <div className="p-3"><button type="button" className="btn btn-secondary min-h-11 w-full" onClick={() => setExpanded(true)}><ChevronDown size={17} />查看更多（展示前 100 名）</button></div>}
     </section>
@@ -139,7 +139,7 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
     </Modal>}
 
     {deckAction && <Modal full onClose={() => { if (!savingDeckId) setDeckAction(null); }}>
-      <div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-black text-ink">{deckAction.kind === "claim" ? `占据第 ${deckAction.rank} 名` : `挑战第 ${deckAction.rank} 名`}</h2><p className="mt-1 text-xs text-muted">选择一个已保存的五张卡组；卡牌位置会按保存顺序带入。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setDeckAction(null)} aria-label="关闭卡组选择"><X size={18} /></button></div>
+      <div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-black text-ink">{deckAction.kind === "claim" ? `${data?.ownRank ? "更新占榜至" : "占据"}第 ${deckAction.rank} 名` : `挑战第 ${deckAction.rank} 名`}</h2><p className="mt-1 text-xs text-muted">选择一个已保存的五张卡组；卡牌位置会按保存顺序带入。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setDeckAction(null)} aria-label="关闭卡组选择"><X size={18} /></button></div>
       {decksLoading ? <p className="py-16 text-center text-sm text-muted">卡组加载中…</p> : <div className="mt-5 space-y-3">{decks.map((deck) => {
         const deckCards = deck.cardIds.map((cardId) => cardsById.get(cardId) ?? null);
         const available = deck.cardIds.length === 5 && deckCards.every(Boolean);
