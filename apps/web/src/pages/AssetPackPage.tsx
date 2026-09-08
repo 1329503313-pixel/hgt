@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpen, Gem, LoaderCircle, ShieldCheck, Shell } from "lucide-react";
+import { BookOpen, Gem, ShieldCheck, Shell } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { AssetCardVisual, AssetMotionMedia } from "../components/AssetCardVisual";
+import { AssetMotionMedia } from "../components/AssetCardVisual";
+import { AssetPackCard } from "../components/AssetPackCard";
 import { AssetDrawOverlay } from "../components/AssetDrawOverlay";
 import { CollectibleVisual } from "../components/CollectibleVisual";
 import { AssetPackStoryModal } from "../components/AssetPackStoryModal";
@@ -108,14 +109,10 @@ export default function AssetPackPage() {
 
           <div className="card p-4">
             <h2 className="font-black text-ink">卡包内容</h2>
+            <p className="mt-1 text-xs leading-5 text-muted">点击史诗或传说卡查看属性与技能，再次点击收起；介绍可上下滑动。</p>
             {pack.upCardId && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900"><p>点击任意史诗卡可选择一张UP。每次抽到史诗卡时，UP与非UP各占50%；若抽到非UP史诗卡，下一张史诗必定为当前UP。</p>{pack.epicUpGuaranteed && <p className="mt-1 font-black text-orange-700">下一张史诗卡必定为当前UP，切换UP后状态仍保留。</p>}</div>}
             <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">
-              {(pack.cards ?? []).map((card) => {
-                const selectable = card.rarity === "epic";
-                const selected = card.id === pack.upCardId;
-                const selecting = card.id === upSelectingCardId;
-                return <div key={card.id} className="relative min-w-0"><AssetCardVisual card={card} owned={card.owned} compactBadges packType={pack.packType} selected={selected} disabled={selectable && upSelectingCardId != null} ariaPressed={selectable ? selected : undefined} ariaLabel={selectable ? `${card.name}，史诗卡，${selected ? "当前UP" : "点击选择为UP"}` : undefined} className={selectable ? "cursor-pointer disabled:cursor-wait" : ""} onClick={selectable ? () => void selectUpCard(card.id) : undefined} />{selected && <span className="asset-card-up-burst" aria-hidden="true">UP</span>}{selecting && <span className="absolute inset-0 z-40 grid place-items-center rounded-2xl bg-slate-950/45 text-white" role="status" aria-label="正在更新UP卡牌"><LoaderCircle className="animate-spin" size={24} /></span>}</div>;
-              })}
+              {(pack.cards ?? []).map((card) => <AssetPackCard key={`${pack.id}:${user?.id}:${card.id}`} card={card} packType={pack.packType} selected={card.id === pack.upCardId} selecting={card.id === upSelectingCardId} onSelectUp={(cardId) => void selectUpCard(cardId)} />)}
             </div>
             <div className="mt-5 border-t border-line pt-5">
               <div className="flex items-center justify-between"><div><h3 className="font-black text-ink">卡包概率</h3><p className="mt-1 text-xs text-muted">按卡牌品质展示抽取概率</p></div><ShieldCheck className="text-primary" size={24} /></div>

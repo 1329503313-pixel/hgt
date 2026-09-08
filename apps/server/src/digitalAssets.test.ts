@@ -140,6 +140,27 @@ test("收藏柜按当前持有星级返回卡牌对战属性", () => {
   }
 });
 
+test("卡包介绍使用数据库属性，兼容零值和缺失配置且不暴露内部字段", () => {
+  const row = {
+    rarity: "epic", star_level: "0", max_hp: "800", attack_value: "250", defense_value: "30",
+    speed_value: "80", energy_required: "40", crit_rate: "0", crit_damage: "150",
+    lifesteal_rate: "12.5", stun_rate: null, extra_action_rate: "0", skill_name: "潮汐",
+    skill_description: "第一段\n第二段", card_id: "private-id", internal: "不应返回"
+  } as never;
+  assert.deepEqual(digitalAssetRules.packCardBattlePreview(row), {
+    starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40,
+    critRate: 0, critDamage: 150, lifestealRate: 12.5, stunRate: 0, extraActionRate: 0,
+    skillName: "潮汐", skillDescription: "第一段\n第二段"
+  });
+  assert.equal(digitalAssetRules.packCardBattlePreview(undefined), null);
+  for (const rarity of ["normal", "rare"]) {
+    assert.equal(digitalAssetRules.packCardBattlePreview({ ...row as object, rarity } as never), null);
+  }
+  const ownedLegend = digitalAssetRules.packCardBattlePreview({ ...row as object, rarity: "legend", star_level: 3, max_hp: 3456 } as never);
+  assert.equal(ownedLegend?.starLevel, 3);
+  assert.equal(ownedLegend?.maxHp, 3456);
+});
+
 test("礼物图标压缩为透明背景正方形 WebP", async () => {
   const source = await sharp({
     create: {

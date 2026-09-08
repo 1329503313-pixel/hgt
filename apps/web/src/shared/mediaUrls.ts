@@ -1,4 +1,8 @@
-const SERVER_MEDIA_PREFIXES = ["/api/media/", "/api/banners/"] as const;
+const SERVER_MEDIA_PREFIXES = [
+  "/api/media/",
+  "/api/banners/",
+  "/api/online-soup/card-battle-boss/covers/"
+] as const;
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");

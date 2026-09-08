@@ -133,6 +133,7 @@ import onlineSoupRouter, {
   validRoomInviteToken
 } from "./onlineSoup.js";
 import { setBossRewardListener } from "./cardBattleBoss.js";
+import { setCardBattleRankingNotificationListener } from "./cardBattleRanking.js";
 import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.js";
 import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
@@ -218,6 +219,7 @@ setBossRewardListener((events) => {
     emitUnreadChanged(event.userId, "card_battle_boss");
   }
 });
+setCardBattleRankingNotificationListener((userId) => emitUnreadChanged(userId, "card_battle_rank_defeated"));
 setOnlineSoupLobbyEventEmitter((event, payload) => {
   if (!onlineSoupLobbySocketClients.size) return;
   const message = JSON.stringify({ event, payload });
@@ -6655,6 +6657,8 @@ app.get("/api/notifications", async (req, res) => {
           ? "/mine/tasks"
         : row.type === "ranking_reward" && row.related_id
           ? `/messages/ranking-rewards/${row.related_id}`
+        : row.type === "card_battle_rank_defeated"
+          ? "/mine/rankings?tab=card_battle"
         : row.type === "shell_adjustment" || row.type === "badge_history_backfill" || row.type === "card_battle_boss"
           ? "/mine/shells/transactions"
         : row.type === "user_follow" && row.actor_id

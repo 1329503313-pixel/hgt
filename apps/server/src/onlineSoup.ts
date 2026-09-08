@@ -100,10 +100,11 @@ import {
   CardBattleRankingRuleError,
   cardBattleRankingDetail,
   cardBattleRankingOwnRank,
+  cardBattleRankingSnapshot,
   claimEmptyCardBattleRank,
   confirmCardBattleRankingWin,
   createCardBattleRankingChallenge,
-  listCardBattleRanking,
+  replaceCardBattleRankingDeck,
 } from "./cardBattleRanking.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
@@ -462,7 +463,7 @@ router.get("/card-battle-rankings", async (req, res) => {
   const parsed = z.object({ limit: z.coerce.number().int().refine((value) => value === 10 || value === 100).default(10) }).safeParse(req.query);
   if (!parsed.success) return fail(res, 400, "榜单数量只能是 10 或 100");
   const limit = parsed.data.limit as 10 | 100;
-  res.json({ entries: await listCardBattleRanking(limit), ownRank: await cardBattleRankingOwnRank(user.id), limit });
+  res.json(await cardBattleRankingSnapshot(user.id, limit));
 });
 
 router.get("/card-battle-rankings/:rank", async (req, res) => {
@@ -483,6 +484,17 @@ router.post("/card-battle-rankings/:rank/claim", async (req, res) => {
   if (!rank.success || !body.success) return fail(res, 400, "请选择有效排名和已保存卡组");
   try {
     res.status(201).json({ entry: await claimEmptyCardBattleRank(user.id, rank.data, body.data.deckId) });
+  } catch (error) { return failCardBattleRanking(res, error); }
+});
+
+router.patch("/card-battle-rankings/:rank/deck", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const rank = z.coerce.number().int().min(1).max(100).safeParse(req.params.rank);
+  const body = z.object({ deckId: z.string().trim().min(1).max(64) }).safeParse(req.body);
+  if (!rank.success || !body.success) return fail(res, 400, "请选择有效排名和已保存卡组");
+  try {
+    res.json({ entry: await replaceCardBattleRankingDeck(user.id, rank.data, body.data.deckId) });
   } catch (error) { return failCardBattleRanking(res, error); }
 });
 

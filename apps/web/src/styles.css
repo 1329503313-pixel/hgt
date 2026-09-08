@@ -5427,6 +5427,34 @@ textarea {
 .asset-card[aria-pressed]:active .asset-card-frame { transform: scale(0.98); }
 .asset-card-locked { filter: grayscale(1); opacity: 0.52; }
 
+/* Keep the preview text fully white, including on unowned cards. */
+.asset-pack-card .asset-card { position: relative; border-radius: 15px; }
+.asset-pack-card .asset-card-locked { filter: none; opacity: 1; }
+.asset-pack-card .asset-card-locked .asset-card-frame { filter: grayscale(1); opacity: 0.52; }
+.asset-pack-card .asset-card:disabled { cursor: default; }
+.asset-pack-card .asset-card:enabled { cursor: pointer; }
+.asset-pack-card .asset-card:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+.asset-pack-card .asset-card:active .asset-card-frame { transform: none; }
+.asset-pack-card .asset-card[aria-expanded="true"] :is(.asset-card-number, .asset-card-rarity, .asset-card-caption, .asset-card-glitter) { visibility: hidden; }
+.asset-pack-card-details {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: block;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  border-radius: inherit;
+  background: rgb(0 0 0 / 0.5);
+  padding: 8px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.9);
+  overflow-wrap: anywhere;
+}
+
 .asset-card-number,
 .asset-card-rarity {
   position: absolute;

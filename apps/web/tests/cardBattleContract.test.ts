@@ -116,8 +116,9 @@ test("管理后台和选卡弹窗展示对战定位并支持数值与技能视�
   assert.match(view, /card\.skillDescription \|\| "暂无技能说明"/);
 });
 
-test("战场保留星级并使用共享动态媒体播放器", () => {
-  assert.match(view, /card\.name} · \{card\.starLevel}★/);
+test("战场隐藏星级并使用共享动态媒体播放器", () => {
+  const battleCard = view.slice(view.indexOf("export function BattleCard("), view.indexOf("export function CardBattleRoomView("));
+  assert.doesNotMatch(battleCard, /card\.starLevel|★/);
   assert.match(view, /card\.motionMp4Url/);
   assert.match(view, /<AssetMotionMedia/);
   assert.match(view, /thumbnailUrl: card\.imageUrl/);
@@ -269,12 +270,16 @@ test("游戏榜提供固定百名卡牌对战榜、卡组详情和私密打榜�
   assert.match(rankingPage, /group: "game"/);
   assert.match(rankingPage, />游戏榜<\/button>/);
   assert.match(rankingPage, /<CardBattleRankingBoard/);
+  assert.match(rankingPage, /new URLSearchParams\(location\.search\)\.get\("tab"\)/);
   assert.match(rankingBoard, /查看更多（展示前 100 名）/);
   assert.match(rankingBoard, /空位，点击占据/);
   assert.match(rankingBoard, /空位，点击更新占榜/);
-  assert.match(rankingBoard, /entry\.rank >= data\.ownRank/);
-  assert.match(rankingBoard, /卡组总星级/);
+  assert.match(rankingBoard, /listedOwnRank \?\? data\?\.ownRank/);
+  assert.doesNotMatch(rankingBoard, /卡组总星级/);
   assert.match(rankingBoard, /卡组总战力/);
+  assert.match(rankingBoard, /kind: "replace"/);
+  assert.match(rankingBoard, />更换卡组<\/button>/);
+  assert.doesNotMatch(rankingBoard, /这是我的榜位/);
   assert.match(rankingBoard, /使用并打榜/);
   assert.match(view, /确认胜利并占据第/);
   assert.match(view, /私密打榜 · 目标第/);

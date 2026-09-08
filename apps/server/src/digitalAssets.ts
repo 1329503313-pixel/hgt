@@ -306,6 +306,25 @@ function packMediaUrl(row: mysql.RowDataPacket, variant: "cover" | "thumbnail") 
   return `/api/media/assets/packs/${encodeURIComponent(String(row.id ?? row.pack_id))}/${variant}?v=${assetVersion(row.updated_at ?? row.pack_updated_at)}`;
 }
 
+function packCardBattlePreview(row: mysql.RowDataPacket | undefined) {
+  if (!row || !cardRaritySupportsBattle(String(row.rarity))) return null;
+  return {
+    starLevel: Number(row.star_level),
+    maxHp: Number(row.max_hp),
+    attack: Number(row.attack_value),
+    defense: Number(row.defense_value),
+    speed: Number(row.speed_value),
+    energyRequired: Number(row.energy_required),
+    critRate: Number(row.crit_rate ?? 25),
+    critDamage: Number(row.crit_damage ?? 150),
+    lifestealRate: Number(row.lifesteal_rate ?? 0),
+    stunRate: Number(row.stun_rate ?? 0),
+    extraActionRate: Number(row.extra_action_rate ?? 0),
+    skillName: String(row.skill_name ?? ""),
+    skillDescription: String(row.skill_description ?? "")
+  };
+}
+
 function cardPayload(row: mysql.RowDataPacket, useMediaUrls = false) {
   const hasMotion = cardRaritySupportsMotion(row.rarity) && Boolean(row.motion_mp4_path);
   return {
@@ -471,7 +490,7 @@ async function packConfiguration(
   const queryable = connection as mysql.PoolConnection;
   // Configuration and draw paths only need metadata. The public pack detail can
   // opt into card stories; images are always served by dedicated media routes.
-  const cardColumns = `c.id, c.card_no, c.name, c.rarity,
+  const cardColumns = `c.id, c.card_no, c.name, c.rarity, c.battle_role,
     '' AS image_url, '' AS thumbnail_url,
     c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version,
     ${includeStory ? "c.story" : "NULL AS story"}, c.release_at, c.status, c.updated_at`;
@@ -1160,7 +1179,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
     const pityScope = pityScopeForPackType(pack.pack_type);
-    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus, collectibleRewards, drawCountRows, epicUpState] = await Promise.all([
+    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus, collectibleRewards, drawCountRows, epicUpState, battleRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, pityScope]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
@@ -1171,12 +1190,22 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         "SELECT COALESCE(SUM(draw_count), 0) AS total_draw_count FROM asset_draw_count_events WHERE user_id = ? AND pack_id = ?",
         [user.id, pack.id]
       ).then(([rows]) => rows),
-      userPackEpicUpState(user.id, String(pack.id), configuration)
+      userPackEpicUpState(user.id, String(pack.id), configuration),
+      pool.query<mysql.RowDataPacket[]>(
+        `SELECT tier.*, c.rarity
+         FROM asset_pack_cards pc
+         INNER JOIN asset_cards c ON c.id = pc.card_id
+         LEFT JOIN user_asset_cards owned ON owned.card_id = c.id AND owned.user_id = ?
+         INNER JOIN asset_card_battle_tiers tier ON tier.card_id = c.id AND tier.star_level = COALESCE(owned.star_level, 0)
+         WHERE pc.pack_id = ? AND c.rarity IN ('epic', 'legend')`,
+        [user.id, pack.id]
+      ).then(([rows]) => rows)
     ]);
     const pity = pityRows[0];
     const usage = usageRows[0];
     const userRow = userRows[0];
     const ownedStarLevels = new Map(ownedRows.map((row: mysql.RowDataPacket) => [String(row.card_id), Number(row.star_level)]));
+    const battlePreviews = new Map(battleRows.map((row) => [String(row.card_id), packCardBattlePreview(row)]));
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
       balance: Number(userRow?.shell_balance ?? 0),
@@ -1206,6 +1235,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
             ...cardPayload({ ...card, story: "" }, true),
             actualProbability: actualCardProbability(configuration, card, epicUpState),
             owned: starLevel != null,
+            battleTier: battlePreviews.get(String(card.id)) ?? null,
             ...(starLevel == null ? {} : { starLevel })
           };
         })
@@ -2079,5 +2109,6 @@ export const digitalAssetRules = {
   pityTrigger,
   pityScopeForPackType,
   updatePity,
-  chooseEpicUpCard
+  chooseEpicUpCard,
+  packCardBattlePreview
 };

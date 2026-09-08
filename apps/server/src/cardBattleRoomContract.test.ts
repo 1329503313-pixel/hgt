@@ -8,8 +8,10 @@ import type { PoolConnection } from "mysql2/promise";
 
 const roomSource = readFileSync(new URL("./cardBattleRoom.ts", import.meta.url), "utf8");
 const routesSource = readFileSync(new URL("./onlineSoup.ts", import.meta.url), "utf8");
+const rankingSource = readFileSync(new URL("./cardBattleRanking.ts", import.meta.url), "utf8");
 const dbSource = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 const digitalAssetsSource = readFileSync(new URL("./digitalAssets.ts", import.meta.url), "utf8");
+const indexSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 const start = new Date("2026-09-08T00:00:00.000Z");
 function playbackFixture(): CardBattleResult {
@@ -124,6 +126,11 @@ test("卡牌对战榜使用隐藏临时房间并冻结守榜卡组", () => {
   assert.match(routesSource, /打榜房间不允许邀请其他用户/);
   assert.match(routesSource, /card-battle-rankings\/:rank\/challenge/);
   assert.match(routesSource, /card-battle\/ranking\/confirm-win/);
+  assert.match(routesSource, /card-battle-rankings\/:rank\/deck/);
+  assert.match(rankingSource, /INSERT INTO notifications[\s\S]*card_battle_rank_defeated/);
+  assert.match(rankingSource, /replaceCardBattleRankingDeck/);
+  assert.match(routesSource, /res\.json\(await cardBattleRankingSnapshot\(user\.id, limit\)\)/);
+  assert.match(indexSource, /row\.type === "card_battle_rank_defeated"[\s\S]*\/mine\/rankings\?tab=card_battle/);
   assert.match(roomSource, /defender_snapshot_json/);
   assert.match(roomSource, /榜单对手阵容快照不可用/);
 });

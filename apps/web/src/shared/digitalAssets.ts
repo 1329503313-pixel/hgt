@@ -50,6 +50,8 @@ export type AssetCard = {
   battleTiers?: CardBattleTier[] | null;
 };
 
+export type AssetCardBattlePreview = Pick<CardBattleTier, "starLevel" | "maxHp" | "attack" | "defense" | "speed" | "energyRequired" | "critRate" | "critDamage" | "lifestealRate" | "stunRate" | "extraActionRate" | "skillName" | "skillDescription">;
+
 export type OwnedAssetCard = AssetCard & {
   starLevel: number;
   duplicateProgress: number;
@@ -59,7 +61,7 @@ export type OwnedAssetCard = AssetCard & {
   firstObtainedAt: string | null;
   lastObtainedAt: string | null;
   displayOrder: number | null;
-  battleTier?: Pick<CardBattleTier, "starLevel" | "maxHp" | "attack" | "defense" | "speed" | "energyRequired" | "critRate" | "critDamage" | "lifestealRate" | "stunRate" | "extraActionRate" | "skillName" | "skillDescription"> | null;
+  battleTier?: AssetCardBattlePreview | null;
   packs: Array<{ id: string; name: string; packType: AssetPackType; coverUrl: string }>;
 };
 
@@ -99,7 +101,7 @@ export type AssetPack = {
   pity: AssetPity;
   previewCards?: AssetCard[];
   collectibleCounts?: { available: number; total: number } | null;
-  cards?: Array<AssetCard & { actualProbability: number; owned: boolean; starLevel?: number }>;
+  cards?: Array<AssetCard & { actualProbability: number; owned: boolean; starLevel?: number; battleTier?: AssetCardBattlePreview | null }>;
   collectibleRewards?: Array<import("./collectibles").Collectible & {
     probability: number;
     acquired: boolean;

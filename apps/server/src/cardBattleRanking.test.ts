@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canClaimEmptyCardBattleRank, promoteCardBattleRankingEntries } from "./cardBattleRanking.js";
+import { cardBattleRankDefeatedNotificationContent, canClaimEmptyCardBattleRank, promoteCardBattleRankingEntries } from "./cardBattleRanking.js";
 import { compactCardBattleRankingEntries } from "./cardBattleRankingState.js";
 
 const entry = (rank: number, userId: string) => ({
@@ -61,4 +61,9 @@ test("已上榜用户只能迁移到比当前排名更靠前的空位", () => {
   assert.equal(canClaimEmptyCardBattleRank(80, 20), true);
   assert.equal(canClaimEmptyCardBattleRank(80, 80), false);
   assert.equal(canClaimEmptyCardBattleRank(20, 80), false);
+});
+
+test("被攻榜用户收到挑战者昵称和最新排名，掉出百名时明确提示未上榜", () => {
+  assert.equal(cardBattleRankDefeatedNotificationContent("海底玩家", 8), "海底玩家在卡牌对战榜中战胜了您，您当前的排名是第8名");
+  assert.equal(cardBattleRankDefeatedNotificationContent("海底玩家", null), "海底玩家在卡牌对战榜中战胜了您，您当前暂未上榜");
 });

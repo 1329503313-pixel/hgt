@@ -101,7 +101,10 @@ export function AssetCardVisual({
   onClick,
   disabled = false,
   ariaPressed,
+  ariaExpanded,
+  ariaDescribedBy,
   ariaLabel,
+  overlay,
   className = ""
 }: {
   card: AssetCard | OwnedAssetCard | AssetDrawResult;
@@ -117,7 +120,10 @@ export function AssetCardVisual({
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
   disabled?: boolean;
   ariaPressed?: boolean;
+  ariaExpanded?: boolean;
+  ariaDescribedBy?: string;
   ariaLabel?: string;
+  overlay?: React.ReactNode;
   className?: string;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -183,6 +189,8 @@ export function AssetCardVisual({
       onClick={onClick}
       disabled={disabled}
       aria-pressed={ariaPressed}
+      aria-expanded={ariaExpanded}
+      aria-describedby={ariaDescribedBy}
       style={needsVisibilityEffects ? ({
         "--legend-effect-delay": `${-((Number.parseInt(card.cardNo, 10) || card.cardNo.length) % 7)}s`
       } as React.CSSProperties) : undefined}
@@ -207,6 +215,7 @@ export function AssetCardVisual({
           </span>
         </span>
       </span>
+      {overlay}
     </button>
   );
 }

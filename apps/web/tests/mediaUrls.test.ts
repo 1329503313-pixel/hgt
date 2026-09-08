@@ -7,6 +7,7 @@ import {
 } from "../src/shared/mediaUrls.ts";
 
 const apiOrigin = "https://hgt.caqis.com";
+const bossCover = `/api/online-soup/card-battle-boss/covers/${"a".repeat(64)}`;
 
 test("resolves API media and banner paths against the configured API origin", () => {
   assert.equal(
@@ -26,10 +27,34 @@ test("does not rewrite navigation, bundled, data, blob, or absolute URLs", () =>
     "/turtle-avatar.png?v=1",
     "data:image/webp;base64,AAAA",
     "blob:https://app.caqis.com/id",
-    "https://zgkc-storage.oss-cn-beijing.aliyuncs.com/hgt/file.webp"
+    "https://zgkc-storage.oss-cn-beijing.aliyuncs.com/hgt/file.webp",
+    `${apiOrigin}${bossCover}`
   ];
   for (const value of preserved) assert.equal(resolveServerMediaUrl(value, apiOrigin), value);
   assert.equal(isServerMediaPath("/api/soups"), false);
+  assert.equal(isServerMediaPath("/api/online-soup/rooms/room-1"), false);
+});
+
+test("resolves all five BOSS covers for APP preparation, battle updates, and replay", () => {
+  const cards = Array.from({ length: 5 }, (_, index) => ({
+    name: `BOSS ${index + 1}`,
+    imageUrl: `/api/online-soup/card-battle-boss/covers/${String(index + 1).repeat(64)}`
+  }));
+  const battle = { boss: { lineup: cards }, game: { lineups: [{ seat: 2, cards }] } };
+  const rest = { room: { cardBattle: battle } };
+  const socket = { event: "online_soup_changed", payload: { roomId: "room-1", cardBattle: battle } };
+  const replay = { replay: { lineups: battle.game.lineups } };
+  const expected = cards.map((card) => ({ ...card, imageUrl: `${apiOrigin}${card.imageUrl}` }));
+
+  assert.equal(isServerMediaPath(bossCover), true);
+  assert.equal(resolveServerMediaUrl(bossCover, `${apiOrigin}/`), `${apiOrigin}${bossCover}`);
+  assert.deepEqual(normalizeServerMediaUrls(rest, apiOrigin).room.cardBattle.boss.lineup, expected);
+  assert.deepEqual(normalizeServerMediaUrls(rest, apiOrigin).room.cardBattle.game.lineups[0].cards, expected);
+  assert.deepEqual(normalizeServerMediaUrls(socket, apiOrigin).payload.cardBattle.game.lineups[0].cards, expected);
+  assert.deepEqual(normalizeServerMediaUrls(replay, apiOrigin).replay.lineups[0].cards, expected);
+  assert.equal(normalizeServerMediaUrls(rest, ""), rest);
+  assert.equal(resolveServerMediaUrl(bossCover, ""), bossCover);
+  assert.equal(rest.room.cardBattle.boss.lineup[0].imageUrl, `/api/online-soup/card-battle-boss/covers/${"1".repeat(64)}`);
 });
 
 test("normalizes nested REST, cache, SSE, and WebSocket payload shapes", () => {

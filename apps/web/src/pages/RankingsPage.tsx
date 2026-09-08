@@ -131,7 +131,7 @@ export default function RankingsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loadingUser, openAuth, showToast } = useApp();
-  const requestedTab = (location.state as { tab?: string } | null)?.tab;
+  const requestedTab = new URLSearchParams(location.search).get("tab") ?? (location.state as { tab?: string } | null)?.tab;
   const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "charm" || requestedTab === "generosity" || requestedTab === "collection" || requestedTab === "collectible" || requestedTab === "draws" || requestedTab === "card_battle" ? requestedTab : "soups";
   const [tab, setTab] = useState<RankingTab>(initialTab);
   const [period, setPeriod] = useState<RankingPeriod>("7d");
