@@ -961,6 +961,8 @@ async function cabinetPayload(userId: string, compact = false) {
               battle_tier.defense_value AS battle_defense,
               battle_tier.speed_value AS battle_speed,
               battle_tier.energy_required AS battle_energy_required,
+              battle_tier.crit_rate AS battle_crit_rate, battle_tier.crit_damage AS battle_crit_damage,
+              battle_tier.lifesteal_rate AS battle_lifesteal_rate, battle_tier.stun_rate AS battle_stun_rate, battle_tier.extra_action_rate AS battle_extra_action_rate,
               battle_tier.skill_name AS battle_skill_name,
               battle_tier.skill_description AS battle_skill_description
        FROM user_asset_cards uc INNER JOIN asset_cards c ON c.id = uc.card_id
@@ -1002,6 +1004,8 @@ async function cabinetPayload(userId: string, compact = false) {
       defense: Number(row.battle_defense),
       speed: Number(row.battle_speed),
       energyRequired: Number(row.battle_energy_required),
+      critRate: Number(row.battle_crit_rate ?? 25), critDamage: Number(row.battle_crit_damage ?? 150),
+      lifestealRate: Number(row.battle_lifesteal_rate ?? 0), stunRate: Number(row.battle_stun_rate ?? 0), extraActionRate: Number(row.battle_extra_action_rate ?? 0),
       skillName: String(row.battle_skill_name ?? ""),
       skillDescription: String(row.battle_skill_description ?? "")
     },

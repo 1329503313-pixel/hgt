@@ -569,6 +569,7 @@ const TRANSACTION_LABELS: Record<string, string> = {
   admin_add: "后台人工增加",
   admin_deduct: "后台人工扣减",
   ranking_reward: "排行榜奖励",
+  card_battle_boss: "BOSS 首次通关奖励",
   daily_entitlement_grant: "每日权益自动赠送"
 };
 

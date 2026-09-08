@@ -1,3 +1,4 @@
+import { battleCollectibleEffectTypes, battleCollectibleConfigError } from "@hgt/shared";
 import express from "express";
 import type mysql from "mysql2/promise";
 import { randomInt } from "node:crypto";
@@ -37,6 +38,9 @@ const collectibleSchema = z.object({
   rarity: z.enum(["epic", "legend"], { message: "收藏品品质只能设置为史诗或传说" }),
   collectibleType: z.enum(["treasure", "commemorative", "honor"]),
   collectibleValue: z.number().int().positive("收藏品价值必须是正整数"),
+  battleEffectDescription: z.string().max(10_000).optional(),
+  battleEffectType: z.enum(battleCollectibleEffectTypes).nullable().optional(),
+  battleEffectValue: z.number().finite().nullable().optional(),
   description: z.string().max(10_000).optional().default(""),
   imageUrl: z.string().trim().min(1, "请上传收藏品封面").max(8_000_000),
   collectibleNo: z.string().trim().regex(/^\d+$/, "收藏品编号只能使用数字").max(32).optional()
@@ -55,6 +59,9 @@ function collectiblePayload(row: mysql.RowDataPacket) {
     rarity: String(row.rarity), rarityLabel: rarityLabels[row.rarity as keyof typeof rarityLabels] ?? String(row.rarity),
     collectibleType: String(row.collectible_type ?? "treasure"), collectibleTypeLabel: collectibleTypeLabels[row.collectible_type as keyof typeof collectibleTypeLabels] ?? "珍宝",
     collectibleValue: Number(row.collectible_value ?? 1),
+    battleEffectDescription: String(row.battle_effect_description ?? ""),
+    battleEffectType: row.battle_effect_type ?? null,
+    battleEffectValue: row.battle_effect_value == null ? null : Number(row.battle_effect_value),
     description: String(row.description ?? ""), imageUrl: imageUrl(String(row.id)), thumbnailUrl: imageUrl(String(row.id), true),
     motionMp4Url: motionUrl(row, "mp4"), motionWebmUrl: motionUrl(row, "webm"),
     motionPosterUrl: row.motion_poster_path ? imageUrl(String(row.id), true) : null,
@@ -472,8 +479,10 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
   });
   app.post("/api/admin/collectibles", async (req, res) => {
     const admin = await deps.requireAdmin(req, res); if (!admin) return; const parsed = collectibleSchema.safeParse(req.body); if (!parsed.success) return deps.sendError(res, 400, parsed.error.issues[0]?.message ?? "资料无效");
+    const effectError = battleCollectibleConfigError(parsed.data.battleEffectType, parsed.data.battleEffectValue);
+    if (effectError) return deps.sendError(res, 400, effectError);
     const id = nanoid(); const connection = await pool.getConnection();
-    try { await connection.beginTransaction(); const no = parsed.data.collectibleNo || await nextNumber(connection); if (parsed.data.collectibleNo) await advanceNumberSequence(connection, no); const media = await optimizeCollectibleImages(parsed.data.imageUrl, id); await connection.query("INSERT INTO collectibles (id,collectible_no,name,rarity,collectible_type,collectible_value,description,image_url,thumbnail_url) VALUES (?,?,?,?,?,?,?,?,?)", [id,no,parsed.data.name,parsed.data.rarity,parsed.data.collectibleType,parsed.data.collectibleValue,parsed.data.description,media.full,media.thumbnail]); await connection.commit(); res.status(201).json({ id }); }
+    try { await connection.beginTransaction(); const no = parsed.data.collectibleNo || await nextNumber(connection); if (parsed.data.collectibleNo) await advanceNumberSequence(connection, no); const media = await optimizeCollectibleImages(parsed.data.imageUrl, id); await connection.query("INSERT INTO collectibles (id,collectible_no,name,rarity,collectible_type,collectible_value,description,image_url,thumbnail_url,battle_effect_description,battle_effect_type,battle_effect_value) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [id,no,parsed.data.name,parsed.data.rarity,parsed.data.collectibleType,parsed.data.collectibleValue,parsed.data.description,media.full,media.thumbnail,parsed.data.battleEffectDescription ?? "",parsed.data.battleEffectType ?? null,parsed.data.battleEffectValue ?? null]); await connection.commit(); res.status(201).json({ id }); }
     catch (error) {
       await connection.rollback();
       if (databaseErrorCode(error) === "ER_DUP_ENTRY") return deps.sendError(res, 409, "收藏品编号已存在");
@@ -483,10 +492,37 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
   });
   app.patch("/api/admin/collectibles/:id", async (req, res) => {
     if (!(await deps.requireAdmin(req, res))) return; const parsed = collectibleSchema.partial().safeParse(req.body); if (!parsed.success) return deps.sendError(res, 400, "资料无效");
-    const [[current]] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? AND deleted_at IS NULL", [req.params.id]); if (!current) return deps.sendError(res, 404, "收藏品不存在");
-    if (parsed.data.collectibleNo && parsed.data.collectibleNo !== current.collectible_no) { const [[flow]] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM collectible_transfers WHERE collectible_id=? LIMIT 1", [req.params.id]); if (flow) return deps.sendError(res, 409, "已经流转的收藏品不能修改编号"); }
-    const data: Record<string,unknown> = { ...parsed.data }; if (parsed.data.imageUrl) { const media=await optimizeCollectibleImages(parsed.data.imageUrl,req.params.id); data.imageUrl=media.full; data.thumbnailUrl=media.thumbnail; }
-    const columns: Record<string,string>={name:"name",rarity:"rarity",collectibleType:"collectible_type",collectibleValue:"collectible_value",description:"description",imageUrl:"image_url",thumbnailUrl:"thumbnail_url",collectibleNo:"collectible_no"}; const entries=Object.entries(data);const connection=await pool.getConnection();try{await connection.beginTransaction();if(entries.length)await connection.query(`UPDATE collectibles SET ${entries.map(([k])=>`${columns[k]}=?`).join(",")} WHERE id=?`,[...entries.map(([,v])=>v),req.params.id]);const previousValue=Number(current.collectible_value??1),nextValue=parsed.data.collectibleValue??previousValue;if(current.owner_user_id&&nextValue!==previousValue)await recordValueEvent(connection,current,String(current.owner_user_id),nextValue-previousValue,"adjustment","admin",req.params.id);await connection.commit();res.json({ok:true});}catch(error){await connection.rollback();deps.sendError(res,409,error instanceof Error?error.message:"保存失败");}finally{connection.release();}
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[current]] = await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? AND deleted_at IS NULL FOR UPDATE", [req.params.id]);
+      if (!current) { await connection.rollback(); return deps.sendError(res, 404, "收藏品不存在"); }
+      // Validate the merged pair under the same lock as the update, including partial edits.
+      const effectError = battleCollectibleConfigError(
+        parsed.data.battleEffectType === undefined ? current.battle_effect_type : parsed.data.battleEffectType,
+        parsed.data.battleEffectValue === undefined ? (current.battle_effect_value == null ? null : Number(current.battle_effect_value)) : parsed.data.battleEffectValue,
+      );
+      if (effectError) { await connection.rollback(); return deps.sendError(res, 400, effectError); }
+      if (parsed.data.collectibleNo && parsed.data.collectibleNo !== current.collectible_no) {
+        const [[flow]] = await connection.query<mysql.RowDataPacket[]>("SELECT id FROM collectible_transfers WHERE collectible_id=? LIMIT 1", [req.params.id]);
+        if (flow) { await connection.rollback(); return deps.sendError(res, 409, "已经流转的收藏品不能修改编号"); }
+      }
+      const data: Record<string, unknown> = { ...parsed.data };
+      if (parsed.data.imageUrl) {
+        const media = await optimizeCollectibleImages(parsed.data.imageUrl, req.params.id);
+        data.imageUrl = media.full; data.thumbnailUrl = media.thumbnail;
+      }
+      const columns: Record<string, string> = { battleEffectDescription: "battle_effect_description", battleEffectType: "battle_effect_type", battleEffectValue: "battle_effect_value", name: "name", rarity: "rarity", collectibleType: "collectible_type", collectibleValue: "collectible_value", description: "description", imageUrl: "image_url", thumbnailUrl: "thumbnail_url", collectibleNo: "collectible_no" };
+      const entries = Object.entries(data);
+      if (entries.length) await connection.query(`UPDATE collectibles SET ${entries.map(([key]) => `${columns[key]}=?`).join(",")} WHERE id=?`, [...entries.map(([, value]) => value), req.params.id]);
+      const previousValue = Number(current.collectible_value ?? 1), nextValue = parsed.data.collectibleValue ?? previousValue;
+      if (current.owner_user_id && nextValue !== previousValue) await recordValueEvent(connection, current, String(current.owner_user_id), nextValue - previousValue, "adjustment", "admin", req.params.id);
+      await connection.commit();
+      res.json({ ok: true });
+    } catch (error) {
+      await connection.rollback();
+      deps.sendError(res, 409, error instanceof Error ? error.message : "保存失败");
+    } finally { connection.release(); }
   });
   app.post("/api/admin/collectibles/:id/grant", async (req,res)=>{
     const admin=await deps.requireAdmin(req,res); if(!admin)return; const userId=String(req.body?.userId??""); const connection=await pool.getConnection();

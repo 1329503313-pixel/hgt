@@ -1,3 +1,5 @@
+import { applyBattleCollectibleStats, type BattleCollectibleBinding } from "@hgt/shared";
+import { BattleCollectibleRuleError, parseBattleCollectibleBindings, resolveBattleCollectibles, loadBattleCollectibles, withBattleCollectible } from "./battleCollectibles.js";
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
@@ -7,7 +9,9 @@ import {
   CardBattleRoomRuleError,
   loadEligibleBattleCards,
   loadSavedCardBattleDecks,
+  forfeitCardBattle,
 } from "./cardBattleRoom.js";
+import { resolveCardBattlePlayback } from "./cardBattlePlayback.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 
 export class CardBattleRankingRuleError extends Error {
@@ -20,6 +24,7 @@ type RankingEntry = {
   rank: number;
   userId: string;
   lineup: string[];
+  collectibleBindings?: BattleCollectibleBinding[];
   totalPower: number;
   achievedAt: Date;
 };
@@ -60,7 +65,8 @@ async function validatedDeck(userId: string, deckId: string, db: mysql.Pool | my
   if (!deck) throw new CardBattleRankingRuleError("卡组不存在或已被删除");
   const cards = await loadEligibleBattleCards(userId, db);
   const cardsById = new Map(cards.map((card) => [card.id, card]));
-  const selected = deck.cardIds.map((cardId) => cardsById.get(cardId) ?? null);
+  const collectibles = await resolveBattleCollectibles(userId, deck.cardIds, deck.collectibleBindings, db, true);
+  const selected = deck.cardIds.map((cardId) => cardsById.has(cardId) ? withBattleCollectible(cardsById.get(cardId)!, collectibles.get(cardId) ?? null) : null);
   if (deck.cardIds.length !== 5 || selected.some((card) => !card)) {
     throw new CardBattleRankingRuleError("卡组包含未拥有、已停用或不可参战的卡牌");
   }
@@ -84,10 +90,23 @@ export async function listCardBattleRanking(limit: 10 | 100) {
        users.role, users.vip_growth_value, users.vip_expires_at, users.vip_legacy_active,
        COALESCE(SUM(owned.star_level), 0) AS star_total,
        COALESCE(SUM(tiers.max_hp + tiers.attack_value * 3 + tiers.defense_value * 4
-         + tiers.speed_value * 7 - tiers.energy_required * 10), entries.total_power) AS current_total_power
+         + tiers.speed_value * 7 - tiers.energy_required * 10
+         + CASE relic.battle_effect_type
+           WHEN 'max_hp' THEN relic.battle_effect_value
+           WHEN 'attack' THEN relic.battle_effect_value * 3
+           WHEN 'attack_skill_damage' THEN relic.battle_effect_value * 3
+           WHEN 'defense' THEN relic.battle_effect_value * 4
+           WHEN 'speed' THEN relic.battle_effect_value * 7
+           WHEN 'energy_reduction' THEN (tiers.energy_required - GREATEST(10, tiers.energy_required - relic.battle_effect_value)) * 10
+           ELSE 0 END), entries.total_power) AS current_total_power
      FROM card_battle_ranking_entries entries
      JOIN users ON users.id = entries.user_id
      LEFT JOIN JSON_TABLE(entries.lineup_json, '$[*]' COLUMNS(card_id VARCHAR(64) PATH '$')) lineup ON TRUE
+     LEFT JOIN JSON_TABLE(COALESCE(entries.collectible_bindings_json, JSON_ARRAY()), '$[*]'
+       COLUMNS(card_id VARCHAR(64) PATH '$.cardId', collectible_id VARCHAR(64) PATH '$.collectibleId')) equipment
+       ON BINARY equipment.card_id = BINARY lineup.card_id
+     LEFT JOIN collectibles relic ON BINARY relic.id = BINARY equipment.collectible_id
+       AND relic.owner_user_id = entries.user_id AND relic.status = 'owned' AND relic.deleted_at IS NULL
      LEFT JOIN user_asset_cards owned ON owned.user_id = entries.user_id
        AND BINARY owned.card_id = BINARY lineup.card_id
      LEFT JOIN asset_cards cards ON cards.id = owned.card_id AND cards.status = 'active'
@@ -141,9 +160,12 @@ export async function cardBattleRankingDetail(rank: number) {
   const cardIds = parseCardIds(row.lineup_json);
   const eligible = await loadEligibleBattleCards(String(row.user_id));
   const cardsById = new Map(eligible.map((card) => [card.id, card]));
+  const bindings = parseBattleCollectibleBindings(row.collectible_bindings_json);
+  const owned = await loadBattleCollectibles(String(row.user_id), pool);
+  const collectiblesAvailable = bindings.every((b) => owned.some((item) => item.id === b.collectibleId));
   const cards = cardIds.map((cardId, index) => {
     const card = cardsById.get(cardId);
-    return card ? { slot: index + 1, ...card } : { slot: index + 1, id: cardId, unavailable: true as const };
+    return card ? { slot: index + 1, ...withBattleCollectible(card, owned.find((item) => bindings.some((b) => b.cardId === cardId && b.collectibleId === item.id)) ?? null) } : { slot: index + 1, id: cardId, unavailable: true as const };
   });
   const vip = vipGrowthSnapshot(row);
   return {
@@ -156,7 +178,7 @@ export async function cardBattleRankingDetail(rank: number) {
     cards,
     starTotal: cards.reduce((sum, card) => sum + ("starLevel" in card ? Number(card.starLevel) : 0), 0),
     totalPower: cards.reduce((sum, card) => sum + ("combatPower" in card ? Number(card.combatPower) : 0), 0),
-    available: cards.length === 5 && cards.every((card) => !("unavailable" in card)),
+    available: collectiblesAvailable && cards.length === 5 && cards.every((card) => !("unavailable" in card)),
     achievedAt: new Date(row.achieved_at).toISOString(),
   };
 }
@@ -180,16 +202,16 @@ export async function claimEmptyCardBattleRank(userId: string, rank: number, dec
     const selection = await validatedDeck(userId, deckId, connection);
     if (currentRank === null) {
       await connection.query(
-        `INSERT INTO card_battle_ranking_entries (rank_position, user_id, lineup_json, total_power)
-         VALUES (?, ?, ?, ?)`,
-        [rank, userId, JSON.stringify(selection.deck.cardIds), selection.totalPower],
+        `INSERT INTO card_battle_ranking_entries (rank_position, user_id, lineup_json, total_power, collectible_bindings_json)
+         VALUES (?, ?, ?, ?, ?)`,
+        [rank, userId, JSON.stringify(selection.deck.cardIds), selection.totalPower, JSON.stringify(selection.deck.collectibleBindings)],
       );
     } else {
       await connection.query(
         `UPDATE card_battle_ranking_entries
-         SET rank_position = ?, lineup_json = ?, total_power = ?, achieved_at = NOW(3)
+         SET rank_position = ?, lineup_json = ?, total_power = ?, collectible_bindings_json = ?, achieved_at = NOW(3)
          WHERE user_id = ? AND rank_position = ?`,
-        [rank, JSON.stringify(selection.deck.cardIds), selection.totalPower, userId, currentRank],
+        [rank, JSON.stringify(selection.deck.cardIds), selection.totalPower, JSON.stringify(selection.deck.collectibleBindings), userId, currentRank],
       );
     }
     await connection.commit();
@@ -246,9 +268,9 @@ export async function createCardBattleRankingChallenge(userId: string, rank: num
     const defenderCardIds = parseCardIds(target.lineup_json);
     let defenderSnapshot: CardBattlePlayerInput;
     try {
-      defenderSnapshot = await buildCardBattlePlayerInput(String(target.user_id), String(target.nickname), 2, defenderCardIds, connection);
+      defenderSnapshot = await buildCardBattlePlayerInput(String(target.user_id), String(target.nickname), 2, defenderCardIds, connection, parseBattleCollectibleBindings(target.collectible_bindings_json));
     } catch (error) {
-      if (error instanceof CardBattleRoomRuleError) throw new CardBattleRankingRuleError("该排名的卡组当前不可用，暂时无法挑战");
+      if (error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) throw new CardBattleRankingRuleError("该排名的卡组当前不可用，暂时无法挑战");
       throw error;
     }
     const roomId = nanoid();
@@ -265,9 +287,9 @@ export async function createCardBattleRankingChallenge(userId: string, rank: num
       [roomId, userId],
     );
     await connection.query(
-      `INSERT INTO online_card_battle_seats (room_id, seat_number, user_id, lineup_json, is_ready)
-       VALUES (?, 1, ?, ?, 0), (?, 2, ?, ?, 1)`,
-      [roomId, userId, JSON.stringify(challenger.deck.cardIds), roomId, target.user_id, JSON.stringify(defenderCardIds)],
+      `INSERT INTO online_card_battle_seats (room_id, seat_number, user_id, lineup_json, is_ready, collectible_bindings_json)
+       VALUES (?, 1, ?, ?, 0, ?), (?, 2, ?, ?, 1, ?)`,
+      [roomId, userId, JSON.stringify(challenger.deck.cardIds), JSON.stringify(challenger.deck.collectibleBindings), roomId, target.user_id, JSON.stringify(defenderCardIds), JSON.stringify(parseBattleCollectibleBindings(target.collectible_bindings_json))],
     );
     await connection.query(
       `INSERT INTO card_battle_ranking_challenges
@@ -294,11 +316,13 @@ export async function isCardBattleRankingRoom(roomId: string, db: mysql.Pool | m
 }
 
 export async function abandonCardBattleRankingChallenge(roomId: string, userId: string, db: mysql.PoolConnection) {
+  await db.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
   const [[challenge]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT * FROM card_battle_ranking_challenges WHERE room_id = ? AND challenger_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
     [roomId, userId],
   );
   if (!challenge) return false;
+  await forfeitCardBattle(roomId, userId, db);
   await db.query("UPDATE card_battle_ranking_challenges SET status = 'abandoned' WHERE id = ?", [challenge.id]);
   await db.query("UPDATE online_card_battles SET status = 'aborted', ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'", [roomId]);
   await db.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
@@ -311,13 +335,14 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
   let committed = false;
   try {
     await connection.beginTransaction();
+    await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
     const [[challenge]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT * FROM card_battle_ranking_challenges WHERE room_id = ? AND challenger_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
       [roomId, userId],
     );
     if (!challenge) throw new CardBattleRankingRuleError("挑战不存在、已结束或无权确认");
     const [[game]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM online_card_battles WHERE room_id = ? AND status = 'ended' ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
+      "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? AND status = 'ended' ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
       [roomId],
     );
     if (!game) throw new CardBattleRankingRuleError("战斗尚未结束");
@@ -327,12 +352,8 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
     if (!challengerPlayer || Number(result?.winnerSeat ?? 0) !== challengerPlayer.seat) {
       throw new CardBattleRankingRuleError("只有本局挑战胜利后才能确认上榜");
     }
-    const [[progress]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT completed_sequence FROM online_card_battle_playback_progress WHERE game_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
-      [game.id, userId],
-    );
-    if (!progress || Number(progress.completed_sequence ?? 0) < Number(result?.events?.length ?? 0)) {
-      throw new CardBattleRankingRuleError("请先完整播放本局战斗动画");
+    if (!resolveCardBattlePlayback(result, game.started_at, String(game.status), new Date(game.db_now).getTime()).complete) {
+      throw new CardBattleRankingRuleError("本局服务器时间轴尚未结束");
     }
     const [lockedRows] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT * FROM card_battle_ranking_entries ORDER BY rank_position FOR UPDATE",
@@ -347,24 +368,23 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
       throw new CardBattleRankingRuleError("该排名已被其他挑战结果改变，本局不更新榜单，请退出后重新挑战", "RANK_CHANGED");
     }
     const lineup = challengerPlayer.cards.slice().sort((left, right) => left.slot - right.slot).map((card) => card.cardId);
-    const totalPower = challengerPlayer.cards.reduce((sum, card) => sum + calculateCardBattlePower({
-      maxHp: card.tier.maxHp, attack: card.tier.attack, defense: card.tier.defense,
-      speed: card.tier.speed, energyRequired: card.tier.energyRequired,
-    }), 0);
+    const collectibleBindings = challengerPlayer.cards.flatMap((card) => card.collectible ? [{ cardId: card.cardId, collectibleId: card.collectible.id }] : []);
+    await resolveBattleCollectibles(userId, lineup, collectibleBindings, connection, true);
+    const totalPower = challengerPlayer.cards.reduce((sum, card) => sum + calculateCardBattlePower(applyBattleCollectibleStats(card.tier, card.collectible)), 0);
     const entries: RankingEntry[] = lockedRows.map((row) => ({
-      rank: Number(row.rank_position), userId: String(row.user_id), lineup: parseCardIds(row.lineup_json),
+      rank: Number(row.rank_position), userId: String(row.user_id), lineup: parseCardIds(row.lineup_json), collectibleBindings: parseBattleCollectibleBindings(row.collectible_bindings_json),
       totalPower: Number(row.total_power ?? 0), achievedAt: new Date(row.achieved_at),
     }));
     const next = promoteCardBattleRankingEntries(entries, {
-      rank: Number(challenge.target_rank), userId, lineup, totalPower, achievedAt: new Date(),
+      rank: Number(challenge.target_rank), userId, lineup, collectibleBindings, totalPower, achievedAt: new Date(),
     }, Number(challenge.target_rank));
     await connection.query("DELETE FROM card_battle_ranking_entries");
     if (next.length) {
       await connection.query(
         `INSERT INTO card_battle_ranking_entries
-          (rank_position, user_id, lineup_json, total_power, achieved_at)
-         VALUES ${next.map(() => "(?, ?, ?, ?, ?)").join(",")}`,
-        next.flatMap((entry) => [entry.rank, entry.userId, JSON.stringify(entry.lineup), entry.totalPower, entry.achievedAt]),
+          (rank_position, user_id, lineup_json, total_power, achieved_at, collectible_bindings_json)
+         VALUES ${next.map(() => "(?, ?, ?, ?, ?, ?)").join(",")}`,
+        next.flatMap((entry) => [entry.rank, entry.userId, JSON.stringify(entry.lineup), entry.totalPower, entry.achievedAt, JSON.stringify(entry.collectibleBindings ?? [])]),
       );
     }
     await connection.query("UPDATE card_battle_ranking_challenges SET status = 'won', confirmed_at = NOW(3) WHERE id = ?", [challenge.id]);

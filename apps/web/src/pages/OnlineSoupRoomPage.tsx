@@ -1689,10 +1689,10 @@ export default function OnlineSoupRoomPage() {
         <div className="space-y-4">
           <div className="pr-10">
             <h2 className="text-xl font-black text-ink">房间成员</h2>
-            <p className="mt-1 text-xs font-bold text-muted">对战席 {occupiedBattleSeats}/2 · 观战席 {spectatorMembers.length}</p>
+            <p className="mt-1 text-xs font-bold text-muted">对战席 {occupiedBattleSeats}/{snapshot.room.cardBattle.seats.length} · 观战席 {spectatorMembers.length}/{snapshot.room.cardBattle.mode === "boss" ? 10 : 20}</p>
           </div>
           <section>
-            <p className="mb-2 text-xs font-bold text-muted">对战席 {occupiedBattleSeats}/2</p>
+            <p className="mb-2 text-xs font-bold text-muted">对战席 {occupiedBattleSeats}/{snapshot.room.cardBattle.seats.length}</p>
             <div className="space-y-2">
               {snapshot.room.cardBattle.seats.map((seat) => {
                 const member = seat.user ? memberById.get(seat.user.id) : null;
@@ -1706,7 +1706,7 @@ export default function OnlineSoupRoomPage() {
             </div>
           </section>
           <section>
-            <p className="mb-2 text-xs font-bold text-muted">观战席 {spectatorMembers.length}</p>
+            <p className="mb-2 text-xs font-bold text-muted">观战席 {spectatorMembers.length}/{snapshot.room.cardBattle.mode === "boss" ? 10 : 20}</p>
             <div className="space-y-2">
               {spectatorMembers.map((member) => <MemberRow key={member.id} member={member} displayName={member.nickname} onOpenProfile={openMemberProfile} />)}
               {spectatorMembers.length === 0 && <div className="grid min-h-14 place-items-center rounded-xl bg-slate-50 text-sm font-bold text-muted">暂无观战成员</div>}

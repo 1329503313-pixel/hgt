@@ -35,6 +35,13 @@ requireMatch(uploader, /completely clean Git worktree/, "APK upload must reject 
 requireMatch(uploader, /localHash !== manifest\.sha256/, "APK upload must verify the local artifact hash against its manifest.");
 
 const deployWrapper = read("scripts/release/deploy-production.ps1");
+const dockerfile = read("Dockerfile");
+const productionBundle = read("scripts/release/create-production-bundle.ps1");
+for (const path of ["packages/shared/package.json", "packages/shared/tsconfig.json", "packages/shared/src"]) {
+  if (!productionBundle.includes(`'${path}'`)) throw new Error(`Production bundle must include shared workspace input: ${path}`);
+  if (dockerfile.split(`COPY ${path} `).length !== 3) throw new Error(`Both Docker builders must copy shared workspace input: ${path}`);
+}
+requireMatch(dockerfile, /COPY --from=server-builder \/app\/packages\/shared\/dist \.\/packages\/shared\/dist/, "Production runtime must preserve the shared workspace symlink target.");
 requireMatch(deployWrapper, /production-preflight\.sh/, "Production deployment must run the versioned authentication preflight.");
 forbidMatch(deployWrapper, /\$\([^\r\n]*docker inspect/, "Do not embed remote Bash command substitutions in the PowerShell deployment wrapper.");
 

@@ -9,7 +9,11 @@ COPY apps/web/vite.config.ts apps/web/
 COPY apps/web/postcss.config.js apps/web/
 COPY apps/web/tailwind.config.ts apps/web/
 COPY apps/web/index.html apps/web/
+COPY packages/shared/package.json packages/shared/
 RUN --mount=type=cache,target=/root/.npm npm ci --legacy-peer-deps
+COPY packages/shared/tsconfig.json packages/shared/
+COPY packages/shared/src packages/shared/src
+RUN npm run build -w @hgt/shared
 COPY apps/web/src apps/web/src
 COPY apps/web/public apps/web/public
 # Vite build 时不要指定 --outDir，用 vite.config.ts 的默认值
@@ -23,7 +27,11 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY apps/server/package.json apps/server/
 COPY apps/server/tsconfig.json apps/server/
+COPY packages/shared/package.json packages/shared/
 RUN --mount=type=cache,target=/root/.npm npm ci --legacy-peer-deps
+COPY packages/shared/tsconfig.json packages/shared/
+COPY packages/shared/src packages/shared/src
+RUN npm run build -w @hgt/shared
 COPY apps/server/src apps/server/src
 COPY scripts/release/check-production-auth-contract.mjs scripts/release/
 RUN node scripts/release/check-production-auth-contract.mjs
@@ -40,6 +48,8 @@ RUN apk add --no-cache vips-dev ffmpeg
 COPY --from=server-builder /app/apps/server/dist ./server/dist
 COPY --from=server-builder /app/node_modules ./node_modules
 COPY --from=server-builder /app/package.json ./
+COPY --from=server-builder /app/packages/shared/package.json ./packages/shared/
+COPY --from=server-builder /app/packages/shared/dist ./packages/shared/dist
 
 # 复制前端构建产物
 COPY --from=web-builder /app/apps/web/dist ./apps/web/dist

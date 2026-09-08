@@ -576,6 +576,8 @@ export type OnlineSoupBackgroundMusic = {
 };
 
 export type OnlineCardBattleCard = {
+  instanceId?: string;
+  collectible?: import("@hgt/shared").BattleCollectible | null;
   id: string;
   cardNo: string;
   name: string;
@@ -586,12 +588,15 @@ export type OnlineCardBattleCard = {
   motionMp4Url: string | null;
   motionWebmUrl: string | null;
   motionPosterUrl: string | null;
-  stats: { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; canAttackRear: boolean };
+  stats: import("@hgt/shared").CardBattleProcStats & { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; critRate: number; critDamage: number; canAttackRear: boolean };
   combatPower: number;
   skillName: string;
   skillDescription: string;
 };
 export type OnlineCardBattleDeck = {
+  collectibleBindings?: import("@hgt/shared").BattleCollectibleBinding[];
+  collectibles?: import("@hgt/shared").BattleCollectible[];
+  collectiblesAvailable?: boolean;
   id: string;
   name: string;
   cardIds: string[];
@@ -599,7 +604,12 @@ export type OnlineCardBattleDeck = {
   updatedAt: string | null;
 };
 export type OnlineCardBattleState = {
-  mode: "1v1";
+  mode: "1v1" | "boss";
+  boss?: (import("./cardBattleBoss").CardBattleBoss & {
+    lineup: OnlineCardBattleCard[];
+    rewardClaimed: boolean;
+    currentReward: { amount: number; participant: boolean; forfeited: boolean; granted: boolean } | null;
+  }) | null;
   phase: "preparing" | "playing" | "ended" | "aborted";
   rankingChallenge: null | {
     id: string;
@@ -609,12 +619,12 @@ export type OnlineCardBattleState = {
     status: "active" | "won" | "abandoned" | "stale";
   };
   seats: Array<{
-    seat: 1 | 2;
+    seat: 1 | 2 | 3;
     user: { id: string; nickname: string; avatar: string | null } | null;
     ready: boolean;
     lineup: Array<{ slot: number; card: OnlineCardBattleCard | null; cardBack: boolean }>;
   }>;
-  me: { userId: string; seat: 1 | 2 | null; eligibleCardCount: number };
+  me: { userId: string; seat: 1 | 2 | 3 | null; eligibleCardCount: number; collectibleBindings?: import("@hgt/shared").BattleCollectibleBinding[] };
   game: null | {
     id: string;
     gameNumber: number;
@@ -622,12 +632,12 @@ export type OnlineCardBattleState = {
     startedAt: string;
     playbackEndsAt: string;
     playback: OnlineCardBattlePlayback;
-    lineups: Array<{ userId: string; nickname: string; seat: 1 | 2; cards: OnlineCardBattleCard[] }>;
+    lineups: Array<{ userId: string; nickname: string; seat: 1 | 2; playerSeat?: 1 | 2 | 3; cards: OnlineCardBattleCard[] }>;
     settlement: null | {
       winnerSeat: 1 | 2 | null;
-      endReason: "elimination" | "round_limit" | "simultaneous_elimination" | "safety_limit";
+      endReason: "elimination" | "round_limit" | "simultaneous_elimination" | "safety_limit" | "surrender";
       rounds: number;
-      players: Array<{ userId: string; nickname: string; seat: 1 | 2; cards: Array<{ slot: number; cardId: string; name: string; damageDealt: number; damageTaken: number }> }>;
+      players: Array<{ userId: string; nickname: string; seat: 1 | 2; cards: Array<{ slot: number; cardId: string; name: string; damageDealt: number; damageTaken: number; healingDone?: number; score?: number }> }>;
     };
   };
 };
@@ -638,16 +648,22 @@ export type OnlineCardBattlePlayback = {
   states: OnlineCardBattleCardState[];
   activeEvent: OnlineCardBattleEvent | null;
   activeEventStartedAt: string | null;
+  activeEventElapsedMs: number;
+  serverNow: string;
 };
-export type OnlineCardBattleCardState = {
+export type OnlineCardBattleCardState = import("@hgt/shared").CardBattleProcStats & {
   instanceId: string; userId: string; seat: 1 | 2; slot: 1 | 2 | 3 | 4 | 5; row: "front" | "rear";
   hp: number; maxHp: number; energy: number; energyRequired: number; attack: number; defense: number; speed: number; alive: boolean;
+  statuses?: import("./cardBattleEffects").CardBattleStatus[];
 };
 export type OnlineCardBattleEvent = {
-  sequence: number; round: number; kind: "round" | "attack" | "skill" | "end";
-  visual: "round" | "damage" | "heal" | "energy" | "buff" | "revive" | "end";
+  sequence: number; round: number; kind: "round" | "attack" | "skill" | "end" | "extra_action" | "stun";
+  visual: "round" | "damage" | "heal" | "energy" | "buff" | "debuff" | "revive" | "end" | "extra_action" | "stun";
+  lifesteal?: number;
+  extraAction?: boolean;
   actorId: string | null; skillName: string | null;
-  effects: Array<{ targetId: string; amount?: number; blocked?: boolean; label?: string }>;
+  effects: Array<{ targetId: string; amount?: number; blocked?: boolean; critical?: boolean; label?: string; stunned?: boolean; stunResisted?: boolean }>;
+  effectType?: import("./digitalAssets").CardBattleEffectType;
   states: OnlineCardBattleCardState[]; durationMs: number; text: string;
 };
 
@@ -679,7 +695,8 @@ export type OnlineSoupLobbyRoom = {
   status: OnlineSoupRoomStatus;
   hostMode: OnlineSoupHostMode;
   contentType: "soup" | "mystery" | "impostor" | "card_battle";
-  host: { id: string; nickname: string };
+  cardBattleMode?: "1v1" | "boss";
+  host: { id: string; nickname: string } | null;
   soupTitle: string | null;
   mysteryTitle: string | null;
   playerCount: number;

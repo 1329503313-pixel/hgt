@@ -1,9 +1,14 @@
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
+import { isBossRoom } from "./cardBattleBossRules.js";
+import { bossBattlePlayer, bossPublic, emitBossRewards, loadBoss, requireAvailableBoss, settleBossRewards } from "./cardBattleBoss.js";
 import { loadCardBattleTiers } from "./cardBattleConfig.js";
 import { CARD_BATTLE_LINEUP_SIZE, calculateCardBattlePower, simulateCardBattle, type CardBattleDeckCard, type CardBattlePlayerInput, type CardBattleResult } from "./cardBattle.js";
-import { resolveCardBattlePlaybackStates } from "./cardBattlePlayback.js";
+import { resolveCardBattlePlayback, surrenderCardBattleResult } from "./cardBattlePlayback.js";
+import { resolveCardBattleSettlementPlayers } from "./cardBattleSettlement.js";
+import { applyBattleCollectibleStats, type BattleCollectibleBinding } from "@hgt/shared";
+import { loadBattleCollectibles, parseBattleCollectibleBindings, resolveBattleCollectibles, withBattleCollectible } from "./battleCollectibles.js";
 
 export class CardBattleRoomRuleError extends Error {}
 
@@ -14,6 +19,8 @@ export type CardBattlePlaybackState = {
   states: CardBattleResult["initialStates"];
   activeEvent: CardBattleResult["events"][number] | null;
   activeEventStartedAt: string | null;
+  activeEventElapsedMs: number;
+  serverNow: string;
 };
 
 function parseList(value: unknown): Array<string | null> {
@@ -53,122 +60,62 @@ function battleMotionPayload(row: mysql.RowDataPacket, starLevel: number) {
   };
 }
 
-function playbackState(result: CardBattleResult, row: mysql.RowDataPacket, status: string): CardBattlePlaybackState {
-  const completedSequence = Math.max(0, Math.min(result.events.length, Number(row.completed_sequence ?? 0)));
-  const complete = completedSequence >= result.events.length;
-  return {
-    completedSequence,
-    totalEvents: result.events.length,
-    complete,
-    states: resolveCardBattlePlaybackStates(result, completedSequence, status),
-    activeEvent: !complete && status !== "aborted" ? result.events[completedSequence] ?? null : null,
-    activeEventStartedAt: !complete && status !== "aborted" ? iso(row.active_started_at) : null,
-  };
-}
-
-async function ensurePlaybackState(gameId: string, viewerId: string, result: CardBattleResult, status: string) {
-  const firstSequence = result.events.length ? 1 : null;
-  await pool.query(
-    `INSERT IGNORE INTO online_card_battle_playback_progress
-      (game_id, user_id, completed_sequence, active_sequence, active_started_at, completed_at)
-     VALUES (?, ?, 0, ?, IF(? IS NULL, NULL, NOW(3)), IF(? IS NULL, NOW(3), NULL))`,
-    [gameId, viewerId, firstSequence, firstSequence, firstSequence],
+export async function readCardBattlePlayback(roomId: string) {
+  await finalizeCardBattleIfDue(roomId);
+  const [[game]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1",
+    [roomId],
   );
-  let [[row]] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT * FROM online_card_battle_playback_progress WHERE game_id = ? AND user_id = ? LIMIT 1",
-    [gameId, viewerId],
+  if (!game) throw new CardBattleRoomRuleError("当前没有可播放的卡牌对战");
+  const result = parseResult(game.result_json);
+  if (!result) throw new CardBattleRoomRuleError("战斗记录不可用");
+  return { gameId: String(game.id), playback: resolveCardBattlePlayback(result, game.started_at, String(game.status), new Date(game.db_now).getTime()) };
+}
+
+// Compatibility for older clients: sequence is ignored and cannot move the shared timeline.
+export async function acknowledgeCardBattleEvent(roomId: string, _viewerId: string, _sequence: number) {
+  return (await readCardBattlePlayback(roomId)).playback;
+}
+
+/** Caller holds the room lock; winner, stop time and seat release commit with leaving. */
+export async function forfeitCardBattle(roomId: string, userId: string, db: mysql.PoolConnection) {
+  const [[game]] = await db.query<mysql.RowDataPacket[]>(
+    "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? AND status = 'playing' ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
+    [roomId],
   );
-  if (!row) throw new CardBattleRoomRuleError("战斗动画进度初始化失败");
-  const completed = Math.max(0, Math.min(result.events.length, Number(row.completed_sequence ?? 0)));
-  if (status !== "aborted" && completed < result.events.length && Number(row.active_sequence ?? 0) !== completed + 1) {
-    await pool.query(
-      `UPDATE online_card_battle_playback_progress
-       SET active_sequence = ?, active_started_at = NOW(3), completed_at = NULL
-       WHERE game_id = ? AND user_id = ? AND completed_sequence = ?`,
-      [completed + 1, gameId, viewerId, completed],
-    );
-    [[row]] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM online_card_battle_playback_progress WHERE game_id = ? AND user_id = ? LIMIT 1",
-      [gameId, viewerId],
-    );
+  if (!game) return false;
+  const result = parseResult(game.result_json);
+  if (!result) throw new CardBattleRoomRuleError("战斗记录不可用");
+  if (game.mode === "boss") {
+    // Explicit departure loses only this player's reward; the frozen team keeps fighting.
+    if (new Date(game.db_now).getTime() < new Date(game.playback_ends_at).getTime()) await db.query(
+      "UPDATE card_battle_boss_participants SET forfeited_at = COALESCE(forfeited_at, NOW(3)) WHERE game_id = ? AND user_id = ?", [game.id, userId]);
+    return false;
   }
-  return playbackState(result, row, status);
+  const forfeited = surrenderCardBattleResult(result, userId, game.started_at, new Date(game.db_now).getTime());
+  if (!forfeited) return false;
+  await db.query("UPDATE online_card_battles SET status = 'ended', result_json = ?, playback_ends_at = NOW(3), ended_at = NOW(3) WHERE id = ? AND status = 'playing'", [JSON.stringify(forfeited), game.id]);
+  await db.query("UPDATE online_card_battle_seats SET is_ready = 0 WHERE room_id = ?", [roomId]);
+  await releaseCardBattleSeat(roomId, userId, db);
+  await db.query("UPDATE online_soup_rooms SET status = 'ended', last_action_at = NOW() WHERE id = ? AND status <> 'closed'", [roomId]);
+  return true;
 }
 
-export async function acknowledgeCardBattleEvent(roomId: string, viewerId: string, sequence: number) {
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    const [[game]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
-      [roomId],
-    );
-    if (!game) throw new CardBattleRoomRuleError("当前没有可播放的卡牌对战");
-    const result = parseResult(game.result_json);
-    if (!result) throw new CardBattleRoomRuleError("战斗记录不可用");
-    if (String(game.status) === "aborted") throw new CardBattleRoomRuleError("本局已经中止");
-    const firstSequence = result.events.length ? 1 : null;
-    await connection.query(
-      `INSERT IGNORE INTO online_card_battle_playback_progress
-        (game_id, user_id, completed_sequence, active_sequence, active_started_at, completed_at)
-       VALUES (?, ?, 0, ?, IF(? IS NULL, NULL, NOW(3)), IF(? IS NULL, NOW(3), NULL))`,
-      [game.id, viewerId, firstSequence, firstSequence, firstSequence],
-    );
-    const [[progress]] = await connection.query<mysql.RowDataPacket[]>(
-      `SELECT progress.*, NOW(3) AS db_now
-       FROM online_card_battle_playback_progress progress
-       WHERE game_id = ? AND user_id = ? LIMIT 1 FOR UPDATE`,
-      [game.id, viewerId],
-    );
-    if (!progress) throw new CardBattleRoomRuleError("战斗动画进度不存在");
-    const completed = Math.max(0, Math.min(result.events.length, Number(progress.completed_sequence ?? 0)));
-    if (sequence <= completed) {
-      await connection.commit();
-      return playbackState(result, progress, String(game.status));
-    }
-    const expectedSequence = completed + 1;
-    if (sequence !== expectedSequence || Number(progress.active_sequence ?? 0) !== expectedSequence) {
-      throw new CardBattleRoomRuleError("必须按顺序完整播放战斗动画");
-    }
-    const event = result.events[completed];
-    if (!event || !progress.active_started_at) throw new CardBattleRoomRuleError("当前战斗动画不存在");
-    const elapsedMs = new Date(progress.db_now).getTime() - new Date(progress.active_started_at).getTime();
-    if (elapsedMs + 25 < event.durationMs) throw new CardBattleRoomRuleError("当前战斗动画尚未播放完成");
-    const nextSequence = expectedSequence < result.events.length ? expectedSequence + 1 : null;
-    await connection.query(
-      `UPDATE online_card_battle_playback_progress
-       SET completed_sequence = ?, active_sequence = ?,
-         active_started_at = IF(? IS NULL, NULL, NOW(3)),
-         completed_at = IF(? IS NULL, NOW(3), NULL)
-       WHERE game_id = ? AND user_id = ?`,
-      [expectedSequence, nextSequence, nextSequence, nextSequence, game.id, viewerId],
-    );
-    const [[updated]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM online_card_battle_playback_progress WHERE game_id = ? AND user_id = ? LIMIT 1",
-      [game.id, viewerId],
-    );
-    await connection.commit();
-    return playbackState(result, updated, String(game.status));
-  } catch (error) {
-    await connection.rollback().catch(() => {});
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
-
-function publicFrozenCard(card: CardBattleDeckCard) {
-  const stats = {
+export function publicFrozenCard(card: CardBattleDeckCard) {
+  const stats = applyBattleCollectibleStats({
     maxHp: card.tier.maxHp, attack: card.tier.attack, defense: card.tier.defense, speed: card.tier.speed,
     energyRequired: card.tier.energyRequired, canAttackRear: card.tier.canAttackRear,
-  };
+    critRate: card.tier.critRate ?? 25, critDamage: card.tier.critDamage ?? 150,
+    lifestealRate: card.tier.lifestealRate ?? 0, stunRate: card.tier.stunRate ?? 0, extraActionRate: card.tier.extraActionRate ?? 0,
+  }, card.collectible);
   return {
-    id: card.cardId, cardNo: "", name: card.name, rarity: card.rarity, starLevel: card.starLevel,
+    id: card.cardId, instanceId: card.instanceId, cardNo: "", name: card.name, rarity: card.rarity, starLevel: card.starLevel,
     battleRole: card.battleRole ?? "damage", imageUrl: card.imageUrl,
     motionMp4Url: card.motionMp4Url ?? null,
     motionWebmUrl: card.motionWebmUrl ?? null,
     motionPosterUrl: card.motionPosterUrl ?? null,
     stats,
+    collectible: card.collectible ?? null,
     combatPower: calculateCardBattlePower(stats),
     skillName: card.tier.skillName, skillDescription: card.tier.skillDescription,
   };
@@ -176,6 +123,11 @@ function publicFrozenCard(card: CardBattleDeckCard) {
 
 export function isCardBattleRoom(room: mysql.RowDataPacket) {
   return String(room.content_type ?? "soup") === "card_battle";
+}
+
+export async function cardBattleRoomMode(roomId: string, db: mysql.Pool | mysql.PoolConnection = pool): Promise<"1v1" | "boss"> {
+  const [[room]] = await db.query<mysql.RowDataPacket[]>("SELECT card_battle_mode FROM online_soup_rooms WHERE id = ?", [roomId]);
+  return room && isBossRoom(room) ? "boss" : "1v1";
 }
 
 export async function eligibleCardCount(userId: string, db: mysql.Pool | mysql.PoolConnection = pool) {
@@ -191,24 +143,26 @@ export async function eligibleCardCount(userId: string, db: mysql.Pool | mysql.P
 }
 
 export async function claimCardBattleSeat(roomId: string, userId: string, db: mysql.PoolConnection) {
+  const mode = await cardBattleRoomMode(roomId, db);
+  if (mode === "boss") await requireAvailableBoss(roomId, db);
   const [[existing]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT seat_number FROM online_card_battle_seats WHERE room_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
     [roomId, userId],
   );
-  if (existing) return Number(existing.seat_number) as 1 | 2;
-  if (await eligibleCardCount(userId, db) < CARD_BATTLE_LINEUP_SIZE) return null;
+  if (existing) return Number(existing.seat_number) as 1 | 2 | 3;
+  if (await eligibleCardCount(userId, db) < (mode === "boss" ? 3 : CARD_BATTLE_LINEUP_SIZE)) return null;
   const [seats] = await db.query<mysql.RowDataPacket[]>(
     "SELECT seat_number FROM online_card_battle_seats WHERE room_id = ? ORDER BY seat_number FOR UPDATE",
     [roomId],
   );
   const used = new Set(seats.map((seat) => Number(seat.seat_number)));
-  const seat = !used.has(1) ? 1 : !used.has(2) ? 2 : null;
+  const seat = !used.has(1) ? 1 : !used.has(2) ? 2 : mode === "boss" && !used.has(3) ? 3 : null;
   if (!seat) return null;
   await db.query(
     "INSERT INTO online_card_battle_seats (room_id, seat_number, user_id, lineup_json) VALUES (?, ?, ?, JSON_ARRAY())",
     [roomId, seat, userId],
   );
-  return seat as 1 | 2;
+  return seat as 1 | 2 | 3;
 }
 
 export async function releaseCardBattleSeat(roomId: string, userId: string, db: mysql.PoolConnection) {
@@ -219,7 +173,8 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
   const [rows] = await db.query<mysql.RowDataPacket[]>(
     `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
        cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level,
-       tiers.max_hp, tiers.attack_value, tiers.defense_value, tiers.speed_value, tiers.energy_required, tiers.can_attack_rear,
+       tiers.max_hp, tiers.attack_value, tiers.defense_value, tiers.speed_value, tiers.energy_required, tiers.can_attack_rear, tiers.crit_rate, tiers.crit_damage,
+       tiers.lifesteal_rate, tiers.stun_rate, tiers.extra_action_rate,
        tiers.skill_name, tiers.skill_description
      FROM user_asset_cards owned
      JOIN asset_cards cards ON cards.id = owned.card_id
@@ -233,6 +188,8 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
     const stats = {
       maxHp: Number(row.max_hp), attack: Number(row.attack_value), defense: Number(row.defense_value), speed: Number(row.speed_value),
       energyRequired: Number(row.energy_required), canAttackRear: Boolean(row.can_attack_rear),
+      critRate: Number(row.crit_rate ?? 25), critDamage: Number(row.crit_damage ?? 150),
+      lifestealRate: Number(row.lifesteal_rate ?? 0), stunRate: Number(row.stun_rate ?? 0), extraActionRate: Number(row.extra_action_rate ?? 0),
     };
     return {
       id: String(row.id),
@@ -252,6 +209,7 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
 }
 
 export type SavedCardBattleDeck = {
+  collectibleBindings: BattleCollectibleBinding[];
   id: string;
   name: string;
   cardIds: string[];
@@ -264,14 +222,16 @@ function savedDeck(row: mysql.RowDataPacket): SavedCardBattleDeck {
     id: String(row.id),
     name: String(row.name),
     cardIds: parseList(row.lineup_json).filter((cardId): cardId is string => Boolean(cardId)),
+    collectibleBindings: parseBattleCollectibleBindings(row.collectible_bindings_json),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };
 }
 
-async function validateSavedDeckLineup(userId: string, cardIds: string[], db: mysql.Pool | mysql.PoolConnection) {
-  if (cardIds.length !== CARD_BATTLE_LINEUP_SIZE || new Set(cardIds).size !== CARD_BATTLE_LINEUP_SIZE) {
-    throw new CardBattleRoomRuleError("卡组必须包含五张不同卡牌");
+async function validateSavedDeckLineup(userId: string, cardIds: string[], db: mysql.Pool | mysql.PoolConnection, mode: "1v1" | "boss" = "1v1") {
+  const size = mode === "boss" ? 3 : CARD_BATTLE_LINEUP_SIZE;
+  if (cardIds.length !== size || new Set(cardIds).size !== size) {
+    throw new CardBattleRoomRuleError(`卡组必须包含${size}张不同卡牌`);
   }
   const [eligible] = await db.query<mysql.RowDataPacket[]>(
     `SELECT cards.id FROM user_asset_cards owned
@@ -281,24 +241,30 @@ async function validateSavedDeckLineup(userId: string, cardIds: string[], db: my
        AND cards.id IN (${cardIds.map(() => "?").join(",")})`,
     [userId, ...cardIds],
   );
-  if (eligible.length !== CARD_BATTLE_LINEUP_SIZE) throw new CardBattleRoomRuleError("卡组包含未拥有、已停用或不可参战的卡牌");
+  if (eligible.length !== size) throw new CardBattleRoomRuleError("卡组包含未拥有、已停用或不可参战的卡牌");
 }
 
-export async function loadSavedCardBattleDecks(userId: string, db: mysql.Pool | mysql.PoolConnection = pool) {
+export async function loadSavedCardBattleDecks(userId: string, db: mysql.Pool | mysql.PoolConnection = pool, mode: "1v1" | "boss" = "1v1") {
   const [rows] = await db.query<mysql.RowDataPacket[]>(
-    "SELECT * FROM user_card_battle_decks WHERE user_id = ? ORDER BY updated_at DESC, created_at DESC",
-    [userId],
+    "SELECT * FROM user_card_battle_decks WHERE user_id = ? AND mode = ? ORDER BY updated_at DESC, created_at DESC",
+    [userId, mode],
   );
-  return rows.map(savedDeck);
+  const owned = await loadBattleCollectibles(userId, db);
+  return rows.map((row) => {
+    const deck = savedDeck(row);
+    return { ...deck, collectibles: owned.filter((item) => deck.collectibleBindings.some((b) => b.collectibleId === item.id)),
+      collectiblesAvailable: deck.collectibleBindings.every((b) => owned.some((item) => item.id === b.collectibleId)) };
+  });
 }
 
-export async function createSavedCardBattleDeck(userId: string, name: string, cardIds: string[], db: mysql.Pool | mysql.PoolConnection = pool) {
-  await validateSavedDeckLineup(userId, cardIds, db);
+export async function createSavedCardBattleDeck(userId: string, name: string, cardIds: string[], db: mysql.Pool | mysql.PoolConnection = pool, collectibleBindings: BattleCollectibleBinding[] = [], mode: "1v1" | "boss" = "1v1") {
+  await validateSavedDeckLineup(userId, cardIds, db, mode);
+  await resolveBattleCollectibles(userId, cardIds, collectibleBindings, db);
   const id = nanoid();
   try {
     await db.query(
-      "INSERT INTO user_card_battle_decks (id, user_id, name, lineup_json) VALUES (?, ?, ?, ?)",
-      [id, userId, name, JSON.stringify(cardIds)],
+      "INSERT INTO user_card_battle_decks (id, user_id, name, lineup_json, collectible_bindings_json, mode) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, userId, name, JSON.stringify(cardIds), JSON.stringify(collectibleBindings), mode],
     );
   } catch (error) {
     if ((error as { code?: string }).code === "ER_DUP_ENTRY") throw new CardBattleRoomRuleError("已有同名卡组，请换一个名称");
@@ -306,16 +272,24 @@ export async function createSavedCardBattleDeck(userId: string, name: string, ca
   }
   const [[row]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM user_card_battle_decks WHERE id = ? AND user_id = ? LIMIT 1", [id, userId]);
   if (!row) throw new CardBattleRoomRuleError("卡组保存失败");
-  return savedDeck(row);
+  const deck = savedDeck(row);
+  const owned = await loadBattleCollectibles(userId, db);
+  return { ...deck, collectibles: owned.filter((item) => deck.collectibleBindings.some((b) => b.collectibleId === item.id)),
+    collectiblesAvailable: deck.collectibleBindings.every((b) => owned.some((item) => item.id === b.collectibleId)) };
 }
 
-export async function updateSavedCardBattleDeck(userId: string, deckId: string, name: string, cardIds: string[] | undefined, db: mysql.Pool | mysql.PoolConnection = pool) {
-  if (cardIds) await validateSavedDeckLineup(userId, cardIds, db);
+export async function updateSavedCardBattleDeck(userId: string, deckId: string, name: string, cardIds: string[] | undefined, db: mysql.Pool | mysql.PoolConnection = pool, collectibleBindings?: BattleCollectibleBinding[], mode: "1v1" | "boss" = "1v1") {
+  if (cardIds) await validateSavedDeckLineup(userId, cardIds, db, mode);
+  const [[current]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM user_card_battle_decks WHERE id = ? AND user_id = ? AND mode = ? LIMIT 1", [deckId, userId, mode]);
+  if (!current) throw new CardBattleRoomRuleError("卡组不存在或已被删除");
+  const selected = cardIds ?? parseList(current.lineup_json);
+  const bindings = collectibleBindings ?? parseBattleCollectibleBindings(current.collectible_bindings_json).filter((b) => selected.includes(b.cardId));
+  if (cardIds || collectibleBindings) await resolveBattleCollectibles(userId, selected, bindings, db);
   try {
     const [result] = await db.query<mysql.ResultSetHeader>(
-      `UPDATE user_card_battle_decks SET name = ?, lineup_json = COALESCE(?, lineup_json)
+      `UPDATE user_card_battle_decks SET name = ?, lineup_json = COALESCE(?, lineup_json), collectible_bindings_json = ?
        WHERE id = ? AND user_id = ?`,
-      [name, cardIds ? JSON.stringify(cardIds) : null, deckId, userId],
+      [name, cardIds ? JSON.stringify(cardIds) : null, JSON.stringify(bindings), deckId, userId],
     );
     if (!result.affectedRows) throw new CardBattleRoomRuleError("卡组不存在或已被删除");
   } catch (error) {
@@ -324,19 +298,26 @@ export async function updateSavedCardBattleDeck(userId: string, deckId: string, 
   }
   const [[row]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM user_card_battle_decks WHERE id = ? AND user_id = ? LIMIT 1", [deckId, userId]);
   if (!row) throw new CardBattleRoomRuleError("卡组不存在或已被删除");
-  return savedDeck(row);
+  const deck = savedDeck(row);
+  const owned = await loadBattleCollectibles(userId, db);
+  return { ...deck, collectibles: owned.filter((item) => deck.collectibleBindings.some((b) => b.collectibleId === item.id)),
+    collectiblesAvailable: deck.collectibleBindings.every((b) => owned.some((item) => item.id === b.collectibleId)) };
 }
 
-export async function saveCardBattleLineup(roomId: string, userId: string, cardIds: Array<string | null>, db: mysql.PoolConnection) {
+export async function saveCardBattleLineup(roomId: string, userId: string, cardIds: Array<string | null>, db: mysql.PoolConnection, collectibleBindings?: BattleCollectibleBinding[]) {
+  const size = await cardBattleRoomMode(roomId, db) === "boss" ? 3 : CARD_BATTLE_LINEUP_SIZE;
   const selectedIds = cardIds.filter((cardId): cardId is string => Boolean(cardId));
-  if (cardIds.length > CARD_BATTLE_LINEUP_SIZE || new Set(selectedIds).size !== selectedIds.length) {
-    throw new CardBattleRoomRuleError("阵容最多选择五张不同卡牌");
+  if (cardIds.length > size || new Set(selectedIds).size !== selectedIds.length) {
+    throw new CardBattleRoomRuleError(`阵容最多选择${size}张不同卡牌`);
   }
   const [[seat]] = await db.query<mysql.RowDataPacket[]>(
-    "SELECT seat_number FROM online_card_battle_seats WHERE room_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
+    "SELECT seat_number, is_ready, collectible_bindings_json FROM online_card_battle_seats WHERE room_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
     [roomId, userId],
   );
   if (!seat) throw new CardBattleRoomRuleError("你当前不在对战席");
+  if (Boolean(seat.is_ready)) throw new CardBattleRoomRuleError("请先取消准备再调整阵容或收藏品");
+  const bindings = collectibleBindings ?? parseBattleCollectibleBindings(seat.collectible_bindings_json).filter((b) => selectedIds.includes(b.cardId));
+  await resolveBattleCollectibles(userId, cardIds, bindings, db, true);
   if (selectedIds.length) {
     const [eligible] = await db.query<mysql.RowDataPacket[]>(
       `SELECT cards.id FROM user_asset_cards owned
@@ -349,21 +330,25 @@ export async function saveCardBattleLineup(roomId: string, userId: string, cardI
     if (eligible.length !== selectedIds.length) throw new CardBattleRoomRuleError("阵容包含未拥有、已停用或不可参战的卡牌");
   }
   await db.query(
-    "UPDATE online_card_battle_seats SET lineup_json = ?, is_ready = 0 WHERE room_id = ? AND user_id = ?",
-    [JSON.stringify(cardIds), roomId, userId],
+    "UPDATE online_card_battle_seats SET lineup_json = ?, collectible_bindings_json = ?, is_ready = 0 WHERE room_id = ? AND user_id = ?",
+    [JSON.stringify(cardIds), JSON.stringify(bindings), roomId, userId],
   );
 }
 
 export async function setCardBattleReady(roomId: string, userId: string, ready: boolean, db: mysql.PoolConnection) {
+  const mode = await cardBattleRoomMode(roomId, db);
+  const size = mode === "boss" ? 3 : CARD_BATTLE_LINEUP_SIZE;
+  if (ready && mode === "boss") await requireAvailableBoss(roomId, db);
   const [[seat]] = await db.query<mysql.RowDataPacket[]>(
-    "SELECT lineup_json FROM online_card_battle_seats WHERE room_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
+    "SELECT lineup_json, collectible_bindings_json FROM online_card_battle_seats WHERE room_id = ? AND user_id = ? LIMIT 1 FOR UPDATE",
     [roomId, userId],
   );
   if (!seat) throw new CardBattleRoomRuleError("你当前不在对战席");
   const cardIds = parseList(seat.lineup_json);
   const selectedIds = cardIds.filter((cardId): cardId is string => Boolean(cardId));
-  if (ready && (cardIds.length !== CARD_BATTLE_LINEUP_SIZE || selectedIds.length !== CARD_BATTLE_LINEUP_SIZE)) throw new CardBattleRoomRuleError("必须选满五张卡牌才能准备");
+  if (ready && (cardIds.length !== size || selectedIds.length !== size || new Set(selectedIds).size !== size)) throw new CardBattleRoomRuleError(`必须选满${size}张不同卡牌才能准备`);
   if (ready) {
+    await resolveBattleCollectibles(userId, cardIds, parseBattleCollectibleBindings(seat.collectible_bindings_json), db, true);
     const [eligible] = await db.query<mysql.RowDataPacket[]>(
       `SELECT cards.id FROM user_asset_cards owned JOIN asset_cards cards ON cards.id = owned.card_id
        JOIN asset_card_battle_tiers tiers ON tiers.card_id = cards.id AND tiers.star_level = owned.star_level
@@ -371,7 +356,7 @@ export async function setCardBattleReady(roomId: string, userId: string, ready: 
          AND cards.id IN (${selectedIds.map(() => "?").join(",")})`,
       [userId, ...selectedIds],
     );
-    if (eligible.length !== CARD_BATTLE_LINEUP_SIZE) throw new CardBattleRoomRuleError("阵容中有卡牌已停用或不再可用，请重新选择");
+    if (eligible.length !== size) throw new CardBattleRoomRuleError("阵容中有卡牌已停用或不再可用，请重新选择");
   }
   await db.query(
     "UPDATE online_card_battle_seats SET is_ready = ? WHERE room_id = ? AND user_id = ?",
@@ -412,54 +397,52 @@ export async function buildCardBattlePlayerInput(
   seat: 1 | 2,
   cardIds: string[],
   db: mysql.PoolConnection,
+  collectibleBindings: BattleCollectibleBinding[] = [],
+  bossPlayerSeat?: 1 | 2 | 3,
 ): Promise<CardBattlePlayerInput> {
-  if (cardIds.length !== CARD_BATTLE_LINEUP_SIZE || new Set(cardIds).size !== CARD_BATTLE_LINEUP_SIZE) {
-    throw new CardBattleRoomRuleError("卡组必须包含五张不同卡牌");
+  const size = bossPlayerSeat ? 3 : CARD_BATTLE_LINEUP_SIZE;
+  if (cardIds.length !== size || new Set(cardIds).size !== size) {
+    throw new CardBattleRoomRuleError(`卡组必须包含 ${size} 张不同卡牌`);
   }
   const cards: CardBattleDeckCard[] = [];
+  const collectibles = await resolveBattleCollectibles(userId, cardIds, collectibleBindings, db, true);
   for (let index = 0; index < cardIds.length; index += 1) {
-    cards.push(await battleDeckCard(userId, seat, index + 1, cardIds[index]!, db));
+    cards.push({ ...await battleDeckCard(userId, seat, index + 1, cardIds[index]!, db),
+      ...(bossPlayerSeat ? { instanceId: `team:${userId}:${index + 1}:${cardIds[index]}` } : {}),
+      collectible: collectibles.get(cardIds[index]!) ?? null });
   }
-  return { userId, nickname, seat, cards };
+  return { userId, nickname, seat, ...(bossPlayerSeat ? { playerSeat: bossPlayerSeat } : {}), cards };
 }
 
-export async function startCardBattle(roomId: string, hostId: string, db: mysql.PoolConnection) {
+export async function startCardBattle(roomId: string, hostId: string | null, db: mysql.PoolConnection) {
   const [[room]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT * FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' AND status <> 'closed' LIMIT 1 FOR UPDATE",
     [roomId],
   );
-  if (!room || String(room.host_id) !== hostId) throw new CardBattleRoomRuleError("仅当前房主可以开始游戏");
+  if (!room || (!isBossRoom(room) && String(room.host_id) !== hostId)) throw new CardBattleRoomRuleError("仅当前房主可以开始游戏");
+  const boss = isBossRoom(room) ? await requireAvailableBoss(roomId, db) : null;
   if (!['preparing', 'ended'].includes(String(room.status))) throw new CardBattleRoomRuleError("当前对局已经开始");
   const [seatRows] = await db.query<mysql.RowDataPacket[]>(
     `SELECT seats.*, users.nickname FROM online_card_battle_seats seats
      JOIN users ON users.id = seats.user_id WHERE seats.room_id = ? ORDER BY seats.seat_number FOR UPDATE`,
     [roomId],
   );
-  if (seatRows.length !== 2 || seatRows.some((seat) => !Boolean(seat.is_ready) || parseList(seat.lineup_json).length !== CARD_BATTLE_LINEUP_SIZE)) {
-    throw new CardBattleRoomRuleError("双方都进入对战席、选满五张卡牌并准备后才能开始");
+  if ((boss ? seatRows.length < 1 || seatRows.length > 3 : seatRows.length !== 2)
+    || seatRows.some((seat) => !Boolean(seat.is_ready) || parseList(seat.lineup_json).length !== (boss ? 3 : CARD_BATTLE_LINEUP_SIZE))) {
+    throw new CardBattleRoomRuleError(boss ? "在席玩家均须选满三张不同卡牌并准备" : "双方都进入对战席、选满五张卡牌并准备后才能开始");
   }
   const [[rankingChallenge]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT defender_id, defender_snapshot_json FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
     [roomId],
   );
   const [[previousGame]] = await db.query<mysql.RowDataPacket[]>(
-    "SELECT id, status, result_json FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
+    "SELECT id, status, result_json, started_at, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
     [roomId],
   );
   if (previousGame && String(previousGame.status) !== "aborted") {
     const previousResult = parseResult(previousGame.result_json);
-    if (!previousResult) throw new CardBattleRoomRuleError("上一局战斗记录不可用，暂时不能开始新对局");
-    const requiredViewerIds = rankingChallenge
-      ? [hostId]
-      : [...new Set([hostId, ...seatRows.map((seat) => String(seat.user_id))])];
-    const [progressRows] = await db.query<mysql.RowDataPacket[]>(
-      `SELECT user_id, completed_sequence FROM online_card_battle_playback_progress
-       WHERE game_id = ? AND user_id IN (${requiredViewerIds.map(() => "?").join(",")}) FOR UPDATE`,
-      [previousGame.id, ...requiredViewerIds],
-    );
-    const progressByUser = new Map(progressRows.map((row) => [String(row.user_id), Number(row.completed_sequence ?? 0)]));
-    if (requiredViewerIds.some((userId) => (progressByUser.get(userId) ?? -1) < previousResult.events.length)) {
-      throw new CardBattleRoomRuleError("房主和双方对战玩家必须完整播放上一局战斗动画后才能开始新对局");
+    if (!previousResult || !resolveCardBattlePlayback(previousResult, previousGame.started_at, String(previousGame.status), new Date(previousGame.db_now).getTime()).complete) {
+      throw new CardBattleRoomRuleError("上一局服务器时间轴尚未结束，暂时不能开始新对局");
     }
   }
   const playerInputs: CardBattlePlayerInput[] = [];
@@ -473,24 +456,29 @@ export async function startCardBattle(roomId: string, hostId: string, db: mysql.
       }
       playerInputs.push(frozen);
     } else {
-      playerInputs.push(await buildCardBattlePlayerInput(String(row.user_id), String(row.nickname), seat, cardIds.filter((cardId): cardId is string => Boolean(cardId)), db));
+      playerInputs.push(await buildCardBattlePlayerInput(String(row.user_id), String(row.nickname), boss ? 1 : seat, cardIds.filter((cardId): cardId is string => Boolean(cardId)), db, parseBattleCollectibleBindings(row.collectible_bindings_json), boss ? Number(row.seat_number) as 1 | 2 | 3 : undefined));
     }
   }
+  if (boss) playerInputs.push(bossBattlePlayer(boss));
   const [[numberRow]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT COALESCE(MAX(game_number), 0) + 1 AS next_number FROM online_card_battles WHERE room_id = ?",
     [roomId],
   );
   const gameId = nanoid();
   const seed = `${roomId}:${numberRow.next_number}:${nanoid()}`;
-  const result = simulateCardBattle(playerInputs, seed);
-  const startedAt = new Date();
+  const result = simulateCardBattle(playerInputs, seed, boss ? "boss" : "1v1");
+  const [[clock]] = await db.query<mysql.RowDataPacket[]>("SELECT NOW(3) AS db_now");
+  const startedAt = new Date(clock.db_now);
   const playbackEndsAt = new Date(startedAt.getTime() + result.playbackDurationMs);
   await db.query(
     `INSERT INTO online_card_battles
-      (id, room_id, game_number, random_seed, lineup_snapshot_json, result_json, playback_ends_at, started_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [gameId, roomId, Number(numberRow.next_number), seed, JSON.stringify(playerInputs), JSON.stringify(result), playbackEndsAt, startedAt],
+      (id, room_id, game_number, random_seed, lineup_snapshot_json, result_json, playback_ends_at, started_at, mode, boss_reward_shells, boss_name_snapshot)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [gameId, roomId, Number(numberRow.next_number), seed, JSON.stringify(playerInputs), JSON.stringify(result), playbackEndsAt, startedAt, boss ? "boss" : "1v1", boss ? Number(boss.reward_shells) : null, boss ? String(boss.name) : null],
   );
+  if (boss) for (const player of playerInputs.filter((item) => item.seat === 1)) await db.query(
+    "INSERT INTO card_battle_boss_participants (game_id, user_id, player_seat, nickname_snapshot) VALUES (?, ?, ?, ?)",
+    [gameId, player.userId, player.playerSeat, player.nickname]);
   await db.query(
     `UPDATE online_soup_rooms SET status = 'playing', current_soup_id = NULL, current_round_id = NULL,
        current_mystery_id = NULL, current_mystery_run_id = NULL, last_action_at = NOW() WHERE id = ?`,
@@ -499,20 +487,34 @@ export async function startCardBattle(roomId: string, hostId: string, db: mysql.
   return { gameId, gameNumber: Number(numberRow.next_number), result, startedAt, playbackEndsAt };
 }
 
+/** Called while holding the room lock, after a ready/seat transition. */
+export async function startBossIfReady(roomId: string, db: mysql.PoolConnection) {
+  const [[room]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM online_soup_rooms WHERE id = ?", [roomId]);
+  if (!room || !isBossRoom(room) || !["preparing", "ended"].includes(String(room.status))) return null;
+  const [seats] = await db.query<mysql.RowDataPacket[]>("SELECT is_ready FROM online_card_battle_seats WHERE room_id = ?", [roomId]);
+  if (!seats.length || seats.some((seat) => !Boolean(seat.is_ready))) return null;
+  return startCardBattle(roomId, null, db);
+}
+
 export async function finalizeCardBattleIfDue(roomId: string) {
   const [[game]] = await pool.query<mysql.RowDataPacket[]>(
-    "SELECT id, playback_ends_at FROM online_card_battles WHERE room_id = ? AND status = 'playing' ORDER BY game_number DESC LIMIT 1",
+    "SELECT id, playback_ends_at, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? AND status = 'playing' ORDER BY game_number DESC LIMIT 1",
     [roomId],
   );
-  if (!game || new Date(game.playback_ends_at).getTime() > Date.now()) return false;
+  if (!game || new Date(game.playback_ends_at).getTime() > new Date(game.db_now).getTime()) return false;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    // Serialize start/leave/finalization on the room before locking child rows.
+    await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
     const [[locked]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT id, playback_ends_at FROM online_card_battles WHERE id = ? AND status = 'playing' FOR UPDATE",
+      "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE id = ? AND status = 'playing' FOR UPDATE",
       [game.id],
     );
-    if (!locked || new Date(locked.playback_ends_at).getTime() > Date.now()) { await connection.commit(); return false; }
+    if (!locked || new Date(locked.playback_ends_at).getTime() > new Date(locked.db_now).getTime()) { await connection.commit(); return false; }
+    const result = parseResult(locked.result_json);
+    if (!result) throw new CardBattleRoomRuleError("战斗记录不可用");
+    const rewards = await settleBossRewards(locked, result, connection);
     await connection.query("UPDATE online_card_battles SET status = 'ended', ended_at = NOW(3) WHERE id = ?", [locked.id]);
     const [[rankingChallenge]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT defender_id FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
@@ -536,6 +538,7 @@ export async function finalizeCardBattleIfDue(roomId: string) {
       [roomId],
     );
     await connection.commit();
+    emitBossRewards(rewards);
     return true;
   } catch (error) { await connection.rollback().catch(() => {}); throw error; }
   finally { connection.release(); }
@@ -545,17 +548,18 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
   await finalizeCardBattleIfDue(roomId);
   const [seatRows, gameRows, roomRows] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT seats.*, users.nickname, users.avatar IS NOT NULL AS has_avatar
+      `SELECT seats.*, users.nickname, users.avatar IS NOT NULL AS has_avatar, members.is_active, members.member_role
        FROM online_card_battle_seats seats JOIN users ON users.id = seats.user_id
+       LEFT JOIN online_soup_members members ON members.room_id = seats.room_id AND members.user_id = seats.user_id
        WHERE seats.room_id = ? ORDER BY seats.seat_number`,
       [roomId],
     ).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1",
+      "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1",
       [roomId],
     ).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
-      `SELECT rooms.status, challenges.id AS challenge_id, challenges.challenger_id,
+      `SELECT rooms.status, rooms.card_battle_mode, challenges.id AS challenge_id, challenges.challenger_id,
          challenges.defender_id, challenges.target_rank, challenges.status AS challenge_status
        FROM online_soup_rooms rooms
        LEFT JOIN card_battle_ranking_challenges challenges ON challenges.room_id = rooms.id
@@ -564,33 +568,38 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
     ).then(([rows]) => rows),
   ]);
   const currentGame = gameRows[0] ?? null;
+  const bossRow = isBossRoom(roomRows[0] ?? {}) ? await loadBoss(roomId) : null;
   const result = currentGame ? parseResult(currentGame.result_json) : null;
   const frozenPlayers = currentGame ? parseLineupSnapshot(currentGame.lineup_snapshot_json) : [];
   const gamePublic = Boolean(result && String(currentGame?.status) === "playing");
-  const seats = await Promise.all(([1, 2] as const).map(async (seatNumber) => {
+  const seatNumbers = bossRow ? [1, 2, 3] as const : [1, 2] as const;
+  const lineupSize = bossRow ? 3 : 5;
+  const seats = await Promise.all(seatNumbers.map(async (seatNumber) => {
     const row = seatRows.find((seat) => Number(seat.seat_number) === seatNumber);
-    if (!row) return { seat: seatNumber, user: null, ready: false, lineup: Array.from({ length: 5 }, (_, index) => ({ slot: index + 1, card: null, cardBack: false })) };
+    if (!row) return { seat: seatNumber, user: null, ready: false, lineup: Array.from({ length: lineupSize }, (_, index) => ({ slot: index + 1, card: null, cardBack: false })) };
     const ids = parseList(row.lineup_json);
     const ownSeat = String(row.user_id) === viewerId;
-    const eligible = ownSeat && ids.length ? await loadEligibleBattleCards(String(row.user_id)) : [];
+    const eligible = (ownSeat || bossRow) && ids.length ? await loadEligibleBattleCards(String(row.user_id)) : [];
     const cardsById = new Map(eligible.map((card) => [card.id, card]));
-    const frozenPlayer = frozenPlayers.find((player) => player.seat === seatNumber) ?? null;
+    const bindings = parseBattleCollectibleBindings(row.collectible_bindings_json);
+    const collectibles = ownSeat || bossRow ? await loadBattleCollectibles(String(row.user_id), pool) : [];
+    const frozenPlayer = frozenPlayers.find((player) => player.userId === String(row.user_id)) ?? null;
     return {
       seat: seatNumber,
       user: { id: String(row.user_id), nickname: String(row.nickname), avatar: row.has_avatar ? `/api/media/users/${encodeURIComponent(String(row.user_id))}/avatar` : null },
       ready: Boolean(row.is_ready),
-      lineup: Array.from({ length: 5 }, (_, index) => {
+      lineup: Array.from({ length: lineupSize }, (_, index) => {
         const cardId = ids[index];
         const frozen = frozenPlayer?.cards[index];
-        const canSee = ownSeat || gamePublic;
+        const canSee = ownSeat || gamePublic || Boolean(bossRow);
         const card = gamePublic && frozen
           ? publicFrozenCard(frozen)
-          : cardId && ownSeat ? cardsById.get(cardId) ?? null : null;
+          : cardId && (ownSeat || bossRow) && cardsById.has(cardId) ? withBattleCollectible(cardsById.get(cardId)!, collectibles.find((item) => bindings.some((b) => b.cardId === cardId && b.collectibleId === item.id)) ?? null) : null;
         return { slot: index + 1, card: canSee ? card : null, cardBack: Boolean(cardId && !canSee) };
       }),
     };
   }));
-  const mySeat = seatRows.find((seat) => String(seat.user_id) === viewerId);
+  const mySeat = seatRows.find((seat) => String(seat.user_id) === viewerId && (!bossRow || (seat.is_active && seat.member_role === "player")));
   const eligibleCount = await eligibleCardCount(viewerId);
   const gameStatus = currentGame ? String(currentGame.status) : null;
   const roomStatus = String(roomRows[0]?.status ?? "preparing");
@@ -600,13 +609,27 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
       : gameStatus === "aborted" ? "aborted"
         : roomStatus === "ended" ? "ended" : "preparing";
   const playback = currentGame && result
-    ? await ensurePlaybackState(String(currentGame.id), viewerId, result, gameStatus ?? "ended")
+    ? resolveCardBattlePlayback(result, currentGame.started_at, gameStatus ?? "ended", new Date(currentGame.db_now).getTime())
     : null;
+  const [[reward]] = bossRow ? await pool.query<mysql.RowDataPacket[]>(
+    "SELECT game_id, amount FROM card_battle_boss_rewards WHERE room_id = ? AND user_id = ?", [roomId, viewerId]) : [[]];
+  const [[participant]] = bossRow && currentGame ? await pool.query<mysql.RowDataPacket[]>(
+    "SELECT forfeited_at FROM card_battle_boss_participants WHERE game_id = ? AND user_id = ?", [currentGame.id, viewerId]) : [[]];
   return {
-    mode: "1v1" as const,
+    mode: bossRow ? "boss" as const : "1v1" as const,
+    boss: bossRow ? {
+      ...bossPublic(bossRow),
+      lineup: parseBossLineupForPreview(bossRow),
+      rewardClaimed: Boolean(reward),
+      currentReward: currentGame ? {
+        amount: Number(currentGame.boss_reward_shells), participant: Boolean(participant), forfeited: Boolean(participant?.forfeited_at),
+        granted: Boolean(reward && String(reward.game_id) === String(currentGame.id)),
+      } : null,
+    } : null,
     phase: phase as "preparing" | "playing" | "ended" | "aborted",
     seats,
-    me: { userId: viewerId, seat: mySeat ? Number(mySeat.seat_number) as 1 | 2 : null, eligibleCardCount: eligibleCount },
+    me: { userId: viewerId, seat: mySeat ? Number(mySeat.seat_number) as 1 | 2 | 3 : null, eligibleCardCount: eligibleCount,
+      collectibleBindings: mySeat ? parseBattleCollectibleBindings(mySeat.collectible_bindings_json) : [] },
     rankingChallenge: challengeRow ? {
       id: String(challengeRow.challenge_id),
       challengerUserId: String(challengeRow.challenger_id),
@@ -625,11 +648,17 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
         userId: player.userId,
         nickname: player.nickname,
         seat: player.seat,
+        playerSeat: player.playerSeat,
         cards: player.cards.map(publicFrozenCard),
       })),
       settlement: playback!.complete && gameStatus !== "aborted"
-        ? { winnerSeat: result.winnerSeat, endReason: result.endReason, rounds: result.rounds, players: result.players }
+        ? { winnerSeat: result.winnerSeat, endReason: result.endReason, rounds: result.rounds, players: resolveCardBattleSettlementPlayers(result) }
         : null,
     } : null,
   };
+}
+
+function parseBossLineupForPreview(row: mysql.RowDataPacket) {
+  try { return bossBattlePlayer(row).cards.map(publicFrozenCard); }
+  catch { return []; } // Draft rooms can intentionally have incomplete cards.
 }

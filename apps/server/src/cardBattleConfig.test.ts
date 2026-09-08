@@ -1,5 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { cardBattleDebuffCodes } from "./cardBattleStatus.js";
+
+test("全部37种减益必须填写1至100的比例及持续回合", () => {
+  assert.equal(cardBattleDebuffCodes.length, 37);
+  for (const type of cardBattleDebuffCodes) {
+    const effect = { order: 0, condition: "energy_full", conditionValue: null, type, value: 25, duration: 2 };
+    assert.equal(cardBattleEffectSchema.safeParse(effect).success, true, type);
+    for (const value of [null, 0, 101]) assert.equal(cardBattleEffectSchema.safeParse({ ...effect, value }).success, false);
+    for (const duration of [null, 0]) assert.equal(cardBattleEffectSchema.safeParse({ ...effect, duration }).success, false);
+    assert.equal(cardBattleEffectNeedsDuration(type), true);
+    assert.equal(cardBattleEffectNeedsValue(type), true);
+  }
+});
 import {
   cardBattleConditionNeedsValue,
   cardBattleEffectNeedsDuration,
@@ -7,7 +20,35 @@ import {
   cardBattleEffectSchema,
   cardBattleTiersSchema,
   defaultCardBattleTiers,
+  loadCardBattleTiers,
+  saveCardBattleTiers,
 } from "./cardBattleConfig.js";
+import type { PoolConnection } from "mysql2/promise";
+
+test("所有品质四星级默认25%/150%，百分比范围和精度受校验", () => {
+  for (const rarity of ["epic", "legend"] as const) {
+    const tiers = defaultCardBattleTiers(rarity);
+    assert.ok(tiers.every((tier) => tier.critRate === 25 && tier.critDamage === 150));
+    for (const critRate of [0, 25.25, 100]) assert.equal(cardBattleTiersSchema.safeParse(tiers.map((tier) => ({ ...tier, critRate }))).success, true);
+    for (const critRate of [-1, 100.01, NaN]) assert.equal(cardBattleTiersSchema.safeParse(tiers.map((tier) => ({ ...tier, critRate }))).success, false);
+    assert.equal(cardBattleTiersSchema.safeParse(tiers.map((tier) => ({ ...tier, critDamage: 99 }))).success, false);
+  }
+});
+
+test("配置持久化写入暴击字段，读取保留0%和百分比小数", async () => {
+  const inserts: unknown[][] = [];
+  const db = { query: async (sql: string, args: unknown[]) => {
+    if (sql.includes("INSERT INTO asset_card_battle_tiers")) inserts.push(args);
+    if (sql.startsWith("SELECT * FROM asset_card_battle_tiers")) return [[{ star_level: 0, max_hp: 1000, attack_value: 100, defense_value: 10, speed_value: 80, energy_required: 40, crit_rate: "0.00", crit_damage: "175.25" }]];
+    return [[]];
+  } } as unknown as PoolConnection;
+  await saveCardBattleTiers("card", defaultCardBattleTiers().map((tier) => ({ ...tier, critRate: 0, critDamage: 175.25 })), db);
+  assert.equal(inserts.length, 4);
+  assert.ok(inserts.every((args) => args.length === 15 && args[10] === 0 && args[11] === 175.25));
+  const loaded = await loadCardBattleTiers("card", db);
+  assert.equal(loaded[0]!.critRate, 0);
+  assert.equal(loaded[0]!.critDamage, 175.25);
+});
 
 test("历史传说卡的四层默认战斗值完全符合产品约定", () => {
   assert.deepEqual(defaultCardBattleTiers().map(({ maxHp, attack, defense, speed, energyRequired, canAttackRear }) => (

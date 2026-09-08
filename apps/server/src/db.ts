@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { initCardBattleBossSchema } from "./cardBattleBossSchema.js";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
@@ -2792,6 +2793,11 @@ export async function initDatabase() {
       defense_value INT UNSIGNED NOT NULL,
       speed_value INT UNSIGNED NOT NULL,
       energy_required INT UNSIGNED NOT NULL,
+      crit_rate DECIMAL(5,2) NOT NULL DEFAULT 25,
+      crit_damage DECIMAL(7,2) NOT NULL DEFAULT 150,
+      lifesteal_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+      stun_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+      extra_action_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
       can_attack_rear TINYINT(1) NOT NULL DEFAULT 0,
       skill_name VARCHAR(50) NULL,
       skill_description VARCHAR(500) NULL,
@@ -2820,6 +2826,12 @@ export async function initDatabase() {
         REFERENCES asset_card_battle_tiers(card_id, star_level) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  // 新列创建时一次性为所有既有星级预设25%/150%；重启不覆盖之后的自定义配置。
+  await ensureColumn("asset_card_battle_tiers", "crit_rate", "crit_rate DECIMAL(5,2) NOT NULL DEFAULT 25");
+  await ensureColumn("asset_card_battle_tiers", "crit_damage", "crit_damage DECIMAL(7,2) NOT NULL DEFAULT 150");
+  await ensureColumn("asset_card_battle_tiers", "lifesteal_rate", "lifesteal_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
+  await ensureColumn("asset_card_battle_tiers", "stun_rate", "stun_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
+  await ensureColumn("asset_card_battle_tiers", "extra_action_rate", "extra_action_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
   // 普通与稀有卡不参与卡牌对战；史诗与传说卡保留战斗配置。
   await pool.query(`
     DELETE battle_tiers
@@ -2960,6 +2972,7 @@ export async function initDatabase() {
       CONSTRAINT fk_online_card_battle_room FOREIGN KEY (room_id) REFERENCES online_soup_rooms(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await initCardBattleBossSchema(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS online_card_battle_playback_progress (
       game_id VARCHAR(64) NOT NULL,
@@ -3076,6 +3089,12 @@ export async function initDatabase() {
       CONSTRAINT fk_collectible_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await ensureColumn("collectibles", "battle_effect_description", "battle_effect_description TEXT NULL");
+  await ensureColumn("collectibles", "battle_effect_type", "battle_effect_type VARCHAR(40) NULL");
+  await ensureColumn("collectibles", "battle_effect_value", "battle_effect_value DECIMAL(12,2) NULL");
+  for (const table of ["online_card_battle_seats", "user_card_battle_decks", "card_battle_ranking_entries"]) {
+    await ensureColumn(table, "collectible_bindings_json", "collectible_bindings_json JSON NULL");
+  }
   await ensureColumn("collectibles", "collectible_type", "collectible_type ENUM('treasure','commemorative','honor') NOT NULL DEFAULT 'treasure' AFTER rarity");
   await ensureColumn("collectibles", "collectible_value", "collectible_value INT UNSIGNED NOT NULL DEFAULT 1 AFTER rarity");
   await pool.query(`

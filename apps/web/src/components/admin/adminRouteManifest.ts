@@ -15,6 +15,7 @@ export const adminRouteManifest = [
   { key: "badges", path: "badges", label: "徽章", superAdminOnly: true },
   { key: "approvals", path: "approvals", label: "审批", superAdminOnly: false },
   { key: "online-soup", path: "online-soup", label: "大厅", superAdminOnly: true },
+  { key: "card-battle-boss", path: "card-battle-boss", label: "卡牌对战BOSS", superAdminOnly: true },
   { key: "ai-host", path: "ai-host", label: "AI审计", superAdminOnly: true },
   { key: "circles", path: "circles", label: "圈子", superAdminOnly: true },
   { key: "collectibles", path: "collectibles", label: "收藏品", superAdminOnly: true },

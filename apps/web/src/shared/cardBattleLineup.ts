@@ -4,14 +4,15 @@ export function reorderCardBattleLineup(
   cardIds: Array<string | null>,
   fromSlot: number,
   toSlot: number,
+  size: number = CARD_BATTLE_LINEUP_SIZE,
 ) {
-  const next = Array.from({ length: CARD_BATTLE_LINEUP_SIZE }, (_, index) => {
+  const next = Array.from({ length: size }, (_, index) => {
     const cardId = cardIds[index];
     return typeof cardId === "string" && cardId ? cardId : null;
   });
   if (!Number.isInteger(fromSlot) || !Number.isInteger(toSlot)
-    || fromSlot < 1 || fromSlot > CARD_BATTLE_LINEUP_SIZE
-    || toSlot < 1 || toSlot > CARD_BATTLE_LINEUP_SIZE
+    || fromSlot < 1 || fromSlot > size
+    || toSlot < 1 || toSlot > size
     || fromSlot === toSlot) return next;
   [next[fromSlot - 1], next[toSlot - 1]] = [next[toSlot - 1], next[fromSlot - 1]];
   return next;

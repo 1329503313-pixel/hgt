@@ -145,7 +145,7 @@ npm run app:android:upload -- --confirm-upload
 npm run release:production:bundle
 ```
 
-脚本使用 `git archive` 只包含 Dockerfile 真正使用的 Web/Server 文件，不包含 Android 工程、历史 `apps/app`、设计源文件、文档、`.env`、`.local`、签名材料或构建产物。输出位于 `artifacts/deploy/`。
+脚本使用 `git archive` 只包含 Dockerfile 真正使用的 Web/Server 文件和 `packages/shared` 的包配置、TypeScript 配置及源码，不包含 Android 工程、历史 `apps/app`、设计源文件、文档、`.env`、`.local`、签名材料或构建产物。两个构建阶段分别编译共享模块，运行镜像保留其包配置和编译产物，保证 workspace 依赖可解析。输出位于 `artifacts/deploy/`。
 
 2026-08-13 的未筛选 tar 约 80MB，主要被 Android 启动画面、历史客户端与设计图片放大；白名单 `tar.gz` 实测约 20.7MB，缩小约 74%。生产镜像不需要这些文件。
 

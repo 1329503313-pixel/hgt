@@ -1,3 +1,4 @@
+import { BattleCollectibleDescription } from "./BattleCollectibleFields";
 import { Gem, LoaderCircle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
@@ -36,6 +37,7 @@ export function CollectibleInfoModal({ collectibleId, onClose }: { collectibleId
         <div className="rounded-xl bg-slate-50 p-3"><dt className="text-xs font-bold text-muted">拥有者</dt><dd className="mt-1 break-words font-black text-ink">{item.owner?.nickname || "暂无拥有者"}</dd></div>
       </dl>
       <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-muted">{item.description || "暂无介绍"}</p>
+      <BattleCollectibleDescription item={item} />
     </article> : null}
   </Modal>;
 }

@@ -1,0 +1,75 @@
+// Real room/admin/replay components with local fixtures; no external APIs are contacted.
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { build } from "esbuild";
+import { chromium, expect } from "@playwright/test";
+const bundle = await build({ stdin: { resolveDir: resolve("apps/web"), loader: "tsx", contents: `
+import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{MemoryRouter}from'react-router-dom';
+import{CardBattleRoomView}from'./src/components/CardBattleRoomView';import{CardBattleBossManagement}from'./src/components/admin/CardBattleBossManagement';import{CardBattleBossReplay}from'./src/components/CardBattleBossReplay';
+import{DEFAULT_LEGEND_CARD_BATTLE_TIERS}from'./src/shared/digitalAssets';
+const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="140"><rect width="100" height="140" fill="#162b49"/><path d="M50 25 80 60 67 115 33 115 20 60Z" fill="#496583"/></svg>');
+const makeCard=(id,name)=>({id,cardNo:id,name,imageUrl:image,rarity:'legend',battleRole:'damage',starLevel:3,combatPower:6000,motionMp4Url:null,motionWebmUrl:null,motionPosterUrl:null,stats:{...DEFAULT_LEGEND_CARD_BATTLE_TIERS[3]},skillName:'协作之光',skillDescription:'全体友军获得防御提升。'});
+const owned=Array.from({length:5},(_,i)=>makeCard('card'+i,'玩家卡'+i));const bosses=Array.from({length:5},(_,i)=>makeCard('boss'+i,'BOSS卡'+i));
+const seats=[1,2,3].map(seat=>({seat,user:{id:'u'+seat,nickname:'挑战玩家'+seat,avatar:null},ready:false,lineup:owned.slice(0,3).map((card,i)=>({slot:i+1,card,cardBack:false}))}));
+const lineups=[...seats.map(seat=>({seat:1,playerSeat:seat.seat,userId:seat.user.id,nickname:seat.user.nickname,cards:seat.lineup.map(item=>item.card)})),{seat:2,userId:'boss:room',nickname:'BOSS',cards:bosses}];
+const states=lineups.flatMap(player=>player.cards.map((card,i)=>({...card.stats,seat:player.seat,userId:player.userId,slot:i+1,row:i<(player.seat===1?1:2)?'front':'rear',instanceId:player.userId+':'+i,hp:3000,maxHp:3000,energy:0,alive:true})));
+const event={sequence:1,round:1,kind:'round',visual:'round',actorId:null,skillName:null,effects:[],states,durationMs:500000,text:'第一回合开始'};
+const playback={completedSequence:0,totalEvents:1,complete:false,states,activeEvent:event,activeEventStartedAt:new Date().toISOString(),activeEventElapsedMs:0,serverNow:new Date().toISOString()};
+const boss={roomId:'room',name:'深海守卫',code:'654321',enabled:true,available:true,startsAt:'2026-01-01T00:00:00Z',endsAt:'2027-01-01T00:00:00Z',rewardShells:500,revision:1,cards:bosses.map(card=>({name:card.name,imageUrl:'/api/online-soup/card-battle-boss/covers/'+'a'.repeat(64),tier:{...DEFAULT_LEGEND_CARD_BATTLE_TIERS[3]}})),lineup:bosses,rewardClaimed:false,currentReward:null,battleCount:1};
+window.requests=[];window.fetch=async(url,options={})=>{window.requests.push({url:String(url),method:options.method,body:options.body?JSON.parse(options.body):null});let data={ok:true};if(String(url).includes('eligible-cards'))data={cards:owned};else if(String(url).includes('/playback'))data={gameId:'game',playback};else if(String(url).includes('/decks'))data={decks:[]};else if(String(url).includes('card-battle-bosses'))data={bosses:[boss],total:1,boss};return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});};
+const replay={name:boss.name,gameId:'game',gameNumber:1,lineups,result:{winnerSeat:1,endReason:'elimination',rounds:1,initialStates:states,finalStates:states,events:[{...event,durationMs:2000}],players:lineups.map(player=>({...player,cards:player.cards.map((card,i)=>({slot:i+1,cardId:card.id,name:card.name,damageDealt:100,damageTaken:50,healingDone:0,score:.2}))}))}};
+function Harness(){const[view,setView]=useState('room');const[playing,setPlaying]=useState(false);window.setView=setView;window.setPlaying=setPlaying;const snapshot={room:{id:'room',name:boss.name,code:boss.code,cardBattle:{mode:'boss',boss,seats,me:{userId:'u3',seat:3,eligibleCardCount:5,collectibleBindings:[]},phase:playing?'playing':'preparing',rankingChallenge:null,game:playing?{id:'game',gameNumber:1,status:'playing',lineups,playback,settlement:null}:null}},me:{isHost:false},members:seats.map(seat=>({...seat.user,role:'player'})),messages:[]};return view==='admin'?<div className="p-4"><CardBattleBossManagement/></div>:view==='replay'?<CardBattleBossReplay replay={replay} onClose={()=>setView('room')}/>:<CardBattleRoomView roomId="room" snapshot={snapshot} stickerSeries={[]} stickersLoading={false} onReload={async()=>{}} onReloadMessages={async()=>{}} onOpenInvite={()=>window.shared=true} onOpenMembers={()=>window.members=true} showToast={message=>window.toast=message}/>;}
+createRoot(document.getElementById('root')).render(<MemoryRouter><Harness/></MemoryRouter>);
+` }, bundle: true, write: false, format: "iife", define: { "import.meta.env": "{}" } });
+const css = readdirSync(resolve("apps/web/dist/assets")).find((file) => file.startsWith("index-") && file.endsWith(".css"));
+const output = mkdtempSync(resolve(tmpdir(), "hgt-boss-browser-"));
+const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM === "1" ? undefined : "msedge", headless: true });
+try {
+  const page = await browser.newPage(); const errors = []; page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/*", (route) => route.abort());
+  await page.setContent('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>');
+  await page.addStyleTag({ content: readFileSync(resolve("apps/web/dist/assets", css), "utf8") });
+  await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  await expect(page.locator(".card-battle-card")).toHaveCount(14);
+  await expect(page.getByRole("button", { name: "开始战斗", exact: true })).toHaveCount(0);
+  await expect(page.locator("button[data-card-battle-slot]")).toHaveCount(3);
+  for (const viewport of [{ width: 375, height: 812 }, { width: 320, height: 568 }, { width: 812, height: 375 }, { width: 1440, height: 1000 }]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const layout = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, halves: [...document.querySelectorAll('.card-battle-half')].map(half => { const r = half.getBoundingClientRect(); return { left: r.left, right: r.right, rows: [...half.querySelectorAll('[data-battle-row]')].map(row=>row.dataset.battleRow), cards: [...half.querySelectorAll('.card-battle-card')].map(card=>{const b=card.getBoundingClientRect();return {left:b.left,right:b.right,width:b.width};})};}) }));
+    assert.ok(layout.width <= viewport.width);
+    assert.deepEqual(layout.halves.map((half) => half.rows), [['rear','front'],['front','rear'],['front','rear'],['front','rear']]);
+    for (const half of layout.halves) for (const card of half.cards) { assert.ok(card.left >= half.left - 1 && card.right <= half.right + 1, JSON.stringify({viewport, half})); assert.ok(card.width >= 42); }
+    await page.locator('.card-battle-arena-scroll').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+    const last = await page.locator('.card-battle-card').last().boundingBox(); const chat = await page.getByPlaceholder('聊天或发表情…').boundingBox(); assert.ok(last.y + last.height < chat.y);
+    if (viewport.width === 375) await page.screenshot({ path: resolve(output, 'mobile-team.png') });
+  }
+  await page.setViewportSize({ width: 375, height: 812 });
+  const slot = page.locator('button[data-card-battle-slot="1"]'); await slot.focus(); await page.keyboard.press('Alt+ArrowRight');
+  assert.deepEqual((await page.evaluate(()=>window.requests.filter(r=>r.url.includes('/lineup')).at(-1))).body.cardIds, ['card1','card0','card2']);
+  await page.getByRole('button', { name: '分享房间', exact: true }).click(); assert.equal(await page.evaluate(()=>window.shared), true);
+  await page.locator('.card-battle-arena-scroll').evaluate(el=>{el.scrollTop=0;});
+  await page.getByRole('button', { name: '查看阵容', exact: true }).click(); await expect(page.getByText('BOSS卡0 · 3★')).toBeVisible();
+  await page.getByRole('button', { name: '挑战玩家2', exact: true }).click(); await expect(page.getByText('玩家卡0 · 3★')).toBeVisible();
+  await page.getByRole('button', { name: '关闭阵容详情', exact: true }).click();
+  await page.evaluate(()=>window.setPlaying(true)); await expect(page.locator('[data-battle-instance]')).toHaveCount(14);
+  assert.equal(new Set(await page.locator('[data-battle-instance]').evaluateAll(els=>els.map(el=>el.dataset.battleInstance))).size, 14);
+  await expect(page.getByRole('button', { name: '准备', exact: true })).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: 'reduce' }); await page.screenshot({ path: resolve(output, 'mobile-playing.png') });
+  await page.evaluate(()=>window.setView('admin')); await page.getByRole('button', { name: '创建', exact: true }).click();
+  await page.getByLabel('房间名称', { exact: true }).fill('测试配置'); await page.getByRole('button', { name: '配置卡牌', exact: true }).click();
+  await expect(page.getByRole('tab', { name: /^\d 星$/ })).toHaveCount(0);
+  await page.getByLabel('3星吸血比例', { exact: true }).fill('12.25'); await page.getByLabel('卡牌名称', { exact: true }).fill('专属守卫');
+  await page.getByRole('button', { name: '新增条件', exact: true }).click(); await page.getByLabel('技能类型').selectOption('attack_all_allies');
+  await expect(page.getByLabel('持续回合（本回合算 1）', { exact: true })).toBeVisible();
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+  await page.screenshot({ path: resolve(output, 'mobile-admin-editor.png') });
+  await page.getByRole('button', { name: '关闭 BOSS 编辑', exact: true }).click();
+  await page.evaluate(()=>window.setView('replay')); await expect(page.locator('.card-battle-card')).toHaveCount(14);
+  await page.getByRole('button', { name: '播放', exact: true }).click(); await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();
+  await page.getByLabel('回放进度', { exact: true }).fill('2000'); await expect(page.getByText('回放结束', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '关闭回放', exact: true }).click();
+  assert.deepEqual(errors, []); console.log('PASS: BOSS room at four viewports, 14 distinct combat instances, team layout, own 3-card keyboard reorder, sharing, all lineup details, superadmin editor, fixed 3 stars, skills, replay controls, reduced motion. Screenshots: ' + output);
+} finally { await browser.close(); }

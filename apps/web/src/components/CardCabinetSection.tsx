@@ -270,6 +270,11 @@ export function CardCabinetSection({
                     ["防御", detail.battleTier.defense],
                     ["速度", detail.battleTier.speed],
                     ["能量", detail.battleTier.energyRequired],
+                    ["暴击率", `${detail.battleTier.critRate ?? 25}%`],
+                    ["暴击伤害", `${detail.battleTier.critDamage ?? 150}%`],
+                    ["吸血比例", `${detail.battleTier.lifestealRate ?? 0}%`],
+                    ["击晕概率", `${detail.battleTier.stunRate ?? 0}%`],
+                    ["再动概率", `${detail.battleTier.extraActionRate ?? 0}%`],
                   ].map(([label, value]) => <div key={label} className="rounded-xl bg-field px-3 py-3">
                     <dt className="text-sm font-medium text-muted">{label}</dt>
                     <dd className="mt-1 font-mono text-lg font-black tabular-nums text-ink">{value}</dd>

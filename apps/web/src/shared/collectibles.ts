@@ -1,8 +1,9 @@
+import type { BattleCollectibleConfig } from "@hgt/shared";
 export type CollectibleRarity = "limited" | "collaboration" | "legend" | "epic";
 export type CollectibleType = "treasure" | "commemorative" | "honor";
 export type CollectibleStatus = "unowned" | "owned" | "auction_pending" | "auction_active" | "draw_linked";
 
-export type Collectible = {
+export type Collectible = Partial<BattleCollectibleConfig> & {
   id: string; collectibleNo: string; name: string; rarity: CollectibleRarity; rarityLabel: string; collectibleType: CollectibleType; collectibleTypeLabel: string; description: string;
   collectibleValue: number;
   imageUrl: string; thumbnailUrl: string; motionMp4Url?: string | null; motionWebmUrl?: string | null; motionPosterUrl?: string | null;

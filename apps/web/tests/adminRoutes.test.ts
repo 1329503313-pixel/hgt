@@ -24,3 +24,11 @@ test("谜局管理仅向超级管理员显示并允许直达", () => {
   assert.equal(canAccessAdminRoute(mysteries, "super_admin"), true);
   assert.equal(canAccessAdminRoute(mysteries, "backoffice_admin"), false);
 });
+
+test("BOSS 后台直达、刷新路由只向超级管理员开放", () => {
+  const route = adminRouteFromPathname("/admin/card-battle-boss");
+  assert.ok(route);
+  assert.equal(route.key, "card-battle-boss");
+  assert.equal(canAccessAdminRoute(route, "super_admin"), true);
+  for (const role of ["backoffice_admin", "user", "vip"] as const) assert.equal(canAccessAdminRoute(route, role), false);
+});

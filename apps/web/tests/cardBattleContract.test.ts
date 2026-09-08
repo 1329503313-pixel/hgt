@@ -1,7 +1,40 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { cardBattleFormationSize } from "../src/shared/cardBattleLayout.js";
+
+test("阵容按半场空间放大，保持两排和横向安全间距", () => {
+  for (const [width, height] of [[892, 260], [375, 300], [1440, 420], [320, 200]]) {
+    const layout = cardBattleFormationSize(width!, height!);
+    assert.ok(layout.cardWidth >= 48 && layout.cardWidth <= 160);
+    assert.ok(layout.cardWidth * 3 + layout.columnGap * 2 <= width! - 32);
+    assert.ok(layout.cardWidth * 2.8 + (width! <= 600 ? 64 : 48) <= height!);
+    assert.ok(layout.columnGap >= 12);
+  }
+  assert.ok(cardBattleFormationSize(892, 260).cardWidth >= 75);
+  assert.ok(cardBattleFormationSize(375, 300).cardWidth >= 84);
+});
+import { CARD_BATTLE_MOTIONS } from "../src/shared/cardBattleMotion.js";
+import { CARD_BATTLE_DEBUFF_LABELS, CARD_BATTLE_STATUS_ORDER } from "../src/shared/cardBattleEffects.js";
+import { cardBattleEffectCodes } from "../../server/src/cardBattle.js";
+import { cardBattleStatusOrder } from "../../server/src/cardBattleStatus.js";
+
+test("动画穷举服务端全部技能类型含全部复活与37种减益，状态顺序一致", () => {
+  assert.deepEqual(Object.keys(CARD_BATTLE_MOTIONS).sort(), [...cardBattleEffectCodes].sort());
+  assert.equal(Object.keys(CARD_BATTLE_DEBUFF_LABELS).length, 37);
+  assert.deepEqual(CARD_BATTLE_STATUS_ORDER, cardBattleStatusOrder);
+  for (const type of cardBattleEffectCodes) {
+    assert.ok(CARD_BATTLE_MOTIONS[type].glyph);
+    if (type.startsWith("revive_")) assert.equal(CARD_BATTLE_MOTIONS[type].motion, "summon");
+  }
+  assert.notEqual(CARD_BATTLE_MOTIONS.damage_single.pattern, CARD_BATTLE_MOTIONS.damage_random.pattern);
+  assert.notEqual(CARD_BATTLE_MOTIONS.damage_random.pattern, CARD_BATTLE_MOTIONS.damage_all.pattern);
+});
 import { reorderCardBattleLineup } from "../src/shared/cardBattleLineup.js";
+import { filterCardBattleSelection } from "../src/shared/cardBattleSelection.js";
+import { cardBattleEventTiming, seekCardBattleAnimations } from "../src/shared/cardBattlePlayback.js";
+import type { OnlineCardBattlePlayback } from "../src/shared/types.js";
+import { defaultCardBattleTiersForRarity } from "../src/shared/digitalAssets.js";
 
 const view = readFileSync(new URL("../src/components/CardBattleRoomView.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
@@ -13,6 +46,41 @@ const assetTypes = readFileSync(new URL("../src/shared/digitalAssets.ts", import
 const rankingPage = readFileSync(new URL("../src/pages/RankingsPage.tsx", import.meta.url), "utf8");
 const rankingBoard = readFileSync(new URL("../src/components/CardBattleRankingBoard.tsx", import.meta.url), "utf8");
 const cardCabinet = readFileSync(new URL("../src/components/CardCabinetSection.tsx", import.meta.url), "utf8");
+
+test("所有星级预设25%暴击率和150%暴伤，编辑、选卡、详情与战斗反馈贯通", () => {
+  for (const rarity of ["epic", "legend"] as const) {
+    assert.ok(defaultCardBattleTiersForRarity(rarity).every((tier) => tier.critRate === 25 && tier.critDamage === 150));
+  }
+  for (const label of ["暴击率", "暴击伤害"]) {
+    assert.ok(battleConfigEditor.includes(label));
+    assert.ok(view.includes(`<dt>${label}</dt>`));
+    assert.ok(cardCabinet.includes(label));
+  }
+  assert.match(battleConfigEditor, /属性增加、复活和回能不暴击/);
+  assert.equal((view.match(/activeEffect.critical \? "暴击 "/g) ?? []).length, 2);
+});
+
+test("当前事件只计算剩余展示时间，迟到超过作用点立即应用状态", () => {
+  const playback = { activeEvent: { durationMs: 1000 }, activeEventElapsedMs: 500 } as OnlineCardBattlePlayback;
+  assert.deepEqual(cardBattleEventTiming(playback), { elapsed: 500, remaining: 500, impactRemaining: 50 });
+  assert.deepEqual(cardBattleEventTiming(playback, 100), { elapsed: 600, remaining: 400, impactRemaining: 0 });
+  assert.deepEqual(cardBattleEventTiming(playback, 2000), { elapsed: 2500, remaining: 0, impactRemaining: 0 });
+  assert.equal(playback.activeEventElapsedMs, 500, "不篡改服务器快照");
+});
+
+test("服务器进度直接定位既有战斗动画，结束动画不会从头播放且不触碰无关动画", () => {
+  let plays = 0;
+  const battle = { animationName: "card-battle-attack-target", currentTime: 0, effect: { getComputedTiming: () => ({ endTime: 1050 }) }, playState: "finished", play: () => { plays++; } };
+  const unrelated = { ...battle, animationName: "spinner", currentTime: 77 };
+  const root = { getAnimations: () => [battle, unrelated] } as unknown as HTMLElement;
+  seekCardBattleAnimations(root, 600);
+  assert.equal(battle.currentTime, 600);
+  assert.equal(unrelated.currentTime, 77);
+  assert.equal(plays, 1);
+  seekCardBattleAnimations(root, 1200);
+  assert.equal(battle.currentTime, 1200);
+  assert.equal(plays, 1);
+});
 
 test("大厅提供卡牌对战且玩家与观战身份由服务端自动分配", () => {
   assert.match(lobby, /contentType: "card_battle"/);
@@ -36,7 +104,9 @@ test("管理后台和选卡弹窗展示对战定位并支持数值与技能视�
   assert.match(assetAdmin, />对战定位</);
   assert.match(assetAdmin, /仅参与卡牌对战的史诗与传说卡可配置/);
   assert.match(view, /CARD_BATTLE_ROLE_LABELS\[card\.battleRole\]/);
-  assert.match(view, /!selected && <span/);
+  assert.doesNotMatch(view, /!selected && <span/);
+  assert.match(view, /left-2 top-2[^\n]*CARD_BATTLE_ROLE_LABELS\[card\.battleRole\]/);
+  assert.match(view, /selected && <span className="absolute right-2 top-2/);
   assert.match(view, /useState<CardView>\("stats"\)/);
   assert.match(view, /cardView === "skill"/);
   assert.match(view, />数值<\/button>/);
@@ -66,16 +136,17 @@ test("管理后台提供攻击力与攻击性技能伤害的自身和全体增�
   assert.match(battleConfigEditor, /"attack_skill_damage_self", "attack_skill_damage_all_allies"/);
 });
 
-test("战斗由服务端逐事件确认、页面隐藏时回滚未播完事件，且不存在本地跳过进度", () => {
-  assert.match(view, /card-battle\/playback\/ack/);
-  assert.match(view, /playback\?\.complete/);
-  assert.doesNotMatch(view, /sessionStorage/);
-  assert.match(view, /document\.visibilityState === "hidden"/);
-  assert.match(view, /setCardStates\(playbackRef\.current\?\.states/);
-  assert.match(view, /battle\.game\?\.lineups/);
+test("服务器时间轴驱动动画，恢复焦点直接同步且不依赖本地确认", () => {
+  const hook = readFileSync(new URL("../src/shared/useServerCardBattlePlayback.ts", import.meta.url), "utf8");
+  assert.match(view, /useServerCardBattlePlayback/);
+  assert.doesNotMatch(hook, /playback\/ack|completedSequence\s*\+|visibilityState === "hidden"/);
+  assert.match(hook, /visibilityState === "visible"/);
+  for (const event of ["focus", "pageshow", "online", "visibilitychange"]) assert.ok(hook.includes(`addEventListener("${event}"`));
+  assert.match(hook, /bypassCache: true, dedupe: false/);
+  assert.match(view, /seekCardBattleAnimations\(arenaRef.current, animationDelayMs\)/);
   assert.doesNotMatch(view, /(?:skipAnimation|onSkip|跳过动画|跳过战斗)/);
   assert.match(styles, /card-battle-attack-target 1\.05s/);
-  assert.match(styles, /--card-battle-attack-x/);
+  assert.match(view, /对局中对战者退出即认输/);
 });
 
 test("对战画面遵守前后排、生命色阶、聊天自底向上堆叠和八秒淡出约定", () => {
@@ -106,7 +177,7 @@ test("卡牌对战复用房间邀请并提供区分对战席与观战席的成�
   assert.match(view, /aria-label="分享房间"/);
   assert.match(view, /aria-label={`房间成员，共 \$\{snapshot\.members\.length\} 人`}/);
   assert.match(roomPage, /<OnlineSoupInviteModal roomId={roomId}/);
-  assert.match(roomPage, /对战席 {occupiedBattleSeats}\/2 · 观战席 {spectatorMembers\.length}/);
+  assert.match(roomPage, /对战席 {occupiedBattleSeats}\/{snapshot\.room\.cardBattle\.seats\.length} · 观战席 {spectatorMembers\.length}/);
   assert.match(roomPage, /号对战席/);
   assert.match(roomPage, /暂无观战成员/);
 });
@@ -145,6 +216,29 @@ test("选卡支持搜索、四种排序并在选卡和战场展示战力", () =>
   assert.match(view, /cardRarityRank\[left\.rarity\] - cardRarityRank\[right\.rarity\]/);
   assert.match(view, /card\.combatPower/);
   assert.match(view, /战力 \{combatPowerFormatter\.format\(card\.combatPower\)\}/);
+});
+
+test("卡牌定位默认全部，三类定位筛选与搜索叠加且不改变原始卡牌列表", () => {
+  const cards = [
+    { name: "火焰", cardNo: "002", battleRole: "damage" as const },
+    { name: "守卫", cardNo: "004", battleRole: "tank" as const },
+    { name: "治愈", cardNo: "026", battleRole: "support" as const },
+  ];
+  assert.deepEqual(filterCardBattleSelection(cards, ""), cards);
+  for (const role of ["damage", "tank", "support"] as const) {
+    assert.deepEqual(filterCardBattleSelection(cards, "", role), cards.filter((card) => card.battleRole === role));
+  }
+  assert.deepEqual(filterCardBattleSelection(cards, " 004 ", "tank"), [cards[1]]);
+  assert.deepEqual(filterCardBattleSelection(cards, "守卫", "damage"), []);
+  assert.deepEqual(filterCardBattleSelection(cards, "辅助", "all"), [cards[2]]);
+  assert.deepEqual(filterCardBattleSelection([], "", "tank"), []);
+  assert.deepEqual(cards.map((card) => card.cardNo), ["002", "004", "026"]);
+  assert.match(view, /useState<CardBattleRoleFilter>\("all"\)/);
+  assert.match(view, /filterCardBattleSelection\(eligibleCards, cardQuery, cardRoleFilter\)/);
+  assert.match(view, />卡牌定位<\/span><select value=\{cardRoleFilter\}/);
+  for (const [value, label] of [["all", "全部"], ["damage", "输出"], ["tank", "坦克"], ["support", "辅助"]]) {
+    assert.ok(view.includes(`<option value="${value}">${label}</option>`));
+  }
 });
 
 test("备战支持保存、编辑和按固定位置使用卡组", () => {

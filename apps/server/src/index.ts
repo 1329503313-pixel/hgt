@@ -118,6 +118,7 @@ import {
 } from "./behaviorAnalytics.js";
 import { WebSocket, WebSocketServer } from "ws";
 import onlineSoupRouter, {
+  recoverCardBattleGames,
   cleanupOnlineSoupInactiveHostRooms,
   cleanupOnlineSoupIdleSingleUserRooms,
   cleanupOnlineSoupStaleSeats,
@@ -131,6 +132,7 @@ import onlineSoupRouter, {
   setOnlineSoupLobbyEventEmitter,
   validRoomInviteToken
 } from "./onlineSoup.js";
+import { setBossRewardListener } from "./cardBattleBoss.js";
 import { mapAndroidReleaseRow, resolveAndroidUpdate } from "./androidAppUpdate.js";
 import { mapWebResourceReleaseRow, resolveWebResourceUpdate } from "./webResourceUpdate.js";
 import { createLegacyHostRedirect } from "./legacyHostRedirect.js";
@@ -210,6 +212,12 @@ function emitCircleSocketEvent(circleId: string, event: string, payload: unknown
 }
 
 setOnlineSoupEventEmitter(emitOnlineSoupSocketEvent);
+setBossRewardListener((events) => {
+  for (const event of events) {
+    emitUserEvent(event.userId, "shell_balance_changed", { balance: event.balance, amount: event.amount, source: "card_battle_boss" });
+    emitUnreadChanged(event.userId, "card_battle_boss");
+  }
+});
 setOnlineSoupLobbyEventEmitter((event, payload) => {
   if (!onlineSoupLobbySocketClients.size) return;
   const message = JSON.stringify({ event, payload });
@@ -429,6 +437,8 @@ app.use(compression({
   threshold: 1024,
   filter: (req, res) => req.path !== "/api/events" && compression.filter(req, res)
 }));
+// A 5MB BOSS cover expands to ~6.7MB in base64; keep the larger limit scoped to this upload.
+app.use("/api/online-soup/admin/card-battle-bosses/covers", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
 app.use((req, res, next) => {
@@ -6641,7 +6651,7 @@ app.get("/api/notifications", async (req, res) => {
           ? "/mine/tasks"
         : row.type === "ranking_reward" && row.related_id
           ? `/messages/ranking-rewards/${row.related_id}`
-        : row.type === "shell_adjustment" || row.type === "badge_history_backfill"
+        : row.type === "shell_adjustment" || row.type === "badge_history_backfill" || row.type === "card_battle_boss"
           ? "/mine/shells/transactions"
         : row.type === "user_follow" && row.actor_id
           ? `/users/${row.actor_id}`
@@ -8285,6 +8295,15 @@ await initializeUserBehaviorAnalytics().catch((error) => {
 await cleanupOnlineSoupStaleSeats();
 await cleanupOnlineSoupInactiveHostRooms();
 await cleanupOnlineSoupIdleSingleUserRooms();
+await recoverCardBattleGames();
+let cardBattleRecoveryRunning = false;
+const cardBattleRecoveryTimer = setInterval(() => {
+  if (cardBattleRecoveryRunning) return;
+  cardBattleRecoveryRunning = true;
+  void recoverCardBattleGames().catch((error) => console.error("Card battle recovery failed", error))
+    .finally(() => { cardBattleRecoveryRunning = false; });
+}, 1000);
+cardBattleRecoveryTimer.unref();
 await resumePendingOnlineSoupAiQuestions();
 await resumePendingMysteryTurns();
 startMysteryCompileJobWorker();

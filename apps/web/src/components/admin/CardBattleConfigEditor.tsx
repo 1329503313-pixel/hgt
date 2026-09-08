@@ -1,4 +1,6 @@
 import { Plus, Trash2 } from "lucide-react";
+import { CARD_BATTLE_PROC_BUFF_LABELS, CARD_BATTLE_PROC_BUFF_CODES, CARD_BATTLE_PROC_STATS, cardBattleProcStat } from "@hgt/shared";
+import { CARD_BATTLE_DEBUFF_LABELS, isCardBattleDebuff } from "../../shared/cardBattleEffects";
 import type { CardBattleCondition, CardBattleEffectType, CardBattleTier } from "../../shared/digitalAssets";
 
 const conditionLabels: Record<CardBattleCondition, string> = {
@@ -16,6 +18,8 @@ const conditionLabels: Record<CardBattleCondition, string> = {
 };
 
 const effectLabels: Record<CardBattleEffectType, string> = {
+  ...CARD_BATTLE_PROC_BUFF_LABELS,
+  ...CARD_BATTLE_DEBUFF_LABELS,
   damage_single: "造成单体伤害", damage_rear: "对敌方后排造成伤害", damage_random: "对随机敌人造成伤害",
   damage_all_front: "对所有前排造成伤害", damage_all_rear: "对所有后排造成伤害", damage_random_2: "对随机2名敌人造成伤害",
   damage_random_3: "对随机3名敌人造成伤害", damage_random_4: "对随机4名敌人造成伤害", damage_all: "对全部敌方造成伤害",
@@ -32,6 +36,9 @@ const effectLabels: Record<CardBattleEffectType, string> = {
 const numericEffects = new Set<CardBattleEffectType>(Object.keys(effectLabels).filter((key) => !key.startsWith("revive_")) as CardBattleEffectType[]);
 const durationEffects = new Set<CardBattleEffectType>(["attack_self", "attack_all_allies", "attack_skill_damage_self", "attack_skill_damage_all_allies", "defense_self", "defense_all_allies", "speed_self", "speed_all_allies"]);
 const thresholdConditions = new Set<CardBattleCondition>(["self_hp_below_percent", "self_hp_below_percent_energy_full"]);
+for (const type of Object.keys(CARD_BATTLE_DEBUFF_LABELS)) durationEffects.add(type as CardBattleEffectType);
+for (const type of CARD_BATTLE_PROC_BUFF_CODES) durationEffects.add(type);
+const effectMaximum = (type: CardBattleEffectType) => isCardBattleDebuff(type) || cardBattleProcStat(type) ? 100 : 1_000_000_000;
 const selfDeathConditions = new Set<CardBattleCondition>(["self_death", "self_death_energy_full"]);
 
 function numberValue(value: string, minimum = 0) {
@@ -39,7 +46,8 @@ function numberValue(value: string, minimum = 0) {
   return Number.isFinite(parsed) ? Math.max(minimum, Math.round(parsed)) : minimum;
 }
 
-export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChange }: {
+export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChange, fixedStar = false }: {
+  fixedStar?: boolean;
   tiers: CardBattleTier[];
   activeStar: 0 | 1 | 2 | 3;
   onActiveStar: (star: 0 | 1 | 2 | 3) => void;
@@ -52,10 +60,10 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
     effects: tier.effects.map((effect, effectIndex) => effectIndex === index ? { ...effect, ...changes } : effect),
   });
   return <fieldset className="sm:col-span-2 rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
-    <div><legend className="text-base font-black text-ink">卡牌对战配置</legend><p className="mt-1 text-xs leading-5 text-muted">0–3 星必须完整配置。技能可留空；每一行条件独立触发，并只绑定本行效果。</p></div>
-    <div className="mt-3 grid grid-cols-4 gap-2" role="tablist" aria-label="选择卡牌星级">
+    <div><legend className="text-base font-black text-ink">卡牌对战配置{fixedStar && " · 固定三星"}</legend><p className="mt-1 text-xs leading-5 text-muted">{fixedStar ? "上架前须填写技能名称、描述及至少一条技能效果。" : "0–3 星必须完整配置。技能可留空；"}每一行条件独立触发，并只绑定本行效果。</p></div>
+    {!fixedStar && <div className="mt-3 grid grid-cols-4 gap-2" role="tablist" aria-label="选择卡牌星级">
       {([0, 1, 2, 3] as const).map((star) => <button key={star} type="button" role="tab" aria-selected={activeStar === star} className={`min-h-11 rounded-xl text-sm font-black transition ${activeStar === star ? "bg-violet-600 text-white" : "border border-violet-200 bg-white text-violet-800 hover:bg-violet-100"}`} onClick={() => onActiveStar(star)}>{star} 星</button>)}
-    </div>
+    </div>}
     <div className="mt-4 grid gap-3 sm:grid-cols-3">
       <label><span className="text-xs font-bold">生命值</span><input aria-label={`${activeStar}星生命值`} type="number" min="1" className="field mt-1" value={tier.maxHp} onChange={(event) => updateTier({ maxHp: numberValue(event.target.value, 1) })} /></label>
       <label><span className="text-xs font-bold">攻击力</span><input aria-label={`${activeStar}星攻击力`} type="number" min="0" className="field mt-1" value={tier.attack} onChange={(event) => updateTier({ attack: numberValue(event.target.value) })} /></label>
@@ -64,19 +72,28 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
       <label><span className="text-xs font-bold">能量要求</span><input aria-label={`${activeStar}星能量要求`} type="number" min="1" className="field mt-1" value={tier.energyRequired} onChange={(event) => updateTier({ energyRequired: numberValue(event.target.value, 1) })} /></label>
       <label className="flex min-h-11 items-center gap-3 self-end rounded-xl border border-violet-200 bg-white px-3"><input type="checkbox" checked={tier.canAttackRear} onChange={(event) => updateTier({ canAttackRear: event.target.checked })} /><span className="text-xs font-bold">普通攻击可攻击后排</span></label>
     </div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-      <label><span className="text-xs font-bold">技能名称（四星共用，可空）</span><input maxLength={50} className="field mt-1" value={tier.skillName} onChange={(event) => updateSharedSkillName(event.target.value)} /><span className="mt-1 block text-[11px] leading-5 text-muted">修改后同步到全部星级；技能描述、条件和效果仍按星级独立配置。</span></label>
-      <label><span className="text-xs font-bold">技能描述（可空）</span><textarea maxLength={500} className="field mt-1 min-h-20" value={tier.skillDescription} onChange={(event) => updateTier({ skillDescription: event.target.value })} /></label>
+    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <label><span className="text-xs font-bold">暴击率（%）</span><input aria-label={`${activeStar}星暴击率`} type="number" min="0" max="100" step="0.01" className="field mt-1" value={tier.critRate ?? 25} onChange={(event) => updateTier({ critRate: Math.min(100, Math.max(0, Math.round(Number(event.target.value) * 100) / 100 || 0)) })} /></label>
+      <label><span className="text-xs font-bold">暴击伤害（%）</span><input aria-label={`${activeStar}星暴击伤害`} type="number" min="100" max="10000" step="0.01" className="field mt-1" value={tier.critDamage ?? 150} onChange={(event) => updateTier({ critDamage: Math.min(10000, Math.max(100, Math.round(Number(event.target.value) * 100) / 100 || 100)) })} /></label>
+      <p className="text-xs leading-5 text-muted sm:col-span-2">暴击只对普攻、伤害技能和治疗技能生效，按每个目标独立判定；150% 表示结算为原数值的 1.5 倍。属性增加、复活和回能不暴击。</p>
     </div>
-    <div className="mt-4 flex items-center justify-between gap-3"><div><h4 className="text-sm font-black text-ink">技能条件与效果</h4><p className="text-[11px] text-muted">多行按从上到下顺序独立结算。</p></div><button type="button" className="btn btn-secondary min-h-11 px-3 text-xs" onClick={() => updateTier({ effects: [...tier.effects, { order: tier.effects.length, condition: "energy_full", conditionValue: null, type: "damage_single", value: 1, duration: null }] })}><Plus size={15} />新增条件</button></div>
+    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      {CARD_BATTLE_PROC_STATS.map(({ key, label }) => <label key={key}><span className="text-xs font-bold">{label}（%）</span><input aria-label={`${activeStar}星${label}`} type="number" min="0" max="100" step="0.01" className="field mt-1 min-h-11" value={tier[key] ?? 0} onChange={(event) => updateTier({ [key]: Math.min(100, Math.max(0, Math.round(Number(event.target.value) * 100) / 100 || 0)) })} /></label>)}
+      <p className="text-xs leading-5 text-muted sm:col-span-3">默认均为 0%。吸血按实际扣血逐目标计算并四舍五入；击晕仅阻止本回合剩余行动；再动立即行动一次，再动及其触发链不再触发再动。</p>
+    </div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <label><span className="text-xs font-bold">{fixedStar ? "技能名称" : "技能名称（四星共用，可空）"}</span><input maxLength={50} className="field mt-1" value={tier.skillName} onChange={(event) => updateSharedSkillName(event.target.value)} />{!fixedStar && <span className="mt-1 block text-[11px] leading-5 text-muted">修改后同步到全部星级；技能描述、条件和效果仍按星级独立配置。</span>}</label>
+      <label><span className="text-xs font-bold">{fixedStar ? "技能描述" : "技能描述（可空）"}</span><textarea maxLength={500} className="field mt-1 min-h-20" value={tier.skillDescription} onChange={(event) => updateTier({ skillDescription: event.target.value })} /></label>
+    </div>
+    <div className="mt-4 flex items-center justify-between gap-3"><div><h4 className="text-sm font-black text-ink">技能条件与效果</h4><p className="text-[11px] text-muted">多行按从上到下顺序独立结算。</p></div><button type="button" className="btn btn-secondary min-h-11 shrink-0 whitespace-nowrap px-3 text-xs" onClick={() => updateTier({ effects: [...tier.effects, { order: tier.effects.length, condition: "energy_full", conditionValue: null, type: "damage_single", value: 1, duration: null }] })}><Plus size={15} />新增条件</button></div>
     <div className="mt-3 space-y-3">
       {tier.effects.length === 0 ? <p className="rounded-xl border border-dashed border-violet-200 bg-white p-4 text-center text-xs text-muted">未配置技能效果；该星级只会进行普通攻击。</p> : tier.effects.map((effect, index) => <section key={effect.id ?? `${activeStar}-${index}`} className="rounded-xl border border-violet-200 bg-white p-3">
         <div className="mb-3 flex items-center justify-between"><strong className="text-xs text-violet-800">条件 {index + 1}</strong><button type="button" aria-label={`删除条件${index + 1}`} className="grid min-h-11 min-w-11 place-items-center rounded-lg text-red-600 hover:bg-red-50" onClick={() => updateTier({ effects: tier.effects.filter((_, effectIndex) => effectIndex !== index).map((item, order) => ({ ...item, order })) })}><Trash2 size={16} /></button></div>
         <div className="grid gap-3 sm:grid-cols-2">
           <label><span className="text-xs font-bold">技能条件</span><select className="field mt-1" value={effect.condition} onChange={(event) => { const condition = event.target.value as CardBattleCondition; updateEffect(index, { condition, conditionValue: thresholdConditions.has(condition) ? (effect.conditionValue ?? 50) : null, ...(effect.type === "revive_self" && !selfDeathConditions.has(condition) ? { type: "revive_ally_1" as const } : {}) }); }}>{Object.entries(conditionLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           {thresholdConditions.has(effect.condition) && <label><span className="text-xs font-bold">生命值阈值（%）</span><input type="number" min="1" max="100" className="field mt-1" value={effect.conditionValue ?? 50} onChange={(event) => updateEffect(index, { conditionValue: Math.min(100, numberValue(event.target.value, 1)) })} /></label>}
-          <label><span className="text-xs font-bold">技能类型</span><select className="field mt-1" value={effect.type} onChange={(event) => { const type = event.target.value as CardBattleEffectType; updateEffect(index, { type, value: numericEffects.has(type) ? (effect.value ?? 1) : null, duration: durationEffects.has(type) ? (effect.duration ?? 1) : null }); }}>{Object.entries(effectLabels).map(([value, label]) => <option key={value} value={value} disabled={value === "revive_self" && !selfDeathConditions.has(effect.condition)}>{label}</option>)}</select>{!selfDeathConditions.has(effect.condition) && <span className="mt-1 block text-[11px] leading-4 text-muted">“复活自己”仅在本卡片死亡条件下可选，避免技能空放并清空能量。</span>}</label>
-          {numericEffects.has(effect.type) && <label><span className="text-xs font-bold">技能数值</span><input type="number" min="1" className="field mt-1" value={effect.value ?? 1} onChange={(event) => updateEffect(index, { value: numberValue(event.target.value, 1) })} />{effect.type.startsWith("attack_skill_damage_") && <span className="mt-1 block text-[11px] leading-4 text-muted">该数值同时增加普通攻击力与攻击性技能伤害。</span>}</label>}
+          <label><span className="text-xs font-bold">技能类型</span><select className="field mt-1" value={effect.type} onChange={(event) => { const type = event.target.value as CardBattleEffectType; updateEffect(index, { type, value: numericEffects.has(type) ? Math.min(effectMaximum(type), effect.value ?? 1) : null, duration: durationEffects.has(type) ? (effect.duration ?? 1) : null }); }}>{Object.entries(effectLabels).map(([value, label]) => <option key={value} value={value} disabled={value === "revive_self" && !selfDeathConditions.has(effect.condition)}>{label}</option>)}</select>{!selfDeathConditions.has(effect.condition) && <span className="mt-1 block text-[11px] leading-4 text-muted">“复活自己”仅在本卡片死亡条件下可选，避免技能空放并清空能量。</span>}</label>
+          {numericEffects.has(effect.type) && <label><span className="text-xs font-bold">{cardBattleProcStat(effect.type) ? "属性变化（百分点）" : isCardBattleDebuff(effect.type) ? "降低比例（%）" : "技能数值"}</span><input type="number" min="1" max={effectMaximum(effect.type)} className="field mt-1" value={effect.value ?? 1} onChange={(event) => updateEffect(index, { value: Math.min(effectMaximum(effect.type), numberValue(event.target.value, 1)) })} />{!isCardBattleDebuff(effect.type) && effect.type.startsWith("attack_skill_damage_") && <span className="mt-1 block text-[11px] leading-4 text-muted">该数值同时增加普通攻击力与攻击性技能伤害。</span>}{cardBattleProcStat(effect.type) ? <span className="mt-1 block text-[11px] leading-4 text-muted">直接增减百分点，例如 20% 降低 10 后为 10%；同属性同方向首层全效、后续半效，首层到期后下一层恢复全效，最终属性限制在 0%–100%。</span> : isCardBattleDebuff(effect.type) && <span className="mt-1 block text-[11px] leading-4 text-muted">按包含增益的当前属性降低此百分比；同属性减益首层全效、后续半效，合计最多100%。</span>}</label>}
           {durationEffects.has(effect.type) && <label><span className="text-xs font-bold">持续回合（本回合算 1）</span><input type="number" min="1" max="30" className="field mt-1" value={effect.duration ?? 1} onChange={(event) => updateEffect(index, { duration: Math.min(30, numberValue(event.target.value, 1)) })} /></label>}
         </div>
       </section>)}
