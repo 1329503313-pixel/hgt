@@ -36,9 +36,21 @@ test("旧结算从真实治疗事件按施法者补算，不改变原快照且�
     const players = resolveCardBattleSettlementPlayers(result);
     assert.equal(players[0]!.cards[0]!.healingDone, 0);
     assert.equal(players[1]!.cards[0]!.healingDone, 500);
+    assert.equal(players[1]!.cards[0]!.supportDone, 500);
+    assert.deepEqual(players[1]!.cards[0]!.supportBreakdown, { healing: 500 });
     assert.equal(players[1]!.cards[0]!.score, .9);
     assert.deepEqual(result, saved);
   }
+});
+
+test("新辅助统计优先于旧治疗量，明确零值不能回退到治疗或保留旧评分", () => {
+  const result = fixture();
+  result.players[1]!.cards[0]!.supportDone = 0;
+  const card = resolveCardBattleSettlementPlayers(result)[1]!.cards[0]!;
+  assert.equal(card.healingDone, 500);
+  assert.equal(card.supportDone, 0);
+  assert.deepEqual(card.supportBreakdown, {});
+  assert.equal(card.score, .5);
 });
 
 test("认输按服务器命中时间截断治疗与评分，旧版无累计字段也不能算入未来治疗", () => {

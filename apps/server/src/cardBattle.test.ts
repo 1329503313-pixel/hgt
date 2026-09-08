@@ -191,7 +191,8 @@ test("治疗量归属施法卡，累计有效自疗与群疗，过量、复活�
     const total = result.events.filter(event => event.actorId === state.instanceId && event.visual === "heal").reduce((sum, event) => sum + event.effects.reduce((sum, effect) => sum + effect.amount!, 0), 0);
     assert.equal(item.healingDone, total);
     assert.equal(state.healingDone, total);
-    assert.equal(item.score, calculateCardBattleScore(item.damageDealt, item.damageTaken, total));
+    assert.equal(item.supportBreakdown?.healing ?? 0, total);
+    assert.equal(item.score, calculateCardBattleScore(item.damageDealt, item.damageTaken, item.supportDone));
     assert.ok(total < 1000000, "只统计扣除过量后的有效恢复");
   }
 });

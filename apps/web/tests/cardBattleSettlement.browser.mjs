@@ -7,8 +7,8 @@ import { build } from "esbuild";
 import { chromium, expect } from "@playwright/test";
 const bundle = await build({stdin:{resolveDir:resolve("apps/web"),loader:"tsx",contents:`
   import React,{useState}from'react';import{createRoot}from'react-dom/client';import{Settlement}from'./src/components/CardBattleRoomView';
-  const cards=Array.from({length:5},(_,index)=>({slot:index+1,cardId:'c'+index,name:index===1?'八字超级治疗使者':'星辉骑士',damageDealt:index===2?1234567890:1500,damageTaken:2000,healingDone:5000}));
-  const players=[{seat:1,userId:'u1',nickname:'胜利玩家',cards},{seat:2,userId:'u2',nickname:'失败玩家',cards:cards.map(card=>({...card,damageDealt:0,damageTaken:0,healingDone:0,score:0}))}];
+  const cards=Array.from({length:5},(_,index)=>({slot:index+1,cardId:'c'+index,name:index===1?'八字超级治疗使者':'星辉骑士',damageDealt:index===2?1234567890:1500,damageTaken:2000,healingDone:5000,supportDone:8000}));
+  const players=[{seat:1,userId:'u1',nickname:'胜利玩家',cards},{seat:2,userId:'u2',nickname:'失败玩家',cards:cards.map(card=>({...card,damageDealt:0,damageTaken:0,healingDone:5000,supportDone:0,score:0}))}];
   function Harness(){const[mode,setMode]=useState('normal');window.setMode=setMode;return<main style={{height:'100dvh',position:'relative',background:'#071426'}}><Settlement battle={{me:{userId:'u1'},rankingChallenge:mode==='ranking'?{targetRank:7}:null,game:{settlement:{winnerSeat:1,rounds:8,endReason:'elimination',players}}}} confirming={mode==='confirming'} onClose={()=>window.closedSettlement=true} onConfirmRankingWin={()=>window.confirmedRanking=true}/></main>};
   createRoot(document.getElementById('root')).render(<Harness/>);
 `},bundle:true,write:false,format:"iife",define:{"import.meta.env":"{}"}});
@@ -20,8 +20,8 @@ try{
  await page.route('**/*',route=>route.abort());await page.setContent('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>');
  await page.addStyleTag({content:readFileSync(resolve('apps/web/dist/assets',css),'utf8')});await page.addScriptTag({content:bundle.outputFiles[0].text});
  await expect(page.getByRole('table')).toHaveCount(2);
- await expect(page.getByRole('table').first().locator('thead th')).toHaveText(['卡牌','伤害','承伤','治疗','评分']);
- await expect(page.getByRole('table').first().locator('tbody tr').first().locator('td')).toHaveText(['1500','2000','5000','7.8']);
+ await expect(page.getByRole('table').first().locator('thead th')).toHaveText(['卡牌','伤害','承伤','辅助','评分']);
+ await expect(page.getByRole('table').first().locator('tbody tr').first().locator('td')).toHaveText(['1500','2000','8000','9.9']);
  await expect(page.getByRole('table').last().locator('tbody tr').first().locator('td')).toHaveText(['0','0','0','0.0']);
  for(const viewport of [{width:320,height:568},{width:375,height:812},{width:812,height:375},{width:1440,height:1000}]){
   await page.setViewportSize(viewport);

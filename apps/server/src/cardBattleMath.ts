@@ -2,7 +2,13 @@ import { cardBattleStatusOrder, type CardBattleStatus, type CardBattleStatusType
 import type { CardBattleProcStat, CardBattleProcStats } from "@hgt/shared";
 
 export type CardBattleBuffStat = "attack" | "skillDamage" | "defense" | "speed" | "maxHp" | "healingReceived" | CardBattleProcStat | "stunned";
-export type CardBattleBuff = { stat: CardBattleBuffStat; value: number; expiresAfterRound: number; debuff?: boolean };
+export type CardBattleBuff = {
+  stat: CardBattleBuffStat; value: number; expiresAfterRound: number; debuff?: boolean;
+  sourceId?: string;
+  sourceOrder?: number;
+  /** Only a stun caused by a skill's extra probability has a support owner. */
+  stunSupportSourceId?: string;
+};
 
 /** In insertion order, separately by polarity: the oldest surviving layer is full strength. */
 export function cardBattleBuffBonus(buffs: readonly CardBattleBuff[], stat: CardBattleBuffStat, debuff = false) {

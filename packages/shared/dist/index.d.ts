@@ -1,4 +1,5 @@
 export { calculateCardBattleScore } from "./cardBattleScore.js";
+export { CARD_BATTLE_SUPPORT_LABELS, type CardBattleSupportKind, type CardBattleSupportBreakdown } from "./cardBattleSupport.js";
 export * from "./cardBattleProcs.js";
 export type UserRole = "super_admin" | "backoffice_admin" | "vip" | "user";
 export declare const VIP_GROWTH_LEVELS: readonly [0, 5, 300, 800, 1500, 2800, 4500, 7000, 10000, 15000];

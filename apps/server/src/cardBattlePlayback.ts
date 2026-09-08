@@ -38,9 +38,10 @@ export function surrenderCardBattleResult(result: CardBattleResult, userId: stri
     rounds: events.at(-1)?.round ?? 0, events, finalStates: states,
     playbackDurationMs: Math.max(0, nowMs - new Date(startedAt).getTime()),
     players: result.players.map((player) => ({ ...player, cards: player.cards.map((card) => {
-      const state = states.find((state) => state.seat === player.seat && state.slot === card.slot);
+      const state = states.find((state) => state.userId === player.userId && state.slot === card.slot);
       // Never use the precomputed future settlement after an early surrender.
-      return { ...card, damageDealt: state?.damageDealt ?? 0, damageTaken: state?.damageTaken ?? 0, healingDone: state?.healingDone, score: undefined };
+      return { ...card, damageDealt: state?.damageDealt ?? 0, damageTaken: state?.damageTaken ?? 0, healingDone: state?.healingDone,
+        supportDone: state?.supportDone, supportBreakdown: state?.supportBreakdown, score: undefined };
     }) })),
   };
   return { ...forfeited, players: resolveCardBattleSettlementPlayers(forfeited) };

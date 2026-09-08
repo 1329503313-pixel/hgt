@@ -1,7 +1,7 @@
 import { calculateCardBattleScore } from "@hgt/shared";
 import type { CardBattleResult } from "./cardBattle.js";
 
-/** Older saved games already record effective healing in each heal event. */
+/** Old games can recover healing, but lack the source/roll data for other support. */
 export function resolveCardBattleSettlementPlayers(result: CardBattleResult) {
   const healingByActor = new Map<string, number>();
   for (const event of result.events) {
@@ -13,6 +13,9 @@ export function resolveCardBattleSettlementPlayers(result: CardBattleResult) {
   return result.players.map((player) => ({ ...player, cards: player.cards.map((card) => {
     const instance = result.initialStates.find((state) => state.userId === player.userId && state.slot === card.slot);
     const healingDone = card.healingDone ?? (instance ? healingByActor.get(instance.instanceId) ?? 0 : 0);
-    return { ...card, healingDone, score: calculateCardBattleScore(card.damageDealt, card.damageTaken, healingDone) };
+    const finalState = result.finalStates.find((state) => state.userId === player.userId && state.slot === card.slot);
+    const supportDone = card.supportDone ?? finalState?.supportDone ?? healingDone;
+    const supportBreakdown = card.supportBreakdown ?? finalState?.supportBreakdown ?? (supportDone === healingDone && healingDone > 0 ? { healing: healingDone } : {});
+    return { ...card, healingDone, supportDone, supportBreakdown, score: calculateCardBattleScore(card.damageDealt, card.damageTaken, supportDone) };
   }) }));
 }

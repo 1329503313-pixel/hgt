@@ -34,7 +34,7 @@ export function AssetPackCard({ card, packType, selected, selecting, onSelectUp 
       ariaDescribedBy={expanded ? descriptionId : undefined}
       ariaLabel={label}
       onClick={interactive ? toggle : undefined}
-      overlay={expanded && <span id={descriptionId} className="asset-pack-card-details">
+      overlay={expanded && <span id={descriptionId} className="asset-pack-card-details scrollbar-hidden">
         <span className="block font-black">{tier?.starLevel ?? (card.owned ? card.starLevel ?? 0 : 0)} 星属性{card.battleRole ? ` · ${CARD_BATTLE_ROLE_LABELS[card.battleRole]}` : ""}</span>
         {tier ? <>
           <span className="mt-2 block space-y-1">

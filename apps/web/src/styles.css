@@ -5443,7 +5443,7 @@ textarea {
   display: block;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
   border-radius: inherit;
   background: rgb(0 0 0 / 0.5);
   padding: 8px;

@@ -10,13 +10,13 @@ export function CardBattleSettlementTable({ player, winnerSeat }: { player: Play
     <div className="overflow-x-auto" role="region" aria-label={`${player.nickname}的结算数据，可横向滚动`} tabIndex={0}>
     <table className="w-full text-[11px] leading-5 sm:text-xs" aria-label={`${player.nickname}的卡牌结算`}>
       <colgroup><col style={{ width: "28%" }} /><col style={{ width: "19%" }} /><col style={{ width: "19%" }} /><col style={{ width: "19%" }} /><col style={{ width: "15%" }} /></colgroup>
-      <thead className="bg-slate-950/35 text-slate-200"><tr>{["卡牌", "伤害", "承伤", "治疗", "评分"].map((label, index) => <th key={label} scope="col" className={`px-1 py-2 font-bold ${index === 0 ? "pl-3 text-left" : "text-right last:pr-3"}`}>{label}</th>)}</tr></thead>
+      <thead className="bg-slate-950/35 text-slate-200"><tr>{["卡牌", "伤害", "承伤", "辅助", "评分"].map((label, index) => <th key={label} scope="col" className={`px-1 py-2 font-bold ${index === 0 ? "pl-3 text-left" : "text-right last:pr-3"}`}>{label}</th>)}</tr></thead>
       <tbody className="tabular-nums">{[...player.cards].sort((a, b) => a.slot - b.slot).map((card) => <tr key={card.slot} className="border-t border-white/5">
         <th scope="row" className="min-w-[76px] break-words py-2.5 pl-3 pr-1 text-left font-medium text-white"><span className="mr-1 text-slate-400">{card.slot}</span>{card.name}</th>
         <td className="whitespace-nowrap px-1 py-2.5 text-right text-red-300">{card.damageDealt}</td>
         <td className="whitespace-nowrap px-1 py-2.5 text-right text-amber-200">{card.damageTaken}</td>
-        <td className="whitespace-nowrap px-1 py-2.5 text-right text-emerald-300">{card.healingDone ?? 0}</td>
-        <td className="whitespace-nowrap py-2.5 pl-1 pr-3 text-right font-black text-cyan-200">{(card.score ?? calculateCardBattleScore(card.damageDealt, card.damageTaken, card.healingDone ?? 0)).toFixed(1)}</td>
+        <td className="whitespace-nowrap px-1 py-2.5 text-right text-emerald-300">{card.supportDone ?? card.healingDone ?? 0}</td>
+        <td className="whitespace-nowrap py-2.5 pl-1 pr-3 text-right font-black text-cyan-200">{(card.score ?? calculateCardBattleScore(card.damageDealt, card.damageTaken, card.supportDone ?? card.healingDone ?? 0)).toFixed(1)}</td>
       </tr>)}</tbody>
     </table>
     </div>

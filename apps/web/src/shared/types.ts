@@ -639,7 +639,7 @@ export type OnlineCardBattleState = {
       winnerSeat: 1 | 2 | null;
       endReason: "elimination" | "round_limit" | "simultaneous_elimination" | "safety_limit" | "surrender";
       rounds: number;
-      players: Array<{ userId: string; nickname: string; seat: 1 | 2; cards: Array<{ slot: number; cardId: string; name: string; damageDealt: number; damageTaken: number; healingDone?: number; score?: number }> }>;
+      players: Array<{ userId: string; nickname: string; seat: 1 | 2; cards: Array<{ slot: number; cardId: string; name: string; damageDealt: number; damageTaken: number; healingDone?: number; supportDone?: number; supportBreakdown?: import("@hgt/shared").CardBattleSupportBreakdown; score?: number }> }>;
     };
   };
 };
@@ -656,6 +656,8 @@ export type OnlineCardBattlePlayback = {
 export type OnlineCardBattleCardState = import("@hgt/shared").CardBattleProcStats & {
   instanceId: string; userId: string; seat: 1 | 2; slot: 1 | 2 | 3 | 4 | 5; row: "front" | "rear";
   hp: number; maxHp: number; energy: number; energyRequired: number; attack: number; defense: number; speed: number; alive: boolean;
+  damageDealt?: number; damageTaken?: number; healingDone?: number;
+  supportDone?: number; supportBreakdown?: import("@hgt/shared").CardBattleSupportBreakdown;
   statuses?: import("./cardBattleEffects").CardBattleStatus[];
 };
 export type OnlineCardBattleEvent = {
