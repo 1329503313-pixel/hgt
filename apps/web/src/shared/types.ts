@@ -617,6 +617,8 @@ export type OnlineCardBattleState = {
     defenderUserId: string;
     targetRank: number;
     status: "active" | "won" | "abandoned" | "stale";
+    fallbackRank?: number | null;
+    fallbackFull?: boolean;
   };
   seats: Array<{
     seat: 1 | 2 | 3;

@@ -1,6 +1,7 @@
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
+import { lockAndCompactCardBattleRanking, lockRankingForCardBattleRoom } from "./cardBattleRankingState.js";
 import { isBossRoom } from "./cardBattleBossRules.js";
 import { bossBattlePlayer, bossPublic, emitBossRewards, loadBoss, requireAvailableBoss, settleBossRewards } from "./cardBattleBoss.js";
 import { loadCardBattleTiers } from "./cardBattleConfig.js";
@@ -10,7 +11,14 @@ import { resolveCardBattleSettlementPlayers } from "./cardBattleSettlement.js";
 import { applyBattleCollectibleStats, type BattleCollectibleBinding } from "@hgt/shared";
 import { loadBattleCollectibles, parseBattleCollectibleBindings, resolveBattleCollectibles, withBattleCollectible } from "./battleCollectibles.js";
 
-export class CardBattleRoomRuleError extends Error {}
+export class CardBattleRoomRuleError extends Error {
+  constructor(message: string, public readonly code?: string) { super(message); }
+}
+
+async function assertRankingChallengeActive(roomId: string, db: mysql.PoolConnection) {
+  const [[challenge]] = await db.query<mysql.RowDataPacket[]>("SELECT status FROM card_battle_ranking_challenges WHERE room_id = ? FOR UPDATE", [roomId]);
+  if (challenge && challenge.status !== "active") throw new CardBattleRoomRuleError("对方排名已发生变化，请重新打榜。", "RANK_CHANGED");
+}
 
 export type CardBattlePlaybackState = {
   completedSequence: number;
@@ -305,6 +313,7 @@ export async function updateSavedCardBattleDeck(userId: string, deckId: string, 
 }
 
 export async function saveCardBattleLineup(roomId: string, userId: string, cardIds: Array<string | null>, db: mysql.PoolConnection, collectibleBindings?: BattleCollectibleBinding[]) {
+  await assertRankingChallengeActive(roomId, db);
   const size = await cardBattleRoomMode(roomId, db) === "boss" ? 3 : CARD_BATTLE_LINEUP_SIZE;
   const selectedIds = cardIds.filter((cardId): cardId is string => Boolean(cardId));
   if (cardIds.length > size || new Set(selectedIds).size !== selectedIds.length) {
@@ -336,6 +345,7 @@ export async function saveCardBattleLineup(roomId: string, userId: string, cardI
 }
 
 export async function setCardBattleReady(roomId: string, userId: string, ready: boolean, db: mysql.PoolConnection) {
+  await assertRankingChallengeActive(roomId, db);
   const mode = await cardBattleRoomMode(roomId, db);
   const size = mode === "boss" ? 3 : CARD_BATTLE_LINEUP_SIZE;
   if (ready && mode === "boss") await requireAvailableBoss(roomId, db);
@@ -415,6 +425,8 @@ export async function buildCardBattlePlayerInput(
 }
 
 export async function startCardBattle(roomId: string, hostId: string | null, db: mysql.PoolConnection) {
+  await lockRankingForCardBattleRoom(roomId, db);
+  await assertRankingChallengeActive(roomId, db);
   const [[room]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT * FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' AND status <> 'closed' LIMIT 1 FOR UPDATE",
     [roomId],
@@ -496,6 +508,31 @@ export async function startBossIfReady(roomId: string, db: mysql.PoolConnection)
   return startCardBattle(roomId, null, db);
 }
 
+async function occupyRankAfterDefeat(game: mysql.RowDataPacket, challenge: mysql.RowDataPacket, result: CardBattleResult, connection: mysql.PoolConnection) {
+  if (!challenge.challenger_was_unranked || !result.winnerSeat || result.endReason === "surrender") return;
+  const player = parseLineupSnapshot(game.lineup_snapshot_json).find((entry) => entry.userId === String(challenge.challenger_id));
+  if (!player || result.winnerSeat === player.seat) return;
+  const [[user]] = await connection.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ?", [player.userId]);
+  if (!user || user.role === "super_admin") return;
+  const rows = await lockAndCompactCardBattleRanking(connection);
+  if (rows.some((row) => String(row.user_id) === player.userId)) return;
+  if (rows.length >= 100) {
+    await connection.query("UPDATE online_card_battles SET ranking_fallback_full = 1 WHERE id = ?", [game.id]);
+    return;
+  }
+  const cards = [...player.cards].sort((a, b) => a.slot - b.slot);
+  const lineup = cards.map((card) => card.cardId);
+  if (lineup.length !== 5 || new Set(lineup).size !== 5) throw new CardBattleRoomRuleError("打榜阵容记录不完整");
+  const bindings = cards.flatMap((card) => card.collectible ? [{ cardId: card.cardId, collectibleId: card.collectible.id }] : []);
+  const totalPower = cards.reduce((sum, card) => sum + calculateCardBattlePower(applyBattleCollectibleStats(card.tier, card.collectible)), 0);
+  const rank = rows.length + 1;
+  await connection.query(
+    "INSERT INTO card_battle_ranking_entries (rank_position,user_id,lineup_json,total_power,collectible_bindings_json) VALUES (?,?,?,?,?)",
+    [rank, player.userId, JSON.stringify(lineup), totalPower, JSON.stringify(bindings)],
+  );
+  await connection.query("UPDATE online_card_battles SET ranking_fallback_rank = ? WHERE id = ?", [rank, game.id]);
+}
+
 export async function finalizeCardBattleIfDue(roomId: string) {
   const [[game]] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT id, playback_ends_at, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? AND status = 'playing' ORDER BY game_number DESC LIMIT 1",
@@ -506,6 +543,7 @@ export async function finalizeCardBattleIfDue(roomId: string) {
   try {
     await connection.beginTransaction();
     // Serialize start/leave/finalization on the room before locking child rows.
+    await lockRankingForCardBattleRoom(roomId, connection);
     await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
     const [[locked]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE id = ? AND status = 'playing' FOR UPDATE",
@@ -517,10 +555,11 @@ export async function finalizeCardBattleIfDue(roomId: string) {
     const rewards = await settleBossRewards(locked, result, connection);
     await connection.query("UPDATE online_card_battles SET status = 'ended', ended_at = NOW(3) WHERE id = ?", [locked.id]);
     const [[rankingChallenge]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT defender_id FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+      "SELECT defender_id, challenger_id, challenger_was_unranked FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
       [roomId],
     );
     if (rankingChallenge) {
+      await occupyRankAfterDefeat(locked, rankingChallenge, result, connection);
       await connection.query(
         "UPDATE online_card_battle_seats SET is_ready = IF(user_id = ?, 1, 0) WHERE room_id = ?",
         [rankingChallenge.defender_id, roomId],
@@ -604,7 +643,8 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
   const gameStatus = currentGame ? String(currentGame.status) : null;
   const roomStatus = String(roomRows[0]?.status ?? "preparing");
   const challengeRow = roomRows[0]?.challenge_id ? roomRows[0] : null;
-  const phase = roomStatus === "preparing" ? "preparing"
+  const rankingInvalidated = challengeRow?.challenge_status === "stale";
+  const phase = rankingInvalidated ? "aborted" : roomStatus === "preparing" ? "preparing"
     : roomStatus === "playing" ? "playing"
       : gameStatus === "aborted" ? "aborted"
         : roomStatus === "ended" ? "ended" : "preparing";
@@ -636,6 +676,8 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
       defenderUserId: String(challengeRow.defender_id),
       targetRank: Number(challengeRow.target_rank),
       status: String(challengeRow.challenge_status) as "active" | "won" | "abandoned" | "stale",
+      fallbackRank: currentGame?.ranking_fallback_rank == null ? null : Number(currentGame.ranking_fallback_rank),
+      fallbackFull: Boolean(currentGame?.ranking_fallback_full),
     } : null,
     game: currentGame && result ? {
       id: String(currentGame.id),
@@ -651,7 +693,7 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
         playerSeat: player.playerSeat,
         cards: player.cards.map(publicFrozenCard),
       })),
-      settlement: playback!.complete && gameStatus !== "aborted"
+      settlement: playback!.complete && gameStatus !== "aborted" && !rankingInvalidated
         ? { winnerSeat: result.winnerSeat, endReason: result.endReason, rounds: result.rounds, players: resolveCardBattleSettlementPlayers(result) }
         : null,
     } : null,

@@ -28,6 +28,7 @@ import { ImpostorChatActionCard, ImpostorGamePanel, ImpostorSettlementCard } fro
 import { ImpostorRulesPreview } from "../components/ImpostorRulesPreview";
 import { CollectibleInfoModal } from "../components/CollectibleInfoModal";
 import { CardBattleRoomView } from "../components/CardBattleRoomView";
+import { cardBattleRoomExit } from "../shared/cardBattleNavigation";
 
 const answerLabels: Record<OnlineSoupAnswer, string> = { yes: "是", no: "不是", both: "是也不是", unknown: "不知道", irrelevant: "不重要" };
 const statusLabels = { preparing: "准备中", playing: "推理中", ended: "本轮已结束", closed: "已关闭" } as const;
@@ -151,6 +152,10 @@ function OnlineReplyQuote({ reply, mine, onLocate }: {
 
 export default function OnlineSoupRoomPage() {
   const { roomId = "" } = useParams();
+  return <OnlineSoupRoomSession key={roomId} roomId={roomId} />;
+}
+
+function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
   const [searchParams] = useSearchParams();
   const inviteToken = searchParams.get("invite") ?? "";
   const requestedMessageId = searchParams.get("locateMessage") ?? "";
@@ -171,6 +176,7 @@ export default function OnlineSoupRoomPage() {
     toggleBackgroundMusicMuted,
   } = useOnlineSoupDock();
   const [snapshot, setSnapshot] = useState<OnlineSoupSnapshot | null>(null);
+  const [rankingInvalidated, setRankingInvalidated] = useState(false);
   const [requestingAiHint, setRequestingAiHint] = useState(false);
   const [submittingFinishVote, setSubmittingFinishVote] = useState(false);
   const [retryingAiMessageId, setRetryingAiMessageId] = useState("");
@@ -281,6 +287,17 @@ export default function OnlineSoupRoomPage() {
   const roomReadAbortRef = useRef(new AbortController());
   const stateRequestStarted = useRef(0);
   const stateRequestApplied = useRef(0);
+  useEffect(() => {
+    // Each keyed room owns its reads; late replies from a departed room must
+    // never update the next room or navigate away from it. Reset for StrictMode.
+    roomReadAbortRef.current = new AbortController();
+    leavingRoomRef.current = false;
+    entryStarted.current = false;
+    return () => {
+      leavingRoomRef.current = true;
+      roomReadAbortRef.current.abort();
+    };
+  }, []);
   progressQuestionsRef.current = progressQuestions;
   roundCluesRef.current = roundClues;
   useEffect(() => { showFullRoom(roomId); }, [roomId, showFullRoom]);
@@ -344,7 +361,13 @@ export default function OnlineSoupRoomPage() {
               messagesNextCursor: current.messagesNextCursor
             };
           });
-          if (data.room.status === "closed") { showToast("房间已关闭"); returnFromInvite(); }
+          if (data.room.status === "closed") {
+            leavingRoomRef.current = true;
+            roomReadAbortRef.current.abort();
+            const ranking = data.room.cardBattle?.rankingChallenge ?? snapshotRef.current?.room.cardBattle?.rankingChallenge;
+            if (ranking) { const exit = cardBattleRoomExit(ranking); navigate(exit.to, exit.options); }
+            else { showToast("房间已关闭"); returnFromInvite(); }
+          }
         } catch (error) {
           if (leavingRoomRef.current || isAbortError(error)) return;
           if (!quietPass && error instanceof ApiError && error.code === "NOT_MEMBER") {
@@ -377,7 +400,7 @@ export default function OnlineSoupRoomPage() {
         quietPass = true;
       } while (refreshQueued.current && !leavingRoomRef.current);
     } finally { refreshPending.current = false; setLoading(false); }
-  }, [inviteToken, roomId, returnFromInvite, showToast]);
+  }, [inviteToken, navigate, roomId, returnFromInvite, showToast]);
 
   const retryEntry = useCallback(() => {
     setEntryRetryError(null);
@@ -415,7 +438,10 @@ export default function OnlineSoupRoomPage() {
       stateRequestApplied.current = requestId;
       setSnapshot((current) => current ? { ...current, ...data } : current);
       if (data.room.status === "closed") {
-        navigate("/online-soup", { replace: true });
+        leavingRoomRef.current = true;
+        roomReadAbortRef.current.abort();
+        const exit = cardBattleRoomExit(data.room.cardBattle?.rankingChallenge ?? snapshotRef.current?.room.cardBattle?.rankingChallenge);
+        navigate(exit.to, exit.options);
       }
     } catch (error) {
       if (leavingRoomRef.current || isAbortError(error)) return;
@@ -592,9 +618,19 @@ export default function OnlineSoupRoomPage() {
 
   useEffect(() => connectOnlineSoupSocket(roomId, (reason, payload) => {
     if (leavingRoomRef.current) return;
+    if (reason === "card_battle_ranking_changed") {
+      setRankingInvalidated(true);
+      void loadState();
+      return;
+    }
     if (reason === "room_closed") {
-      showToast("主持人已关闭房间");
-      navigate("/online-soup", { replace: true });
+      leavingRoomRef.current = true;
+      roomReadAbortRef.current.abort();
+      const ranking = snapshotRef.current?.room.cardBattle?.rankingChallenge
+        ?? (payload.cause === "ranking_win_confirmed" || payload.cause === "ranking_challenger_exit");
+      if (!ranking) showToast("主持人已关闭房间");
+      const exit = cardBattleRoomExit(ranking);
+      navigate(exit.to, exit.options);
       return;
     }
     if (reason === "member_kicked" && payload.userId === user?.id) {
@@ -1677,6 +1713,7 @@ export default function OnlineSoupRoomPage() {
       <CardBattleRoomView
         roomId={roomId}
         snapshot={snapshot}
+        rankingInvalidated={rankingInvalidated}
         stickerSeries={stickerSeries}
         stickersLoading={stickersLoading}
         onReload={loadState}

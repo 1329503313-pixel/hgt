@@ -2,6 +2,7 @@ import { BattleCollectiblePicker } from "./BattleCollectiblePicker";
 import { battleCardWithCollectible, battleDeckCollectible } from "../shared/battleCollectibles";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useServerCardBattlePlayback } from "../shared/useServerCardBattlePlayback";
+import { cardBattleRoomExit } from "../shared/cardBattleNavigation";
 import { seekCardBattleAnimations } from "../shared/cardBattlePlayback";
 import { CardBattleSkillFx, CardBattleProcFx, CardBattleStatusIcons } from "./CardBattleEffects";
 import { CardBattleSettlementTable } from "./CardBattleSettlementTable";
@@ -22,6 +23,7 @@ import { UnifiedBackButton } from "./UnifiedBackButton";
 type Props = {
   roomId: string;
   snapshot: OnlineSoupSnapshot;
+  rankingInvalidated?: boolean;
   stickerSeries: StickerSeries[];
   stickersLoading: boolean;
   onReload: () => Promise<unknown>;
@@ -316,6 +318,8 @@ export function Settlement({ battle, onClose, onConfirmRankingWin, confirming }:
       <div className="mt-4 space-y-4">{[...settlement.players].sort((left, right) => Number(right.seat === settlement.winnerSeat) - Number(left.seat === settlement.winnerSeat) || left.seat - right.seat).map((player) => <CardBattleSettlementTable key={player.userId} player={player} winnerSeat={settlement.winnerSeat} />)}</div>
       <p className="mt-3 text-[11px] leading-5 text-slate-400">评分 =（伤害 × 1.5 + 承伤 + 治疗 × 0.7）× 0.001，四舍五入保留 1 位小数。治疗统计治疗技能与吸血实际恢复量，不计溢出、复活及生命上限提升。</p>
       {battle.rankingChallenge && <div className="mt-4">
+        {battle.rankingChallenge.fallbackRank && <p className="mb-3 rounded-xl bg-violet-400/15 p-3 text-sm font-bold text-violet-100">已使用本次对战卡组自动占据第 {battle.rankingChallenge.fallbackRank} 名，可继续调整卡组挑战更高排名。</p>}
+        {battle.rankingChallenge.fallbackFull && <p className="mb-3 rounded-xl bg-white/10 p-3 text-sm text-slate-200">榜单 100 个位置已满，本次未自动占榜。</p>}
         {rankingWon
           ? <button type="button" className="min-h-12 w-full rounded-xl bg-amber-400 px-4 text-sm font-black text-slate-950 disabled:opacity-60" disabled={confirming} onClick={onConfirmRankingWin}>{confirming ? "确认中…" : `确认胜利并占据第 ${battle.rankingChallenge.targetRank} 名`}</button>
           : <button type="button" className="min-h-12 w-full rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15" onClick={onClose}>返回调整卡组并重新准备</button>}
@@ -324,9 +328,12 @@ export function Settlement({ battle, onClose, onConfirmRankingWin, confirming }:
   </div>;
 }
 
-export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLoading, onReload, onReloadMessages, onOpenInvite, onOpenMembers, showToast }: Props) {
+export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankChangedByEvent = false, stickerSeries, stickersLoading, onReload, onReloadMessages, onOpenInvite, onOpenMembers, showToast }: Props) {
   const navigate = useNavigate();
   const battle = snapshot.room.cardBattle!;
+  const [rankingChanged, setRankingChanged] = useState(false);
+  const [rankingCloseError, setRankingCloseError] = useState("");
+  const rankingInvalidated = rankChangedByEvent || rankingChanged || battle.rankingChallenge?.status === "stale";
   const isBoss = battle.mode === "boss";
   const lineupSize = isBoss ? 3 : 5;
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -351,12 +358,13 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   const [stickersOpen, setStickersOpen] = useState(false);
   const [chatBubbles, setChatBubbles] = useState<ChatBubble[]>([]);
   const [optimisticOwnIds, setOptimisticOwnIds] = useState<Array<string | null> | null>(null);
-  const { playback, cardStates, activeEvent, animationDelayMs, syncing } = useServerCardBattlePlayback(roomId, battle.game, onReload);
+  const { playback, cardStates, activeEvent, animationDelayMs, syncing } = useServerCardBattlePlayback(roomId, rankingInvalidated ? null : battle.game, onReload);
   const arenaRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (arenaRef.current && activeEvent) seekCardBattleAnimations(arenaRef.current, animationDelayMs);
   }, [activeEvent, animationDelayMs, playback?.serverNow]);
   const [settlementDismissedGameId, setSettlementDismissedGameId] = useState<string | null>(null);
+  const [watchedGameId, setWatchedGameId] = useState<string | null>(null);
   const [confirmingRankingWin, setConfirmingRankingWin] = useState(false);
   const onReloadRef = useRef(onReload);
   const bubbleRoomIdRef = useRef(roomId);
@@ -425,7 +433,13 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     return () => { cancelled = true; };
   }, [battle.me.seat, decksOpen, roomId, showToast]);
 
-  useEffect(() => { setSettlementDismissedGameId(null); }, [battle.game?.id]);
+  // A saved result on entry is history. Only a game observed in progress during
+  // this room visit may open a settlement when its server timeline finishes.
+  useEffect(() => {
+    if (battle.phase === "playing" && battle.game?.status === "playing" && !battle.game.playback.complete) {
+      setWatchedGameId(battle.game.id);
+    }
+  }, [battle.phase, battle.game?.id, battle.game?.status, battle.game?.playback.complete]);
 
   const currentSeat = battle.seats.find((seat) => seat.seat === battle.me.seat) ?? null;
   const serverOwnIds = currentSeat?.lineup.map((slot) => slot.card?.id ?? null) ?? [];
@@ -480,7 +494,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     if (saving) return false;
     setSaving(true);
     try { await api(`/api/online-soup/rooms/${roomId}/${path}`, { method: path === "card-battle/lineup" ? "PUT" : "POST", ...(body === undefined ? {} : { body }) }); await onReload(); return true; }
-    catch (error) { showToast(error instanceof Error ? error.message : "操作失败"); return false; }
+    catch (error) { if (error instanceof ApiError && error.code === "RANK_CHANGED") setRankingChanged(true); else showToast(error instanceof Error ? error.message : "操作失败"); return false; }
     finally { setSaving(false); }
   }
   async function chooseCard(cardId: string) {
@@ -563,7 +577,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
   }
   async function leaveRoom(close = false) {
     setSaving(true);
-    try { await api(`/api/online-soup/rooms/${roomId}/${close ? "close" : "leave"}`, { method: "POST" }); navigate(battle.rankingChallenge ? "/rankings" : "/online-soup", { replace: true, ...(battle.rankingChallenge ? { state: { tab: "card_battle" } } : {}) }); }
+    try { await api(`/api/online-soup/rooms/${roomId}/${close ? "close" : "leave"}`, { method: "POST" }); const exit = cardBattleRoomExit(battle.rankingChallenge); navigate(exit.to, exit.options); }
     catch (error) { showToast(error instanceof Error ? error.message : "退出失败"); setSaving(false); }
   }
   async function confirmRankingWin() {
@@ -572,16 +586,42 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
     try {
       await api(`/api/online-soup/rooms/${roomId}/card-battle/ranking/confirm-win`, { method: "POST" });
       showToast(`打榜成功，已占据第 ${battle.rankingChallenge.targetRank} 名`);
-      navigate("/rankings", { replace: true, state: { tab: "card_battle" } });
+      const exit = cardBattleRoomExit(battle.rankingChallenge);
+      navigate(exit.to, exit.options);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "胜利确认失败");
       if (error instanceof ApiError && error.code === "RANK_CHANGED") {
-        navigate("/rankings", { replace: true, state: { tab: "card_battle" } });
+        setRankingChanged(true);
+        setConfirmingRankingWin(false);
         return;
       }
+      showToast(error instanceof Error ? error.message : "胜利确认失败");
       setConfirmingRankingWin(false);
     }
   }
+
+  async function acknowledgeRankingChange() {
+    if (saving) return;
+    setSaving(true); setRankingCloseError("");
+    try {
+      await api(`/api/online-soup/rooms/${roomId}/card-battle/ranking/acknowledge-change`, { method: "POST" });
+      const exit = cardBattleRoomExit(true);
+      navigate(exit.to, exit.options);
+    } catch (error) {
+      setRankingCloseError(error instanceof Error ? error.message : "关闭房间失败，请重试");
+      setSaving(false);
+    }
+  }
+
+  if (rankingInvalidated) return <div className="min-h-[100dvh] bg-[#071426]">
+    <Modal hideClose onClose={() => undefined}>
+      <div role="alertdialog" aria-modal="true" aria-labelledby="ranking-changed-title" aria-describedby="ranking-changed-description" className="space-y-4 text-center">
+        <h2 id="ranking-changed-title" className="text-xl font-black text-ink">打榜已结束</h2>
+        <p id="ranking-changed-description" className="text-sm leading-6 text-muted">对方排名已发生变化，请重新打榜。</p>
+        {rankingCloseError && <p role="alert" className="text-sm text-red-600">{rankingCloseError}</p>}
+        <button type="button" autoFocus className="btn btn-primary min-h-12 w-full" disabled={saving} onClick={() => void acknowledgeRankingChange()}>{saving ? "关闭中…" : "确认"}</button>
+      </div>
+    </Modal>
+  </div>;
 
   return <div className="card-battle-room flex h-[100dvh] flex-col overflow-hidden bg-[#071426] text-white">
     <header className="relative z-[100] flex min-h-14 shrink-0 items-center gap-3 border-b border-white/10 bg-slate-950/90 px-3 backdrop-blur-xl">
@@ -630,7 +670,7 @@ export function CardBattleRoomView({ roomId, snapshot, stickerSeries, stickersLo
         {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={saving} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="mt-2 max-h-60 overflow-y-auto rounded-xl p-2 text-slate-900" />}
       </div>
 
-      {animationComplete && battle.game?.settlement && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} onConfirmRankingWin={() => void confirmRankingWin()} confirming={confirmingRankingWin} />}
+      {battle.phase === "ended" && animationComplete && battle.game?.settlement && watchedGameId === battle.game.id && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} onConfirmRankingWin={() => void confirmRankingWin()} confirming={confirmingRankingWin} />}
     </main>
 
     {detailsOpen && <BossLineupDetails groups={[{ name: "BOSS", cards: topSeat.lineup.flatMap((item) => item.card ? [item.card] : []) }, ...([1, 2, 3] as const).map((seat) => { const member = displaySeat(seat); return { name: member.user?.nickname ?? `空席 ${seat}`, cards: member.lineup.flatMap((item) => item.card ? [item.card] : []) }; })]} onClose={() => setDetailsOpen(false)} />}

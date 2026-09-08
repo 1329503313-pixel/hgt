@@ -280,3 +280,16 @@ test("游戏榜提供固定百名卡牌对战榜、卡组详情和私密打榜�
   assert.match(view, /私密打榜 · 目标第/);
   assert.match(view, /!battle\.rankingChallenge && <button[^\n]+aria-label="分享房间"/);
 });
+
+test("确认胜利与房间关闭统一返回已注册的卡牌榜，旧地址可刷新恢复", async () => {
+  const { cardBattleRoomExit, CARD_BATTLE_RANKINGS_PATH } = await import("../src/shared/cardBattleNavigation");
+  const app = readFileSync(new URL("../src/UserApp.tsx", import.meta.url), "utf8");
+  const room = readFileSync(new URL("../src/pages/OnlineSoupRoomPage.tsx", import.meta.url), "utf8");
+  assert.ok(app.includes(`path="${CARD_BATTLE_RANKINGS_PATH.slice(1)}"`));
+  assert.match(app, /path="rankings" element=\{<Navigate to=\{CARD_BATTLE_RANKINGS_PATH\} state=\{CARD_BATTLE_RANKINGS_STATE\} replace/);
+  assert.deepEqual(cardBattleRoomExit({ status: "active" }), { to: "/mine/rankings", options: { replace: true, state: { tab: "card_battle" } } });
+  assert.deepEqual(cardBattleRoomExit(null), { to: "/online-soup", options: { replace: true } });
+  assert.doesNotMatch(view, /navigate\("\/rankings"/);
+  assert.match(room, /payload\.cause === "ranking_win_confirmed"/);
+  assert.match(room, /cardBattleRoomExit\(ranking\)/);
+});

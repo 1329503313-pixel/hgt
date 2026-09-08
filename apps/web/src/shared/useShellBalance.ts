@@ -37,20 +37,18 @@ export function useShellBalance(userId: string | undefined) {
     };
     window.addEventListener(SHELL_BALANCE_UPDATED_EVENT, handleBalanceUpdate);
     const loadBalance = () => {
-      const version = updateVersionRef.current;
+      const version = ++updateVersionRef.current;
       void api<ShellTaskCenter>("/api/me/shells", { bypassCache: true, dedupe: false })
         .then((data) => {
           if (active && updateVersionRef.current === version) setBalance(data.balance);
         })
-        .catch(() => {
-          if (active && updateVersionRef.current === version) setBalance(null);
-        });
+        .catch(() => {});
     };
     loadBalance();
     const unsubscribe = subscribeServerEvent("unread_changed", (event) => {
       try {
         const payload = JSON.parse(event.data) as { source?: string };
-        if (payload.source === "badge_unlock" || payload.source === "shell_adjustment" || payload.source === "gift_received" || payload.source === "collectible_bid" || payload.source === "collectible_outbid") loadBalance();
+        if (payload.source === "badge_unlock" || payload.source === "shell_adjustment" || payload.source?.startsWith("admin_shell_grant_") || payload.source === "gift_received" || payload.source === "collectible_bid" || payload.source === "collectible_outbid") loadBalance();
       } catch {
         // A later event or remount will reconcile the balance.
       }
@@ -66,10 +64,19 @@ export function useShellBalance(userId: string | undefined) {
         loadBalance();
       }
     });
+    const unsubscribeConnected = subscribeServerEvent("connected", loadBalance);
+    const resume = () => { if (document.visibilityState === "visible") loadBalance(); };
+    window.addEventListener("focus", resume);
+    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", resume);
     return () => {
       active = false;
       unsubscribe();
       unsubscribeBalance();
+      unsubscribeConnected();
+      window.removeEventListener("focus", resume);
+      window.removeEventListener("online", resume);
+      document.removeEventListener("visibilitychange", resume);
       window.removeEventListener(SHELL_BALANCE_UPDATED_EVENT, handleBalanceUpdate);
     };
   }, [userId]);

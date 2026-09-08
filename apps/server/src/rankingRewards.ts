@@ -1,6 +1,7 @@
 import type mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
+import { lockAndCompactCardBattleRanking } from "./cardBattleRankingState.js";
 import { creditGiftInventory } from "./giftInventory.js";
 import { MAX_EXPERIENCE } from "./levelSystem.js";
 import { SYSTEM_BADGE_ACHIEVEMENT_POINTS } from "./badgeRewards.js";
@@ -184,6 +185,7 @@ async function rankingStandings(
   periodStart: Date,
   periodEnd: Date
 ): Promise<Standings> {
+  await lockAndCompactCardBattleRanking(connection);
   const [achievementRows, levelRows, charmRows, generosityRows, collectionRows, collectibleRows, drawRows, cardBattleRows] = await Promise.all([
     connection.query<mysql.RowDataPacket[]>(
       `SELECT u.id, u.created_at, ubu.badge_key, ubu.unlocked_at,

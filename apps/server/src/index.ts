@@ -2742,12 +2742,14 @@ app.get("/api/me/invited-users", async (req, res) => {
 app.get("/api/me/shells", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  await reconcileAdminShellGrantsOnLogin(user.id);
   res.json(await shellTaskCenter(user.id));
 });
 
 app.get("/api/me/shell-transactions", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
+  await reconcileAdminShellGrantsOnLogin(user.id);
   const limit = Math.min(50, Math.max(1, Math.floor(Number(req.query.limit ?? 20) || 20)));
   const offset = Math.max(0, Math.floor(Number(req.query.offset ?? 0) || 0));
   res.json(await shellTransactions(user.id, limit, offset));
@@ -2774,6 +2776,9 @@ app.get("/api/events", async (req, res) => {
     if (clients.size === 0) userEventClients.delete(user.id);
     unregisterPresenceConnection(user.id);
   });
+  // A restored SSE session may not repeat /auth/me (e.g. an APP returning from background).
+  void reconcileAdminShellGrantsOnLogin(user.id)
+    .catch((error) => console.error("Admin shell grant session reconciliation failed:", error));
 });
 
 app.patch("/api/me/nickname", async (req, res) => {
@@ -6622,8 +6627,7 @@ app.get("/api/ranking-rewards/:settlementId", async (req, res) => {
 app.get("/api/notifications", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  const expiredGrantUserIds = await expireAdminShellGrants(user.id);
-  if (expiredGrantUserIds.length > 0) emitUnreadChanged(user.id, "admin_shell_grant_expired");
+  await reconcileAdminShellGrantsOnLogin(user.id);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT n.*,
       CASE

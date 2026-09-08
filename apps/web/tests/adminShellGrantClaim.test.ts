@@ -18,3 +18,14 @@ test("后台明确说明在线立即到账、离线登录领取和 N×24 小时�
   assert.match(userManagement, /N×24 小时内登录领取/);
   assert.match(userManagement, /待登录领取/);
 });
+
+test("恢复实时连接、查询余额和打开通知均结算同一份待领取账本", () => {
+  const server = readFileSync(new URL("../../server/src/index.ts", import.meta.url), "utf8");
+  for (const path of ["/api/events", "/api/me/shells", "/api/me/shell-transactions", "/api/notifications"]) {
+    const start = server.indexOf(`app.get("${path}"`);
+    assert.ok(start >= 0);
+    const route = server.slice(start, server.indexOf('\n});', start));
+    assert.match(route, /reconcileAdminShellGrantsOnLogin\(user\.id\)/, path);
+    if (path !== "/api/events") assert.match(route, /await reconcileAdminShellGrantsOnLogin\(user\.id\)/, path);
+  }
+});

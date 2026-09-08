@@ -2916,6 +2916,12 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS card_battle_ranking_lock (
+      id TINYINT UNSIGNED PRIMARY KEY
+    ) ENGINE=InnoDB;
+  `);
+  await pool.query("INSERT IGNORE INTO card_battle_ranking_lock (id) VALUES (1)");
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS card_battle_ranking_entries (
       rank_position TINYINT UNSIGNED NOT NULL,
       user_id VARCHAR(64) NOT NULL,
@@ -3095,6 +3101,9 @@ export async function initDatabase() {
   for (const table of ["online_card_battle_seats", "user_card_battle_decks", "card_battle_ranking_entries"]) {
     await ensureColumn(table, "collectible_bindings_json", "collectible_bindings_json JSON NULL");
   }
+  await ensureColumn("card_battle_ranking_challenges", "challenger_was_unranked", "challenger_was_unranked TINYINT(1) NOT NULL DEFAULT 0");
+  await ensureColumn("online_card_battles", "ranking_fallback_rank", "ranking_fallback_rank TINYINT UNSIGNED NULL");
+  await ensureColumn("online_card_battles", "ranking_fallback_full", "ranking_fallback_full TINYINT(1) NOT NULL DEFAULT 0");
   await ensureColumn("collectibles", "collectible_type", "collectible_type ENUM('treasure','commemorative','honor') NOT NULL DEFAULT 'treasure' AFTER rarity");
   await ensureColumn("collectibles", "collectible_value", "collectible_value INT UNSIGNED NOT NULL DEFAULT 1 AFTER rarity");
   await pool.query(`

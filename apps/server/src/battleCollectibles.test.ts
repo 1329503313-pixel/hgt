@@ -153,6 +153,7 @@ test("卡组保存/重命名/加载保留绑定，换位随卡移动，换下解
   let row: Record<string, unknown> = { id: "deck", name: "旧卡组", lineup_json: ids, collectible_bindings_json: null };
   let seat: Record<string, unknown> = { seat_number: 1, lineup_json: ids, collectible_bindings_json: null, is_ready: 0 };
   const db = { query: async (sql: string, params: unknown[] = []) => {
+    if (sql.includes("FROM card_battle_ranking_challenges")) return [[]];
     if (sql.includes("SELECT card_battle_mode FROM online_soup_rooms")) return [[{ card_battle_mode: "1v1" }]];
     if (sql.includes("FROM collectibles")) return [owned ? [{ id: "r", name: "收藏品", collectible_no: "001", battle_effect_type: "attack", battle_effect_value: 20 }] : []];
     if (sql.includes("FROM user_asset_cards")) return [ids.map((id) => ({ id }))];

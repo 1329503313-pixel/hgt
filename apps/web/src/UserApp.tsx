@@ -3,6 +3,7 @@ import { Navigate, Routes, Route } from "react-router-dom";
 import { useApp } from "./context/AppContext";
 import { IncomingMessageBanner } from "./components/IncomingMessageBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { CARD_BATTLE_RANKINGS_PATH, CARD_BATTLE_RANKINGS_STATE } from "./shared/cardBattleNavigation";
 import MainLayout from "./layouts/MainLayout";
 import ContentNavLayout from "./layouts/ContentNavLayout";
 import { RouteScrollManager } from "./components/RouteScrollManager";
@@ -88,6 +89,7 @@ export default function UserApp() {
               <Route path="mine/achievements" element={<MyAchievementsPage />} />
               <Route path="mine/excellent-author" element={<ExcellentAuthorPage />} />
               <Route path="mine/rankings" element={<RankingsPage />} />
+              <Route path="rankings" element={<Navigate to={CARD_BATTLE_RANKINGS_PATH} state={CARD_BATTLE_RANKINGS_STATE} replace />} />
               <Route path="mine/tasks" element={<ShellTaskCenterPage />} />
               <Route path="mine/shells/transactions" element={<ShellTransactionsPage />} />
               <Route path="mine/store" element={<AssetStorePage />} />

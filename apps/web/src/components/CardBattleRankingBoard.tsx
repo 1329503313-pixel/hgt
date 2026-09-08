@@ -1,11 +1,13 @@
 import { battleCardWithCollectible, battleDeckCollectible } from "../shared/battleCollectibles";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, Crown, Layers, ShieldQuestion, Sparkles, Swords, X } from "lucide-react";
+import { ChevronDown, Crown, ShieldQuestion, Sparkles, Swords, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { OnlineCardBattleCard, OnlineCardBattleDeck } from "../shared/types";
 import { Modal } from "./Modal";
 import { VipIdentity } from "./VipIdentity";
+import { CardBattleRankingDeckEditor } from "./CardBattleRankingDeckEditor";
+import type { BattleCollectibleBinding } from "@hgt/shared";
 
 type RankingEntry = { rank: number; occupied: false } | {
   rank: number;
@@ -90,8 +92,8 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
     setSavingDeckId(deck.id);
     try {
       if (deckAction.kind === "claim") {
-        await api(`/api/online-soup/card-battle-rankings/${deckAction.rank}/claim`, { method: "POST", body: { deckId: deck.id } });
-        showToast(data?.ownRank ? `已更新至卡牌对战榜第 ${deckAction.rank} 名` : `已占据卡牌对战榜第 ${deckAction.rank} 名`);
+        const result = await api<{ entry: { rank: number } }>(`/api/online-soup/card-battle-rankings/${deckAction.rank}/claim`, { method: "POST", body: { deckId: deck.id } });
+        showToast(`已占据卡牌对战榜第 ${result.entry.rank} 名`);
         setDeckAction(null);
         await load();
       } else {
@@ -102,12 +104,21 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
     finally { setSavingDeckId(null); }
   }
 
+  async function saveDefaultDeck(name: string, cardIds: string[], collectibleBindings: BattleCollectibleBinding[]) {
+    setSavingDeckId("default");
+    try {
+      const { deck } = await api<{ deck: OnlineCardBattleDeck }>("/api/online-soup/card-battle/decks", { method: "POST", body: { name, cardIds, collectibleBindings } });
+      setDecks((current) => [deck, ...current]);
+      await useDeck(deck);
+    } finally { setSavingDeckId(null); }
+  }
+
   const canChallengeDetail = detail && detail.user.id !== currentUserId && (data?.ownRank == null || detail.rank < data.ownRank);
 
   return <div className="rankings-workspace">
     <aside className="rankings-spotlight is-card-battle hidden lg:flex">
       <div className="rankings-spotlight-heading"><span><Crown size={19} /></span><div><p>RANKED DUEL</p><h2>卡牌对战榜</h2></div></div>
-      <div className="rankings-rule-card"><Swords size={17} /><div><strong>当前榜位</strong><p>榜单固定 100 个位置。空位可使用已保存的五张卡组直接占据；已有人时可查看守榜卡组并发起私密 1v1 挑战。</p></div></div>
+      <div className="rankings-rule-card"><Swords size={17} /><div><strong>当前榜位</strong><p>榜单最多 100 人，空缺会自动收拢并保持用户先后顺序。空位可直接配置或选择五张卡组占据；已有人时可发起私密 1v1 挑战。未上榜用户正常战败后，会用本局卡组占据最靠前的空位。</p></div></div>
       <div className="rankings-rule-card"><Sparkles size={17} /><div><strong>奖励结算</strong><p>复用排行榜礼物奖励：每周一 00:00 和每月首日 00:00 按当时榜位结算；月结算第一额外获得史诗限时徽章“游戏王”。</p></div></div>
       <div className="rankings-own-summary"><span>我的当前排名</span><strong>{data?.ownRank ? `第 ${data.ownRank} 名` : "暂未上榜"}</strong></div>
     </aside>
@@ -146,7 +157,7 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
         const available = deck.collectiblesAvailable !== false && deck.cardIds.length === 5 && deckCards.every(Boolean);
         const totalPower = deckCards.reduce((sum, card) => sum + (card?.combatPower ?? 0), 0);
         return <article key={deck.id} className="rounded-2xl border border-line bg-white p-3 shadow-sm"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-black text-ink">{deck.name}</h3><p className={`mt-1 text-xs font-bold ${available ? "text-amber-600" : "text-red-600"}`}>{available ? `总战力 ${number.format(totalPower)}` : "含有当前不可用卡牌或收藏品"}</p></div><button type="button" className="btn btn-primary min-h-11 shrink-0" disabled={!available || Boolean(savingDeckId)} onClick={() => void useDeck(deck)}>{savingDeckId === deck.id ? "处理中…" : deckAction.kind === "claim" ? "使用并占榜" : "使用并打榜"}</button></div><div className="mt-3 grid grid-cols-5 gap-2">{deckCards.map((card, index) => <div key={`${deck.cardIds[index]}-${index}`} className="min-w-0"><div className="relative aspect-[5/7] overflow-hidden rounded-lg bg-slate-100">{card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" loading="lazy" /> : <span className="grid h-full place-items-center text-[9px] text-muted">不可用</span>}<span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-950/75 text-[9px] font-black text-white">{index + 1}</span></div><p className="mt-1 truncate text-[10px] font-bold text-amber-700" title={card?.collectible?.name}>{card?.collectible?.name}</p><p className="mt-1 truncate text-[9px] font-bold text-muted">{card?.name ?? "未知卡牌"}</p></div>)}</div></article>;
-      })}{decks.length === 0 && <div className="py-12 text-center"><Layers className="mx-auto text-slate-300" size={36} /><p className="mt-3 font-black text-ink">还没有已保存卡组</p><p className="mt-1 text-sm text-muted">请先进入普通卡牌对战房，选满五张卡牌并保存卡组。</p></div>}</div>}
+      })}{decks.length === 0 && <CardBattleRankingDeckEditor cards={cards} actionLabel={deckAction.kind === "claim" ? "保存默认卡组并占榜" : "保存默认卡组并打榜"} onSave={saveDefaultDeck} />}</div>}
     </Modal>}
   </div>;
 }

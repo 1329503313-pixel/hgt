@@ -13,6 +13,7 @@ import {
 } from "./cardBattleRoom.js";
 import { resolveCardBattlePlayback } from "./cardBattlePlayback.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
+import { compactCardBattleRankingEntries, lockAndCompactCardBattleRanking, lockCardBattleRanking, reconcileCardBattleRanking } from "./cardBattleRankingState.js";
 
 export class CardBattleRankingRuleError extends Error {
   constructor(message: string, public readonly code = "CARD_BATTLE_RANKING_RULE") {
@@ -30,12 +31,10 @@ type RankingEntry = {
 };
 
 export function promoteCardBattleRankingEntries(entries: RankingEntry[], challenger: RankingEntry, targetRank: number) {
-  const shifted = entries
-    .filter((entry) => entry.userId !== challenger.userId)
-    .map((entry) => entry.rank >= targetRank ? { ...entry, rank: entry.rank + 1 } : { ...entry })
-    .filter((entry) => entry.rank <= 100);
-  shifted.push({ ...challenger, rank: targetRank });
-  return shifted.sort((left, right) => left.rank - right.rank);
+  const ordered = [...entries].sort((a, b) => a.rank - b.rank).filter((entry) => entry.userId !== challenger.userId);
+  const targetIndex = ordered.findIndex((entry) => entry.rank >= targetRank);
+  ordered.splice(targetIndex < 0 ? ordered.length : targetIndex, 0, challenger);
+  return compactCardBattleRankingEntries(ordered.map((entry, index) => ({ ...entry, rank: index + 1 })));
 }
 
 export function canClaimEmptyCardBattleRank(currentRank: number | null, targetRank: number) {
@@ -84,6 +83,7 @@ async function assertRankingEligibleUser(userId: string, db: mysql.Pool | mysql.
 }
 
 export async function listCardBattleRanking(limit: 10 | 100) {
+  await reconcileCardBattleRanking();
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT entries.rank_position, entries.user_id, entries.total_power AS saved_total_power,
        entries.achieved_at, users.nickname, users.avatar IS NOT NULL AS has_avatar,
@@ -149,6 +149,7 @@ export async function cardBattleRankingOwnRank(userId: string) {
 }
 
 export async function cardBattleRankingDetail(rank: number) {
+  await reconcileCardBattleRanking();
   const [[row]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT entries.*, users.nickname, users.avatar IS NOT NULL AS has_avatar,
        users.vip_growth_value, users.vip_expires_at, users.vip_legacy_active
@@ -188,18 +189,17 @@ export async function claimEmptyCardBattleRank(userId: string, rank: number, dec
   try {
     await connection.beginTransaction();
     await assertRankingEligibleUser(userId, connection);
-    const [slotResult, ownResult] = await Promise.all([
-      connection.query<mysql.RowDataPacket[]>("SELECT user_id FROM card_battle_ranking_entries WHERE rank_position = ? FOR UPDATE", [rank]),
-      connection.query<mysql.RowDataPacket[]>("SELECT rank_position FROM card_battle_ranking_entries WHERE user_id = ? FOR UPDATE", [userId]),
-    ]);
-    const slot = slotResult[0][0];
-    const own = ownResult[0][0];
+    const rows = await lockAndCompactCardBattleRanking(connection);
+    const slot = rows.find((row) => Number(row.rank_position) === rank);
+    const own = rows.find((row) => String(row.user_id) === userId);
     if (slot) throw new CardBattleRankingRuleError("该排名已被占据，请刷新榜单", "RANK_OCCUPIED");
     const currentRank = own ? Number(own.rank_position) : null;
     if (!canClaimEmptyCardBattleRank(currentRank, rank)) {
       throw new CardBattleRankingRuleError("已上榜用户只能移动到比当前排名更靠前的空位");
     }
     const selection = await validatedDeck(userId, deckId, connection);
+    // Clicking any empty slot ultimately occupies the first available position.
+    rank = rows.length + 1;
     if (currentRank === null) {
       await connection.query(
         `INSERT INTO card_battle_ranking_entries (rank_position, user_id, lineup_json, total_power, collectible_bindings_json)
@@ -215,13 +215,13 @@ export async function claimEmptyCardBattleRank(userId: string, rank: number, dec
       );
     }
     await connection.commit();
-    return cardBattleRankingDetail(rank);
   } catch (error) {
     await connection.rollback().catch(() => undefined);
     throw error;
   } finally {
     connection.release();
   }
+  return cardBattleRankingDetail(rank);
 }
 
 async function uniqueRoomCode(db: mysql.PoolConnection) {
@@ -238,18 +238,7 @@ export async function createCardBattleRankingChallenge(userId: string, rank: num
   try {
     await connection.beginTransaction();
     await assertRankingEligibleUser(userId, connection);
-    await connection.query(
-      `UPDATE card_battle_ranking_challenges challenges
-       JOIN online_soup_rooms rooms ON rooms.id = challenges.room_id
-       SET challenges.status = 'abandoned'
-       WHERE challenges.challenger_id = ? AND challenges.status = 'active' AND rooms.status = 'closed'`,
-      [userId],
-    );
-    const [[activeChallenge]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT room_id FROM card_battle_ranking_challenges WHERE challenger_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
-      [userId],
-    );
-    if (activeChallenge) throw new CardBattleRankingRuleError("你已有进行中的打榜房间，请先完成或退出当前挑战", "ACTIVE_CHALLENGE");
+    await lockAndCompactCardBattleRanking(connection);
     const [[target]] = await connection.query<mysql.RowDataPacket[]>(
       `SELECT entries.*, users.nickname FROM card_battle_ranking_entries entries
        JOIN users ON users.id = entries.user_id WHERE entries.rank_position = ? LIMIT 1 FOR UPDATE`,
@@ -293,9 +282,9 @@ export async function createCardBattleRankingChallenge(userId: string, rank: num
     );
     await connection.query(
       `INSERT INTO card_battle_ranking_challenges
-        (id, room_id, challenger_id, defender_id, target_rank, defender_lineup_json, defender_snapshot_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [challengeId, roomId, userId, target.user_id, rank, JSON.stringify(defenderCardIds), JSON.stringify([defenderSnapshot])],
+        (id, room_id, challenger_id, defender_id, target_rank, defender_lineup_json, defender_snapshot_json, challenger_was_unranked)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [challengeId, roomId, userId, target.user_id, rank, JSON.stringify(defenderCardIds), JSON.stringify([defenderSnapshot]), ownRank ? 0 : 1],
     );
     await connection.commit();
     return { roomId, challengeId, code, challengerNickname };
@@ -316,18 +305,45 @@ export async function isCardBattleRankingRoom(roomId: string, db: mysql.Pool | m
 }
 
 export async function abandonCardBattleRankingChallenge(roomId: string, userId: string, db: mysql.PoolConnection) {
+  await lockCardBattleRanking(db);
   await db.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
   const [[challenge]] = await db.query<mysql.RowDataPacket[]>(
-    "SELECT * FROM card_battle_ranking_challenges WHERE room_id = ? AND challenger_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+    "SELECT * FROM card_battle_ranking_challenges WHERE room_id = ? AND challenger_id = ? AND status IN ('active','stale') LIMIT 1 FOR UPDATE",
     [roomId, userId],
   );
   if (!challenge) return false;
-  await forfeitCardBattle(roomId, userId, db);
-  await db.query("UPDATE card_battle_ranking_challenges SET status = 'abandoned' WHERE id = ?", [challenge.id]);
+  if (challenge.status === "active") {
+    await forfeitCardBattle(roomId, userId, db);
+    await db.query("UPDATE card_battle_ranking_challenges SET status = 'abandoned' WHERE id = ?", [challenge.id]);
+  }
   await db.query("UPDATE online_card_battles SET status = 'aborted', ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'", [roomId]);
   await db.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
   await db.query("UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ?", [roomId]);
   return true;
+}
+
+async function invalidateRankingRooms(roomIds: string[], connection: mysql.PoolConnection) {
+  for (const roomId of [...roomIds].sort()) {
+    await connection.query("UPDATE online_soup_rooms SET status = 'ended', last_action_at = NOW() WHERE id = ? AND status <> 'closed'", [roomId]);
+    await connection.query("UPDATE card_battle_ranking_challenges SET status = 'stale' WHERE room_id = ? AND status = 'active'", [roomId]);
+    await connection.query("UPDATE online_card_battles SET status = 'aborted', playback_ends_at = NOW(3), ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'", [roomId]);
+    await connection.query("UPDATE online_card_battle_seats SET is_ready = 0 WHERE room_id = ?", [roomId]);
+  }
+}
+
+export async function acknowledgeCardBattleRankingChange(roomId: string, userId: string) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await lockCardBattleRanking(connection);
+    const [[challenge]] = await connection.query<mysql.RowDataPacket[]>("SELECT status FROM card_battle_ranking_challenges WHERE room_id = ? AND challenger_id = ? FOR UPDATE", [roomId, userId]);
+    if (challenge?.status !== "stale") throw new CardBattleRankingRuleError("当前房间没有待确认的排名变化");
+    await abandonCardBattleRankingChallenge(roomId, userId, connection);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally { connection.release(); }
 }
 
 export async function confirmCardBattleRankingWin(roomId: string, userId: string) {
@@ -335,12 +351,15 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
   let committed = false;
   try {
     await connection.beginTransaction();
+    const lockedRows = await lockAndCompactCardBattleRanking(connection);
     await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
     const [[challenge]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM card_battle_ranking_challenges WHERE room_id = ? AND challenger_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+      "SELECT * FROM card_battle_ranking_challenges WHERE room_id = ? AND challenger_id = ? LIMIT 1 FOR UPDATE",
       [roomId, userId],
     );
     if (!challenge) throw new CardBattleRankingRuleError("挑战不存在、已结束或无权确认");
+    if (challenge.status === "stale") throw new CardBattleRankingRuleError("对方排名已发生变化，请重新打榜。", "RANK_CHANGED");
+    if (challenge.status !== "active") throw new CardBattleRankingRuleError("挑战已结束");
     const [[game]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? AND status = 'ended' ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
       [roomId],
@@ -355,17 +374,12 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
     if (!resolveCardBattlePlayback(result, game.started_at, String(game.status), new Date(game.db_now).getTime()).complete) {
       throw new CardBattleRankingRuleError("本局服务器时间轴尚未结束");
     }
-    const [lockedRows] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM card_battle_ranking_entries ORDER BY rank_position FOR UPDATE",
-    );
     const target = lockedRows.find((row) => Number(row.rank_position) === Number(challenge.target_rank));
     if (!target || String(target.user_id) !== String(challenge.defender_id)) {
-      await connection.query("UPDATE card_battle_ranking_challenges SET status = 'stale' WHERE id = ?", [challenge.id]);
-      await connection.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ?", [roomId]);
-      await connection.query("UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ?", [roomId]);
+      await invalidateRankingRooms([roomId], connection);
       await connection.commit();
       committed = true;
-      throw new CardBattleRankingRuleError("该排名已被其他挑战结果改变，本局不更新榜单，请退出后重新挑战", "RANK_CHANGED");
+      throw new CardBattleRankingRuleError("对方排名已发生变化，请重新打榜。", "RANK_CHANGED");
     }
     const lineup = challengerPlayer.cards.slice().sort((left, right) => left.slot - right.slot).map((card) => card.cardId);
     const collectibleBindings = challengerPlayer.cards.flatMap((card) => card.collectible ? [{ cardId: card.cardId, collectibleId: card.collectible.id }] : []);
@@ -388,11 +402,15 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
       );
     }
     await connection.query("UPDATE card_battle_ranking_challenges SET status = 'won', confirmed_at = NOW(3) WHERE id = ?", [challenge.id]);
+    const [otherChallenges] = await connection.query<mysql.RowDataPacket[]>("SELECT room_id, challenger_id, defender_id, target_rank FROM card_battle_ranking_challenges WHERE status = 'active' ORDER BY room_id FOR UPDATE");
+    const nextOccupants = new Map(next.map((entry) => [entry.rank, entry.userId]));
+    const invalidatedRoomIds = otherChallenges.filter((other) => String(other.challenger_id) === userId || nextOccupants.get(Number(other.target_rank)) !== String(other.defender_id)).map((other) => String(other.room_id));
+    await invalidateRankingRooms(invalidatedRoomIds, connection);
     await connection.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ?", [roomId]);
     await connection.query("UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ?", [roomId]);
     await connection.commit();
     committed = true;
-    return { rank: Number(challenge.target_rank) };
+    return { rank: Number(challenge.target_rank), invalidatedRoomIds };
   } catch (error) {
     if (!committed) await connection.rollback().catch(() => undefined);
     throw error;

@@ -7,6 +7,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { config } from "./config.js";
 import { pool } from "./db.js";
+import { lockRankingForCardBattleRoom } from "./cardBattleRankingState.js";
 import { isBossRoom, BOSS_SPECTATOR_SEATS } from "./cardBattleBossRules.js";
 import { bossAvailable, CardBattleBossRuleError } from "./cardBattleBoss.js";
 import { registerCardBattleBossRoutes } from "./cardBattleBossRoutes.js";
@@ -95,6 +96,7 @@ import {
 } from "./cardBattleRoom.js";
 import {
   abandonCardBattleRankingChallenge,
+  acknowledgeCardBattleRankingChange,
   CardBattleRankingRuleError,
   cardBattleRankingDetail,
   cardBattleRankingOwnRank,
@@ -429,6 +431,23 @@ router.get("/card-battle/decks", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
   res.json({ decks: await loadSavedCardBattleDecks(user.id) });
+});
+
+router.post("/card-battle/decks", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const parsed = z.object({
+    name: z.string().trim().min(1, "请输入卡组名称").max(30, "卡组名称最多 30 个字"),
+    cardIds: z.array(z.string().trim().min(1).max(64)).length(5, "请选择五张不同卡牌"),
+    collectibleBindings: battleCollectibleBindingsSchema.optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "卡组信息不正确");
+  try {
+    res.status(201).json({ deck: await createSavedCardBattleDeck(user.id, parsed.data.name, parsed.data.cardIds, pool, parsed.data.collectibleBindings) });
+  } catch (error) {
+    if (error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message);
+    throw error;
+  }
 });
 
 router.get("/card-battle/eligible-cards", async (req, res) => {
@@ -2923,6 +2942,7 @@ router.put("/rooms/:roomId/card-battle/lineup", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    await lockRankingForCardBattleRoom(context.room.id, connection);
     const [[room]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT * FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' FOR UPDATE",
       [context.room.id],
@@ -2941,7 +2961,7 @@ router.put("/rooms/:roomId/card-battle/lineup", async (req, res) => {
     void notifyRoom(context.room.id, "card_battle_lineup_changed", { userId: context.user.id });
   } catch (error) {
     await connection.rollback().catch(() => {});
-    if (error instanceof CardBattleBossRuleError || error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message);
+    if (error instanceof CardBattleBossRuleError || error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message, error instanceof CardBattleRoomRuleError ? error.code : undefined);
     throw error;
   } finally { connection.release(); }
 });
@@ -2956,6 +2976,7 @@ router.post("/rooms/:roomId/card-battle/ready", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    await lockRankingForCardBattleRoom(context.room.id, connection);
     const [[room]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT * FROM online_soup_rooms WHERE id = ? AND content_type = 'card_battle' FOR UPDATE",
       [context.room.id],
@@ -2979,7 +3000,7 @@ router.post("/rooms/:roomId/card-battle/ready", async (req, res) => {
     void notifyRoom(context.room.id, "card_battle_ready_changed", { userId: context.user.id, ready: parsed.data.ready });
   } catch (error) {
     await connection.rollback().catch(() => {});
-    if (error instanceof CardBattleBossRuleError || error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message);
+    if (error instanceof CardBattleBossRuleError || error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message, error instanceof CardBattleRoomRuleError ? error.code : undefined);
     throw error;
   } finally { connection.release(); }
 });
@@ -3078,9 +3099,23 @@ router.post("/rooms/:roomId/card-battle/ranking/confirm-win", async (req, res) =
   if (!context) return;
   if (String(context.room.room_scope ?? "public") !== "ranking_challenge") return fail(res, 409, "当前不是打榜房间");
   try {
-    const result = await confirmCardBattleRankingWin(context.room.id, context.user.id);
+    const { invalidatedRoomIds, ...result } = await confirmCardBattleRankingWin(context.room.id, context.user.id);
+    for (const roomId of invalidatedRoomIds) notifyRoom(roomId, "card_battle_ranking_changed");
     res.json({ ok: true, ...result, roomClosed: true });
     void notifyRoom(context.room.id, "room_closed", { cause: "ranking_win_confirmed" });
+  } catch (error) {
+    if (error instanceof CardBattleRankingRuleError && error.code === "RANK_CHANGED") notifyRoom(context.room.id, "card_battle_ranking_changed");
+    return failCardBattleRanking(res, error);
+  }
+});
+
+router.post("/rooms/:roomId/card-battle/ranking/acknowledge-change", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  try {
+    await acknowledgeCardBattleRankingChange(req.params.roomId, user.id);
+    res.json({ ok: true, roomClosed: true });
+    notifyRoom(req.params.roomId, "room_closed", { cause: "ranking_challenger_exit" });
   } catch (error) { return failCardBattleRanking(res, error); }
 });
 
@@ -3979,7 +4014,7 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       return;
     } catch (error) {
       await connection.rollback().catch(() => {});
-      if (error instanceof CardBattleBossRuleError || error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message);
+      if (error instanceof CardBattleBossRuleError || error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message, error instanceof CardBattleRoomRuleError ? error.code : undefined);
       throw error;
     } finally { connection.release(); }
   }
