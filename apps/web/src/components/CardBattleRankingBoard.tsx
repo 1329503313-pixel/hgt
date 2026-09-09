@@ -1,12 +1,13 @@
+import { CardBattleDeckActions } from "./CardBattleDeckActions";
 import { battleCardWithCollectible, battleDeckCollectible } from "../shared/battleCollectibles";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Crown, ShieldQuestion, Sparkles, Swords, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { OnlineCardBattleCard, OnlineCardBattleDeck } from "../shared/types";
 import { Modal } from "./Modal";
 import { VipIdentity } from "./VipIdentity";
-import { CardBattleRankingDeckEditor } from "./CardBattleRankingDeckEditor";
+import { CardBattleDeckEditor } from "./CardBattleDeckEditor";
 import type { BattleCollectibleBinding } from "@hgt/shared";
 
 type RankingEntry = { rank: number; occupied: false } | {
@@ -44,6 +45,9 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
   const [cards, setCards] = useState<OnlineCardBattleCard[]>([]);
   const [decksLoading, setDecksLoading] = useState(false);
   const [savingDeckId, setSavingDeckId] = useState<string | null>(null);
+  const deckSavingRef = useRef(savingDeckId);
+  deckSavingRef.current = savingDeckId;
+  const closeDecks = useCallback(() => { if (!deckSavingRef.current) setDeckAction(null); }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,14 +160,19 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
       </>}
     </Modal>}
 
-    {deckAction && <Modal full onClose={() => { if (!savingDeckId) setDeckAction(null); }}>
-      <div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-black text-ink">{deckAction.kind === "claim" ? `${ownRank ? "更新占榜至" : "占据"}第 ${deckAction.rank} 名` : deckAction.kind === "replace" ? `更换第 ${deckAction.rank} 名守榜卡组` : `挑战第 ${deckAction.rank} 名`}</h2><p className="mt-1 text-xs text-muted">选择一个已保存的五张卡组；卡牌位置和收藏品绑定会一并带入。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setDeckAction(null)} aria-label="关闭卡组选择"><X size={18} /></button></div>
+    {deckAction && <Modal full onClose={closeDecks}>
+      <div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-black text-ink">{deckAction.kind === "claim" ? `${ownRank ? "更新占榜至" : "占据"}第 ${deckAction.rank} 名` : deckAction.kind === "replace" ? `更换第 ${deckAction.rank} 名守榜卡组` : `挑战第 ${deckAction.rank} 名`}</h2><p className="mt-1 text-xs text-muted">选择一个已保存的五张卡组；卡牌位置和收藏品绑定会一并带入。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" disabled={Boolean(savingDeckId)} onClick={() => setDeckAction(null)} aria-label="关闭卡组选择"><X size={18} /></button></div>
       {decksLoading ? <p className="py-16 text-center text-sm text-muted">卡组加载中…</p> : <div className="mt-5 space-y-3">{decks.map((deck) => {
         const deckCards = deck.cardIds.map((cardId) => { const card = cardsById.get(cardId); return card ? battleCardWithCollectible(card, battleDeckCollectible(deck, cardId)) : null; });
         const available = deck.collectiblesAvailable !== false && deck.cardIds.length === 5 && deckCards.every(Boolean);
         const totalPower = deckCards.reduce((sum, card) => sum + (card?.combatPower ?? 0), 0);
-        return <article key={deck.id} className="rounded-2xl border border-line bg-white p-3 shadow-sm"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-black text-ink">{deck.name}</h3><p className={`mt-1 text-xs font-bold ${available ? "text-amber-600" : "text-red-600"}`}>{available ? `总战力 ${number.format(totalPower)}` : "含有当前不可用卡牌或收藏品"}</p></div><button type="button" className="btn btn-primary min-h-11 shrink-0" disabled={!available || Boolean(savingDeckId)} onClick={() => void useDeck(deck)}>{savingDeckId === deck.id ? "处理中…" : deckAction.kind === "claim" ? "使用并占榜" : deckAction.kind === "replace" ? "使用并更换" : "使用并打榜"}</button></div><div className="mt-3 grid grid-cols-5 gap-2">{deckCards.map((card, index) => <div key={`${deck.cardIds[index]}-${index}`} className="min-w-0"><div className="relative aspect-[5/7] overflow-hidden rounded-lg bg-slate-100">{card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" loading="lazy" /> : <span className="grid h-full place-items-center text-[9px] text-muted">不可用</span>}<span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-950/75 text-[9px] font-black text-white">{index + 1}</span></div><p className="mt-1 truncate text-[10px] font-bold text-amber-700" title={card?.collectible?.name}>{card?.collectible?.name}</p><p className="mt-1 truncate text-[9px] font-bold text-muted">{card?.name ?? "未知卡牌"}</p></div>)}</div></article>;
-      })}{decks.length === 0 && <CardBattleRankingDeckEditor cards={cards} actionLabel={deckAction.kind === "claim" ? "保存默认卡组并占榜" : deckAction.kind === "replace" ? "保存默认卡组并更换" : "保存默认卡组并打榜"} onSave={saveDefaultDeck} />}</div>}
+        return <article key={deck.id} className="rounded-2xl border border-line bg-white p-3 shadow-sm"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-black text-ink">{deck.name}</h3><p className={`mt-1 text-xs font-bold ${available ? "text-amber-600" : "text-red-600"}`}>{available ? `总战力 ${number.format(totalPower)}` : "含有当前不可用卡牌或收藏品"}</p></div><button type="button" className="btn btn-primary min-h-11 shrink-0" disabled={!available || Boolean(savingDeckId)} onClick={() => void useDeck(deck)}>{savingDeckId === deck.id ? "处理中…" : deckAction.kind === "claim" ? "使用并占榜" : deckAction.kind === "replace" ? "使用并更换" : "使用并打榜"}</button></div><div className="mt-3 grid grid-cols-5 gap-2">{deckCards.map((card, index) => <div key={`${deck.cardIds[index]}-${index}`} className="min-w-0"><div className="relative aspect-[5/7] overflow-hidden rounded-lg bg-slate-100">{card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" loading="lazy" /> : <span className="grid h-full place-items-center text-[9px] text-muted">不可用</span>}<span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-950/75 text-[9px] font-black text-white">{index + 1}</span></div><p className="mt-1 truncate text-[10px] font-bold text-amber-700" title={card?.collectible?.name}>{card?.collectible?.name}</p><p className="mt-1 truncate text-[9px] font-bold text-muted">{card?.name ?? "未知卡牌"}</p></div>)}</div>
+          <CardBattleDeckActions deck={deck} cards={cards} apiPath="/api/online-soup/card-battle/decks" disabled={Boolean(savingDeckId)}
+            onChanged={(updated) => setDecks((current) => current.map((item) => item.id === updated.id ? updated : item))}
+            onDeleted={(id) => setDecks((current) => current.filter((item) => item.id !== id))}
+            onBusyChange={(busy) => setSavingDeckId(busy ? deck.id : null)} showToast={showToast} />
+        </article>;
+      })}{decks.length === 0 && <CardBattleDeckEditor cards={cards} actionLabel={deckAction.kind === "claim" ? "保存默认卡组并占榜" : deckAction.kind === "replace" ? "保存默认卡组并更换" : "保存默认卡组并打榜"} onSave={saveDefaultDeck} />}</div>}
     </Modal>}
   </div>;
 }

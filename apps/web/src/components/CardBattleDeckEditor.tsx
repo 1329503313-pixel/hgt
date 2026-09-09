@@ -1,26 +1,29 @@
 import { useMemo, useState } from "react";
 import { Gem, Plus, Search } from "lucide-react";
 import type { BattleCollectibleBinding } from "@hgt/shared";
-import type { OnlineCardBattleCard } from "../shared/types";
+import type { OnlineCardBattleCard, OnlineCardBattleDeck } from "../shared/types";
 import { filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
 import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
 import { BattleCollectiblePicker } from "./BattleCollectiblePicker";
 
-const slots = ["前排 1", "前排 2", "后排 1", "后排 2", "后排 3"];
-
-export function CardBattleRankingDeckEditor({ cards, actionLabel, onSave }: {
+export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, lineupSize = 5, currentLineup, onSavingChange }: {
   cards: OnlineCardBattleCard[];
   actionLabel: string;
   onSave: (name: string, cardIds: string[], bindings: BattleCollectibleBinding[]) => Promise<void>;
+  initialDeck?: Pick<OnlineCardBattleDeck, "name" | "cardIds" | "collectibleBindings">;
+  lineupSize?: 3 | 5;
+  currentLineup?: { cardIds: string[]; collectibleBindings: BattleCollectibleBinding[] };
+  onSavingChange?: (saving: boolean) => void;
 }) {
-  const [name, setName] = useState("默认卡组");
-  const [selectedIds, setSelectedIds] = useState<Array<string | null>>(Array(5).fill(null));
+  const slots = lineupSize === 3 ? ["前排 1", "后排 1", "后排 2"] : ["前排 1", "前排 2", "后排 1", "后排 2", "后排 3"];
+  const [name, setName] = useState(initialDeck?.name ?? "默认卡组");
+  const [selectedIds, setSelectedIds] = useState<Array<string | null>>(() => Array.from({ length: lineupSize }, (_, index) => initialDeck?.cardIds[index] ?? null));
   const [slot, setSlot] = useState(0);
   const [query, setQuery] = useState("");
   const [role, setRole] = useState<CardBattleRoleFilter>("all");
   const [sort, setSort] = useState("number");
   const [view, setView] = useState<"stats" | "skill">("stats");
-  const [bindings, setBindings] = useState<BattleCollectibleBinding[]>([]);
+  const [bindings, setBindings] = useState<BattleCollectibleBinding[]>(initialDeck?.collectibleBindings ?? []);
   const [equipmentOpen, setEquipmentOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -29,9 +32,10 @@ export function CardBattleRankingDeckEditor({ cards, actionLabel, onSave }: {
   const filtered = filterCardBattleSelection(cards, query, role).sort((a, b) =>
     (sort === "star" ? b.starLevel - a.starLevel : sort === "power" ? b.combatPower - a.combatPower : sort === "rarity" ? Number(b.rarity === "legend") - Number(a.rarity === "legend") : 0)
       || a.cardNo.localeCompare(b.cardNo, "zh-CN", { numeric: true }));
-  const complete = selected.every(Boolean) && new Set(selectedIds).size === 5;
+  const complete = selected.every(Boolean) && new Set(selectedIds).size === lineupSize;
 
   function choose(cardId: string) {
+    if (saving || selectedIds.some((id, index) => id === cardId && index !== slot)) return;
     const next = selectedIds.map((id, index) => index === slot ? cardId : id);
     setSelectedIds(next);
     setBindings((current) => current.filter((binding) => next.includes(binding.cardId)));
@@ -43,21 +47,22 @@ export function CardBattleRankingDeckEditor({ cards, actionLabel, onSave }: {
   async function save() {
     if (saving || !complete) return;
     if (!name.trim()) { setError("请输入卡组名称"); return; }
-    setSaving(true); setError("");
+    setSaving(true); onSavingChange?.(true); setError("");
     try { await onSave(name.trim(), selectedIds as string[], bindings); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "卡组保存失败，请重试"); }
-    finally { setSaving(false); }
+    finally { setSaving(false); onSavingChange?.(false); }
   }
 
-  return <section className="mt-5 space-y-4" aria-label="配置默认卡组">
-    <div className="rounded-xl bg-violet-50 p-3 text-sm leading-6 text-violet-800">还没有卡组，在这里选择五张不同卡牌。前两个位置为前排，后三个位置为后排。</div>
+  return <section className="mt-5 space-y-4" aria-label={initialDeck ? "编辑卡组卡牌" : "配置默认卡组"}>
+    <div className="rounded-xl bg-violet-50 p-3 text-sm leading-6 text-violet-800">{initialDeck ? "点击下方卡面选择要更换的位置，再从卡牌列表选择新卡。保存后生效。" : "还没有卡组，在这里选择五张不同卡牌。"}{lineupSize === 3 ? "第一个位置为前排，后两个位置为后排。" : "前两个位置为前排，后三个位置为后排。"}</div>
     <label className="block"><span className="label">卡组名称</span><input className="field mt-1 min-h-11 w-full" maxLength={30} value={name} disabled={saving} onChange={(event) => setName(event.target.value)} /></label>
-    <div className="grid grid-cols-5 gap-2">{selected.map((card, index) => <button key={index} type="button" disabled={saving} aria-label={`配置${slots[index]}`} aria-pressed={slot === index} onClick={() => setSlot(index)} className={`min-h-11 min-w-0 rounded-xl border-2 p-1 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${slot === index ? "border-violet-500 bg-violet-50" : "border-line bg-white"}`}>
+    {currentLineup?.cardIds.length === lineupSize && <button type="button" className="btn btn-secondary min-h-11 w-full" disabled={saving} onClick={() => { setSelectedIds([...currentLineup.cardIds]); setBindings([...currentLineup.collectibleBindings]); setError(""); }}>用当前阵容覆盖卡组</button>}
+    <div className={`grid ${lineupSize === 3 ? "grid-cols-3" : "grid-cols-5"} gap-2`}>{selected.map((card, index) => <button key={index} type="button" disabled={saving} aria-label={`配置${slots[index]}`} aria-pressed={slot === index} onClick={() => setSlot(index)} className={`min-h-11 min-w-0 rounded-xl border-2 p-1 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${slot === index ? "border-violet-500 bg-violet-50" : "border-line bg-white"}`}>
       <span className="mb-1 block text-xs font-bold text-primary">{slots[index]}</span>
       <span className="relative block aspect-[5/7] overflow-hidden rounded-lg bg-slate-100">{card ? <img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} /> : <span className="grid h-full place-items-center text-slate-400"><Plus size={22} /></span>}</span>
-      <span className="mt-1 block truncate text-xs font-bold text-ink">{card?.name ?? "选择卡牌"}</span>
+      <span className="mt-1 block truncate text-xs font-bold text-ink">{card?.name ?? (selectedIds[index] ? "卡牌不可用，点击更换" : "选择卡牌")}</span>
     </button>)}</div>
-    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted" role="status">已选 {selected.filter(Boolean).length}/5 张 · 正在配置{slots[slot]}</p><button type="button" className="btn btn-secondary min-h-11" disabled={saving || !selected.some(Boolean)} onClick={() => setEquipmentOpen(true)}><Gem size={16} />装配收藏品{bindings.length ? `（${bindings.length}）` : ""}</button></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted" role="status">已选 {selected.filter(Boolean).length}/{lineupSize} 张 · 正在配置{slots[slot]}</p><button type="button" className="btn btn-secondary min-h-11" disabled={saving || !selected.some(Boolean)} onClick={() => setEquipmentOpen(true)}><Gem size={16} />装配收藏品{bindings.length ? `（${bindings.length}）` : ""}</button></div>
     <div className="grid gap-2 sm:grid-cols-[1fr_150px]">
       <label><span className="label inline-flex items-center gap-1"><Search size={14} />搜索卡牌</span><input className="field mt-1 min-h-11 w-full" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名称或编号" /></label>
       <label><span className="label">卡牌定位</span><select className="field mt-1 min-h-11 w-full" value={role} onChange={(event) => setRole(event.target.value as CardBattleRoleFilter)}><option value="all">全部</option>{Object.entries(CARD_BATTLE_ROLE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -66,7 +71,7 @@ export function CardBattleRankingDeckEditor({ cards, actionLabel, onSave }: {
       <label className="min-w-0"><span className="sr-only">卡牌排序方式</span><select className="field min-h-11" value={sort} onChange={(event) => setSort(event.target.value)}><option value="number">按编号排序</option><option value="rarity">按品质排序</option><option value="star">按星级排序</option><option value="power">按战力排序</option></select></label>
       <div className="flex gap-2" aria-label="卡牌信息视角"><button type="button" aria-pressed={view === "stats"} className={`btn min-h-11 ${view === "stats" ? "btn-primary" : "btn-secondary"}`} onClick={() => setView("stats")}>数值</button><button type="button" aria-pressed={view === "skill"} className={`btn min-h-11 ${view === "skill" ? "btn-primary" : "btn-secondary"}`} onClick={() => setView("skill")}>技能</button></div>
     </div>
-    {cards.length < 5 && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">当前只有 {cards.length} 张可参战卡牌，集齐五张不同的史诗或传说卡牌后即可占榜。</p>}
+    {cards.length < lineupSize && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">当前只有 {cards.length} 张可参战卡牌，需要 {lineupSize} 张不同的史诗或传说卡牌才能保存卡组。</p>}
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{filtered.map((card) => {
       const usedAt = selectedIds.indexOf(card.id);
       return <button key={card.id} type="button" aria-label={`选择${card.name}`} aria-pressed={selectedIds[slot] === card.id} disabled={saving || (usedAt >= 0 && usedAt !== slot)} onClick={() => choose(card.id)} className="min-w-0 rounded-xl border border-line p-2 text-left transition hover:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50">

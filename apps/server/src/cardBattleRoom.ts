@@ -295,9 +295,9 @@ export async function updateSavedCardBattleDeck(userId: string, deckId: string, 
   if (cardIds || collectibleBindings) await resolveBattleCollectibles(userId, selected, bindings, db);
   try {
     const [result] = await db.query<mysql.ResultSetHeader>(
-      `UPDATE user_card_battle_decks SET name = ?, lineup_json = COALESCE(?, lineup_json), collectible_bindings_json = ?
-       WHERE id = ? AND user_id = ?`,
-      [name, cardIds ? JSON.stringify(cardIds) : null, JSON.stringify(bindings), deckId, userId],
+      `UPDATE user_card_battle_decks SET name = ?, lineup_json = COALESCE(?, lineup_json), collectible_bindings_json = COALESCE(?, collectible_bindings_json)
+       WHERE id = ? AND user_id = ? AND mode = ?`,
+      [name, cardIds ? JSON.stringify(cardIds) : null, cardIds || collectibleBindings ? JSON.stringify(bindings) : null, deckId, userId, mode],
     );
     if (!result.affectedRows) throw new CardBattleRoomRuleError("卡组不存在或已被删除");
   } catch (error) {
@@ -310,6 +310,14 @@ export async function updateSavedCardBattleDeck(userId: string, deckId: string, 
   const owned = await loadBattleCollectibles(userId, db);
   return { ...deck, collectibles: owned.filter((item) => deck.collectibleBindings.some((b) => b.collectibleId === item.id)),
     collectiblesAvailable: deck.collectibleBindings.every((b) => owned.some((item) => item.id === b.collectibleId)) };
+}
+
+export async function deleteSavedCardBattleDeck(userId: string, deckId: string, db: mysql.Pool | mysql.PoolConnection = pool, mode: "1v1" | "boss" = "1v1") {
+  const [result] = await db.query<mysql.ResultSetHeader>(
+    "DELETE FROM user_card_battle_decks WHERE id = ? AND user_id = ? AND mode = ?",
+    [deckId, userId, mode],
+  );
+  if (!result.affectedRows) throw new CardBattleRoomRuleError("卡组不存在或已被删除");
 }
 
 export async function saveCardBattleLineup(roomId: string, userId: string, cardIds: Array<string | null>, db: mysql.PoolConnection, collectibleBindings?: BattleCollectibleBinding[]) {

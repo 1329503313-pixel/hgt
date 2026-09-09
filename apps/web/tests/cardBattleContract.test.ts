@@ -246,7 +246,13 @@ test("备战支持保存、编辑和按固定位置使用卡组", () => {
   assert.match(view, />选择卡组<\/button>/);
   assert.match(view, /保存当前卡组/);
   assert.match(view, /编辑卡组/);
-  assert.match(view, /用当前阵容覆盖卡组/);
+  const editor = readFileSync(new URL("../src/components/CardBattleDeckEditor.tsx", import.meta.url), "utf8");
+  const actions = readFileSync(new URL("../src/components/CardBattleDeckActions.tsx", import.meta.url), "utf8");
+  assert.match(view, /<CardBattleDeckActions/);
+  assert.match(actions, /修改名称/);
+  assert.match(actions, /编辑卡组/);
+  assert.match(actions, /删除卡组/);
+  assert.match(editor, /用当前阵容覆盖卡组/);
   assert.match(view, /card-battle\/decks/);
   assert.match(view, /const next = \[\.\.\.deck\.cardIds\]/);
 });

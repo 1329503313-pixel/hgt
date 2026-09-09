@@ -158,7 +158,7 @@ test("卡组保存/重命名/加载保留绑定，换位随卡移动，换下解
     if (sql.includes("FROM collectibles")) return [owned ? [{ id: "r", name: "收藏品", collectible_no: "001", battle_effect_type: "attack", battle_effect_value: 20 }] : []];
     if (sql.includes("FROM user_asset_cards")) return [ids.map((id) => ({ id }))];
     if (sql.startsWith("INSERT INTO user_card_battle_decks")) row = { id: params[0], name: params[2], lineup_json: params[3], collectible_bindings_json: params[4] };
-    if (sql.startsWith("UPDATE user_card_battle_decks")) row = { ...row, name: params[0], lineup_json: params[1] ?? row.lineup_json, collectible_bindings_json: params[2] };
+    if (sql.startsWith("UPDATE user_card_battle_decks")) row = { ...row, name: params[0], lineup_json: params[1] ?? row.lineup_json, collectible_bindings_json: params[2] ?? row.collectible_bindings_json };
     if (sql.startsWith("SELECT") && sql.includes("user_card_battle_decks")) return [[row]];
     if (sql.startsWith("SELECT") && sql.includes("online_card_battle_seats")) return [[seat]];
     if (sql.startsWith("UPDATE online_card_battle_seats SET lineup_json")) seat = { ...seat, lineup_json: params[0], collectible_bindings_json: params[1] };

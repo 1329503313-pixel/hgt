@@ -1,13 +1,16 @@
+import type { BattleCollectibleBinding } from "@hgt/shared";
+import { CardBattleDeckActions } from "./CardBattleDeckActions";
+import { CardBattleDeckEditor } from "./CardBattleDeckEditor";
 import { BattleCollectiblePicker } from "./BattleCollectiblePicker";
 import { battleCardWithCollectible, battleDeckCollectible } from "../shared/battleCollectibles";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useServerCardBattlePlayback } from "../shared/useServerCardBattlePlayback";
 import { cardBattleRoomExit } from "../shared/cardBattleNavigation";
 import { seekCardBattleAnimations } from "../shared/cardBattlePlayback";
 import { CardBattleSkillFx, CardBattleProcFx, CardBattleStatusIcons } from "./CardBattleEffects";
 import { CardBattleSettlementTable } from "./CardBattleSettlementTable";
 import { cardBattleFormationSize } from "../shared/cardBattleLayout";
-import { ArrowUpDown, Gem, Check, ChevronDown, Eye, GripVertical, Layers, LogOut, Menu, Pencil, Save, Search, Send, Share2, Smile, Sparkles, Swords, Users, X } from "lucide-react";
+import { ArrowUpDown, Gem, Check, ChevronDown, Eye, GripVertical, Layers, LogOut, Menu, Save, Search, Send, Share2, Smile, Sparkles, Swords, Users, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { reorderCardBattleLineup } from "../shared/cardBattleLineup";
@@ -42,7 +45,7 @@ type ChatBubble = {
 
 type CardSort = "number" | "rarity" | "star" | "power";
 type CardView = "stats" | "skill";
-type DeckEditorState = { id: string | null; name: string; cardIds: string[]; replaceWithCurrent: boolean };
+type DeckEditorState = { name: string; cardIds: string[]; collectibleBindings: BattleCollectibleBinding[] };
 
 const combatPowerFormatter = new Intl.NumberFormat("zh-CN");
 const cardRarityRank: Record<OnlineCardBattleCard["rarity"], number> = { epic: 0, legend: 1 };
@@ -350,6 +353,11 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   const [decksLoading, setDecksLoading] = useState(false);
   const [deckEditor, setDeckEditor] = useState<DeckEditorState | null>(null);
   const [saving, setSaving] = useState(false);
+  const deckSavingRef = useRef(saving);
+  deckSavingRef.current = saving;
+  const closeDecks = useCallback(() => {
+    if (!deckSavingRef.current) { setDecksOpen(false); setDeckEditor(null); }
+  }, []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -509,7 +517,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   }
   async function applyDeck(deck: OnlineCardBattleDeck) {
     if (saving || deck.collectiblesAvailable === false || deck.cardIds.length !== lineupSize || deck.cardIds.some((cardId) => !eligibleCards.some((card) => card.id === cardId))) {
-      showToast("该卡组中有卡牌或收藏品已不可用，请用当前阵容更新卡组");
+      showToast("该卡组中有卡牌或收藏品已不可用，请编辑卡组后重试");
       return;
     }
     const next = [...deck.cardIds];
@@ -522,25 +530,18 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
       showToast(`已选择卡组“${deck.name}”`);
     }
   }
-  async function saveDeck(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!deckEditor || saving) return;
-    const name = deckEditor.name.trim();
-    if (!name) { showToast("请输入卡组名称"); return; }
-    const currentCardIds = ownIds.filter((cardId): cardId is string => Boolean(cardId));
-    const cardIds = deckEditor.id && !deckEditor.replaceWithCurrent ? deckEditor.cardIds : currentCardIds;
-    if (cardIds.length !== lineupSize) { showToast(`必须选满 ${lineupSize} 张卡牌才能保存卡组`); return; }
+  async function saveDeck(name: string, cardIds: string[], collectibleBindings: BattleCollectibleBinding[]) {
+    if (saving) return;
     setSaving(true);
     try {
-      const response = await api<{ deck: OnlineCardBattleDeck }>(
-        `/api/online-soup/rooms/${roomId}/card-battle/decks${deckEditor.id ? `/${deckEditor.id}` : ""}`,
-        { method: deckEditor.id ? "PATCH" : "POST", body: { name, cardIds: deckEditor.id && !deckEditor.replaceWithCurrent ? undefined : cardIds, collectibleBindings: deckEditor.id && !deckEditor.replaceWithCurrent ? undefined : ownBindings } },
+      const { deck } = await api<{ deck: OnlineCardBattleDeck }>(
+        "/api/online-soup/rooms/" + roomId + "/card-battle/decks",
+        { method: "POST", body: { name, cardIds, collectibleBindings } },
       );
-      setDecks((current) => [response.deck, ...current.filter((deck) => deck.id !== response.deck.id)]);
+      setDecks((current) => [deck, ...current]);
       setDeckEditor(null);
-      showToast(deckEditor.id ? "卡组已更新" : "当前卡组已保存");
-    } catch (error) { showToast(error instanceof Error ? error.message : "卡组保存失败"); }
-    finally { setSaving(false); }
+      showToast("当前卡组已保存");
+    } finally { setSaving(false); }
   }
   async function reorderCards(fromSlot: number, toSlot: number) {
     if (!canConfigure || !battle.me.seat || currentSeat?.ready || saving) return false;
@@ -678,28 +679,24 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
       cards={ownIds.map((id) => id ? ownCardsById.get(id) ?? null : null)} bindings={ownBindings} disabled={saving}
       onSave={(collectibleBindings) => mutation("card-battle/lineup", { cardIds: ownIds, collectibleBindings })}
       onClose={() => setCollectiblesOpen(false)} />}
-    {decksOpen && <Modal full onClose={() => { setDecksOpen(false); setDeckEditor(null); }}>
-      {deckEditor ? <form onSubmit={saveDeck}>
-        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">{deckEditor.id ? "编辑卡组" : "保存当前卡组"}</h2><p className="mt-1 text-xs text-muted">卡组会保存 {lineupSize} 张卡牌、当前卡位及收藏品绑定关系。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setDeckEditor(null)} aria-label="返回卡组列表"><X size={18} /></button></div>
-        <label className="mt-5 block"><span className="text-sm font-black text-ink">卡组名称</span><input className="field mt-2 min-h-11 w-full" maxLength={30} value={deckEditor.name} onChange={(event) => setDeckEditor((current) => current ? { ...current, name: event.target.value } : current)} placeholder="例如：高速反击队" autoFocus /><span className="mt-1 block text-right text-[10px] text-muted">{deckEditor.name.length}/30</span></label>
-        {deckEditor.id && ownIds.filter(Boolean).length === lineupSize && <button type="button" aria-pressed={deckEditor.replaceWithCurrent} onClick={() => setDeckEditor((current) => current ? { ...current, replaceWithCurrent: !current.replaceWithCurrent } : current)} className={`mt-3 flex min-h-11 w-full items-center justify-between rounded-xl border px-3 text-left text-xs font-bold transition ${deckEditor.replaceWithCurrent ? "border-cyan-400 bg-cyan-50 text-cyan-800" : "border-line bg-white text-muted"}`}><span><strong className="block text-ink">用当前阵容覆盖卡组</strong><span>同时更新 {lineupSize} 张卡牌、位置及收藏品绑定</span></span>{deckEditor.replaceWithCurrent && <Check size={18} />}</button>}
-        <div className="mt-4"><h3 className="text-sm font-black text-ink">{deckEditor.id && !deckEditor.replaceWithCurrent ? "已保存的卡位" : "将保存的卡位"}</h3><div className={`mt-2 grid ${isBoss ? "grid-cols-3" : "grid-cols-5"} gap-2`}>{(deckEditor.id && !deckEditor.replaceWithCurrent ? deckEditor.cardIds : ownIds).map((cardId, index) => {
-          const savedDeck = deckEditor.id && !deckEditor.replaceWithCurrent ? decks.find((d) => d.id === deckEditor.id) : null;
-          const baseCard = eligibleCards.find((c) => c.id === cardId);
-          const card = savedDeck && baseCard ? battleCardWithCollectible(baseCard, battleDeckCollectible(savedDeck, cardId)) : cardId ? ownCardsById.get(cardId) : null;
-          return <div key={`${cardId ?? "empty"}-${index}`} className="min-w-0 text-center"><div className="relative aspect-[5/7] overflow-hidden rounded-lg border border-line bg-slate-100">{card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" /> : <span className="grid h-full place-items-center text-[9px] font-bold text-slate-400">不可用</span>}<span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-950/75 text-[9px] font-black text-white">{index + 1}</span></div><p className="mt-1 truncate text-[10px] font-bold text-amber-700" title={card?.collectible?.name}>{card?.collectible?.name}</p><p className="mt-1 truncate text-[9px] font-bold text-muted">{card?.name ?? "未知卡牌"}</p></div>;
-        })}</div></div>
-        <div className="mt-6 grid grid-cols-2 gap-2"><button type="button" className="btn btn-secondary" onClick={() => setDeckEditor(null)}>取消</button><button type="submit" className="btn btn-primary inline-flex items-center justify-center gap-1.5" disabled={saving || !deckEditor.name.trim()}><Save size={16} />{saving ? "保存中…" : "保存卡组"}</button></div>
-      </form> : <>
-        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择卡组</h2><p className="mt-1 text-xs text-muted">使用卡组会恢复保存的 {lineupSize} 个卡位及收藏品绑定。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setDecksOpen(false)} aria-label="关闭"><X size={18} /></button></div>
-        <button type="button" className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 text-sm font-black text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" disabled={saving || ownIds.filter(Boolean).length !== lineupSize} onClick={() => setDeckEditor({ id: null, name: `我的卡组 ${decks.length + 1}`, cardIds: ownIds.filter((cardId): cardId is string => Boolean(cardId)), replaceWithCurrent: true })}><Save size={17} />保存当前卡组</button>
+    {decksOpen && <Modal full onClose={closeDecks}>
+      {deckEditor ? <>
+        <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-black text-ink">保存当前卡组</h2><button type="button" className="btn btn-secondary min-h-11 min-w-11" disabled={saving} onClick={() => setDeckEditor(null)} aria-label="返回卡组列表"><X size={18} /></button></div>
+        <CardBattleDeckEditor cards={eligibleCards} initialDeck={deckEditor} lineupSize={lineupSize} actionLabel="保存卡组" onSave={saveDeck} />
+      </> : <>
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择卡组</h2><p className="mt-1 text-xs text-muted">使用卡组会恢复保存的 {lineupSize} 个卡位及收藏品绑定。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" disabled={saving} onClick={() => setDecksOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <button type="button" className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 text-sm font-black text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" disabled={saving || ownIds.filter(Boolean).length !== lineupSize} onClick={() => setDeckEditor({ name: `我的卡组 ${decks.length + 1}`, cardIds: ownIds.filter((cardId): cardId is string => Boolean(cardId)), collectibleBindings: [...ownBindings] })}><Save size={17} />保存当前卡组</button>
         {ownIds.filter(Boolean).length !== lineupSize && <p className="mt-2 text-center text-xs text-muted">选满 {lineupSize} 张卡牌后即可保存当前卡组</p>}
         <div className="mt-5 space-y-3">{decks.map((deck) => {
           const availableCards = deck.cardIds.map((cardId) => { const card = eligibleCards.find((c) => c.id === cardId); return card ? battleCardWithCollectible(card, battleDeckCollectible(deck, cardId)) : null; });
           const available = deck.collectiblesAvailable !== false && deck.cardIds.length === lineupSize && availableCards.every(Boolean);
           const totalPower = availableCards.reduce((sum, card) => sum + (card?.combatPower ?? 0), 0);
-          return <article key={deck.id} className="rounded-2xl border border-line bg-white p-3 shadow-sm"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-black text-ink">{deck.name}</h3><p className={`mt-1 text-[11px] font-bold ${available ? "text-amber-600" : "text-red-600"}`}>{available ? `总战力 ${combatPowerFormatter.format(totalPower)}` : "含有当前不可用的卡牌或收藏品"}</p></div><button type="button" className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-line px-3 text-xs font-black text-muted hover:bg-slate-50" onClick={() => setDeckEditor({ id: deck.id, name: deck.name, cardIds: deck.cardIds, replaceWithCurrent: false })}><Pencil size={14} />编辑</button></div>
+          return <article key={deck.id} className="rounded-2xl border border-line bg-white p-3 shadow-sm"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-black text-ink">{deck.name}</h3><p className={`mt-1 text-[11px] font-bold ${available ? "text-amber-600" : "text-red-600"}`}>{available ? `总战力 ${combatPowerFormatter.format(totalPower)}` : "含有当前不可用的卡牌或收藏品"}</p></div></div>
             <div className={`mt-3 grid ${isBoss ? "grid-cols-3" : "grid-cols-5"} gap-2`}>{availableCards.map((card, index) => <div key={`${deck.cardIds[index] ?? "empty"}-${index}`} className="min-w-0 text-center"><div className="relative aspect-[5/7] overflow-hidden rounded-lg border border-line bg-slate-100">{card ? <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" loading="lazy" /> : <span className="grid h-full place-items-center text-[9px] font-bold text-slate-400">不可用</span>}<span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-950/75 text-[9px] font-black text-white">{index + 1}</span></div><p className="mt-1 truncate text-[10px] font-bold text-amber-700" title={card?.collectible?.name}>{card?.collectible?.name}</p><p className="mt-1 truncate text-[9px] font-bold text-muted">{card?.name ?? "未知卡牌"}</p></div>)}</div>
+            <CardBattleDeckActions deck={deck} cards={eligibleCards} lineupSize={lineupSize} apiPath={"/api/online-soup/rooms/" + roomId + "/card-battle/decks"} disabled={saving}
+              currentLineup={{ cardIds: ownIds.filter((id): id is string => Boolean(id)), collectibleBindings: ownBindings }}
+              onChanged={(updated) => setDecks((current) => current.map((item) => item.id === updated.id ? updated : item))}
+              onDeleted={(id) => setDecks((current) => current.filter((item) => item.id !== id))} onBusyChange={setSaving} showToast={showToast} />
             <button type="button" className="mt-3 min-h-11 w-full rounded-xl bg-slate-900 px-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400" disabled={saving || !available} onClick={() => void applyDeck(deck)}>使用此卡组</button>
           </article>;
         })}</div>

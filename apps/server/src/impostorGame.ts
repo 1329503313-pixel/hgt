@@ -24,6 +24,11 @@ export type ImpostorMissionSubmission = {
 };
 export type ImpostorPublicClue = { role: ImpostorRole; content: string };
 export type ImpostorInvestigationResult = { targetUserIds: string[]; reportedHasImpostor: boolean };
+export type ImpostorAccusationResult = {
+  attempt: number;
+  voteCounts: Array<{ userId: string; votes: number }>;
+  abstainedCount: number;
+};
 export type ImpostorDayHistory = {
   day: number;
   isolatedUserIds: string[];
@@ -64,6 +69,7 @@ export type ImpostorGameState = {
     candidateUserIds: string[];
     ballots: Record<string, string | null>;
   } | null;
+  accusationResults?: ImpostorAccusationResult[];
   assassinationTargetUserId: string | null;
   winner: ImpostorWinner | null;
   endReason: string | null;
@@ -241,6 +247,7 @@ export function createImpostorGame(
     clues: {},
     publicClues: [],
     accusation: null,
+    accusationResults: [],
     assassinationTargetUserId: null,
     winner: null,
     endReason: null,
@@ -510,6 +517,12 @@ function settleAccusation(state: ImpostorGameState, now: Date): ImpostorGameStat
   const accusation = next.accusation!;
   const counts = new Map(accusation.candidateUserIds.map((id) => [id, 0]));
   for (const target of Object.values(accusation.ballots)) if (target && counts.has(target)) counts.set(target, (counts.get(target) ?? 0) + 1);
+  // Preserve the completed tally before ending the game or replacing revote ballots.
+  next.accusationResults = [...(next.accusationResults ?? []), {
+    attempt: accusation.attempt,
+    voteCounts: [...next.players].sort((a, b) => a.seat - b.seat).map(({ userId }) => ({ userId, votes: counts.get(userId) ?? 0 })),
+    abstainedCount: next.players.length - [...counts.values()].reduce((sum, votes) => sum + votes, 0),
+  }];
   const highest = Math.max(0, ...counts.values());
   if (highest === 0) return endGame(next, "impostor", "最终指认无人获得有效票");
   const leaders = [...counts.entries()].filter(([, count]) => count === highest).map(([id]) => id);
@@ -522,6 +535,13 @@ function settleAccusation(state: ImpostorGameState, now: Date): ImpostorGameStat
   next.accusation = { attempt: 2, candidateUserIds: leaders, ballots: {} };
   next.deadlineAt = deadline(now, IMPOSTOR_ACCUSATION_SECONDS);
   return next;
+}
+
+export function impostorAccusationResultMessages(before: ImpostorGameState, after: ImpostorGameState, playerDescription: (userId: string) => string) {
+  const previousCount = before.gameNumber === after.gameNumber ? (before.accusationResults?.length ?? 0) : 0;
+  return (after.accusationResults ?? []).slice(previousCount).map((result) =>
+    `最终指认结果（第${after.gameNumber}局，第${result.attempt}轮）：${result.voteCounts.map(({ userId, votes }) => `${playerDescription(userId)}：${votes}票`).join("；")}；弃权/超时弃票：${result.abstainedCount}票。`,
+  );
 }
 
 export function advanceExpiredImpostorGame(state: ImpostorGameState, now = new Date(), randomIndex: RandomIndex = defaultRandomIndex) {

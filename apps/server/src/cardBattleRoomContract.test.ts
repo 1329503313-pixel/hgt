@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { CardBattleResult } from "./cardBattle.js";
 import { resolveCardBattlePlayback, resolveCardBattlePlaybackStates, surrenderCardBattleResult } from "./cardBattlePlayback.js";
-import { forfeitCardBattle } from "./cardBattleRoom.js";
+import { deleteSavedCardBattleDeck, forfeitCardBattle, updateSavedCardBattleDeck } from "./cardBattleRoom.js";
 import type { PoolConnection } from "mysql2/promise";
 
 const roomSource = readFileSync(new URL("./cardBattleRoom.ts", import.meta.url), "utf8");
@@ -14,6 +14,81 @@ const digitalAssetsSource = readFileSync(new URL("./digitalAssets.ts", import.me
 const indexSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 const start = new Date("2026-09-08T00:00:00.000Z");
+
+function savedDeckFixture(mode: "1v1" | "boss" = "1v1") {
+  const cardIds = mode === "boss" ? ["c1", "c2", "c3"] : ["c1", "c2", "c3", "c4", "c5"];
+  let row: Record<string, unknown> | null = { id: "deck1", user_id: "u1", mode, name: "原卡组", lineup_json: JSON.stringify(cardIds), collectible_bindings_json: JSON.stringify([{ cardId: "c1", collectibleId: "item1" }]) };
+  const writes: Array<{ sql: string; params: unknown[] }> = [];
+  const db = { query: async (sql: string, params: unknown[] = []) => {
+    if (sql.includes("FROM user_asset_cards")) return [params.slice(1).filter((id) => id !== "unowned").map((id) => ({ id }))];
+    if (sql.includes("FROM collectibles")) return [[{ id: "item1", name: "测试收藏品", collectible_no: "1", battle_effect_type: null, battle_effect_value: null }]];
+    if (sql.startsWith("SELECT * FROM user_card_battle_decks")) return [row && params[0] === row.id && params[1] === row.user_id && (params.length < 3 || params[2] === row.mode) ? [{ ...row }] : []];
+    writes.push({ sql, params });
+    if (sql.startsWith("DELETE FROM user_card_battle_decks")) {
+      assert.match(sql, /WHERE id = \? AND user_id = \? AND mode = \?/);
+      const matches = row && params[0] === row.id && params[1] === row.user_id && params[2] === row.mode;
+      if (matches) row = null;
+      return [{ affectedRows: matches ? 1 : 0 }];
+    }
+    if (sql.startsWith("UPDATE user_card_battle_decks") && row) {
+      assert.match(sql, /WHERE id = \? AND user_id = \? AND mode = \?/);
+      assert.deepEqual(params.slice(3), [row.id, row.user_id, row.mode]);
+      if (params[0] === "同名卡组") throw Object.assign(new Error("duplicate"), { code: "ER_DUP_ENTRY" });
+      row.name = params[0];
+      if (params[1] != null) row.lineup_json = params[1];
+      if (params[2] != null) row.collectible_bindings_json = params[2];
+      return [{ affectedRows: 1 }];
+    }
+    throw new Error("Unexpected deck SQL: " + sql);
+  } } as unknown as PoolConnection;
+  return { db, cardIds, writes, getRow: () => row };
+}
+
+test("删除卡组仅删除本人对应模式记录，拒绝越权、跨模式与重复删除", async () => {
+  for (const mode of ["1v1", "boss"] as const) {
+    const fixture = savedDeckFixture(mode);
+    await assert.rejects(deleteSavedCardBattleDeck("u2", "deck1", fixture.db, mode), /不存在或已被删除/);
+    await assert.rejects(deleteSavedCardBattleDeck("u1", "deck1", fixture.db, mode === "boss" ? "1v1" : "boss"), /不存在或已被删除/);
+    assert.ok(fixture.getRow());
+    await deleteSavedCardBattleDeck("u1", "deck1", fixture.db, mode);
+    assert.equal(fixture.getRow(), null);
+    await assert.rejects(deleteSavedCardBattleDeck("u1", "deck1", fixture.db, mode), /不存在或已被删除/);
+    assert.ok(fixture.writes.every(({ sql }) => sql.startsWith("DELETE FROM user_card_battle_decks")));
+  }
+});
+
+test("卡组改名保持卡牌和收藏品绑定，只更新名称，重名失败保留原数据", async () => {
+  const fixture = savedDeckFixture();
+  const before = { ...fixture.getRow() };
+  const renamed = await updateSavedCardBattleDeck("u1", "deck1", "新名称", undefined, fixture.db);
+  assert.equal(renamed.name, "新名称");
+  assert.deepEqual(renamed.cardIds, fixture.cardIds);
+  assert.equal(fixture.getRow()!.lineup_json, before.lineup_json);
+  assert.equal(fixture.getRow()!.collectible_bindings_json, before.collectible_bindings_json);
+  assert.deepEqual(fixture.writes[0]!.params.slice(0, 3), ["新名称", null, null]);
+  await assert.rejects(updateSavedCardBattleDeck("u1", "deck1", "同名卡组", undefined, fixture.db), /已有同名卡组/);
+  assert.equal(fixture.getRow()!.name, "新名称");
+});
+
+test("编辑卡组拒绝越权、跨模式、重复卡牌和不可参战卡牌", async () => {
+  const fixture = savedDeckFixture();
+  await assert.rejects(updateSavedCardBattleDeck("u2", "deck1", "偷改", undefined, fixture.db), /不存在或已被删除/);
+  await assert.rejects(updateSavedCardBattleDeck("u1", "deck1", "错模式", undefined, fixture.db, undefined, "boss"), /不存在或已被删除/);
+  await assert.rejects(updateSavedCardBattleDeck("u1", "deck1", "重复", ["c1", "c1", "c3", "c4", "c5"], fixture.db), /不同卡牌/);
+  await assert.rejects(updateSavedCardBattleDeck("u1", "deck1", "不可用", ["unowned", "c2", "c3", "c4", "c5"], fixture.db), /未拥有/);
+  assert.equal(fixture.writes.length, 0);
+});
+
+test("普通与 BOSS 卡组按槽位换卡，换下卡牌解除绑定且保留其他卡位", async () => {
+  for (const mode of ["1v1", "boss"] as const) {
+    const fixture = savedDeckFixture(mode);
+    const next = ["c6", ...fixture.cardIds.slice(1)];
+    const updated = await updateSavedCardBattleDeck("u1", "deck1", "换卡后", next, fixture.db, undefined, mode);
+    assert.deepEqual(updated.cardIds, next);
+    assert.deepEqual(updated.collectibleBindings, []);
+    assert.equal(fixture.writes.length, 1);
+  }
+});
 function playbackFixture(): CardBattleResult {
   const initialStates = ([1, 2] as const).map((seat) => ({ instanceId: `c${seat}`, userId: `u${seat}`, seat, slot: 1 as const, row: "front" as const, hp: 1000, maxHp: 1000, energy: 0, energyRequired: 40, attack: 800, defense: 600, speed: 100, alive: true, damageDealt: 0, damageTaken: 0 }));
   const first = initialStates.map((state) => ({ ...state, hp: state.seat === 2 ? 800 : 1000, damageDealt: state.seat === 1 ? 200 : 0, damageTaken: state.seat === 2 ? 800 : 0 }));

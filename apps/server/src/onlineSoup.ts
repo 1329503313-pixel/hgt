@@ -49,6 +49,7 @@ import {
   ImpostorGameRuleError,
   advanceExpiredImpostorGame,
   createImpostorGame,
+  impostorAccusationResultMessages,
   impostorNightActionTargetCount,
   impostorNightActionTypes,
   impostorRoleLabel,
@@ -80,6 +81,7 @@ import {
   cardBattleClientState,
   claimCardBattleSeat,
   createSavedCardBattleDeck,
+  deleteSavedCardBattleDeck,
   eligibleCardCount,
   finalizeCardBattleIfDue,
   forfeitCardBattle,
@@ -455,6 +457,35 @@ router.get("/card-battle/eligible-cards", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
   res.json({ cards: await loadEligibleBattleCards(user.id) });
+});
+
+router.patch("/card-battle/decks/:deckId", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  const parsed = z.object({
+    name: z.string().trim().min(1, "请输入卡组名称").max(30, "卡组名称最多 30 个字"),
+    cardIds: z.array(z.string().trim().min(1).max(64)).length(5, "请选择五张不同卡牌").optional(),
+    collectibleBindings: battleCollectibleBindingsSchema.optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return fail(res, 400, parsed.error.issues[0]?.message ?? "卡组信息不正确");
+  try {
+    res.json({ deck: await updateSavedCardBattleDeck(user.id, req.params.deckId, parsed.data.name, parsed.data.cardIds, pool, parsed.data.collectibleBindings) });
+  } catch (error) {
+    if (error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message);
+    throw error;
+  }
+});
+
+router.delete("/card-battle/decks/:deckId", async (req, res) => {
+  const user = userOf(req);
+  if (!user) return fail(res, 401, "请先登录");
+  try {
+    await deleteSavedCardBattleDeck(user.id, req.params.deckId);
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
+    throw error;
+  }
 });
 
 router.get("/card-battle-rankings", async (req, res) => {
@@ -1973,6 +2004,7 @@ async function writeImpostorTransitionMessages(
   const readyBefore = new Set(before.readyUserIds ?? []);
   const newlyReady = (after.readyUserIds ?? []).filter((userId) => !readyBefore.has(userId));
   const namesNeeded = newlyReady.length > 0
+    || (after.accusationResults?.length ?? 0) > (before.accusationResults?.length ?? 0)
     || (before.phase !== "day_ready" && after.phase === "day_ready" && after.isolatedUserIds.length > 0)
     || (before.phase !== "mission" && after.phase === "mission")
     || (before.phase !== "ended" && after.phase === "ended");
@@ -2040,6 +2072,9 @@ async function writeImpostorTransitionMessages(
     await impostorEventMessage(roomId, `伪人已亮明身份：${impostorSeat ?? "?"}号。请在60秒内选择刺杀目标（第${after.gameNumber}局）`, {
       kind: "assassination", gameNumber: after.gameNumber, day: after.day, impostorSeat,
     }, connection);
+  }
+  for (const content of impostorAccusationResultMessages(before, after, playerDescription)) {
+    await systemMessage(roomId, null, content, connection);
   }
   if (before.phase !== "accusation" && after.phase === "accusation") {
     await impostorEventMessage(roomId, `所有玩家选择公投目标（第${after.gameNumber}局）`, {
@@ -2940,6 +2975,19 @@ router.patch("/rooms/:roomId/card-battle/decks/:deckId", async (req, res) => {
     res.json({ deck: await updateSavedCardBattleDeck(context.user.id, req.params.deckId, parsed.data.name, parsed.data.cardIds, pool, parsed.data.collectibleBindings, isBossRoom(context.room) ? "boss" : "1v1") });
   } catch (error) {
     if (error instanceof CardBattleBossRuleError || error instanceof CardBattleRoomRuleError || error instanceof BattleCollectibleRuleError) return fail(res, 409, error.message);
+    throw error;
+  }
+});
+
+router.delete("/rooms/:roomId/card-battle/decks/:deckId", async (req, res) => {
+  const context = await requireMember(req, res);
+  if (!context) return;
+  if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
+  try {
+    await deleteSavedCardBattleDeck(context.user.id, req.params.deckId, pool, isBossRoom(context.room) ? "boss" : "1v1");
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof CardBattleRoomRuleError) return fail(res, 409, error.message);
     throw error;
   }
 });

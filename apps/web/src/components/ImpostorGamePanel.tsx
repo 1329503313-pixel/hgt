@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { CheckCircle2, Clock3, Eye, Moon, Shield, ShieldCheck, ShieldOff, Sun, UserRoundSearch, Users, VenetianMask, Vote, XCircle } from "lucide-react";
-import { api } from "../api";
+import type { ImpostorActions } from "../shared/useImpostorActions";
 import type { OnlineImpostorGame, OnlineSoupMessage, OnlineSoupSnapshot } from "../shared/types";
 
 type Member = OnlineSoupSnapshot["members"][number];
@@ -109,20 +109,20 @@ export function ImpostorGamePanel({ game, members, currentUserId, onChanged }: P
 
       {game.phase === "night" && <>
         <p className="text-sm font-black text-ink">夜间行动</p>
-        {!me ? <p className="text-sm text-muted">等待游戏者秘密行动，夜晚将在倒计时结束后统一结算。</p> : me.nightSubmitted ? <StatusNotice text="夜间行动已提交，夜晚将在倒计时结束后统一结算" /> : me.nightActionTypes.length === 0 ? <StatusNotice text="本夜没有可用技能，等待倒计时结束" /> : <StatusNotice text="请在聊天中的夜间行动卡选择技能" />}
+        {!me ? <p className="text-sm text-muted">等待游戏者秘密行动，夜晚将在倒计时结束后统一结算。</p> : me.nightSubmitted ? <StatusNotice text="夜间行动已提交，夜晚将在倒计时结束后统一结算" /> : me.nightActionTypes.length === 0 ? <StatusNotice text="本夜没有可用技能，等待倒计时结束" /> : <StatusNotice text="请在聊天或“更多”中的夜间行动卡选择技能" />}
       </>}
 
-      {game.phase === "day_ready" && <StatusNotice text={me?.readySubmitted ? "你已准备，等待其他玩家；白天准备阶段不设倒计时" : me ? "请在聊天中的准备卡完成准备" : "等待所有游戏者准备"} />}
+      {game.phase === "day_ready" && <StatusNotice text={me?.readySubmitted ? "你已准备，等待其他玩家；白天准备阶段不设倒计时" : me ? "请在聊天或“更多”中的准备卡完成准备" : "等待所有游戏者准备"} />}
 
-      {game.phase === "clue" && <StatusNotice text={me?.clueSubmitted ? "线索已提交，等待统一公开" : me ? "请在聊天中的留言卡填写匿名线索" : "游戏者正在匿名提交线索"} />}
+      {game.phase === "clue" && <StatusNotice text={me?.clueSubmitted ? "线索已提交，等待统一公开" : me ? "请在聊天或“更多”中的留言卡填写匿名线索" : "游戏者正在匿名提交线索"} />}
 
-      {game.phase === "day_vote" && nomination && <StatusNotice text={me?.nominationSubmitted ? "任务人选投票已提交，请在聊天中等待其他玩家" : "请在聊天中的系统投票消息内选择任务人选"} />}
+      {game.phase === "day_vote" && nomination && <StatusNotice text={me?.nominationSubmitted ? "任务人选投票已提交，请在聊天中等待其他玩家" : "请在聊天或“更多”中的系统投票消息内选择任务人选"} />}
 
-      {game.phase === "mission" && <><div><p className="text-sm font-black text-ink">本轮任务成员</p><p className="mt-1 text-sm leading-6 text-muted">{game.missionTeamUserIds.map(playerName).join("、")}</p></div>{missionMember && me ? <StatusNotice text={me.missionChoiceSubmitted ? "任务选择已提交" : "请在聊天中的任务卡秘密选择守护或破坏"} /> : <StatusNotice text="等待任务成员秘密选择；超时将自动守护" />}<SubmissionProgress submitted={game.missionSubmittedUserIds.length} total={game.missionTeamUserIds.length} /></>}
+      {game.phase === "mission" && <><div><p className="text-sm font-black text-ink">本轮任务成员</p><p className="mt-1 text-sm leading-6 text-muted">{game.missionTeamUserIds.map(playerName).join("、")}</p></div>{missionMember && me ? <StatusNotice text={me.missionChoiceSubmitted ? "任务选择已提交" : "请在聊天或“更多”中的任务卡秘密选择守护或破坏"} /> : <StatusNotice text="等待任务成员秘密选择；超时将自动守护" />}<SubmissionProgress submitted={game.missionSubmittedUserIds.length} total={game.missionTeamUserIds.length} /></>}
 
-      {game.phase === "assassination" && <StatusNotice text={me?.canAssassinate ? "身份已经公开，请在聊天中的刺杀卡选择目标" : `${game.revealedImpostorSeat ?? "?"}号是伪人，等待其完成刺杀`} />}
+      {game.phase === "assassination" && <StatusNotice text={me?.canAssassinate ? "身份已经公开，请在聊天或“更多”中的刺杀卡选择目标" : `${game.revealedImpostorSeat ?? "?"}号是伪人，等待其完成刺杀`} />}
 
-      {game.phase === "accusation" && accusation && <StatusNotice text={me?.accusationSubmitted ? "公投目标已提交，请在聊天中等待其他玩家" : me ? "请在聊天中的系统消息内选择公投目标" : "游戏者正在进行最终公投"} />}
+      {game.phase === "accusation" && accusation && <StatusNotice text={me?.accusationSubmitted ? "公投目标已提交，请在聊天中等待其他玩家" : me ? "请在聊天或“更多”中的系统消息内选择公投目标" : "游戏者正在进行最终公投"} />}
 
       {game.phase === "ended" && <StatusNotice text="本局结算和全部身份已发布到聊天中" />}
       {game.history.length > 0 && <div><p className="mb-2 text-sm font-black text-ink">任务记录</p><div className="space-y-2">{game.history.map((item) => <div key={item.day} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm"><span>第 {item.day} 天 · {item.missionTeamUserIds.map((id) => `${seatById.get(id)}号`).join("、")}</span><strong className={item.result === "success" ? "text-emerald-700" : "text-rose-700"}>{item.result === "success" ? "成功" : "失败"}</strong></div>)}</div></div>}
@@ -131,7 +131,7 @@ export function ImpostorGamePanel({ game, members, currentUserId, onChanged }: P
   </section>;
 }
 
-type ChatActionProps = Pick<Props, "roomId" | "game" | "members" | "currentUserId" | "onChanged" | "showToast">;
+type ChatActionProps = Pick<Props, "members" | "currentUserId"> & { actions: ImpostorActions };
 
 export function ImpostorSettlementCard({ event }: { event: Extract<NonNullable<OnlineSoupMessage["impostorEvent"]>, { kind: "settlement" }> }) {
   const winnerLabel = event.winner === "good" ? "好人阵营胜利" : event.winner === "impostor" ? "伪人阵营胜利" : "本局已终止";
@@ -144,46 +144,14 @@ export function ImpostorSettlementCard({ event }: { event: Extract<NonNullable<O
   </article>;
 }
 
-export function ImpostorChatActionCard({ roomId, game, members, currentUserId, onChanged, showToast }: ChatActionProps) {
-  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
-  const [selectedAction, setSelectedAction] = useState<keyof typeof actionLabel | null>(null);
-  const [clue, setClue] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [now, setNow] = useState(Date.now());
+export function ImpostorChatActionCard({ actions, members, currentUserId }: ChatActionProps) {
+  const { game, selectedTargets, selectedAction, clue, saving, now, setSelectedAction, setClue, toggleTarget, submit } = actions;
+  const clueId = useId();
   const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
   const seatById = useMemo(() => new Map(game?.playerSeats.map((seat) => [seat.userId, seat.seat]) ?? []), [game?.playerSeats]);
   const playerName = (userId: string) => `${seatById.get(userId) ?? "?"}号 ${memberById.get(userId)?.nickname ?? "已离开玩家"}`;
 
-  useEffect(() => {
-    setSelectedTargets([]);
-    setSelectedAction(null);
-    setClue("");
-  }, [game?.gameNumber, game?.phase, game?.day, game?.nomination?.attempt, game?.accusation?.attempt]);
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   if (!game || !["night", "clue", "day_ready", "day_vote", "mission", "assassination", "accusation"].includes(game.phase)) return null;
-
-  function toggleTarget(userId: string, limit: number) {
-    setSelectedTargets((current) => current.includes(userId)
-      ? current.filter((id) => id !== userId)
-      : current.length < limit ? [...current, userId] : [...current.slice(1), userId]);
-  }
-
-  async function submit(path: string, body?: object) {
-    if (saving) return;
-    setSaving(true);
-    try {
-      await api(`/api/online-soup/rooms/${roomId}/${path}`, { method: "POST", ...(body === undefined ? {} : { body }) });
-      await onChanged();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "操作失败，请稍后重试");
-    } finally {
-      setSaving(false);
-    }
-  }
 
   const expired = Boolean(game.deadlineAt && new Date(game.deadlineAt).getTime() <= now);
   const deadlineBadge = game.deadlineAt && <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 font-mono text-xs font-black tabular-nums text-slate-700"><Clock3 size={13} />{formatRemaining(game.deadlineAt, now)}</span>;
@@ -197,8 +165,8 @@ export function ImpostorChatActionCard({ roomId, game, members, currentUserId, o
       {!game.me ? <NightStatusNotice text="旁观者不可进行夜间行动" /> : game.me.nightSubmitted ? <NightStatusNotice text="夜间行动已提交，等待统一结算" /> : game.me.nightActionTypes.length === 0 ? <NightStatusNotice text="本夜没有可用技能" /> : <>
         {game.me.nightActionTypes.includes("investigate") && <p className="mt-2 text-xs leading-5 text-slate-300">查验时请选择两名不同玩家，可以包括自己；结果将在夜晚结算后显示。</p>}
         {game.me.role === "impostor" && Object.values(game.me.nightActionTargetCounts).some((count) => count === 2) && <p className="mt-1 text-xs leading-5 text-rose-200">你上次任务选择了守护，本夜可将同一个技能用于两名不同玩家。</p>}
-        <div className="mt-2 grid grid-cols-2 gap-2">{game.me.nightActionTypes.map((action) => <button key={action} type="button" disabled={expired} aria-pressed={selectedAction === action} className={`btn segmented-choice min-h-11 ${selectedAction === action ? "border-violet-400 bg-violet-600 text-white" : "border-slate-500 bg-slate-700 text-white hover:bg-slate-600"}`} onClick={() => { setSelectedAction(action); setSelectedTargets([]); }}>{actionLabel[action]}</button>)}</div>
-        {selectedAction && selectedAction !== "skip" && <TargetGrid dark items={actionTargets} selected={selectedTargets} playerName={playerName} onToggle={(id) => toggleTarget(id, actionTargetLimit)} />}
+        <div className="mt-2 grid grid-cols-2 gap-2">{game.me.nightActionTypes.map((action) => <button key={action} type="button" disabled={saving || expired} aria-pressed={selectedAction === action} className={`btn segmented-choice min-h-11 ${selectedAction === action ? "border-violet-400 bg-violet-600 text-white" : "border-slate-500 bg-slate-700 text-white hover:bg-slate-600"}`} onClick={() => setSelectedAction(action)}>{actionLabel[action]}</button>)}</div>
+        {selectedAction && selectedAction !== "skip" && <TargetGrid dark disabled={saving || expired} items={actionTargets} selected={selectedTargets} playerName={playerName} onToggle={(id) => toggleTarget(id, actionTargetLimit)} />}
         {selectedAction && <button type="button" className="btn mt-2 min-h-11 w-full bg-violet-600 text-white hover:bg-violet-500" disabled={saving || expired || (selectedAction !== "skip" && selectedTargets.length !== actionTargetLimit)} onClick={() => void submit("impostor/night-action", { type: selectedAction, targetUserIds: selectedAction === "skip" ? [] : selectedTargets })}>{saving ? "提交中…" : selectedAction === "skip" ? "确认本夜不使用技能" : `确认使用${actionLabel[selectedAction]}${actionTargetLimit === 2 ? "（2人）" : ""}`}</button>}
         {expired && <NightStatusNotice text="行动时间已结束，未提交视为跳过" />}
       </>}
@@ -209,8 +177,8 @@ export function ImpostorChatActionCard({ roomId, game, members, currentUserId, o
     return <article className="impostor-night-action-card mx-auto mt-2 w-full max-w-xl rounded-2xl border border-slate-600 bg-slate-800 p-3 text-left text-white shadow-sm" aria-label="匿名留言">
       <div className="flex items-center gap-2 text-sm font-black"><Moon size={17} />填写匿名身份留言{deadlineBadge}</div>
       {!game.me ? <NightStatusNotice text="旁观者不可填写留言" /> : game.me.clueSubmitted ? <NightStatusNotice text="留言已提交，等待统一公开" /> : <>
-        <label htmlFor="impostor-chat-clue" className="mt-2 block text-xs font-bold text-slate-300">最多 10 个字，也可以跳过</label>
-        <textarea id="impostor-chat-clue" className="mt-2 min-h-20 w-full resize-none rounded-xl border border-slate-500 bg-slate-700 px-3 py-2 text-base text-white caret-white outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-400/30" value={clue} disabled={expired} onChange={(event) => setClue(Array.from(event.target.value).slice(0, 10).join(""))} placeholder="填写本局匿名留言…" />
+        <label htmlFor={clueId} className="mt-2 block text-xs font-bold text-slate-300">最多 10 个字，也可以跳过</label>
+        <textarea id={clueId} className="mt-2 min-h-20 w-full resize-none rounded-xl border border-slate-500 bg-slate-700 px-3 py-2 text-base text-white caret-white outline-none placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-400/30" value={clue} disabled={saving || expired} onChange={(event) => setClue(event.target.value)} placeholder="填写本局匿名留言…" />
         <div className="mt-2 grid grid-cols-2 gap-2"><button className="btn min-h-11 border border-slate-500 bg-slate-700 text-white hover:bg-slate-600" disabled={saving || expired} onClick={() => void submit("impostor/clue", { content: null })}>跳过</button><button className="btn min-h-11 bg-violet-600 text-white hover:bg-violet-500" disabled={saving || expired || !clue.trim()} onClick={() => void submit("impostor/clue", { content: clue })}>提交留言</button></div>
         {expired && <NightStatusNotice text="留言时间已结束，未提交视为跳过" />}
       </>}
@@ -232,7 +200,7 @@ export function ImpostorChatActionCard({ roomId, game, members, currentUserId, o
       <div className="flex items-center gap-2 text-sm font-black text-violet-900"><Vote size={17} />{nomination.attempt > 1 ? `第 ${nomination.attempt} 次平票重投` : `选择 ${nomination.required} 名任务人选`}{deadlineBadge}</div>
       {nomination.lockedUserIds.length > 0 && <p className="mt-1 text-xs font-bold text-emerald-700">已确定：{nomination.lockedUserIds.map(playerName).join("、")}</p>}
       {!game.me ? <StatusNotice text="旁观者不可参与投票" /> : submitted ? <StatusNotice text="任务人选投票已提交" /> : <>
-        <TargetGrid items={game.playerSeats.map(({ userId }) => ({
+        <TargetGrid disabled={saving || expired} items={game.playerSeats.map(({ userId }) => ({
           userId,
           disabled: !nomination.candidateUserIds.includes(userId),
           suffix: game.isolatedUserIds.includes(userId) ? "（隔离）" : previousMissionTeam.has(userId) ? "（上次已执行任务）" : nomination.lockedUserIds.includes(userId) ? "（已确定）" : "",
@@ -262,18 +230,19 @@ export function ImpostorChatActionCard({ roomId, game, members, currentUserId, o
       <div className="flex items-center gap-2 text-sm font-black text-rose-900"><UserRoundSearch size={17} />{game.revealedImpostorSeat ?? "?"}号伪人选择刺杀目标{deadlineBadge}</div>
       {game.me?.canAssassinate ? <>
         <p className="mt-1 text-xs leading-5 text-muted">刺中侦探则伪人获胜，否则好人获胜。</p>
-        <TargetGrid items={game.playerSeats.map(({ userId }) => ({ userId, disabled: userId === currentUserId, suffix: userId === currentUserId ? "（自己）" : "" }))} selected={selectedTargets} playerName={playerName} onToggle={(id) => toggleTarget(id, 1)} />
+        <TargetGrid disabled={saving || expired} items={game.playerSeats.map(({ userId }) => ({ userId, disabled: userId === currentUserId, suffix: userId === currentUserId ? "（自己）" : "" }))} selected={selectedTargets} playerName={playerName} onToggle={(id) => toggleTarget(id, 1)} />
         <button className="btn mt-2 min-h-11 w-full bg-rose-600 text-white hover:bg-rose-700" disabled={saving || expired || selectedTargets.length !== 1} onClick={() => void submit("impostor/assassinate", { targetUserId: selectedTargets[0] })}><UserRoundSearch size={17} />{saving ? "提交中…" : expired ? "刺杀已超时" : "确认刺杀"}</button>
       </> : <StatusNotice text="等待伪人秘密选择刺杀目标" />}
     </article>;
   }
 
-  const accusation = game.accusation!;
+  if (game.phase !== "accusation" || !game.accusation) return null;
+  const accusation = game.accusation;
   const submitted = Boolean(game.me?.accusationSubmitted);
   return <article className="mx-auto mt-2 w-full max-w-xl rounded-2xl border border-blue-200 bg-blue-50 p-3 text-left shadow-sm" aria-label="最终公投">
     <div className="flex items-center gap-2 text-sm font-black text-blue-900"><Vote size={17} />{accusation.attempt === 2 ? "平票重投：再次选择公投目标" : "所有玩家选择公投目标"}{deadlineBadge}</div>
     {!game.me ? <StatusNotice text="旁观者不可参与公投" /> : submitted ? <StatusNotice text="公投目标已提交" /> : <>
-      <TargetGrid items={game.playerSeats.map(({ userId }) => ({
+      <TargetGrid disabled={saving || expired} items={game.playerSeats.map(({ userId }) => ({
         userId,
         disabled: userId === currentUserId || !accusation.candidateUserIds.includes(userId),
         suffix: userId === currentUserId ? "（自己）" : "",
@@ -284,8 +253,8 @@ export function ImpostorChatActionCard({ roomId, game, members, currentUserId, o
   </article>;
 }
 
-function TargetGrid({ items, selected, playerName, onToggle, dark = false }: { items: Array<{ userId: string; disabled?: boolean; suffix?: string }>; selected: string[]; playerName: (id: string) => string; onToggle: (id: string) => void; dark?: boolean }) {
-  return <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">{items.map(({ userId, disabled = false, suffix = "" }) => <button key={userId} type="button" disabled={disabled} aria-pressed={selected.includes(userId)} className={`min-h-11 rounded-xl border px-3 py-2 text-left text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${disabled ? dark ? "cursor-not-allowed border-slate-600 bg-slate-700 text-slate-400 opacity-70" : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 opacity-80" : selected.includes(userId) ? "border-violet-500 bg-violet-600 text-white" : dark ? "border-slate-500 bg-slate-700 text-white hover:border-violet-400 hover:bg-slate-600" : "border-line bg-white text-ink hover:border-violet-300 hover:bg-violet-50"}`} onClick={() => onToggle(userId)}>{playerName(userId)}{suffix}</button>)}</div>;
+function TargetGrid({ items, selected, playerName, onToggle, dark = false, disabled: locked = false }: { items: Array<{ userId: string; disabled?: boolean; suffix?: string }>; selected: string[]; playerName: (id: string) => string; onToggle: (id: string) => void; dark?: boolean; disabled?: boolean }) {
+  return <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">{items.map(({ userId, disabled = false, suffix = "" }) => <button key={userId} type="button" disabled={locked || disabled} aria-pressed={selected.includes(userId)} className={`min-h-11 rounded-xl border px-3 py-2 text-left text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70 ${disabled ? dark ? "cursor-not-allowed border-slate-600 bg-slate-700 text-slate-400 opacity-70" : "border-slate-200 bg-slate-100 text-slate-400 opacity-80" : selected.includes(userId) ? "border-violet-500 bg-violet-600 text-white" : dark ? "border-slate-500 bg-slate-700 text-white hover:border-violet-400 hover:bg-slate-600" : "border-line bg-white text-ink hover:border-violet-300 hover:bg-violet-50"}`} onClick={() => onToggle(userId)}>{playerName(userId)}{suffix}</button>)}</div>;
 }
 
 function SubmissionProgress({ submitted, total }: { submitted: number; total: number }) {

@@ -4,6 +4,7 @@ import {
   IMPOSTOR_MISSION_SIZES,
   advanceExpiredImpostorGame,
   createImpostorGame,
+  impostorAccusationResultMessages,
   impostorNightActionTargetCount,
   startImpostorAssassination,
   submitImpostorAccusation,
@@ -333,13 +334,83 @@ test("最终指认第二次仍平票时伪人胜利", () => {
   state = submitImpostorAccusation(state, "u3", "u4", now);
   state = submitImpostorAccusation(state, "u4", "u3", now);
   assert.equal(state.accusation?.attempt, 2);
+  const firstResult = structuredClone(state.accusationResults![0]);
+  assert.deepEqual(firstResult, { attempt: 1, voteCounts: [
+    { userId: "u1", votes: 0 }, { userId: "u2", votes: 0 }, { userId: "u3", votes: 2 }, { userId: "u4", votes: 2 },
+  ], abstainedCount: 0 });
   assert.equal(state.deadlineAt, "2026-08-25T00:05:00.000Z");
   state = submitImpostorAccusation(state, "u1", "u3", now);
   state = submitImpostorAccusation(state, "u2", "u4", now);
   state = submitImpostorAccusation(state, "u3", "u4", now);
+  const beforeLastVote = state;
   state = submitImpostorAccusation(state, "u4", "u3", now);
   assert.equal(state.winner, "impostor");
   assert.match(state.endReason ?? "", /第二次/);
+  assert.deepEqual(state.accusationResults, [firstResult, { ...firstResult, attempt: 2 }]);
+  assert.deepEqual(impostorAccusationResultMessages(beforeLastVote, state, (id) => `${id.slice(1)}号 玩家${id.slice(1)}`), [
+    "最终指认结果（第1局，第2轮）：1号 玩家1：0票；2号 玩家2：0票；3号 玩家3：2票；4号 玩家4：2票；弃权/超时弃票：0票。",
+  ]);
+  assert.deepEqual(impostorAccusationResultMessages(state, structuredClone(state), (id) => id), []);
+});
+
+test("最终指认完成后公开全部4-6名玩家得票，包含最后一票、零票与弃权", () => {
+  for (const count of [4, 5, 6]) {
+    const players = users.concat(["u5", "u6"]).slice(0, count);
+    let state = createImpostorGame(players, 8, now, fixedRandom);
+    const initial = structuredClone(state);
+    const impostorId = state.players.find((player) => player.role === "impostor")!.userId;
+    state.phase = "accusation";
+    state.accusation = { attempt: 1, candidateUserIds: players, ballots: {} };
+    for (const [index, userId] of players.entries()) {
+      const before = state;
+      state = submitImpostorAccusation(state, userId, userId === impostorId ? null : impostorId, now);
+      if (index < count - 1) {
+        assert.deepEqual(state.accusationResults, []);
+        assert.deepEqual(impostorAccusationResultMessages(before, state, (id) => id), []);
+      }
+    }
+    assert.equal(state.winner, "good");
+    assert.equal(state.accusation, null);
+    assert.deepEqual(state.accusationResults, [{ attempt: 1, voteCounts: players.map((userId) => ({ userId, votes: userId === impostorId ? count - 1 : 0 })), abstainedCount: 1 }]);
+    const restored = JSON.parse(JSON.stringify(state)) as ImpostorGameState;
+    const messages = impostorAccusationResultMessages(initial, restored, (id) => `${id.slice(1)}号 昵称${id.slice(1)}`);
+    assert.equal(messages.length, 1);
+    for (const userId of players) assert.ok(messages[0].includes(`${userId.slice(1)}号 昵称${userId.slice(1)}：${userId === impostorId ? count - 1 : 0}票`));
+    assert.ok(messages[0].endsWith("弃权/超时弃票：1票。"));
+    assert.deepEqual(createImpostorGame(players, 9, now, fixedRandom).accusationResults, []);
+  }
+});
+
+test("最终指认超时和全员弃权仍公开所有玩家零票，兼容没有结果字段的旧存档", () => {
+  for (const mode of ["partial", "timeout", "abstain"] as const) {
+    let state = firstNightResolved();
+    delete state.accusationResults;
+    state.phase = "accusation";
+    state.accusation = { attempt: 1, candidateUserIds: [...users], ballots: {} };
+    const before = structuredClone(state);
+    if (mode === "partial") state = submitImpostorAccusation(state, "u1", "u2", now);
+    if (mode === "abstain") {
+      for (const userId of users) state = submitImpostorAccusation(state, userId, null, now);
+    } else {
+      state.deadlineAt = now.toISOString();
+      state = advanceExpiredImpostorGame(state, now, fixedRandom);
+    }
+    assert.equal(state.phase, "ended");
+    assert.deepEqual(state.accusationResults, [{ attempt: 1, voteCounts: users.map((userId) => ({ userId, votes: mode === "partial" && userId === "u2" ? 1 : 0 })), abstainedCount: mode === "partial" ? 3 : 4 }]);
+    assert.equal(impostorAccusationResultMessages(before, state, (id) => id).length, 1);
+  }
+});
+
+test("最终指认被终止或刺杀打断时不公布尚未完成的票数", () => {
+  let state = firstNightResolved();
+  state.phase = "accusation";
+  state.accusation = { attempt: 1, candidateUserIds: [...users], ballots: {} };
+  state = submitImpostorAccusation(state, "u1", "u2", now);
+  const impostorId = state.players.find((player) => player.role === "impostor")!.userId;
+  for (const interrupted of [terminateImpostorGame(state), startImpostorAssassination(state, impostorId, now)]) {
+    assert.deepEqual(interrupted.accusationResults, []);
+    assert.deepEqual(impostorAccusationResultMessages(state, interrupted, (id) => id), []);
+  }
 });
 
 test("投票超时未提交者按弃票结算", () => {
