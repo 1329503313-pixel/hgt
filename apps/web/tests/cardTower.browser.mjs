@@ -17,7 +17,7 @@ const makeCard=(id,name)=>({id,cardNo:id,name,imageUrl:image,rarity:'legend',bat
 const cards=Array.from({length:15},(_,i)=>makeCard('card'+i,'玩家卡'+i));const bosses=Array.from({length:5},(_,i)=>makeCard('boss'+i,'BOSS卡'+i));
 const decks=[0,1,2].map(i=>({id:'deck'+i,name:'快捷卡组'+(i+1),cardIds:cards.slice(i*5,i*5+5).map(c=>c.id),collectibleBindings:[]}));
 const floor={id:'floor1',floorNumber:1,enabled:true,rewardShells:50,clearCount:1,revision:1,cards:bosses.map(c=>({name:c.name,imageUrl:'/api/online-soup/card-battle-boss/covers/'+'a'.repeat(64),tier:{...DEFAULT_LEGEND_CARD_BATTLE_TIERS[3]}}))};
-window.tower={room:{id:'room',name:'通天塔挑战'},formations:emptyCardTowerFormations(),revision:1,clearedFloor:0,message:null,nextFloor:{id:'floor1',floorNumber:1,rewardShells:50,lineup:bosses},game:null};
+window.tower={room:{id:'room',name:'卡牌闯关'},formations:emptyCardTowerFormations(),revision:1,clearedFloor:0,message:null,nextFloor:{id:'floor1',floorNumber:1,rewardShells:50,lineup:bosses},game:null};
 window.requests=[];window.fetch=async(url,options={})=>{url=String(url);const body=options.body?JSON.parse(options.body):null;window.requests.push({url,method:options.method,body});let data={ok:true};
 if(url.includes('/resources'))data={cards,decks,collectibles:[]};
 else if(url.includes('/admin/card-tower/floors/')&&url.includes('/clears'))data={clears:[{userId:'u2',nickname:'挑战者',username:'challenger',clearedAt:'2026-09-10T01:02:03Z'}],total:1};
@@ -25,7 +25,7 @@ else if(url.includes('/admin/card-tower/floors'))data={floors:[floor],total:1,ca
 else if(url.includes('/ranking'))data={entries:[{userId:'u2',nickname:'挑战者',ranking:1,totalPower:90000,floorNumber:12,clearedAt:'2026-09-10T01:02:03Z',vipLevel:0,vipActive:false}],me:null};
 else if(url.endsWith('/formation')){window.tower.formations=replaceCardTowerFormation(window.tower.formations,body.index,body.formation);window.tower.revision++;data={formations:window.tower.formations,revision:window.tower.revision};}
 else if(url.includes('/collectibles'))data={collectibles:[]};
-else if(url.endsWith('/start')){const lineups=window.tower.formations.filter(f=>f.cardIds.some(Boolean)).map((f,i)=>({seat:1,userId:'u1:formation:'+i,nickname:'阵容 '+(i+1),cards:f.cardIds.map(id=>cards.find(c=>c.id===id))}));lineups.push({seat:2,userId:'boss',nickname:'通天塔第 1 层',cards:bosses});const states=[lineups[0],lineups.at(-1)].flatMap(p=>p.cards.map((c,i)=>({...c.stats,instanceId:p.userId+':'+i,userId:p.userId,seat:p.seat,slot:i+1,row:i<2?'front':'rear',hp:3000,maxHp:3000,energy:0,alive:true})));const event={sequence:1,round:1,kind:'round',visual:'round',actorId:null,skillName:null,effects:[],states,durationMs:500000,text:'第一回合开始'};window.tower.game={id:'game',status:'playing',floorNumber:1,totalPower:90000,rewardShells:50,lineups,settlement:null,playback:{completedSequence:0,totalEvents:1,complete:false,states,activeEvent:event,activeEventStartedAt:new Date().toISOString(),activeEventElapsedMs:0,serverNow:new Date().toISOString()}};}
+else if(url.endsWith('/start')){const lineups=window.tower.formations.filter(f=>f.cardIds.some(Boolean)).map((f,i)=>({seat:1,userId:'u1:formation:'+i,nickname:'阵容 '+(i+1),cards:f.cardIds.map(id=>cards.find(c=>c.id===id))}));lineups.push({seat:2,userId:'boss',nickname:'卡牌闯关第 1 层',cards:bosses});const states=[lineups[0],lineups.at(-1)].flatMap(p=>p.cards.map((c,i)=>({...c.stats,instanceId:p.userId+':'+i,userId:p.userId,seat:p.seat,slot:i+1,row:i<2?'front':'rear',hp:3000,maxHp:3000,energy:0,alive:true})));const event={sequence:1,round:1,kind:'round',visual:'round',actorId:null,skillName:null,effects:[],states,durationMs:500000,text:'第一回合开始'};window.tower.game={id:'game',status:'playing',floorNumber:1,totalPower:90000,rewardShells:50,lineups,settlement:null,playback:{completedSequence:0,totalEvents:1,complete:false,states,activeEvent:event,activeEventStartedAt:new Date().toISOString(),activeEventElapsedMs:0,serverNow:new Date().toISOString()}};}
 else if(url.includes('/playback'))data={gameId:'game',playback:window.tower.game?.playback};
 else if(url.includes('/rooms/'))data=window.tower;
 return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});};
@@ -57,6 +57,9 @@ try {
   await page.getByRole('button', { name: '阵容 3 · 0/5', exact: true }).click(); await importDeck(3);
   await page.getByRole('button', { name: '配置阵容', exact: true }).click();
   await expect(page.getByText('配置阵容 3', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '选择玩家卡0', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '选择玩家卡5', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '选择玩家卡10', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '卸下当前卡位', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.tower.formations[2].cardIds[0])).toBe(null);
   await page.getByRole('button', { name: '选择玩家卡10', exact: true }).click();

@@ -50,7 +50,7 @@ export function BossEditor({ boss, onClose, onSaved, tower }: { boss: CardBattle
     } catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
   }
   return <Modal full onClose={() => { if (!busy) onClose(); }}><form onSubmit={save}><button type="button" className="float-right grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100 text-ink" disabled={busy} onClick={onClose} aria-label="关闭 BOSS 编辑"><X size={18} /></button>
-    <h2 className="pr-10 text-xl font-black text-ink">{tower ? `${tower.id ? "编辑" : "新增"}通天塔第 ${tower.floorNumber} 层` : boss ? "编辑 BOSS 房间" : "创建 BOSS 房间"}</h2><p className="mt-2 text-sm leading-6 text-muted">{tower ? "层级自动生成且不可删除，上架后不可下架。编辑只影响之后开始的挑战。" : `系统永久房间，无房主。${boss ? `房间号 ${boss.code}` : ""}`}五张专属卡牌固定三星；上架时须完整配置。</p>
+    <h2 className="pr-10 text-xl font-black text-ink">{tower ? `${tower.id ? "编辑" : "新增"}卡牌闯关第 ${tower.floorNumber} 层` : boss ? "编辑 BOSS 房间" : "创建 BOSS 房间"}</h2><p className="mt-2 text-sm leading-6 text-muted">{tower ? "层级自动生成且不可删除，上架后不可下架。编辑只影响之后开始的挑战。" : `系统永久房间，无房主。${boss ? `房间号 ${boss.code}` : ""}`}五张专属卡牌固定三星；上架时须完整配置。</p>
     <fieldset disabled={busy} className="mt-4 space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
         {!tower && <><label className="sm:col-span-2"><span className="text-sm font-bold text-ink">房间名称</span><input required maxLength={50} className="field mt-1 w-full" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>

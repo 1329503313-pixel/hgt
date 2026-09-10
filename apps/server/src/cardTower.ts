@@ -53,14 +53,14 @@ async function nextFloor(id: string, db: mysql.Pool | mysql.PoolConnection = poo
   const [[progress]] = await db.query<mysql.RowDataPacket[]>("SELECT COALESCE(MAX(floor_number), 0) AS floor FROM card_tower_clears WHERE user_id = ?", [id]);
   const floor = Number(progress!.floor) + 1;
   const [[row]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM card_tower_floors WHERE floor_number = ?", [floor]);
-  return { clearedFloor: floor - 1, row: row ?? null, message: !row ? floor === 1 ? "暂无已开放的通天塔层级" : "当前所有层级已全部通关" : !row.enabled ? `第 ${floor} 层尚未上架，敬请期待` : null };
+  return { clearedFloor: floor - 1, row: row ?? null, message: !row ? floor === 1 ? "暂无已开放的卡牌闯关层级" : "当前所有层级已全部通关" : !row.enabled ? `第 ${floor} 层尚未上架，敬请期待` : null };
 }
 function floorPublic(row: mysql.RowDataPacket) {
   return { id: String(row.id), floorNumber: Number(row.floor_number), enabled: Boolean(row.enabled), rewardShells: Number(row.reward_shells),
     cards: json<unknown[]>(row.cards_json), revision: Number(row.revision), clearCount: Number(row.clear_count ?? 0) };
 }
 function floorBoss(row: mysql.RowDataPacket) {
-  return bossBattlePlayer({ ...row, room_id: row.id, name: `通天塔第 ${row.floor_number} 层`, room_code: "", db_now: new Date(),
+  return bossBattlePlayer({ ...row, room_id: row.id, name: `卡牌闯关第 ${row.floor_number} 层`, room_code: "", db_now: new Date(),
     starts_at: new Date("2000-01-01"), ends_at: new Date("2100-01-01") } as mysql.RowDataPacket);
 }
 
@@ -85,9 +85,9 @@ export async function finalizeCardTowerRoom(roomId: string, id: string) {
             [id, game.floor_id, game.floor_number, game.id, game.total_power, amount, game.playback_ends_at]);
           await db.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balance, id]);
           await db.query(`INSERT INTO shell_transactions (id,user_id,transaction_type,amount,balance_after,related_type,related_id,remark,idempotency_key)
-            VALUES (?,?,'card_tower',?,?,'card_tower',?,?,?)`, [nanoid(), id, amount, balance, game.floor_id, `通天塔第 ${game.floor_number} 层首次通关`, `tower:${id}:${game.floor_id}`]);
+            VALUES (?,?,'card_tower',?,?,'card_tower',?,?,?)`, [nanoid(), id, amount, balance, game.floor_id, `卡牌闯关第 ${game.floor_number} 层首次通关`, `tower:${id}:${game.floor_id}`]);
           await db.query(`INSERT INTO notifications (id,user_id,type,title,content,related_id) VALUES (?,?,'card_tower','卡牌闯关通关奖励',?,?)`,
-            [nanoid(), id, `首次通关通天塔第 ${game.floor_number} 层，${amount} 贝壳已到账。`, game.floor_id]);
+            [nanoid(), id, `首次通关卡牌闯关第 ${game.floor_number} 层，${amount} 贝壳已到账。`, game.floor_id]);
           rewards.push({ userId: id, amount, balance });
         }
       }
@@ -126,7 +126,7 @@ export function registerCardTowerRoutes(router: Router) {
   }));
   const saveFloor = handler(async (req, res) => {
     const input = floorSchema.parse(req.body);
-    const validated = bossInputSchema.parse({ ...input, name: "通天塔", startsAt: "2000-01-01T00:00:00Z", endsAt: "2100-01-01T00:00:00Z" });
+    const validated = bossInputSchema.parse({ ...input, name: "卡牌闯关", startsAt: "2000-01-01T00:00:00Z", endsAt: "2100-01-01T00:00:00Z" });
     const id = await transaction(async (db) => {
       await db.query("SELECT id FROM card_tower_admin_lock WHERE id = 1 FOR UPDATE");
       const floorId = req.params.floorId ? String(req.params.floorId) : nanoid();
