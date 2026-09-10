@@ -1,9 +1,10 @@
 import { cardBattleStatusOrder, type CardBattleStatus, type CardBattleStatusType } from "./cardBattleStatus.js";
 import type { CardBattleProcStat, CardBattleProcStats } from "@hgt/shared";
 
-export type CardBattleBuffStat = "attack" | "skillDamage" | "defense" | "speed" | "maxHp" | "healingReceived" | CardBattleProcStat | "stunned";
+export type CardBattleBuffStat = "attack" | "skillDamage" | "defense" | "speed" | "maxHp" | "healingReceived" | CardBattleProcStat | "stunned" | "immunity" | "revivalBlock";
 export type CardBattleBuff = {
   stat: CardBattleBuffStat; value: number; expiresAfterRound: number; debuff?: boolean;
+  applicationId?: number;
   sourceId?: string;
   sourceOrder?: number;
   /** Only a stun caused by a skill's extra probability has a support owner. */
@@ -42,19 +43,19 @@ export function cardBattleStatuses(buffs: readonly CardBattleBuff[], round: numb
   const counts = new Map<CardBattleStatusType, number>();
   for (const buff of buffs) {
     if (buff.value <= 0 || buff.expiresAfterRound < round) continue;
-    if (buff.stat === "stunned") {
-      statuses.push({ type: "stunned", value: 1, multiplier: 1, remainingRounds: 1 });
+    if (buff.stat === "stunned" || buff.stat === "immunity" || buff.stat === "revivalBlock") {
+      statuses.push({ type: buff.stat === "revivalBlock" ? "revival_block" : buff.stat, category: buff.debuff ? "debuff" : "buff", value: 1, multiplier: 1, remainingRounds: Math.max(1, buff.expiresAfterRound - round + 1) });
       continue;
     }
     // The two components of an attack+skill-damage debuff share one status icon.
     if (buff.debuff && buff.stat === "skillDamage") continue;
     const type: CardBattleStatusType | undefined = buff.debuff
-      ? ({ attack: "attack_skill_damage_down", defense: "defense_down", speed: "speed_down", maxHp: "max_hp_down", healingReceived: "healing_received_down", lifestealRate: "lifesteal_down", stunRate: "stun_down", extraActionRate: "extra_action_down" } as const)[buff.stat as Exclude<CardBattleBuffStat, "skillDamage" | "stunned">]
-      : ({ attack: "attack_up", skillDamage: "skill_damage_up", defense: "defense_up", speed: "speed_up", maxHp: "max_hp_up", lifestealRate: "lifesteal_up", stunRate: "stun_up", extraActionRate: "extra_action_up" } as const)[buff.stat as Exclude<CardBattleBuffStat, "healingReceived" | "stunned">];
+      ? ({ attack: "attack_skill_damage_down", defense: "defense_down", speed: "speed_down", maxHp: "max_hp_down", healingReceived: "healing_received_down", lifestealRate: "lifesteal_down", stunRate: "stun_down", extraActionRate: "extra_action_down" } as const)[buff.stat as Exclude<CardBattleBuffStat, "skillDamage" | "stunned" | "immunity" | "revivalBlock">]
+      : ({ attack: "attack_up", skillDamage: "skill_damage_up", defense: "defense_up", speed: "speed_up", maxHp: "max_hp_up", lifestealRate: "lifesteal_up", stunRate: "stun_up", extraActionRate: "extra_action_up" } as const)[buff.stat as Exclude<CardBattleBuffStat, "healingReceived" | "stunned" | "immunity" | "revivalBlock">];
     if (!type) continue;
     const remainingRounds = Number.isFinite(buff.expiresAfterRound) ? Math.max(1, buff.expiresAfterRound - round + 1) : null;
     const multiplier = counts.has(type) ? .5 : 1;
-    statuses.push({ type, value: buff.value, multiplier, remainingRounds });
+    statuses.push({ type, category: buff.debuff ? "debuff" : "buff", value: buff.value, multiplier, remainingRounds });
     counts.set(type, (counts.get(type) ?? 0) + 1);
   }
   return statuses.sort((left, right) => cardBattleStatusOrder.indexOf(left.type) - cardBattleStatusOrder.indexOf(right.type));
@@ -67,8 +68,10 @@ export function rollCardBattleCritical(stats: { critRate?: number; critDamage?: 
 }
 
 /** One deterministic draw per target hit, applied before defense. */
-export function rollCardBattleDamage(baseDamage: number, defense: number, hp: number, random: () => number) {
+export function rollCardBattleDamage(baseDamage: number, defense: number, hp: number, random: () => number, ignoreDefensePercent = 0) {
   const incomingDamage = Math.round(Math.max(0, baseDamage) * (.98 + random() * .04));
-  const damage = Math.min(hp, Math.max(0, Math.round(incomingDamage - defense)));
+  const ignoredPercent = Number.isFinite(ignoreDefensePercent) ? Math.min(100, Math.max(0, ignoreDefensePercent)) : 0;
+  const effectiveDefense = defense * ((100 - ignoredPercent) / 100);
+  const damage = Math.min(hp, Math.max(0, Math.round(incomingDamage - effectiveDefense)));
   return { incomingDamage, damage };
 }

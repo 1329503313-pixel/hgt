@@ -1,7 +1,5 @@
 import { User } from "lucide-react";
 import type { Evaluation } from "../shared/types";
-import { EquippedBadgeIcon } from "./BadgeVisuals";
-import { LevelBadge } from "./LevelBadge";
 import { VipIdentity } from "./VipIdentity";
 
 export function EvaluationCard({ evaluation, compact = false }: { evaluation: Evaluation; compact?: boolean }) {
@@ -9,13 +7,13 @@ export function EvaluationCard({ evaluation, compact = false }: { evaluation: Ev
     <article className={`detail-evaluation-item rounded-xl border border-line bg-slate-50 p-4 ${compact ? "detail-evaluation-item-compact" : ""}`}>
       <div className="flex items-center justify-between gap-3">
         <span className="flex min-w-0 flex-wrap items-center gap-2">
-          {evaluation.reviewerAvatar ? (
+          {!evaluation.isAnonymous && evaluation.reviewerAvatar ? (
             <img className="h-6 w-6 shrink-0 rounded-full object-cover" src={evaluation.reviewerAvatar} alt={`${evaluation.reviewer}头像`} />
           ) : (
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-blue-100 text-primary"><User size={14} /></span>
           )}
-          <VipIdentity nickname={evaluation.reviewer} userLevel={evaluation.reviewerLevel} vipLevel={evaluation.reviewerVipLevel} vipActive={evaluation.reviewerVipActive} equippedBadge={evaluation.reviewerEquippedBadge} className="min-w-0" iconClassName="h-4 w-4" badgeClassName="h-5 w-5" />
-          {evaluation.isCreatorEvaluation ? (
+          {evaluation.isAnonymous ? <span className="font-bold text-ink">匿名用户</span> : <VipIdentity nickname={evaluation.reviewer} userLevel={evaluation.reviewerLevel} vipLevel={evaluation.reviewerVipLevel} vipActive={evaluation.reviewerVipActive} equippedBadge={evaluation.reviewerEquippedBadge} className="min-w-0" iconClassName="h-4 w-4" badgeClassName="h-5 w-5" />}
+          {!evaluation.isAnonymous && evaluation.isCreatorEvaluation ? (
             <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">上传者评价 · 仅展示</span>
           ) : !evaluation.countsTowardScore ? (
             <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-600">未计入评分</span>

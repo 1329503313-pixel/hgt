@@ -1,3 +1,4 @@
+import { cardBattleStatusCategory } from "@hgt/shared";
 import { useId, type CSSProperties } from "react";
 import { CARD_BATTLE_MOTIONS, CARD_BATTLE_PROC_MOTIONS, CARD_BATTLE_STATUS_GLYPHS, type BattleGlyphName, type BattleMotion } from "../shared/cardBattleMotion";
 import { CARD_BATTLE_STATUS_ORDER, cardBattleStatusText, type CardBattleStatus } from "../shared/cardBattleEffects";
@@ -33,7 +34,7 @@ export function CardBattleStatusIcons({ statuses }: { statuses: CardBattleStatus
   if (!statuses.length) return null;
   const sorted = [...statuses].sort((a, b) => CARD_BATTLE_STATUS_ORDER.indexOf(a.type) - CARD_BATTLE_STATUS_ORDER.indexOf(b.type));
   return <div className="card-battle-status-rail" role="list" aria-label={`卡牌状态，共${sorted.length}层，可横向滚动`} tabIndex={0}>
-    {sorted.map((status, index) => <span key={`${status.type}:${index}`} role="listitem" className={`card-battle-status-icon ${status.type.endsWith("_down") || status.type === "stunned" ? "is-debuff" : "is-buff"}`} title={cardBattleStatusText(status)} aria-label={cardBattleStatusText(status)} data-status-type={status.type}>
+    {sorted.map((status, index) => <span key={`${status.type}:${index}`} role="listitem" className={`card-battle-status-icon ${(status.category ?? cardBattleStatusCategory(status.type)) === "debuff" ? "is-debuff" : "is-buff"}`} title={cardBattleStatusText(status)} aria-label={cardBattleStatusText(status)} data-status-type={status.type} data-status-category={status.category ?? cardBattleStatusCategory(status.type)}>
       <BattleGlyph name={CARD_BATTLE_STATUS_GLYPHS[status.type]} />
       <small>{status.remainingRounds ?? "∞"}</small>
     </span>)}

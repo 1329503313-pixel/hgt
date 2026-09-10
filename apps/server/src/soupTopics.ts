@@ -15,3 +15,22 @@ export function soupTopicSearchFilterSql(alias = "s") {
 export function soupTopicDirectMatchOrderSql(alias = "s") {
   return `CASE WHEN ${alias}.title LIKE ? OR ${alias}.author LIKE ? OR ${alias}.summary LIKE ? THEN 0 ELSE 1 END ASC`;
 }
+
+export function soupTopicSummaryColumnsSql(alias = "s") {
+  return `${alias}.topic_id,
+    (SELECT topic.name FROM soup_topics topic WHERE topic.id = ${alias}.topic_id) AS topic_name,
+    (SELECT topic.is_active FROM soup_topics topic WHERE topic.id = ${alias}.topic_id) AS topic_is_active`;
+}
+
+export function soupKeywordFilter(keyword: string) {
+  const value = keyword.trim();
+  if (value.startsWith("#") && value.slice(1).trim()) {
+    return {
+      sql: "EXISTS (SELECT 1 FROM soup_topics matched_topic WHERE matched_topic.id = s.topic_id AND matched_topic.name = ?)",
+      params: [value.slice(1).trim()],
+      orderKeyword: null
+    };
+  }
+  const pattern = `%${value}%`;
+  return { sql: soupTopicSearchFilterSql(), params: [pattern, pattern, pattern, pattern], orderKeyword: pattern };
+}

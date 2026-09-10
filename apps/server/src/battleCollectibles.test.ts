@@ -127,6 +127,19 @@ test("免死可重复保留1点生命且不触发死亡技能，到期后复活�
   assert.ok(result.events.filter((e) => e.round > 2).every((e) => e.states.every((c) => !c.statuses?.some((s) => s.type === "death_protection"))));
 });
 
+test("伤害技能忽防包含收藏品加防，100%忽防仍遵守无敌与免死保护", () => {
+  for (const protection of ["defense", "invincible", "death_protection"] as const) {
+    const one = team("a", { attack: 0, speed: 200, energyRequired: 10, effects: [{ ...effect("damage_all", 1000), ignoreDefensePercent: 100 }] });
+    const two = team("b", { attack: 0, defense: 2000, maxHp: 100 }, relic(protection, protection === "defense" ? 1000 : 30));
+    const result = simulate(one, two);
+    const hit = result.events.find((event) => event.actorId?.startsWith("a") && event.effectType === "damage_all")!;
+    assert.ok(hit);
+    const expectedDamage = protection === "invincible" ? 0 : protection === "death_protection" ? 99 : 100;
+    assert.ok(hit.effects.every((visual) => visual.amount === -expectedDamage));
+    if (protection !== "defense") assert.ok(hit.effects.every((visual) => visual.label === (protection === "invincible" ? "无敌" : "免死")));
+  }
+});
+
 test("复活后仍恢复收藏品增加的生命上限", () => {
   const two = team("b", { maxHp: 100, attack: 0, effects: [effect("revive_self", 0, "self_death")] }, relic("max_hp", 200));
   const result = simulate(team("a", { speed: 200, attack: 10000 }), two);

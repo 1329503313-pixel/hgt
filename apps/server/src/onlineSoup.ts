@@ -11,6 +11,7 @@ import { lockRankingForCardBattleRoom } from "./cardBattleRankingState.js";
 import { isBossRoom, BOSS_SPECTATOR_SEATS } from "./cardBattleBossRules.js";
 import { bossAvailable, CardBattleBossRuleError } from "./cardBattleBoss.js";
 import { registerCardBattleBossRoutes } from "./cardBattleBossRoutes.js";
+import { registerCardTowerRoutes, recoverCardTowerGames } from "./cardTower.js";
 import { getSticker, userOwnsSticker } from "./stickers.js";
 import { settleOnlineSoupRound } from "./shellCurrency.js";
 import { levelForExperience } from "./levelSystem.js";
@@ -30,6 +31,7 @@ import { ONLINE_SOUP_SINGLE_USER_IDLE_MINUTES, shouldAutoCloseIdleOnlineSoupRoom
 import { consumeDailyEntitlement, isEntitlementLimitError } from "./entitlements.js";
 import { publicOssUrl } from "./ossStorage.js";
 import { onlineSoupEligibleSourceSql, onlineSoupEligibleSources } from "./onlineSoupEligibleSource.js";
+import { canViewOnlineSoupRoundHistory, onlineSoupMessageVisibleSql, recordOnlineSoupRoundViewers, sealOnlineSoupRoundHistory } from "./onlineSoupHistory.js";
 import { buildMysteryOpeningNarrative, mysteryTurnConflictAction, processMysteryTurn, startOrContinueMysteryRun } from "./mystery/runtime.js";
 import { MysteryInvariantError } from "./mystery/engine.js";
 import { MysteryModelError } from "./mystery/models.js";
@@ -656,6 +658,7 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
           `房主离线已满${HOST_OFFLINE_GRACE_MINUTES}分钟，本轮已结束，已取消当前海龟汤`,
           connection
         );
+        await sealOnlineSoupRoundHistory(connection, String(room.id), endedRoundId);
       }
       clearedSoup = !systemManagedRoom && Boolean(room.current_soup_id || room.current_round_id || room.current_mystery_id || room.current_mystery_run_id || String(room.status) !== "preparing");
       if (clearedSoup) {
@@ -1141,6 +1144,7 @@ async function completeAiRound(
       [nanoid(), roomId, roundId, JSON.stringify(honors)],
     );
   }
+  await sealOnlineSoupRoundHistory(db, roomId, roundId);
   return true;
 }
 
@@ -1373,6 +1377,7 @@ async function processRoomAiQuestions(roomId: string) {
         let voteOpened = false;
         try {
           await connection.beginTransaction();
+          await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
           const [[locked]] = await connection.query<mysql.RowDataPacket[]>(
             `SELECT m.ai_status, m.recalled_at, r.status AS round_status, r.host_mode, r.ai_version
              FROM online_soup_messages m JOIN online_soup_rounds r ON r.id = m.round_id
@@ -1682,6 +1687,7 @@ async function processMysteryRoomTurns(roomId: string) {
 }
 
 async function requireMember(req: any, res: any) {
+  res.setHeader("Cache-Control", "private, no-store");
   const user = userOf(req);
   if (!user) { fail(res, 401, "请先登录", "LOGIN_REQUIRED"); return null; }
   const room = await roomById(req.params.roomId);
@@ -1806,9 +1812,9 @@ function mapRoomMessage(row: mysql.RowDataPacket, room: mysql.RowDataPacket) {
   };
 }
 
-async function roomMessagePage(room: mysql.RowDataPacket, before?: string, limit = MESSAGE_PAGE_SIZE, after?: string) {
+async function roomMessagePage(room: mysql.RowDataPacket, viewerId: string | null, before?: string, limit = MESSAGE_PAGE_SIZE, after?: string) {
   const safeLimit = Math.max(1, Math.min(limit, MESSAGE_PAGE_SIZE));
-  const params: Array<string | number> = [String(room.id)];
+  const params: Array<string | number> = viewerId ? [viewerId, String(room.id), viewerId] : [String(room.id)];
   const beforeClause = before ? "AND m.message_sequence < ?" : "";
   const afterClause = after ? "AND m.message_sequence > ?" : "";
   if (before) params.push(before);
@@ -1833,8 +1839,9 @@ async function roomMessagePage(room: mysql.RowDataPacket, before?: string, limit
      LEFT JOIN online_soup_rounds r ON r.id = m.round_id
      LEFT JOIN soups ms ON ms.id = r.soup_id
      LEFT JOIN online_soup_messages reply ON reply.id = m.reply_to_message_id AND reply.room_id = m.room_id
+       ${viewerId ? `AND ${onlineSoupMessageVisibleSql("reply")}` : ""}
      LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
-     WHERE m.room_id = ? ${beforeClause} ${afterClause}
+     WHERE m.room_id = ? ${viewerId ? `AND ${onlineSoupMessageVisibleSql()}` : ""} ${beforeClause} ${afterClause}
      ORDER BY m.message_sequence ${after ? "ASC" : "DESC"} LIMIT ?`,
     params
   );
@@ -2154,9 +2161,10 @@ async function mutateImpostorGame(
   }
 }
 
-async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysql.RowDataPacket, includeMessages = true) {
+async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysql.RowDataPacket, includeMessages = true, adminAudit = false) {
   const room = knownRoom ?? await roomById(roomId);
   if (!room) return null;
+  const canViewRound = adminAudit || await canViewOnlineSoupRoundHistory(pool, room.current_round_id ? String(room.current_round_id) : null, viewer.id);
   const [[memberRows], messagePage, finishVote, impostorGame, cardBattle] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
     `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, m.muted_until, u.nickname, u.experience, u.role,
@@ -2167,8 +2175,8 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
      WHERE m.room_id = ? AND m.is_active = 1 ORDER BY FIELD(m.member_role, 'host','player','spectator'), m.joined_at`,
     [roomId]
     ),
-    includeMessages ? roomMessagePage(room) : Promise.resolve(null),
-    room.current_round_id
+    includeMessages ? roomMessagePage(room, adminAudit ? null : viewer.id) : Promise.resolve(null),
+    canViewRound && room.current_round_id
       ? (async () => {
           const [rows] = await pool.query<mysql.RowDataPacket[]>(
             `SELECT v.id, v.status, v.opened_at,
@@ -2207,7 +2215,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   if (cardBattle?.phase === "ended") room.status = "ended";
   const viewerMember = memberRows.find((row) => String(row.user_id) === viewer.id);
   const isHost = room.host_id === viewer.id;
-  const canViewHostMaterials = canViewOnlineSoupHostMaterials(isHost, room.host_mode);
+  const canViewHostMaterials = canViewRound && canViewOnlineSoupHostMaterials(isHost, room.host_mode);
   const hostPresenceBase = room.host_grace_started_at ?? room.host_last_seen_at;
   const hostOnline = !room.host_grace_started_at
     && Date.now() - new Date(room.host_last_seen_at).getTime() <= HOST_ONLINE_SECONDS * 1000;
@@ -2223,7 +2231,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
     room.active_question_count,
     room.unanswered_question_count
   );
-  const visibleSupplementalSurfaces = publishedSurfaceIndices
+  const visibleSupplementalSurfaces = (canViewRound ? publishedSurfaceIndices : [])
     .filter((index) => supplementalSurfaces[index])
     .map((index) => ({ index, content: supplementalSurfaces[index] }));
   return {
@@ -2232,21 +2240,21 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
       status: String(room.status), hostOnline, hostOfflineDeadline,
       hostMode: String(room.host_mode ?? "human"),
       contentType: String(room.content_type ?? "soup"),
-      aiProgress: String(room.host_mode ?? "human") === "ai" && room.current_round_id
+      aiProgress: canViewRound && String(room.host_mode ?? "human") === "ai" && room.current_round_id
         ? Number(room.ai_progress ?? 0)
         : null,
       finishVote,
       playerCount: memberRows.filter((row) => row.member_role === "player").length,
       playerCapacity: playerCapacityForRoom(room),
       participantCapacity: participantCapacityForRoom(room),
-      currentRoundId: room.current_round_id ? String(room.current_round_id) : null,
-      questionLimit: String(room.host_mode ?? "human") === "human" ? questionLimit.limit : null,
-      questionCount: questionLimit.used,
-      remainingQuestionCount: String(room.host_mode ?? "human") === "human" ? questionLimit.remaining : null,
+      currentRoundId: canViewRound && room.current_round_id ? String(room.current_round_id) : null,
+      questionLimit: canViewRound && String(room.host_mode ?? "human") === "human" ? questionLimit.limit : null,
+      questionCount: canViewRound ? questionLimit.used : 0,
+      remainingQuestionCount: canViewRound && String(room.host_mode ?? "human") === "human" ? questionLimit.remaining : null,
       questionLimitResolutionRequired: String(room.host_mode ?? "human") === "human"
         && String(room.status) === "playing"
         && questionLimit.resolutionRequired,
-      bestQuestionMessageId: room.best_question_message_id ? String(room.best_question_message_id) : null,
+      bestQuestionMessageId: canViewRound && room.best_question_message_id ? String(room.best_question_message_id) : null,
       coverBackgroundEnabled: Number(room.cover_background_enabled ?? 1) !== 0,
       backgroundMusic: room.current_background_music_id && room.background_music_audio_ref ? {
         id: String(room.current_background_music_id),
@@ -2335,6 +2343,7 @@ router.get("/rooms", async (req, res) => {
 });
 
 router.get("/active-room", async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
   const [members] = await pool.query<mysql.RowDataPacket[]>(
@@ -2472,6 +2481,7 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
     await releaseStaleSeats(String(room.id), connection);
     const existing = await activeMember(room.id, user.id, connection);
     if (existing) {
+      await recordOnlineSoupRoundViewers(connection, String(room.id), user.id);
       await connection.commit();
       return res.json({ roomId: String(room.id), role: String(existing.member_role), joined: false });
     }
@@ -2525,6 +2535,7 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
       [room.id, user.id, role]
     );
     await roomEntrySystemMessage(String(room.id), room.current_round_id ? String(room.current_round_id) : null, user, connection);
+    await recordOnlineSoupRoundViewers(connection, String(room.id), user.id);
     await connection.commit();
     recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role, joined: true });
@@ -2910,6 +2921,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
     const role = existing?.member_role ?? (room.host_id === user.id
       ? (isCardBattleRoom(room) ? resolvedRole : isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")
       : resolvedRole);
+    await recordOnlineSoupRoundViewers(connection, String(room.id), user.id);
     await connection.commit();
     if (!existing) recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role: String(role), joined: !existing });
@@ -3191,13 +3203,13 @@ router.get("/rooms/:roomId/messages", async (req, res) => {
     path: ["before"]
   }).safeParse(req.query);
   if (!parsed.success) return fail(res, 400, "消息游标不正确");
-  res.json(await roomMessagePage(context.room, parsed.data.before, parsed.data.limit, parsed.data.after));
+  res.json(await roomMessagePage(context.room, context.user.id, parsed.data.before, parsed.data.limit, parsed.data.after));
 });
 
 router.get("/rooms/:roomId/progress", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
-  if (!context.room.current_round_id) {
+  if (!context.room.current_round_id || !await canViewOnlineSoupRoundHistory(pool, String(context.room.current_round_id), context.user.id)) {
     return res.json({ roundId: null, aiProgress: null, questions: [], hasMore: false, nextCursor: null });
   }
   const parsed = z.object({
@@ -3447,6 +3459,7 @@ router.post("/rooms/:roomId/finish-vote", async (req, res) => {
   let continueCount = 0;
   try {
     await connection.beginTransaction();
+    await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [context.room.id]);
     const [[round]] = await connection.query<mysql.RowDataPacket[]>(
       `SELECT status AS round_status, soup_id, host_mode, ai_progress
        FROM online_soup_rounds WHERE id = ? FOR UPDATE`,
@@ -3564,7 +3577,7 @@ router.get("/rooms/:roomId/clues", async (req, res) => {
     });
   }
 
-  if (!context.room.current_round_id) {
+  if (!context.room.current_round_id || !await canViewOnlineSoupRoundHistory(pool, String(context.room.current_round_id), context.user.id)) {
     return res.json({ contextId: null, roundId: null, clues: [], hasMore: false, nextCursor: null });
   }
   const params: Array<string | number> = [String(context.room.current_round_id)];
@@ -4272,6 +4285,7 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       "UPDATE online_soup_rooms SET status = 'playing', current_round_id = ?, last_action_at = NOW() WHERE id = ?",
       [roundId, context.room.id]
     );
+    await recordOnlineSoupRoundViewers(connection, String(context.room.id));
     await systemMessage(
       context.room.id,
       roundId,
@@ -4576,11 +4590,12 @@ router.post("/rooms/:roomId/messages", async (req, res) => {
     }
     if (parsed.data.replyToMessageId) {
       const [[replyTarget]] = await connection.query<mysql.RowDataPacket[]>(
-        `SELECT id FROM online_soup_messages
-         WHERE id = ? AND room_id = ? AND recalled_at IS NULL
+        `SELECT m.id FROM online_soup_messages m
+         WHERE m.id = ? AND m.room_id = ? AND m.recalled_at IS NULL
            AND message_type IN ('discussion','question','host','sticker')
+           AND ${onlineSoupMessageVisibleSql()}
          LIMIT 1`,
-        [parsed.data.replyToMessageId, context.room.id]
+        [parsed.data.replyToMessageId, context.room.id, context.user.id]
       );
       if (!replyTarget) {
         await connection.rollback();
@@ -5088,6 +5103,13 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
   let humanHonors: OnlineSoupAiHonors | null = null;
   try {
     await connection.beginTransaction();
+    const [[lockedRoom]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT status, current_round_id, host_id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [context.room.id]
+    );
+    if (!lockedRoom || lockedRoom.status !== "playing" || lockedRoom.current_round_id !== context.room.current_round_id || lockedRoom.host_id !== context.user.id) {
+      await connection.rollback();
+      return fail(res, 409, "当前回合状态已变化，请刷新后重试");
+    }
     const [[round]] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT published_bottom_indices FROM online_soup_rounds WHERE id = ? FOR UPDATE",
       [context.room.current_round_id]
@@ -5174,6 +5196,7 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
          VALUES (?, ?, ?, NULL, 'ai_honor', ?)`,
         [nanoid(), context.room.id, context.room.current_round_id, JSON.stringify(humanHonors)],
       );
+      await sealOnlineSoupRoundHistory(connection, String(context.room.id), String(context.room.current_round_id));
       const settlement = await settleOnlineSoupRound(connection, String(context.room.current_round_id));
       completedRound = settlement.completed;
     } else {
@@ -5324,6 +5347,7 @@ router.post("/rooms/:roomId/resolve-question-limit", async (req, res) => {
       "UPDATE online_soup_finish_votes SET status = 'cancelled', closed_at = NOW() WHERE round_id = ? AND status = 'open'",
       [roundId]
     );
+    await sealOnlineSoupRoundHistory(connection, String(context.room.id), roundId);
     const settlement = await settleOnlineSoupRound(connection, roundId);
     completedRound = settlement.completed;
     await connection.commit();
@@ -5384,6 +5408,7 @@ router.post("/rooms/:roomId/end-round", async (req, res) => {
       [roundId],
     );
     await systemMessage(context.room.id, roundId, "主持人关闭了本轮推理", connection);
+    await sealOnlineSoupRoundHistory(connection, String(context.room.id), roundId);
     const settlement = await settleOnlineSoupRound(connection, roundId);
     completedRound = settlement.completed;
     await connection.commit();
@@ -5789,7 +5814,8 @@ router.get("/admin/rooms/:roomId", async (req, res) => {
   const user = userOf(req);
   if (!user) return fail(res, 401, "请先登录");
   if (!isSuperAdminRole(user.role)) return fail(res, 403, "需要超级管理员权限");
-  const snapshot = await roomSnapshot(req.params.roomId, user);
+  res.setHeader("Cache-Control", "private, no-store");
+  const snapshot = await roomSnapshot(req.params.roomId, user, undefined, true, true);
   if (!snapshot) return fail(res, 404, "房间不存在");
   res.json({
     ...snapshot,
@@ -5813,6 +5839,7 @@ function scheduleCardBattleEnd(roomId: string, endsAt: Date) {
 /** Independent of connected clients; restart recovery settles every due game. */
 let availableBossRooms: Set<string> | null = null;
 export async function recoverCardBattleGames() {
+  await recoverCardTowerGames();
   const [due] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT DISTINCT room_id FROM online_card_battles WHERE status = 'playing' AND playback_ends_at <= NOW(3)");
   for (const game of due) {
@@ -5847,6 +5874,7 @@ export async function recoverCardBattleGames() {
   }
 }
 
+registerCardTowerRoutes(router);
 registerCardBattleBossRoutes(router, (roomId) => {
   notifyRoom(roomId, "boss_configuration_changed");
   notifyLobby("boss_configuration_changed");

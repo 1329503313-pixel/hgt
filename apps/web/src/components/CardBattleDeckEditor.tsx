@@ -1,12 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Gem, Plus, Search } from "lucide-react";
-import type { BattleCollectibleBinding } from "@hgt/shared";
+import type { BattleCollectibleBinding, CardTowerFormation } from "@hgt/shared";
 import type { OnlineCardBattleCard, OnlineCardBattleDeck } from "../shared/types";
 import { filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
 import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
 import { BattleCollectiblePicker } from "./BattleCollectiblePicker";
 
-export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, lineupSize = 5, currentLineup, onSavingChange }: {
+export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, lineupSize = 5, currentLineup, onSavingChange, tower }: {
+  tower?: { formation: CardTowerFormation; onChange: (formation: CardTowerFormation) => Promise<void> };
   cards: OnlineCardBattleCard[];
   actionLabel: string;
   onSave: (name: string, cardIds: string[], bindings: BattleCollectibleBinding[]) => Promise<void>;
@@ -17,16 +18,17 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
 }) {
   const slots = lineupSize === 3 ? ["前排 1", "后排 1", "后排 2"] : ["前排 1", "前排 2", "后排 1", "后排 2", "后排 3"];
   const [name, setName] = useState(initialDeck?.name ?? "默认卡组");
-  const [selectedIds, setSelectedIds] = useState<Array<string | null>>(() => Array.from({ length: lineupSize }, (_, index) => initialDeck?.cardIds[index] ?? null));
+  const [selectedIds, setSelectedIds] = useState<Array<string | null>>(() => Array.from({ length: lineupSize }, (_, index) => tower?.formation.cardIds[index] ?? initialDeck?.cardIds[index] ?? null));
   const [slot, setSlot] = useState(0);
   const [query, setQuery] = useState("");
   const [role, setRole] = useState<CardBattleRoleFilter>("all");
   const [sort, setSort] = useState("number");
   const [view, setView] = useState<"stats" | "skill">("stats");
-  const [bindings, setBindings] = useState<BattleCollectibleBinding[]>(initialDeck?.collectibleBindings ?? []);
+  const [bindings, setBindings] = useState<BattleCollectibleBinding[]>(tower?.formation.collectibleBindings ?? initialDeck?.collectibleBindings ?? []);
   const [equipmentOpen, setEquipmentOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => { if (tower && !saving) { setSelectedIds([...tower.formation.cardIds]); setBindings([...tower.formation.collectibleBindings]); } }, [tower?.formation, saving]);
   const cardsById = useMemo(() => new Map(cards.map((card) => [card.id, card])), [cards]);
   const selected = selectedIds.map((id) => id ? cardsById.get(id) ?? null : null);
   const filtered = filterCardBattleSelection(cards, query, role).sort((a, b) =>
@@ -34,11 +36,19 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
       || a.cardNo.localeCompare(b.cardNo, "zh-CN", { numeric: true }));
   const complete = selected.every(Boolean) && new Set(selectedIds).size === lineupSize;
 
-  function choose(cardId: string) {
+  async function commitFormation(ids: Array<string | null>, nextBindings: BattleCollectibleBinding[]) {
+    if (!tower || saving) return false;
+    setSaving(true); onSavingChange?.(true); setError("");
+    try { await tower.onChange({ cardIds: ids, collectibleBindings: nextBindings }); setSelectedIds(ids); setBindings(nextBindings); return true; }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "阵容保存失败，请重试"); return false; }
+    finally { setSaving(false); onSavingChange?.(false); }
+  }
+  async function choose(cardId: string) {
     if (saving || selectedIds.some((id, index) => id === cardId && index !== slot)) return;
     const next = selectedIds.map((id, index) => index === slot ? cardId : id);
-    setSelectedIds(next);
-    setBindings((current) => current.filter((binding) => next.includes(binding.cardId)));
+    const nextBindings = bindings.filter((binding) => next.includes(binding.cardId));
+    if (tower) { if (!await commitFormation(next, nextBindings)) return; }
+    else { setSelectedIds(next); setBindings(nextBindings); }
     const empty = next.findIndex((id) => !id);
     if (empty >= 0) setSlot(empty);
     setError("");
@@ -54,8 +64,9 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
   }
 
   return <section className="mt-5 space-y-4" aria-label={initialDeck ? "编辑卡组卡牌" : "配置默认卡组"}>
-    <div className="rounded-xl bg-violet-50 p-3 text-sm leading-6 text-violet-800">{initialDeck ? "点击下方卡面选择要更换的位置，再从卡牌列表选择新卡。保存后生效。" : "还没有卡组，在这里选择五张不同卡牌。"}{lineupSize === 3 ? "第一个位置为前排，后两个位置为后排。" : "前两个位置为前排，后三个位置为后排。"}</div>
-    <label className="block"><span className="label">卡组名称</span><input className="field mt-1 min-h-11 w-full" maxLength={30} value={name} disabled={saving} onChange={(event) => setName(event.target.value)} /></label>
+    <div className="rounded-xl bg-violet-50 p-3 text-sm leading-6 text-violet-800">{tower ? "点击卡位，再选择卡牌。每次修改自动保存；与其他阵容重复的卡牌或收藏品会从原阵容卸下。" : initialDeck ? "点击下方卡面选择要更换的位置，再从卡牌列表选择新卡。保存后生效。" : "还没有卡组，在这里选择五张不同卡牌。"}{lineupSize === 3 ? "第一个位置为前排，后两个位置为后排。" : "前两个位置为前排，后三个位置为后排。"}</div>
+    {!tower && <label className="block"><span className="label">卡组名称</span><input className="field mt-1 min-h-11 w-full" maxLength={30} value={name} disabled={saving} onChange={(event) => setName(event.target.value)} /></label>}
+    {tower && <div className="flex flex-wrap gap-2"><button className="btn btn-secondary" disabled={saving || !selectedIds[slot]} onClick={() => { const ids = selectedIds.map((id, i) => i === slot ? null : id); void commitFormation(ids, bindings.filter((binding) => ids.includes(binding.cardId))); }}>卸下当前卡位</button>{[-1, 1].map((direction) => <button key={direction} className="btn btn-secondary" disabled={saving || slot + direction < 0 || slot + direction >= 5} onClick={() => { const ids = [...selectedIds]; [ids[slot], ids[slot + direction]] = [ids[slot + direction]!, ids[slot]!]; void commitFormation(ids, bindings).then((ok) => { if (ok) setSlot(slot + direction); }); }}>{direction < 0 ? "与左侧换位" : "与右侧换位"}</button>)}</div>}
     {currentLineup?.cardIds.length === lineupSize && <button type="button" className="btn btn-secondary min-h-11 w-full" disabled={saving} onClick={() => { setSelectedIds([...currentLineup.cardIds]); setBindings([...currentLineup.collectibleBindings]); setError(""); }}>用当前阵容覆盖卡组</button>}
     <div className={`grid ${lineupSize === 3 ? "grid-cols-3" : "grid-cols-5"} gap-2`}>{selected.map((card, index) => <button key={index} type="button" disabled={saving} aria-label={`配置${slots[index]}`} aria-pressed={slot === index} onClick={() => setSlot(index)} className={`min-h-11 min-w-0 rounded-xl border-2 p-1 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${slot === index ? "border-violet-500 bg-violet-50" : "border-line bg-white"}`}>
       <span className="mb-1 block text-xs font-bold text-primary">{slots[index]}</span>
@@ -84,8 +95,8 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
     {!filtered.length && cards.length > 0 && <p className="py-6 text-center text-sm text-muted">没有匹配的卡牌</p>}
     <div className="sticky bottom-0 border-t border-line bg-white py-3">
       {error && <p className="mb-3 text-sm text-red-600" role="alert">{error}</p>}
-      <button type="button" className="btn btn-primary min-h-12 w-full" disabled={!complete || saving || !name.trim()} onClick={() => void save()}>{saving ? "保存中…" : actionLabel}</button>
+      {tower ? <p role="status" className="text-center text-sm text-muted">{saving ? "正在保存阵容…" : "修改自动保存，下次进入仍会保留"}</p> : <button type="button" className="btn btn-primary min-h-12 w-full" disabled={!complete || saving || !name.trim()} onClick={() => void save()}>{saving ? "保存中…" : actionLabel}</button>}
     </div>
-    {equipmentOpen && <BattleCollectiblePicker cards={selected} bindings={bindings} disabled={saving} onSave={async (next) => { setBindings(next); return true; }} onClose={() => setEquipmentOpen(false)} />}
+    {equipmentOpen && <BattleCollectiblePicker cards={selected} bindings={bindings} disabled={saving} onSave={async (next) => { if (tower) return commitFormation(selectedIds, next); setBindings(next); return true; }} onClose={() => setEquipmentOpen(false)} />}
   </section>;
 }

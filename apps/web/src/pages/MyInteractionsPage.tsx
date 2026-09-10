@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MessageSquare, Star, ThumbsUp, X } from "lucide-react";
+import { MessageSquare, Star, ThumbsUp, User, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -11,7 +11,7 @@ import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 
 type InteractionSoup = { id: string; title: string; coverImage: string | null; likeCount: number; favoriteCount: number; evaluationCount: number };
 type InteractionType = "likes" | "favorites" | "evaluations";
-type InteractionItem = { userId: string; nickname: string; avatar: string | null; total: number | null; content: string | null; createdAt: string };
+type InteractionItem = { id: string; isAnonymous: boolean; userId: string | null; nickname: string; avatar: string | null; total: number | null; content: string | null; createdAt: string };
 
 export default function MyInteractionsPage() {
   const { user, loadingUser, showToast } = useApp();
@@ -63,9 +63,9 @@ export default function MyInteractionsPage() {
         <div className="flex items-center justify-between"><div><h2 className="text-lg font-black text-ink">{detail.type === "likes" ? "点赞用户" : detail.type === "favorites" ? "收藏用户" : "评价明细"}</h2><p className="mt-1 text-xs text-muted">{detail.title}</p></div><button className="btn btn-secondary h-9 w-9 p-0" onClick={() => setDetail(null)}><X size={16} /></button></div>
         <div className="mt-4 divide-y divide-line">
           {detail.items.map((item) => (
-            <div key={`${item.userId}-${item.createdAt}`} className="flex gap-3 py-3">
-              <button className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-blue-100 font-black text-primary" onClick={() => navigate(`/users/${item.userId}`)}>{item.avatar ? <img className="h-full w-full object-cover" src={item.avatar} alt="" /> : item.nickname.slice(0, 1)}</button>
-              <div className="min-w-0 flex-1"><button className="text-sm font-black text-ink" onClick={() => navigate(`/users/${item.userId}`)}>{item.nickname}</button><p className="text-xs text-muted">{new Date(item.createdAt).toLocaleString("zh-CN", { hour12: false })}</p>{detail.type === "evaluations" && <><p className="mt-1 text-sm font-bold text-primary">评分 {item.total ?? "-"}</p><p className="mt-1 whitespace-pre-wrap text-sm text-ink">{item.content || "未填写文字评价"}</p></>}</div>
+            <div key={item.id ?? `${item.userId}-${item.createdAt}`} className="flex gap-3 py-3">
+              {item.isAnonymous || !item.userId ? <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-100 text-primary"><User size={22} /></span> : <button className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-blue-100 font-black text-primary" onClick={() => navigate(`/users/${item.userId}`)}>{item.avatar ? <img className="h-full w-full object-cover" src={item.avatar} alt="" /> : item.nickname.slice(0, 1)}</button>}
+              <div className="min-w-0 flex-1">{item.isAnonymous || !item.userId ? <span className="text-sm font-black text-ink">匿名用户</span> : <button className="text-sm font-black text-ink" onClick={() => navigate(`/users/${item.userId}`)}>{item.nickname}</button>}<p className="text-xs text-muted">{new Date(item.createdAt).toLocaleString("zh-CN", { hour12: false })}</p>{detail.type === "evaluations" && <><p className="mt-1 text-sm font-bold text-primary">评分 {item.total ?? "-"}</p><p className="mt-1 whitespace-pre-wrap text-sm text-ink">{item.content || "未填写文字评价"}</p></>}</div>
             </div>
           ))}
           {!detail.items.length && <p className="py-16 text-center text-sm text-muted">暂无数据</p>}

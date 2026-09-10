@@ -9,7 +9,8 @@ import type { Collectible } from "../../shared/collectibles";
 import { AdminPagination, paginateAdminItems, useAdminPagination } from "./AdminPagination";
 import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
 import { CardBattleConfigEditor } from "./CardBattleConfigEditor";
-import { defaultCardBattleTiersForRarity, type CardBattleTier } from "../../shared/digitalAssets";
+import { defaultCardBattleTiersForRarity } from "../../shared/digitalAssets";
+import { cardBattleSelectionError, type CardBattleTierDraft } from "./cardBattleEditorDraft";
 
 type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[]; battleConfigured: boolean };
 type AdminPack = {
@@ -25,7 +26,7 @@ type CardSort = "number-asc" | "number-desc" | "rarity-asc" | "rarity-desc";
 type CardForm = {
   cardNo: string; name: string; rarity: AssetRarity; imageUrl: string; story: string; status: string; packIds: string[];
   battleRole: CardBattleRole | null;
-  motionMp4Url: string | null; motionWebmUrl: string | null; motionPosterUrl: string | null; battleTiers: CardBattleTier[] | null;
+  motionMp4Url: string | null; motionWebmUrl: string | null; motionPosterUrl: string | null; battleTiers: CardBattleTierDraft[] | null;
 };
 const isBattleRarity = (rarity: AssetRarity): rarity is "epic" | "legend" => rarity === "epic" || rarity === "legend";
 const freshBattleTiers = (rarity: "epic" | "legend") => defaultCardBattleTiersForRarity(rarity).map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) }));
@@ -267,6 +268,8 @@ export function DigitalAssetManagement() {
 
   async function saveCard() {
     if (cardForm.packIds.length === 0) { setMessage("卡牌必须至少绑定一个卡包"); return; }
+    const selectionError = cardBattleSelectionError(cardForm.battleTiers);
+    if (selectionError) { setMessage(selectionError); return; }
     setSaving(true); setSavingPhase("正在保存卡牌资料…"); setMessage("");
     try {
       const unchangedStoredImage = Boolean(editingCardId && cardForm.imageUrl.startsWith(`/api/media/assets/cards/${encodeURIComponent(editingCardId!)}/`));

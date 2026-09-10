@@ -27,7 +27,8 @@ export default function UserProfilePage() {
   const onlineSoupRoomId = onlineSoupOrigin?.onlineSoupRoomId ?? "";
   const circleId = onlineSoupOrigin?.circleId ?? "";
   const privateConversationId = onlineSoupOrigin?.privateConversationId ?? "";
-  const backTarget = privateConversationId ? `/messages/chat/${privateConversationId}` : onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : circleId ? `/circles/${circleId}` : "/";
+  const towerRankingReturn = (location.state as { returnTo?: string } | null)?.returnTo === "/mine/rankings?tab=card_battle&mode=tower";
+  const backTarget = towerRankingReturn ? "/mine/rankings?tab=card_battle&mode=tower" : privateConversationId ? `/messages/chat/${privateConversationId}` : onlineSoupRoomId ? `/online-soup/rooms/${onlineSoupRoomId}` : circleId ? `/circles/${circleId}` : "/";
   const backState = privateConversationId && onlineSoupRoomId ? { onlineSoupRoomId } : undefined;
   const [profile, setProfile] = useState<SocialProfile | null>(null);
   const [soups, setSoups] = useState<SoupSummary[]>([]);

@@ -6,7 +6,7 @@ import { cardBattleEventTiming } from "./cardBattlePlayback";
 type Game = { id: string; playback: OnlineCardBattlePlayback };
 
 /** Timers only render the current server event and request another snapshot, never advance a sequence. */
-export function useServerCardBattlePlayback(roomId: string, game: Game | null, onReload: () => Promise<unknown>) {
+export function useServerCardBattlePlayback(roomId: string, game: Game | null, onReload: () => Promise<unknown>, playbackPath?: string) {
   const [playback, setPlayback] = useState<OnlineCardBattlePlayback | null>(game?.playback ?? null);
   const [cardStates, setCardStates] = useState(game?.playback.states ?? []);
   const [activeEvent, setActiveEvent] = useState<OnlineCardBattlePlayback["activeEvent"]>(null);
@@ -56,7 +56,7 @@ export function useServerCardBattlePlayback(roomId: string, game: Game | null, o
       if (disposed || !gameId) return;
       const version = ++requestVersion;
       try {
-        const data = await api<{ gameId: string; playback: OnlineCardBattlePlayback }>(`/api/online-soup/rooms/${roomId}/card-battle/playback`, { bypassCache: true, dedupe: false });
+        const data = await api<{ gameId: string; playback: OnlineCardBattlePlayback }>(playbackPath ?? `/api/online-soup/rooms/${roomId}/card-battle/playback`, { bypassCache: true, dedupe: false });
         if (disposed || version !== requestVersion) return;
         if (data.gameId !== gameId) {
           setActiveEvent(null);
@@ -96,7 +96,7 @@ export function useServerCardBattlePlayback(roomId: string, game: Game | null, o
       window.removeEventListener("online", resume);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [roomId, game?.id]);
+  }, [roomId, game?.id, playbackPath]);
 
   useEffect(() => {
     if (game) consumeRef.current?.(game.playback);

@@ -68,6 +68,7 @@ export type RadarStats = {
 };
 
 export type SoupSummary = {
+  topic: SoupTopicReference | null;
   id: string;
   title: string;
   author: string;
@@ -104,11 +105,13 @@ export type SoupSummary = {
 };
 
 export type Evaluation = {
+  isAnonymous: boolean;
+  isOwnEvaluation: boolean;
   id: string;
   soupId: string;
   total: number;
   reviewer: string;
-  reviewerId: string;
+  reviewerId: string | null;
   reviewerAvatar: string | null;
   reviewerLevel: number;
   reviewerVipGrowthValue: number;
@@ -151,7 +154,6 @@ export type SoupDetail = SoupSummary & {
   canConfigureAiGame: boolean;
   keyFacts: KeyFact[] | null;
   keyFactsCustomized: boolean;
-  topic: SoupTopicReference | null;
   canViewFull: boolean;
   canEdit: boolean;
   canPinToProfile: boolean;

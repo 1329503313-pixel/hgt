@@ -1,6 +1,7 @@
 export { calculateCardBattleScore } from "./cardBattleScore.js";
 export { CARD_BATTLE_SUPPORT_LABELS, type CardBattleSupportKind, type CardBattleSupportBreakdown } from "./cardBattleSupport.js";
 export * from "./cardBattleProcs.js";
+export * from "./cardBattleDamage.js";
 export type UserRole = "super_admin" | "backoffice_admin" | "vip" | "user";
 export const VIP_GROWTH_LEVELS = [0, 5, 300, 800, 1500, 2800, 4500, 7000, 10000, 15000] as const;
 export type VipLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -30,6 +31,7 @@ export type RadarStats = {
 };
 
 export type SoupSummary = {
+  topic: SoupTopicReference | null;
   id: string;
   title: string;
   author: string;
@@ -51,11 +53,13 @@ export type SoupSummary = {
 };
 
 export type Evaluation = {
+  isAnonymous: boolean;
+  isOwnEvaluation: boolean;
   id: string;
   soupId: string;
   total: number;
   reviewer: string;
-  reviewerId: string;
+  reviewerId: string | null;
   isCreatorEvaluation: boolean;
   countsTowardScore: boolean;
   writing: number | null;
@@ -83,7 +87,6 @@ export type SoupDetail = SoupSummary & {
   manual: string | null;
   enableAiGame: boolean;
   canConfigureAiGame: boolean;
-  topic: SoupTopicReference | null;
   canViewFull: boolean;
   canEdit: boolean;
   isFavorited: boolean;
@@ -115,3 +118,5 @@ export type ViewRequestItem = {
   handledBy: string | null;
 };
 export * from "./battleCollectibles.js";
+export * from "./cardBattleSkills.js";
+export * from "./cardTower.js";

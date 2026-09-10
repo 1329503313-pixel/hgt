@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { adminRouteFromPathname, adminRouteManifest, adminRoutePath, canAccessAdminRoute, defaultAdminTab } from "../src/components/admin/adminRouteManifest.js";
+import { cardBattleAdminRoutes, adminRouteFromPathname, adminRouteManifest, adminRoutePath, canAccessAdminRoute, defaultAdminTab } from "../src/components/admin/adminRouteManifest.js";
 import { parentRoute } from "../src/shared/routeHierarchy.js";
 
 test("管理后台模块统一注册唯一的全局路径", () => {
@@ -31,4 +31,16 @@ test("BOSS 后台直达、刷新路由只向超级管理员开放", () => {
   assert.equal(route.key, "card-battle-boss");
   assert.equal(canAccessAdminRoute(route, "super_admin"), true);
   for (const role of ["backoffice_admin", "user", "vip"] as const) assert.equal(canAccessAdminRoute(route, role), false);
+});
+
+
+test("卡牌对战两个子模块使用已注册路径并继承权限", () => {
+  assert.deepEqual(cardBattleAdminRoutes.map((route) => route.path), ["/admin/card-battle/boss", "/admin/card-battle/tower"]);
+  for (const child of cardBattleAdminRoutes) {
+    const parent = adminRouteFromPathname(child.path)!;
+    assert.equal(parent.label, "卡牌对战");
+    assert.equal(canAccessAdminRoute(parent, "user"), false);
+    assert.equal(canAccessAdminRoute(parent, "super_admin"), true);
+  }
+  assert.equal(parentRoute("/online-soup/tower/room"), "/online-soup");
 });

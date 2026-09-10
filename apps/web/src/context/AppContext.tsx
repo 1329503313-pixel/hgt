@@ -41,6 +41,7 @@ export type SoupForm = {
 };
 
 export type EvalForm = {
+  isAnonymous: boolean;
   total: string;
   writing: string;
   logic: string;
@@ -77,6 +78,7 @@ export const emptySoup: SoupForm = {
 };
 
 export const emptyEval: EvalForm = {
+  isAnonymous: false,
   total: "",
   writing: "",
   logic: "",
@@ -338,6 +340,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSoupIdForEval(soupId);
     if (ownEval) {
       setEvalForm({
+        isAnonymous: Boolean(ownEval.isAnonymous),
         total: String(ownEval.total),
         writing: ownEval.writing?.toString() ?? "",
         logic: ownEval.logic?.toString() ?? "",

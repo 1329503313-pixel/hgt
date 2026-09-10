@@ -25,6 +25,31 @@ const inputs = (one: CardBattleDeckCard[], two: CardBattleDeckCard[]): CardBattl
 const total = (result: ReturnType<typeof simulateCardBattle>, kind: CardBattleSupportKind, prefix = "a") => result.finalStates
   .filter((state) => state.instanceId.startsWith(prefix)).reduce((sum, state) => sum + (state.supportBreakdown?.[kind] ?? 0), 0);
 
+test("忽防基于增减益后的有效防御，增防与减防辅助仅归属其实际收益", () => {
+  for (const ignoreDefensePercent of [0, 50, 100]) {
+    const one = side("a", { attack: 0, speed: 30 });
+    // Rear caster avoids receiving energy from round-one enemy attacks.
+    one[2]!.tier.effects = [effect("defense_down_all", 25), { ...effect("damage_all", 2000), order: 1, ignoreDefensePercent }];
+    const two = side("b", { attack: 0, defense: 1000, speed: 40 });
+    two[0]!.tier.effects = [effect("defense_all_allies", 200)];
+    const result = simulateCardBattle(inputs(one, two), "ignore-defense-support");
+    const first = result.events.find((event) => event.actorId === "a3" && event.effectType === "damage_all")!;
+    assert.ok(first);
+    const previous = result.events[result.events.indexOf(first) - 1]!.states;
+    for (const hit of first.effects) {
+      const state = first.states.find((item) => item.instanceId === hit.targetId)!;
+      const before = previous.find((item) => item.instanceId === hit.targetId)!;
+      assert.equal(state.defense, 900, "先结算(1000+200)×75%");
+      const incoming = state.damageTaken! - before.damageTaken!;
+      assert.equal(hit.amount, -(incoming - 900 * (1 - ignoreDefensePercent / 100)));
+    }
+    assert.equal(first.states.find((state) => state.instanceId === "b1")!.supportBreakdown?.damageReduction ?? 0,
+      150 * 5 * (1 - ignoreDefensePercent / 100), "100%忽防不为防御增益虚增辅助");
+    assert.equal(first.states.find((state) => state.instanceId === "a3")!.supportBreakdown?.damageBoost ?? 0,
+      300 * 5 * (1 - ignoreDefensePercent / 100), "100%忽防不为防御减益虚增辅助");
+  }
+});
+
 test("同类增益按施加顺序分摊净增量，半效、首层到期、减益与生命截断均参与反事实", () => {
   const buffs: CardBattleBuff[] = [
     { stat: "attack", value: 100, expiresAfterRound: 1, sourceId: "a", sourceOrder: 1 },

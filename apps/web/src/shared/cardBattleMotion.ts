@@ -1,3 +1,4 @@
+import { CARD_BATTLE_CONTROL_LABELS, isCardBattleStun, isCardBattleRevivalBlock, isCardBattleImmunity } from "@hgt/shared";
 import type { CardBattleEffectType } from "./digitalAssets";
 import { CARD_BATTLE_DEBUFF_LABELS, type CardBattleStatusType } from "./cardBattleEffects";
 
@@ -52,10 +53,20 @@ const debuffs = Object.fromEntries(Object.entries(CARD_BATTLE_DEBUFF_LABELS).map
   return [type, motion(glyph, color, pattern, "shatter", label, pattern === "all" ? 5 : pattern === "front" ? 2 : pattern === "rear" ? 3 : 1)];
 })) as Record<keyof typeof CARD_BATTLE_DEBUFF_LABELS, BattleMotion>;
 
+const controls = Object.fromEntries(Object.entries(CARD_BATTLE_CONTROL_LABELS).map(([type, label]) => {
+  const suffix = type.slice(type.lastIndexOf("_") + 1);
+  const pattern: BattleMotion["pattern"] = type === "act_again" ? "self" : suffix === "damaged" ? "all" : suffix as BattleMotion["pattern"];
+  const glyph: BattleGlyphName = type === "act_again" ? "repeat" : isCardBattleStun(type) ? "dizzy" : isCardBattleRevivalBlock(type) ? "broken-heart" : isCardBattleImmunity(type) ? "shield" : "heal";
+  return [type, motion(glyph, isCardBattleRevivalBlock(type) ? "#fda4af" : "#a5b4fc", pattern,
+    type === "act_again" ? "reprise" : isCardBattleStun(type) ? "daze" : isCardBattleImmunity(type) ? "guard" : "rise",
+    label, pattern === "all" ? 5 : pattern === "front" ? 2 : pattern === "rear" ? 3 : 1)];
+})) as Record<keyof typeof CARD_BATTLE_CONTROL_LABELS, BattleMotion>;
+
 /** Every supported effect has an explicit family and a scope/count-specific choreography. */
-export const CARD_BATTLE_MOTIONS: Record<CardBattleEffectType, BattleMotion> = { ...existing, ...debuffs };
+export const CARD_BATTLE_MOTIONS: Record<CardBattleEffectType, BattleMotion> = { ...existing, ...debuffs, ...controls };
 export const CARD_BATTLE_STATUS_GLYPHS: Record<CardBattleStatusType, BattleGlyphName> = {
   lifesteal_up: "blood", stun_up: "dizzy", extra_action_up: "repeat", lifesteal_down: "blood-block", stun_down: "dizzy-block", extra_action_down: "repeat-block", stunned: "dizzy",
+  immunity: "shield", revival_block: "broken-heart",
   debuff_resistance: "shield", invincible: "energy", death_protection: "heart",
   attack_up: "sword", skill_damage_up: "arcane", max_hp_up: "heart", defense_up: "shield", speed_up: "wings",
   speed_down: "frozen-wings", attack_skill_damage_down: "broken-sword", defense_down: "broken-shield", max_hp_down: "broken-heart", healing_received_down: "heal-block",

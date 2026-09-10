@@ -5,6 +5,7 @@ import type { SoupDetail } from "../shared/types";
 import { api, SoupResponse, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
 import { ContentCard } from "../components/ContentCard";
+import { SoupTopicLink } from "../components/SoupTopicLink";
 import { RadarChart } from "../RadarChart";
 import { LogOut } from "lucide-react";
 import { EquippedBadgeIcon } from "../components/BadgeVisuals";
@@ -108,7 +109,7 @@ export default function DetailPage() {
 
   const ownEvaluation = useMemo(() => {
     if (!soup || !user) return null;
-    return soup.evaluations.find((e) => e.reviewerId === user.id) ?? null;
+    return soup.evaluations.find((e) => e.isOwnEvaluation || e.reviewerId === user.id) ?? null;
   }, [soup, user]);
 
   async function handleFavorite() {
@@ -365,7 +366,7 @@ export default function DetailPage() {
         <div className="detail-meta-info min-w-0">
           <div>
             <p className="detail-meta-eyebrow">TURTLE SOUP · CASE FILE</p>
-            <h1 className="mt-2 break-words text-2xl font-black leading-tight text-ink lg:text-4xl">{soup.title}</h1>
+            <h1 className="mt-2 break-words text-2xl font-black leading-tight text-ink lg:text-4xl">{soup.title}<SoupTopicLink topic={soup.topic} /></h1>
             {soup.summary && <p className="detail-summary mt-3 line-clamp-3 text-sm leading-7 text-muted lg:text-base">{soup.summary}</p>}
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="pill">{soup.type}</span>

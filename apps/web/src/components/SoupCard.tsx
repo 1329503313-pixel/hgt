@@ -4,6 +4,7 @@ import { formatViews } from "../context/AppContext";
 import { EquippedBadgeIcon } from "./BadgeVisuals";
 import { VipIdentity } from "./VipIdentity";
 import { defaultCoverUrl } from "../shared/staticAssets";
+import { SoupTopicLink } from "./SoupTopicLink";
 
 export function SoupCard({
   soup,
@@ -40,7 +41,7 @@ export function SoupCard({
       </div>
       <div className="p-3">
         <h2 className="flex min-w-0 items-end text-[16px] font-black leading-snug text-ink" title={soup.title}>
-          <span className="min-w-0 flex-1 line-clamp-2">{soup.title}</span>
+          <span className="min-w-0 flex-1 break-words">{soup.title}<SoupTopicLink topic={soup.topic} /></span>
           <span className="soup-card-title-heat ml-1 inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap pb-0.5 text-[12px] font-black leading-none text-red-500" title={`热力值 ${soup.heatValue}`}>
             <Flame size={14} className="fill-red-500" />
             {soup.heatValue.toLocaleString()}

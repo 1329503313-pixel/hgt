@@ -30,6 +30,26 @@ test("BOSS 支持一至三名队友，允许同款卡但保留独立实例、三
     }
   }
 });
+test("BOSS 全体伤害对三名队友的九张卡逐目标应用忽防比例", () => {
+  for (const ignoreDefensePercent of [50, 100]) {
+    const team = [1, 2, 3].map((seat) => player(`p${seat}`, 1, seat as 1 | 2 | 3, { attack: 0, defense: 1000, maxHp: 1_000_000 }));
+    const boss = player("boss", 2, undefined, { attack: 0, maxHp: 1_000_000, speed: 200, energyRequired: 10,
+      effects: [{ ...effect("damage_all", 800), ignoreDefensePercent }] });
+    const result = simulateCardBattle([...team, boss], "boss-ignore-defense", "boss");
+    const first = result.events.find((event) => event.effectType === "damage_all")!;
+    assert.ok(first);
+    assert.equal(first.effects.length, 9);
+    const previous = result.events[result.events.indexOf(first) - 1]!.states;
+    for (const hit of first.effects) {
+      const state = first.states.find((item) => item.instanceId === hit.targetId)!;
+      const before = previous.find((item) => item.instanceId === hit.targetId)!;
+      const incoming = state.damageTaken! - before.damageTaken!;
+      assert.equal(hit.amount, -(incoming - 1000 * (1 - ignoreDefensePercent / 100)));
+      assert.equal(state.defense, 1000);
+    }
+  }
+});
+
 test("BOSS 超过三名队友、个人重复卡、缺少卡牌均拒绝", () => {
   const boss = player("boss", 2);
   assert.throws(() => simulateCardBattle([boss], "invalid", "boss"));

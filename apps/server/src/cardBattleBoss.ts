@@ -47,7 +47,7 @@ export function bossBattlePlayer(row: mysql.RowDataPacket): CardBattlePlayerInpu
   };
 }
 
-type RewardEvent = { userId: string; amount: number; balance: number };
+type RewardEvent = { userId: string; amount: number; balance: number; source?: "card_battle_boss" | "card_tower" };
 let rewardListener: (events: RewardEvent[]) => void = () => {};
 export function setBossRewardListener(listener: typeof rewardListener) { rewardListener = listener; }
 export function emitBossRewards(events: RewardEvent[]) { if (events.length) rewardListener(events); }

@@ -425,7 +425,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
     }
     const requestId = ++userSearchRequestRef.current;
     setUsersExpanded(false);
-    if (!keyword) {
+    if (!keyword || keyword.startsWith("#")) {
       setMatchedUsers([]);
       setUsersLoading(false);
       return;
@@ -834,7 +834,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
 
       {homeCategory !== "mystery" && filters.keyword && (
         <div className="home-content-heading is-search-result">
-          <h2>海龟汤</h2>
+          <h2>{filters.keyword.startsWith("#") ? `${filters.keyword} · 海龟汤` : "海龟汤"}</h2>
         </div>
       )}
 

@@ -63,6 +63,13 @@ export function EvalEditor() {
           <textarea className="field min-h-24" style={{ minHeight: 96 }} placeholder="说说你对这条海龟汤的看法（选填，最多500字）" maxLength={500} value={value.content} onChange={(e) => patch({ content: e.target.value })} />
           <span className="text-xs text-muted">剩余 {500 - value.content.length} 字</span>
         </label>
+        <div>
+          <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-bold text-ink">
+            <input type="checkbox" className="h-5 w-5 accent-blue-600" checked={value.isAnonymous} disabled={submitting} aria-describedby="anonymous-evaluation-hint" onChange={(event) => patch({ isAnonymous: event.target.checked })} />
+            匿名评价
+          </label>
+          <p id="anonymous-evaluation-hint" className="pl-7 text-xs leading-5 text-muted">勾选后其他人无法看到您的信息</p>
+        </div>
         <button className="btn btn-primary w-full" disabled={submitting}>
           {submitting ? "保存中…" : "保存评价"}
         </button>

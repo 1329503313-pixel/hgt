@@ -97,12 +97,13 @@ export default function AdminPage() {
             {adminRoutes.map((route) => (
               <Route
                 key={route.key}
-                path={route.path}
+                path={route.key === "card-battle-boss" ? `${route.path}/*` : route.path}
                 element={canAccessAdminRoute(route, user.role)
                   ? route.render(routeContext)
                   : <Navigate to={adminRoutePath(defaultAdminTab)} replace />}
               />
             ))}
+            <Route path="card-battle-boss" element={<Navigate to="/admin/card-battle/boss" replace />} />
             <Route path="*" element={<Navigate to={adminRoutePath(defaultAdminTab)} replace />} />
           </Routes>
         </div>

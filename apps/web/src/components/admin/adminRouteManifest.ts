@@ -15,7 +15,7 @@ export const adminRouteManifest = [
   { key: "badges", path: "badges", label: "徽章", superAdminOnly: true },
   { key: "approvals", path: "approvals", label: "审批", superAdminOnly: false },
   { key: "online-soup", path: "online-soup", label: "大厅", superAdminOnly: true },
-  { key: "card-battle-boss", path: "card-battle-boss", label: "卡牌对战BOSS", superAdminOnly: true },
+  { key: "card-battle-boss", path: "card-battle", label: "卡牌对战", superAdminOnly: true },
   { key: "ai-host", path: "ai-host", label: "AI审计", superAdminOnly: true },
   { key: "circles", path: "circles", label: "圈子", superAdminOnly: true },
   { key: "collectibles", path: "collectibles", label: "收藏品", superAdminOnly: true },
@@ -28,13 +28,18 @@ export type AdminTab = (typeof adminRouteManifest)[number]["key"];
 export type AdminRouteManifestEntry = (typeof adminRouteManifest)[number];
 export const defaultAdminTab: AdminTab = "data";
 
+export const cardBattleAdminRoutes = [
+  { path: "/admin/card-battle/boss", label: "BOSS 房间" },
+  { path: "/admin/card-battle/tower", label: "卡牌闯关" }
+] as const;
+
 export function adminRoutePath(tab: AdminTab) {
   const route = adminRouteManifest.find((item) => item.key === tab);
   return `/admin/${route?.path ?? defaultAdminTab}`;
 }
 
 export function adminRouteFromPathname(pathname: string): AdminRouteManifestEntry | undefined {
-  const path = pathname.replace(/^\/admin\/?/, "").split("/")[0];
+  const path = pathname.replace(/^\/admin\/?/, "").split("/")[0]?.replace(/^card-battle-boss$/, "card-battle");
   return adminRouteManifest.find((route) => route.path === path);
 }
 

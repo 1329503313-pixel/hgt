@@ -10,6 +10,7 @@ export function parentRoute(pathname: string) {
   const onlineSoupSelectRoute = path.match(/^\/online-soup\/rooms\/([^/]+)\/select-soup$/);
   if (onlineSoupSelectRoute) return `/online-soup/rooms/${onlineSoupSelectRoute[1]}`;
   if (/^\/online-soup\/rooms\/[^/]+$/.test(path)) return "/online-soup";
+  if (/^\/online-soup\/tower\/[^/]+$/.test(path)) return "/online-soup";
   if (/^\/circles\/[^/]+$/.test(path)) return "/circles";
 
   if (path === "/mine/settings/password") return "/mine/settings";

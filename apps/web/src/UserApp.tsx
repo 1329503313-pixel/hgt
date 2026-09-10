@@ -46,6 +46,7 @@ const AccountSettingsPage = lazy(() => import("./pages/AccountSettingsPage"));
 const MyInvitationsPage = lazy(() => import("./pages/MyInvitationsPage"));
 const OnlineSoupLobbyPage = lazy(() => import("./pages/OnlineSoupLobbyPage"));
 const OnlineSoupRoomPage = lazy(() => import("./pages/OnlineSoupRoomPage"));
+const CardTowerRoomPage = lazy(() => import("./pages/CardTowerRoomPage"));
 const OnlineSoupSelectPage = lazy(() => import("./pages/OnlineSoupSelectPage"));
 const CirclesPage = lazy(() => import("./pages/CirclesPage"));
 const CircleChatPage = lazy(() => import("./pages/CircleChatPage"));
@@ -131,6 +132,7 @@ export default function UserApp() {
             </Route>
 
             <Route path="online-soup/rooms/:roomId" element={<OnlineSoupRoomPage />} />
+            <Route path="online-soup/tower/:roomId" element={<CardTowerRoomPage />} />
             <Route path="online-soup/rooms/:roomId/select-soup" element={<OnlineSoupSelectPage />} />
             <Route path="circles/:circleId" element={<CircleChatPage />} />
             <Route path="messages/chat/:id" element={<ChatPage />} />

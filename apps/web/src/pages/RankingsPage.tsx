@@ -10,6 +10,7 @@ import { useApp } from "../context/AppContext";
 import { ListSkeleton } from "../components/Skeletons";
 import { readSessionCache, writeSessionCache } from "../shared/sessionCache";
 import { CardBattleRankingBoard } from "../components/CardBattleRankingBoard";
+import { CardTowerRankingBoard } from "../components/CardTowerRankingBoard";
 
 type HotSoupRank = {
   rank: number;
@@ -134,6 +135,8 @@ export default function RankingsPage() {
   const requestedTab = new URLSearchParams(location.search).get("tab") ?? (location.state as { tab?: string } | null)?.tab;
   const initialTab: RankingTab = requestedTab === "users" || requestedTab === "level" || requestedTab === "charm" || requestedTab === "generosity" || requestedTab === "collection" || requestedTab === "collectible" || requestedTab === "draws" || requestedTab === "card_battle" ? requestedTab : "soups";
   const [tab, setTab] = useState<RankingTab>(initialTab);
+  const towerMode = new URLSearchParams(location.search).get("mode") === "tower";
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
   const [period, setPeriod] = useState<RankingPeriod>("7d");
   const [data, setData] = useState<RankingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -342,7 +345,7 @@ export default function RankingsPage() {
             <p className="hidden text-xs font-black tracking-[0.16em] text-primary lg:block">LEADERBOARDS</p>
             <h2 className="font-black text-ink lg:mt-1 lg:text-xl">选择排行榜</h2>
           </div>
-          <p>{activeGroup === "game" ? "卡牌对战榜展示固定榜位，默认前 10 名，可展开至前 100 名" : `${usesCurrentCollectibleValue ? "收藏品榜展示当前持有总价值" : period === "all" ? "展示累计总值" : `展示最近${periodLabel}内增长的数值`}，各榜单取前 10 名`}</p>
+          <p>{activeGroup === "game" ? (towerMode ? "按通关层数排名，同层优先通关者靠前" : "卡牌排位展示固定榜位，默认前 10 名，可展开至前 100 名") : `${usesCurrentCollectibleValue ? "收藏品榜展示当前持有总价值" : period === "all" ? "展示累计总值" : `展示最近${periodLabel}内增长的数值`}，各榜单取前 10 名`}</p>
         </div>
 
         <div className="rankings-filter-grid">
@@ -371,9 +374,9 @@ export default function RankingsPage() {
           </div>
 
           <div className="rankings-filter-group">
-            <span className="rankings-filter-label">统计周期</span>
-            <div className="rankings-segmented" aria-label="排行榜时间范围">
-              {activeGroup === "game" ? <button type="button" className="is-active" disabled aria-pressed="true">当前榜位</button> : ([
+            <span className="rankings-filter-label">{activeGroup === "game" ? "模式" : "统计周期"}</span>
+            <div className="rankings-segmented" aria-label={activeGroup === "game" ? "排行榜模式" : "排行榜时间范围"}>
+              {activeGroup === "game" ? ([["ranked", "卡牌排位"], ["tower", "卡牌闯关"]] as const).map(([mode, label]) => <button key={mode} type="button" className={(mode === "tower") === towerMode ? "is-active" : ""} aria-pressed={(mode === "tower") === towerMode} onClick={() => navigate(`/mine/rankings?tab=card_battle&mode=${mode}`)}>{label}</button>) : ([
                 ["7d", "7日"],
                 ["30d", "30日"],
                 ["all", "永久"]
@@ -385,7 +388,7 @@ export default function RankingsPage() {
         </div>
       </div>
 
-      {tab === "card_battle" ? <CardBattleRankingBoard currentUserId={user.id} showToast={showToast} /> : <div className="rankings-workspace">
+      {tab === "card_battle" ? towerMode ? <CardTowerRankingBoard currentUserId={user.id} /> : <CardBattleRankingBoard currentUserId={user.id} showToast={showToast} /> : <div className="rankings-workspace">
         <aside className={`rankings-spotlight hidden lg:flex ${activeCategory.tone}`}>
           <div className="rankings-spotlight-heading">
             <span><Crown size={19} /></span>

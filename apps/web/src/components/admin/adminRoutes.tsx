@@ -36,7 +36,7 @@ import { GiftManagement } from "./GiftManagement";
 import { MysteryManagement } from "./MysteryManagement";
 import { NoticeManagement } from "./NoticeManagement";
 import { OnlineSoupRoomManagement } from "./OnlineSoupRoomManagement";
-import { CardBattleBossManagement } from "./CardBattleBossManagement";
+import { CardBattleManagement } from "./CardTowerManagement";
 import { SoupManagement } from "./SoupManagement";
 import { StoreManagement } from "./StoreManagement";
 import { UserManagement } from "./UserManagement";
@@ -66,7 +66,7 @@ const adminRoutePresentations: Record<AdminTab, AdminRoutePresentation> = {
   badges: { icon: Award, render: () => <BadgeManagement /> },
   approvals: { icon: ClipboardCheck, render: ({ isSuperAdmin, refreshModuleUnread }) => <ApprovalManagement canReviewExcellentAuthor={isSuperAdmin} onPendingChange={refreshModuleUnread} /> },
   "online-soup": { icon: Radio, render: () => <OnlineSoupRoomManagement /> },
-  "card-battle-boss": { icon: Swords, render: () => <CardBattleBossManagement /> },
+  "card-battle-boss": { icon: Swords, render: () => <CardBattleManagement /> },
   "ai-host": { icon: Bot, render: () => <AiHostAuditManagement /> },
   circles: { icon: CircleEllipsis, render: () => <CircleManagement /> },
   collectibles: { icon: Gem, render: () => <CollectibleManagement /> },

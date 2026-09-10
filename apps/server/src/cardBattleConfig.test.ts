@@ -24,6 +24,68 @@ import {
   saveCardBattleTiers,
 } from "./cardBattleConfig.js";
 import type { PoolConnection } from "mysql2/promise";
+import { isCardBattleDamageEffect, isCardBattleAttachedOnly } from "@hgt/shared";
+import { cardBattleEffectCodes } from "./cardBattle.js";
+import { bossCardSchema } from "./cardBattleBossRules.js";
+
+test("所有直接伤害技能默认忽防0%，允许0至100%的两位小数，非伤害技能不能配置忽防", () => {
+  const damageTypes = cardBattleEffectCodes.filter(isCardBattleDamageEffect);
+  assert.ok(damageTypes.length >= 9);
+  for (const type of damageTypes) {
+    const effect = { order: 0, condition: "energy_full", conditionValue: null, type, value: 800, duration: null };
+    assert.equal(cardBattleEffectSchema.parse(effect).ignoreDefensePercent, 0, type);
+    assert.equal(cardBattleEffectNeedsValue(type), true, type);
+    for (const ignoreDefensePercent of [0, 0.01, 12.25, 50, 99.99, 100]) {
+      assert.equal(cardBattleEffectSchema.parse({ ...effect, ignoreDefensePercent }).ignoreDefensePercent, ignoreDefensePercent, type);
+    }
+    for (const ignoreDefensePercent of [-1, 100.01, 1.001, NaN, Infinity, null, "50"]) {
+      assert.equal(cardBattleEffectSchema.safeParse({ ...effect, ignoreDefensePercent }).success, false, `${type}: ${ignoreDefensePercent}`);
+    }
+  }
+  for (const type of cardBattleEffectCodes.filter((type) => !isCardBattleDamageEffect(type) && !isCardBattleAttachedOnly(type))) {
+    const effect = { order: 0, condition: "self_death", conditionValue: null, type,
+      value: cardBattleEffectNeedsValue(type) ? 25 : null, duration: cardBattleEffectNeedsDuration(type) ? 2 : null };
+    assert.equal(cardBattleEffectSchema.safeParse(effect).success, true, type);
+    assert.equal(cardBattleEffectSchema.safeParse({ ...effect, ignoreDefensePercent: 50 }).success, false, type);
+  }
+  assert.equal(isCardBattleDamageEffect("damage_future_target"), true);
+  assert.equal(cardBattleEffectNeedsValue("damage_future_target"), true);
+  assert.equal(isCardBattleDamageEffect("attack_skill_damage_self"), false);
+});
+
+test("忽防比例按星级和技能行持久化，读取保留0%、小数、100%并兼容旧记录", async () => {
+  const tierRows: Record<string, unknown>[] = [];
+  const effectRows: Record<string, unknown>[] = [];
+  const db = { query: async (sql: string, args: unknown[] = []) => {
+    const insert = sql.match(/INSERT INTO (asset_card_battle_tiers|asset_card_battle_effects)\s*\(([^)]+)\)/);
+    if (insert) {
+      const columns = insert[2]!.split(",").map((column) => column.trim());
+      assert.equal(columns.length, args.length);
+      (insert[1] === "asset_card_battle_tiers" ? tierRows : effectRows).push(Object.fromEntries(columns.map((column, index) => [column, args[index]])));
+    }
+    if (sql.startsWith("SELECT * FROM asset_card_battle_tiers")) return [tierRows];
+    if (sql.startsWith("SELECT * FROM asset_card_battle_effects")) return [effectRows];
+    return [[]];
+  } } as unknown as PoolConnection;
+  const percentages = [undefined, 0, 12.25, 100];
+  const tiers = defaultCardBattleTiers().map((tier, star) => ({ ...tier, effects: [
+    { order: 0, condition: "energy_full" as const, conditionValue: null, type: "damage_all" as const,
+      value: 800, duration: null, ignoreDefensePercent: percentages[star] },
+    { order: 1, condition: "energy_full" as const, conditionValue: null, type: "damage_single" as const,
+      value: 400, duration: null, ignoreDefensePercent: 25.5 },
+  ] }));
+  await saveCardBattleTiers("card", tiers, db);
+  // mysql2 returns DECIMAL columns as strings.
+  for (const row of effectRows) row.ignore_defense_percent = Number(row.ignore_defense_percent).toFixed(2);
+  let loaded = await loadCardBattleTiers("card", db);
+  assert.deepEqual(loaded.map((tier) => tier.effects.map((effect) => effect.ignoreDefensePercent)), [[0, 25.5], [0, 25.5], [12.25, 25.5], [100, 25.5]]);
+  delete effectRows[0]!.ignore_defense_percent;
+  loaded = await loadCardBattleTiers("card", db);
+  assert.equal(loaded[0]!.effects[0]!.ignoreDefensePercent, 0);
+  const boss = { name: "BOSS", imageUrl: `/api/online-soup/card-battle-boss/covers/${"a".repeat(64)}`, tier: loaded[3] };
+  assert.equal(bossCardSchema.parse(boss).tier.effects[0]!.ignoreDefensePercent, 100);
+  assert.equal(bossCardSchema.safeParse({ ...boss, tier: { ...loaded[3], effects: [{ ...loaded[3]!.effects[0], ignoreDefensePercent: 101 }] } }).success, false);
+});
 
 test("所有品质四星级默认25%/150%，百分比范围和精度受校验", () => {
   for (const rarity of ["epic", "legend"] as const) {

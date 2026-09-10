@@ -6,7 +6,8 @@ function isFocusedWorkspace(pathname: string) {
   return pathname === "/admin"
     || /^\/messages\/chat\/[^/]+$/.test(pathname)
     || /^\/circles\/[^/]+$/.test(pathname)
-    || /^\/online-soup\/rooms\/[^/]+(?:\/select-soup)?$/.test(pathname);
+    || /^\/online-soup\/rooms\/[^/]+(?:\/select-soup)?$/.test(pathname)
+    || /^\/online-soup\/tower\/[^/]+$/.test(pathname);
 }
 
 export function SiteFooter() {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cardBattleBuffBonus, cardBattleEffectiveStat, cardBattleStatuses, rollCardBattleDamage, rollCardBattleCritical, type CardBattleBuff } from "./cardBattleMath.js";
 import { cardBattleDebuffCodes, cardBattleDebuff } from "./cardBattleStatus.js";
 import { calculateCardBattleScore } from "@hgt/shared";
-import { CARD_BATTLE_MAX_EVENTS, CARD_BATTLE_MAX_PLAYBACK_MS, CARD_BATTLE_MAX_ROUNDS, calculateCardBattlePower, simulateCardBattle, type CardBattleDeckCard, type CardBattleSkillEffect } from "./cardBattle.js";
+import { CARD_BATTLE_MAX_EVENTS, CARD_BATTLE_MAX_PLAYBACK_MS, CARD_BATTLE_MAX_ROUNDS, cardBattleEffectCodes, calculateCardBattlePower, simulateCardBattle, type CardBattleDeckCard, type CardBattleSkillEffect } from "./cardBattle.js";
 
 test("暴击率边界、150%倍率与旧阵容默认25%准确", () => {
   assert.deepEqual(rollCardBattleCritical({ critRate: 0, critDamage: 150 }, () => 0), { critical: false, multiplier: 1 });
@@ -160,6 +160,58 @@ test("卡牌战力按生命、攻击、防御、速度和能量统一计算", ()
   assert.equal(calculateCardBattlePower({ maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50 }), 3100);
 });
 
+test("忽防仅缩减本次有效防御，保留伤害浮动、暴击、最终取整与生命截断", () => {
+  for (const [ignoreDefensePercent, damage] of [[0, 200], [50, 500], [100, 800], [12.25, 274]]) {
+    assert.deepEqual(rollCardBattleDamage(800, 600, 1000, () => .5, ignoreDefensePercent), { incomingDamage: 800, damage });
+  }
+  assert.deepEqual(rollCardBattleDamage(800, 600, 1000, () => .5), rollCardBattleDamage(800, 600, 1000, () => .5, 0));
+  assert.deepEqual(rollCardBattleDamage(800, 1200, 1000, () => .5, 0), { incomingDamage: 800, damage: 0 });
+  assert.deepEqual(rollCardBattleDamage(800, 1200, 1000, () => .5, 100), { incomingDamage: 800, damage: 800 });
+  assert.deepEqual(rollCardBattleDamage(800 * 1.5, 600, 5000, () => 0, 50), { incomingDamage: 1176, damage: 876 });
+  assert.deepEqual(rollCardBattleDamage(800, 600, 50, () => .5, 100), { incomingDamage: 800, damage: 50 });
+  assert.equal(rollCardBattleDamage(100, 3, 1000, () => .5, 50).damage, 99, "不对剩余防御提前取整");
+});
+
+test("所有伤害类型对各目标应用本行忽防比例，普攻和其他技能行保持原防御规则", () => {
+  const damageTypes = cardBattleEffectCodes.filter((type) => type.startsWith("damage_"));
+  const targetCounts: Record<string, number> = { damage_single: 1, damage_rear: 1, damage_random: 1, damage_all_front: 2,
+    damage_all_rear: 3, damage_random_2: 2, damage_random_3: 3, damage_random_4: 4, damage_all: 5 };
+  for (const type of damageTypes) {
+    for (const ignoreDefensePercent of [undefined, 0, 50, 100]) {
+      const effects: CardBattleSkillEffect[] = [
+        { id: "piercing", order: 0, condition: "energy_full", conditionValue: null, type, value: 800, duration: null, ignoreDefensePercent },
+        { id: "regular", order: 1, condition: "energy_full", conditionValue: null, type: "damage_all", value: 800, duration: null },
+      ];
+      const one = [card("a1", 1, { attack: 800, speed: 1000, energyRequired: 10, maxHp: 1_000_000 }, effects),
+        ...[2, 3, 4, 5].map((slot) => card(`a${slot}`, slot as 2 | 3 | 4 | 5, { attack: 0, maxHp: 1_000_000 }))];
+      const two = [1, 2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, defense: 1000, maxHp: 1_000_000 }));
+      const inputs = players(one, two);
+      const beforeInputs = JSON.stringify(inputs);
+      const result = simulateCardBattle(inputs, `ignore-${type}`);
+      assert.equal(JSON.stringify(inputs), beforeInputs, "不修改冻结阵容");
+      const skills = result.events.filter((event) => event.kind === "skill" && event.visual === "damage" && event.actorId === "a1");
+      assert.ok(skills.length >= 2);
+      assert.equal(skills[0]!.effects.length, targetCounts[type]);
+      const event = skills[0]!;
+      const previous = result.events[result.events.indexOf(event) - 1]!.states;
+      for (const hit of event.effects) {
+        const state = event.states.find((item) => item.instanceId === hit.targetId)!;
+        const old = previous.find((item) => item.instanceId === hit.targetId)!;
+        const incoming = state.damageTaken! - old.damageTaken!;
+        assert.ok(incoming >= 784 && incoming <= 816);
+        assert.equal(hit.amount, -Math.max(0, Math.round(incoming - 1000 * (1 - (ignoreDefensePercent ?? 0) / 100))));
+        assert.equal(state.defense, 1000);
+      }
+      assert.ok(skills[1]!.effects.every((hit) => hit.blocked), "下一技能行不继承忽防");
+      assert.ok(result.events.filter((event) => event.kind === "attack" && event.actorId === "a1").every((event) => event.effects.every((hit) => hit.blocked)), "普攻不继承忽防");
+      if (ignoreDefensePercent === undefined) {
+        effects[0]!.ignoreDefensePercent = 0;
+        assert.deepEqual(simulateCardBattle(inputs, `ignore-${type}`), result, "旧冻结技能与显式0%完全一致");
+      }
+    }
+  }
+});
+
 function card(id: string, slot: 1 | 2 | 3 | 4 | 5, overrides: Partial<CardBattleDeckCard["tier"]> = {}, effects: CardBattleSkillEffect[] = []): CardBattleDeckCard {
   return {
     instanceId: id, cardId: id, name: id, imageUrl: `/${id}.webp`, rarity: "legend", battleRole: "damage", starLevel: 0, slot,
@@ -230,7 +282,7 @@ test("25种减益均由服务端生成状态、目标范围和技能动画类型
       assert.equal(state.seat, 2);
       if (target === "single" || target === "front") assert.ok(state.slot <= 2);
       if (target === "rear") assert.ok(state.slot >= 3);
-      assert.deepEqual(state.statuses, [{ type: status, value: 25, remainingRounds: 1, multiplier: 1 }]);
+      assert.deepEqual(state.statuses, [{ type: status, category: "debuff", value: 25, remainingRounds: 1, multiplier: 1 }]);
       assert.equal(effect.amount, 25, "状态不暴击");
       assert.equal(effect.critical, undefined);
       if (status === "speed_down") assert.equal(state.speed, 75);

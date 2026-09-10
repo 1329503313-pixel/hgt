@@ -123,7 +123,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
   const content = <>
     {state && !cardBack && <CardBattleSkillFx event={activeEvent} instanceId={state.instanceId} />}
     {state && !cardBack && <CardBattleProcFx event={activeEvent} instanceId={state.instanceId} />}
-    {state?.alive && !cardBack && !showPower && <CardBattleStatusIcons statuses={state.statuses ?? []} />}
+    {state && !cardBack && !showPower && <CardBattleStatusIcons statuses={state.statuses ?? []} />}
     {card && !cardBack && activeEvent?.kind === "skill" && isActiveActor && activeEvent.skillName && <span className="card-battle-skill-name pointer-events-none absolute inset-x-[-8px] -top-6 z-[85] truncate rounded-full border border-amber-200/70 bg-amber-400 px-2 py-1 text-center text-[9px] font-black text-slate-950 shadow-lg" title={activeEvent.skillName}>{activeEvent.skillName}</span>}
     <div className="absolute inset-x-1 top-1 z-20 h-1.5 overflow-hidden rounded-full bg-slate-950/40" aria-label={state ? `生命比例 ${Math.round(state.hp / Math.max(1, state.maxHp) * 100)}%` : undefined}>
       <span className={`block h-full transition-[width,background-color] duration-300 ${state ? hpTone(state.hp, state.maxHp) : "bg-emerald-500"}`} style={{ width: `${state ? Math.max(0, state.hp / Math.max(1, state.maxHp) * 100) : 100}%` }} />

@@ -34,7 +34,7 @@ export default function SoupEvaluationsPage() {
   }, [id, refreshKey, showToast]);
 
   const ownEvaluation = useMemo(
-    () => soup && user ? soup.evaluations.find((evaluation) => evaluation.reviewerId === user.id) ?? null : null,
+    () => soup && user ? soup.evaluations.find((evaluation) => evaluation.isOwnEvaluation || evaluation.reviewerId === user.id) ?? null : null,
     [soup, user]
   );
 

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Search, Star, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { Evaluation } from "../../shared/types";
@@ -11,10 +11,11 @@ import { Modal } from "../Modal";
 import { ScoreInput } from "../FormWidgets";
 
 type EvalRow = Evaluation & { soupTitle: string };
-type EvaluationColumn = "reviewer" | "total" | "soup" | "content" | "contentVisibility" | "dimensions" | "createdAt" | "actions";
+type EvaluationColumn = "reviewer" | "evaluationType" | "total" | "soup" | "content" | "contentVisibility" | "dimensions" | "createdAt" | "actions";
 
 const evaluationColumns: readonly AdminColumn<EvaluationColumn>[] = [
   { key: "reviewer", label: "评价者", width: "130px" },
+  { key: "evaluationType", label: "评价类型", width: "110px" },
   { key: "total", label: "总分", width: "90px" },
   { key: "soup", label: "汤品", width: "minmax(180px, 1fr)" },
   { key: "content", label: "评价内容", width: "minmax(220px, 1.2fr)" },
@@ -35,6 +36,7 @@ const dimensionLabels: Array<{ key: "writing" | "logic" | "share" | "mechanism" 
 
 function evaluationToForm(evaluation: EvalRow): EvalForm {
   return {
+    isAnonymous: evaluation.isAnonymous,
     total: String(evaluation.total),
     writing: evaluation.writing == null ? "" : String(evaluation.writing),
     logic: evaluation.logic == null ? "" : String(evaluation.logic),
@@ -55,6 +57,9 @@ export function EvaluationManagement() {
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [submittedKeyword, setSubmittedKeyword] = useState("");
+  const [evaluationType, setEvaluationType] = useState("all");
+  const [loadError, setLoadError] = useState("");
+  const loadRequest = useRef(0);
   const [editing, setEditing] = useState<EvalRow | null>(null);
   const [editForm, setEditForm] = useState<EvalForm | null>(null);
   const [editHidden, setEditHidden] = useState(false);
@@ -64,21 +69,27 @@ export function EvaluationManagement() {
   const template = useMemo(() => gridTemplate(evaluationColumns, visibleColumns), [visibleColumns]);
 
   const loadEvaluations = useCallback(async () => {
+    const request = ++loadRequest.current;
     setLoading(true);
+    setLoadError("");
     try {
       const params = new URLSearchParams();
+      params.set("evaluationType", evaluationType);
       if (submittedKeyword) params.set("keyword", submittedKeyword);
       params.set("limit", String(pageSize));
       params.set("offset", String((page - 1) * pageSize));
       const data = await api<EvaluationsResponse>(`/api/admin/evaluations?${params.toString()}`);
+      if (request !== loadRequest.current) return;
       setEvaluations(data.evaluations);
       setTotal(data.total);
+    } catch (error) {
+      if (request === loadRequest.current) { setEvaluations([]); setTotal(0); setLoadError(error instanceof Error ? error.message : "评价加载失败"); }
     } finally {
-      setLoading(false);
+      if (request === loadRequest.current) setLoading(false);
     }
-  }, [submittedKeyword, page, pageSize]);
+  }, [submittedKeyword, evaluationType, page, pageSize]);
 
-  useEffect(() => { loadEvaluations(); }, [loadEvaluations]);
+  useEffect(() => { void loadEvaluations(); return () => { loadRequest.current += 1; }; }, [loadEvaluations]);
 
   async function handleDelete(id: string, reviewer: string) {
     if (!confirm(`确定删除 ${reviewer} 的评价吗？`)) return;
@@ -132,7 +143,8 @@ export function EvaluationManagement() {
         <ColumnSelector columns={evaluationColumns} visible={visibleColumns} onChange={setVisibleColumns} />
       </div>
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex flex-wrap items-end gap-2">
+        <label className="space-y-1"><span className="block text-xs font-bold text-muted">评价类型</span><select aria-label="评价类型" className="field min-h-11" value={evaluationType} onChange={(event) => { setPage(1); setEvaluationType(event.target.value); }}><option value="all">全部评价</option><option value="normal">正常评价</option><option value="anonymous">匿名评价</option></select></label>
         <div className="relative min-w-0 flex-1">
           <input
             className="field h-10 pl-4 pr-24"
@@ -157,6 +169,7 @@ export function EvaluationManagement() {
             {evaluations.map((evaluation) => (
               <div key={evaluation.id} className="grid items-center justify-items-center gap-2 rounded-lg border border-line p-3 text-center text-sm" style={{ gridTemplateColumns: template }}>
                 {visibleColumns.has("reviewer") && <strong className="max-w-full truncate">{evaluation.reviewer}</strong>}
+                {visibleColumns.has("evaluationType") && <span className={`rounded-full px-2 py-1 text-xs font-bold ${evaluation.isAnonymous ? "bg-slate-100 text-slate-600" : "bg-blue-50 text-primary"}`}>{evaluation.isAnonymous ? "匿名评价" : "正常评价"}</span>}
                 {visibleColumns.has("total") && <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs font-bold text-primary"><Star className="fill-amber-400 text-amber-400" size={12} />{evaluation.total}</span>}
                 {visibleColumns.has("soup") && <button className="max-w-full truncate font-semibold text-ink hover:text-primary" onClick={() => navigate(`/soup/${evaluation.soupId}`)}>{evaluation.soupTitle || "查看汤品"}</button>}
                 {visibleColumns.has("content") && <p className="line-clamp-2 max-w-full text-xs text-muted">{evaluation.content || "—"}</p>}
@@ -180,6 +193,7 @@ export function EvaluationManagement() {
       </div>
 
       {loading && <ListSkeleton rows={6} />}
+      {loadError && <p role="alert" className="py-3 text-sm text-red-600">{loadError}</p>}
       {evaluations.length === 0 && !loading && <p className="py-8 text-center text-sm text-muted">暂无可管理的评价</p>}
       <AdminPagination
         page={page}

@@ -39,7 +39,8 @@ test("18种技能全需数值与回合数，目标范围和独立状态正确且
     const skill = effect(type);
     assert.ok(cardBattleEffectSchema.safeParse(skill).success, type);
     for (const value of [null, 0, 101]) assert.equal(cardBattleEffectSchema.safeParse({ ...skill, value }).success, false);
-    for (const duration of [null, 0, 31, 1.5]) assert.equal(cardBattleEffectSchema.safeParse({ ...skill, duration }).success, false);
+    for (const duration of [null, 0, 1.5]) assert.equal(cardBattleEffectSchema.safeParse({ ...skill, duration }).success, false);
+    assert.equal(cardBattleEffectSchema.safeParse({ ...skill, duration: 365 }).success, true);
     const one = side("a", { speed: 20, critRate: 100, critDamage: 1000, energyRequired: 10 });
     one[0]!.tier.effects = [skill];
     const two = side("b");

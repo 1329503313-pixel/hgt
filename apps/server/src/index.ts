@@ -1,4 +1,6 @@
 import "express-async-errors";
+import { canViewOnlineSoupMessage } from "./onlineSoupHistory.js";
+import { evaluationAdminFilter, evaluationTypeSchema, presentEvaluation, presentEvaluationInteraction, syncEvaluationNotification } from "./evaluationPrivacy.js";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import compression from "compression";
@@ -49,7 +51,7 @@ import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
 import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
-import { SOUP_TOPIC_NAME_MAX_LENGTH, shouldRequireActiveSoupTopic, soupTopicDirectMatchOrderSql, soupTopicNameLength, soupTopicSearchFilterSql } from "./soupTopics.js";
+import { SOUP_TOPIC_NAME_MAX_LENGTH, shouldRequireActiveSoupTopic, soupTopicDirectMatchOrderSql, soupTopicNameLength, soupKeywordFilter, soupTopicSummaryColumnsSql } from "./soupTopics.js";
 import {
   evaluationCountsTowardScore,
   scoringEvaluationJoin,
@@ -182,6 +184,7 @@ app.disable("x-powered-by");
 const userEventClients = new Map<string, Set<Response>>();
 const unreadCountsCache = new Map<string, { expiresAt: number; payload: unknown }>();
 const onlineSoupRoomSocketClients = new Map<string, Set<WebSocket>>();
+const onlineSoupSocketSendQueues = new WeakMap<WebSocket, Promise<void>>();
 const onlineSoupLobbySocketClients = new Set<WebSocket>();
 const circleSocketClients = new Map<string, Set<WebSocket>>();
 const presenceConnectionCounts = new Map<string, number>();
@@ -192,16 +195,25 @@ function emitOnlineSoupSocketEvent(roomId: string, event: string, payload: unkno
   const clients = onlineSoupRoomSocketClients.get(roomId);
   if (!clients?.size) return;
   const message = JSON.stringify({ event, payload });
-  const details = payload as { reason?: unknown; userId?: unknown };
+  const details = payload as { reason?: unknown; userId?: unknown; messageId?: unknown };
   const kickedUserId = event === "online_soup_changed" && details.reason === "member_kicked"
     ? String(details.userId ?? "")
     : "";
   for (const client of clients) {
     if (client.readyState !== WebSocket.OPEN) continue;
-    client.send(message);
-    if (kickedUserId && String((client as any).onlineSoupUserId) === kickedUserId) {
-      client.close(4003, "removed from room");
-    }
+    // Preserve event order while checking late settlement pushes against each viewer's history.
+    const previous = onlineSoupSocketSendQueues.get(client) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      if (client.readyState !== WebSocket.OPEN) return;
+      const visible = typeof details.messageId !== "string"
+        || await canViewOnlineSoupMessage(pool, roomId, details.messageId, String((client as any).onlineSoupUserId));
+      if (client.readyState !== WebSocket.OPEN) return;
+      client.send(visible ? message : JSON.stringify({ event, payload: { roomId, reason: "history_changed" } }));
+      if (kickedUserId && String((client as any).onlineSoupUserId) === kickedUserId) {
+        client.close(4003, "removed from room");
+      }
+    }).catch(error => { console.error("Online soup socket history check failed", error); });
+    onlineSoupSocketSendQueues.set(client, next);
   }
 }
 
@@ -215,8 +227,8 @@ function emitCircleSocketEvent(circleId: string, event: string, payload: unknown
 setOnlineSoupEventEmitter(emitOnlineSoupSocketEvent);
 setBossRewardListener((events) => {
   for (const event of events) {
-    emitUserEvent(event.userId, "shell_balance_changed", { balance: event.balance, amount: event.amount, source: "card_battle_boss" });
-    emitUnreadChanged(event.userId, "card_battle_boss");
+    emitUserEvent(event.userId, "shell_balance_changed", { balance: event.balance, amount: event.amount, source: event.source ?? "card_battle_boss" });
+    emitUnreadChanged(event.userId, event.source ?? "card_battle_boss");
   }
 });
 setCardBattleRankingNotificationListener((userId) => emitUnreadChanged(userId, "card_battle_rank_defeated"));
@@ -723,6 +735,7 @@ const soupTopicStatusSchema = z.object({
 });
 
 const evaluationSchema = z.object({
+  isAnonymous: z.boolean().optional(),
   total: score,
   writing: optionalScore,
   logic: optionalScore,
@@ -1196,16 +1209,17 @@ function safeParseJson(value: unknown) {
   }
 }
 
-function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true, creatorId?: unknown) {
+function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true, creatorId?: unknown, viewerId?: string, audience: "public" | "admin" = "public") {
   const isContentHidden = bool(row.is_content_hidden);
   const isCreatorEvaluation = creatorId != null && String(row.reviewer_id) === String(creatorId);
   const countsTowardScore = creatorId == null
     ? undefined
     : evaluationCountsTowardScore(row.reviewer_id, creatorId, row.reviewer_experience);
-  return {
+  return presentEvaluation({
     id: row.id,
     soupId: row.soup_id,
     soupTitle: row.soup_title ? String(row.soup_title) : undefined,
+    isAnonymous: bool(row.is_anonymous),
     total: Number(row.total),
     reviewer: row.reviewer,
     reviewerId: row.reviewer_id,
@@ -1236,7 +1250,7 @@ function mapEvaluation(row: mysql.RowDataPacket, canViewHiddenContent = true, cr
     content: isContentHidden && !canViewHiddenContent ? null : row.content ? String(row.content) : null,
     isContentHidden,
     createdAt: new Date(row.created_at).toISOString()
-  };
+  }, viewerId, audience);
 }
 
 function mapSoupSummary(row: mysql.RowDataPacket) {
@@ -1252,6 +1266,9 @@ function mapSoupSummary(row: mysql.RowDataPacket) {
     type: row.type,
     difficulty: String(row.difficulty ?? "普通"),
     summary: row.summary ?? "",
+    topic: row.topic_id && row.topic_name ? {
+      id: String(row.topic_id), name: String(row.topic_name), isActive: bool(row.topic_is_active)
+    } : null,
     coverImage: soupImageUrl(row.id, row.cover_thumbnail, "thumbnail", bool(row.has_cover_thumbnail)),
     isOriginal: bool(row.is_original ?? 1),
     creatorId: row.creator_id,
@@ -1306,7 +1323,7 @@ function soupSummaryColumns(alias = "s") {
     ${alias}.is_original, ${alias}.creator_id, ${alias}.creator_name,
     ${alias}.is_surface_public, ${alias}.is_bottom_public, ${alias}.enable_ai_game,
     ${alias}.view_count, ${alias}.created_at, ${alias}.review_status, ${alias}.review_reason, ${alias}.review_version,
-    ${alias}.profile_pinned_at`;
+    ${alias}.profile_pinned_at, ${soupTopicSummaryColumnsSql(alias)}`;
 }
 
 function mapSoupDetail(row: mysql.RowDataPacket) {
@@ -4125,7 +4142,7 @@ app.get("/api/me/soups/:id/interactions", async (req, res) => {
     );
   } else if (type === "evaluations") {
     [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT u.id, u.nickname, NULL AS avatar, u.avatar IS NOT NULL AS has_avatar, e.total, e.content, e.created_at
+      `SELECT u.id, u.nickname, NULL AS avatar, u.avatar IS NOT NULL AS has_avatar, e.id AS interaction_id, e.is_anonymous, e.total, e.content, e.created_at
        FROM evaluations e INNER JOIN users u ON u.id = e.reviewer_id
        WHERE e.soup_id = ? ORDER BY e.created_at DESC`,
       [req.params.id]
@@ -4136,7 +4153,9 @@ app.get("/api/me/soups/:id/interactions", async (req, res) => {
   res.json({
     title: String(soupRows[0].title),
     type,
-    interactions: rows.map((row) => ({
+    interactions: rows.map((row) => presentEvaluationInteraction({
+      id: String(row.interaction_id ?? row.id),
+      isAnonymous: bool(row.is_anonymous),
       userId: String(row.id),
       nickname: String(row.nickname),
       avatar: avatarUrl(row.id, row.avatar, bool(row.has_avatar)),
@@ -5271,10 +5290,10 @@ app.get("/api/soups", async (req, res) => {
     }
   }
 
-  if (req.query.keyword) {
-    where.push(soupTopicSearchFilterSql());
-    const keyword = `%${String(req.query.keyword)}%`;
-    params.push(keyword, keyword, keyword, keyword);
+  const keywordFilter = req.query.keyword ? soupKeywordFilter(String(req.query.keyword)) : null;
+  if (keywordFilter) {
+    where.push(keywordFilter.sql);
+    params.push(...keywordFilter.params);
   }
   if (req.query.author) {
     where.push("s.author LIKE ?");
@@ -5363,7 +5382,7 @@ app.get("/api/soups", async (req, res) => {
       : sortBy === "heat"
         ? `${heatOrderExpression} ${order}, s.created_at DESC`
         : `s.created_at ${order}, s.id ${order}`;
-  const searchOrderKeyword = req.query.keyword ? `%${String(req.query.keyword)}%` : null;
+  const searchOrderKeyword = keywordFilter?.orderKeyword ?? null;
   const orderClause = searchOrderKeyword
     ? `${soupTopicDirectMatchOrderSql()}, ${baseOrderClause}`
     : baseOrderClause;
@@ -5377,7 +5396,7 @@ app.get("/api/soups", async (req, res) => {
     : baseOrderParams;
 
   const summarySelect = (lightImages = false) => `
-    SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail,
+    SELECT s.id, s.title, s.author, s.type, s.difficulty, s.summary, s.cover_thumbnail, ${soupTopicSummaryColumnsSql()},
       ${lightImages ? "s.has_cover_thumbnail" : "s.cover_thumbnail IS NOT NULL AS has_cover_thumbnail"}, s.is_original,
       s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.enable_ai_game, s.view_count, s.created_at,
       s.review_status, s.review_reason, s.review_version,
@@ -5407,7 +5426,7 @@ app.get("/api/soups", async (req, res) => {
            CASE WHEN s.cover_thumbnail LIKE 'data:image/%' THEN NULL ELSE s.cover_thumbnail END AS cover_thumbnail,
            s.cover_thumbnail IS NOT NULL AS has_cover_thumbnail,
            s.is_original, s.creator_id, s.creator_name, s.is_surface_public, s.is_bottom_public, s.enable_ai_game,
-           s.view_count, s.created_at, s.review_status, s.review_reason, s.review_version
+           s.view_count, s.created_at, s.review_status, s.review_reason, s.review_version, s.topic_id
          FROM soups s
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
          ORDER BY ${orderClause}
@@ -5689,7 +5708,7 @@ app.get("/api/soups/:id", async (req, res) => {
       isFavorited: favoriteRows.length > 0,
       isLiked: likeRows.length > 0,
       pendingRequestId: requestRows[0]?.id ?? null,
-      evaluations: evalRows.map((row) => mapEvaluation(row, full, soup.creator_id))
+      evaluations: evalRows.map((row) => mapEvaluation(row, full, soup.creator_id, user?.id))
     }
   });
 });
@@ -6188,12 +6207,14 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
   const connection = await pool.getConnection();
   let created = false;
   let savedId = id;
+  let savedAnonymous = data.isAnonymous ?? false;
+  let evaluationNotificationChanged = false;
   try {
     await connection.beginTransaction();
     const [insertResult] = await connection.query<mysql.ResultSetHeader>(
       `INSERT IGNORE INTO evaluations
-        (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth, content)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, soup_id, total, reviewer, reviewer_id, writing, logic, share, mechanism, twist, depth, content, is_anonymous)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         req.params.id,
@@ -6206,7 +6227,8 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         data.mechanism,
         data.twist,
         data.depth,
-        data.content || null
+        data.content || null,
+        savedAnonymous
       ]
     );
     created = insertResult.affectedRows === 1;
@@ -6221,7 +6243,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
     if (!created) {
       await connection.query(
         `UPDATE evaluations
-         SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?
+         SET total = ?, reviewer = ?, writing = ?, logic = ?, share = ?, mechanism = ?, twist = ?, depth = ?, content = ?, is_anonymous = COALESCE(?, is_anonymous)
          WHERE soup_id = ? AND reviewer_id = ?`,
         [
           data.total,
@@ -6233,15 +6255,17 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
           data.twist,
           data.depth,
           data.content || null,
+          data.isAnonymous ?? null,
           req.params.id,
           user.id
         ]
       );
       const [[savedEvaluation]] = await connection.query<mysql.RowDataPacket[]>(
-        "SELECT id FROM evaluations WHERE soup_id = ? AND reviewer_id = ? LIMIT 1",
+        "SELECT id, is_anonymous FROM evaluations WHERE soup_id = ? AND reviewer_id = ? LIMIT 1",
         [req.params.id, user.id]
       );
       savedId = String(savedEvaluation.id);
+      savedAnonymous = bool(savedEvaluation.is_anonymous);
     }
     if (data.content?.trim()) {
       await connection.query(
@@ -6264,6 +6288,10 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
         { relatedType: "soup", relatedId: req.params.id, connection }
       );
     }
+    evaluationNotificationChanged = await syncEvaluationNotification(connection, {
+      soupId: req.params.id, soupTitle: String(soup.title), creatorId: String(soup.creator_id),
+      reviewerId: user.id, reviewer: user.nickname, total: data.total, isAnonymous: savedAnonymous, created,
+    });
     await connection.commit();
   } catch (error) {
     await connection.rollback();
@@ -6272,16 +6300,7 @@ app.post("/api/soups/:id/evaluations", async (req, res) => {
     connection.release();
   }
   recordUserBehavior("save_evaluation");
-  if (created && String(soup.creator_id) !== user.id) {
-    await notify(
-      String(soup.creator_id),
-      "soup_evaluation",
-      "收到新的评价",
-      `${user.nickname} 评价了你的海龟汤《${soup.title}》，评分 ${data.total} 分`,
-      req.params.id,
-      user.id
-    );
-  }
+  if (evaluationNotificationChanged) emitUnreadChanged(String(soup.creator_id), "soup_evaluation");
   queueSystemBadgeSync([user.id, String(soup.creator_id)]);
   res.status(created ? 201 : 200).json({ id: savedId });
 });
@@ -6659,7 +6678,7 @@ app.get("/api/notifications", async (req, res) => {
           ? `/messages/ranking-rewards/${row.related_id}`
         : row.type === "card_battle_rank_defeated"
           ? "/mine/rankings?tab=card_battle"
-        : row.type === "shell_adjustment" || row.type === "badge_history_backfill" || row.type === "card_battle_boss"
+        : row.type === "shell_adjustment" || row.type === "badge_history_backfill" || row.type === "card_battle_boss" || row.type === "card_tower"
           ? "/mine/shells/transactions"
         : row.type === "user_follow" && row.actor_id
           ? `/users/${row.actor_id}`
@@ -8036,10 +8055,9 @@ app.get("/api/admin/evaluations", async (req, res) => {
   const offset = Number(req.query.offset ?? 0);
   const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
 
-  const where = keyword
-    ? "WHERE (e.reviewer LIKE ? OR e.content LIKE ? OR s.title LIKE ?)"
-    : "";
-  const searchParams = keyword ? [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`] : [];
+  const parsedType = evaluationTypeSchema.safeParse(req.query.evaluationType);
+  if (!parsedType.success) return sendError(res, 400, "评价类型不正确");
+  const { where, params: searchParams } = evaluationAdminFilter(keyword, parsedType.data);
 
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `
@@ -8060,7 +8078,7 @@ app.get("/api/admin/evaluations", async (req, res) => {
   const hasMore = rows.length > limit;
   if (hasMore) rows.pop();
   res.json({
-    evaluations: rows.map((row) => mapEvaluation(row)),
+    evaluations: rows.map((row) => mapEvaluation(row, true, undefined, undefined, "admin")),
     total: Number(totalRow.total),
     hasMore
   });
@@ -8068,7 +8086,7 @@ app.get("/api/admin/evaluations", async (req, res) => {
 
 app.patch("/api/admin/evaluations/:id", async (req, res) => {
   if (!(await requireBackofficeAdmin(req, res))) return;
-  const parsed = evaluationSchema.extend({ isContentHidden: z.boolean().default(false) }).safeParse(req.body);
+  const parsed = evaluationSchema.omit({ isAnonymous: true }).extend({ isContentHidden: z.boolean().default(false) }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "评分必须在 1-5 之间，步长 0.5；维度评分必须在 0-5 之间");
 
   const data = parsed.data;
@@ -8100,7 +8118,7 @@ app.patch("/api/admin/evaluations/:id", async (req, res) => {
     [req.params.id]
   );
   dashboardCache.clear();
-  res.json({ evaluation: mapEvaluation(rows[0]) });
+  res.json({ evaluation: mapEvaluation(rows[0], true, undefined, undefined, "admin") });
 });
 
 // ---------- AI 游戏路由 ----------

@@ -8,6 +8,7 @@ import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
 import { SoupTopicManagement } from "./SoupTopicManagement";
+import { SoupTopicLink } from "../SoupTopicLink";
 
 type SoupColumn = "title" | "review" | "original" | "difficulty" | "heat" | "likes" | "favorites" | "evaluations" | "creator" | "createdAt" | "actions";
 
@@ -97,7 +98,8 @@ function SoupListManagement({ canDelete }: { canDelete: boolean }) {
         <div className="relative min-w-0 flex-1">
           <input
             className="field h-10 pl-4 pr-24"
-            placeholder="搜索标题、作者..."
+            placeholder="搜索标题、作者、话题..."
+            aria-label="搜索标题、作者、话题"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
@@ -156,6 +158,7 @@ function SoupListManagement({ canDelete }: { canDelete: boolean }) {
                   <button className="max-w-full truncate font-semibold text-ink hover:text-primary" onClick={() => navigate(`/soup/${s.id}`)}>
                     {s.title}
                   </button>
+                  <SoupTopicLink topic={s.topic} />
                   <div className="text-xs text-muted">{s.type}</div>
                 </div>}
                 {visibleColumns.has("review") && <span className={`rounded-md px-2 py-1 text-xs font-bold ${s.reviewStatus === "pending" ? "bg-amber-50 text-amber-700" : s.reviewStatus === "rejected" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>

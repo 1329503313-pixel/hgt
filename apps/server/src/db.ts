@@ -1,5 +1,7 @@
 import bcrypt from "bcryptjs";
 import { initCardBattleBossSchema } from "./cardBattleBossSchema.js";
+import { initCardTowerSchema } from "./cardTowerSchema.js";
+import { initOnlineSoupHistory } from "./onlineSoupHistory.js";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
@@ -419,6 +421,7 @@ export async function initDatabase() {
       depth DECIMAL(3,1) NULL,
       content TEXT NULL,
       is_content_hidden BOOLEAN NOT NULL DEFAULT FALSE,
+      is_anonymous BOOLEAN NOT NULL DEFAULT FALSE,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_evaluation_user_soup (soup_id, reviewer_id),
@@ -539,6 +542,7 @@ export async function initDatabase() {
   await ensureColumn("soups", "topic_id", "topic_id VARCHAR(64) NULL AFTER view_count");
   await ensureColumn("evaluations", "content", "content TEXT NULL AFTER depth");
   await ensureColumn("evaluations", "is_content_hidden", "is_content_hidden BOOLEAN NOT NULL DEFAULT FALSE AFTER content");
+  await ensureColumn("evaluations", "is_anonymous", "is_anonymous BOOLEAN NOT NULL DEFAULT FALSE AFTER is_content_hidden");
   await ensureColumn("users", "avatar", "avatar LONGTEXT NULL AFTER nickname");
   await ensureColumn("users", "bio", "bio VARCHAR(40) NOT NULL DEFAULT '' AFTER nickname");
   await ensureColumn("users", "invite_code", "invite_code CHAR(5) NULL AFTER nickname");
@@ -1853,6 +1857,7 @@ export async function initDatabase() {
       completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  await initOnlineSoupHistory(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_behavior_daily_stats (
       stat_date DATE NOT NULL,
@@ -2818,7 +2823,10 @@ export async function initDatabase() {
       condition_value INT UNSIGNED NULL,
       effect_code VARCHAR(64) NOT NULL,
       effect_value INT UNSIGNED NULL,
-      duration_rounds INT UNSIGNED NULL,
+      ignore_defense_percent DECIMAL(5,2) NOT NULL DEFAULT 0,
+      duration_rounds BIGINT UNSIGNED NULL,
+      probability DECIMAL(5,2) NULL,
+      additional_effects JSON NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_asset_card_battle_effect_order (card_id, star_level, effect_order),
@@ -2826,6 +2834,16 @@ export async function initDatabase() {
         REFERENCES asset_card_battle_tiers(card_id, star_level) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  // 既有技能默认不忽略防御；后续重启不覆盖管理员保存的比例。
+  await ensureColumn("asset_card_battle_effects", "ignore_defense_percent", "ignore_defense_percent DECIMAL(5,2) NOT NULL DEFAULT 0");
+  await ensureColumn("asset_card_battle_effects", "probability", "probability DECIMAL(5,2) NULL");
+  await ensureColumn("asset_card_battle_effects", "additional_effects", "additional_effects JSON NULL");
+  const [battleDurationColumns] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_card_battle_effects' AND COLUMN_NAME = 'duration_rounds'",
+  );
+  if (battleDurationColumns[0]?.DATA_TYPE !== "bigint") {
+    await pool.query("ALTER TABLE asset_card_battle_effects MODIFY COLUMN duration_rounds BIGINT UNSIGNED NULL");
+  }
   // 新列创建时一次性为所有既有星级预设25%/150%；重启不覆盖之后的自定义配置。
   await ensureColumn("asset_card_battle_tiers", "crit_rate", "crit_rate DECIMAL(5,2) NOT NULL DEFAULT 25");
   await ensureColumn("asset_card_battle_tiers", "crit_damage", "crit_damage DECIMAL(7,2) NOT NULL DEFAULT 150");
@@ -2979,6 +2997,7 @@ export async function initDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
   await initCardBattleBossSchema(pool);
+  await initCardTowerSchema(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS online_card_battle_playback_progress (
       game_id VARCHAR(64) NOT NULL,

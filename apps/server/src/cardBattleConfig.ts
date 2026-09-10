@@ -9,19 +9,19 @@ import {
 } from "./cardBattle.js";
 import { pool } from "./db.js";
 import { cardBattleDebuffCodes, isCardBattleDebuff } from "./cardBattleStatus.js";
-import { CARD_BATTLE_PROC_BUFF_CODES, cardBattleProcStat } from "@hgt/shared";
+import { CARD_BATTLE_CONTROL_CODES, cardBattleControlNeedsDuration, isCardBattleCleanse, isCardBattleStun, isCardBattleAttachedOnly, CARD_BATTLE_PROC_BUFF_CODES, cardBattleProcStat, isCardBattleDamageEffect } from "@hgt/shared";
 
 const numericValueEffects = new Set([
   ...CARD_BATTLE_PROC_BUFF_CODES,
+  ...CARD_BATTLE_CONTROL_CODES.filter(isCardBattleCleanse),
   ...cardBattleDebuffCodes,
-  "damage_single", "damage_rear", "damage_random", "damage_all_front", "damage_all_rear",
-  "damage_random_2", "damage_random_3", "damage_random_4", "damage_all",
   "heal_self", "heal_lowest_ally", "energy_self", "energy_lowest_ally", "heal_all_allies", "energy_all_allies",
   "defense_self", "defense_all_allies", "speed_self", "speed_all_allies", "max_hp_self", "max_hp_all_allies",
   "attack_self", "attack_all_allies",
   "attack_skill_damage_self", "attack_skill_damage_all_allies",
 ]);
 const durationEffects = new Set([
+  ...CARD_BATTLE_CONTROL_CODES.filter(cardBattleControlNeedsDuration),
   ...CARD_BATTLE_PROC_BUFF_CODES,
   ...cardBattleDebuffCodes,
   "attack_self", "attack_all_allies", "defense_self", "defense_all_allies", "speed_self", "speed_all_allies",
@@ -30,41 +30,69 @@ const durationEffects = new Set([
 const thresholdConditions = new Set(["self_hp_below_percent", "self_hp_below_percent_energy_full"]);
 const selfDeathConditions = new Set(["self_death", "self_death_energy_full"]);
 
-export const cardBattleEffectSchema = z.object({
+const actionFields = {
   id: z.string().trim().min(1).max(64).optional(),
-  order: z.number().int().min(0).max(999),
-  condition: z.enum(cardBattleConditionCodes),
-  conditionValue: z.number().int().min(1).max(100).nullable(),
   type: z.enum(cardBattleEffectCodes),
   value: z.number().int().min(1).max(1_000_000_000).nullable(),
-  duration: z.number().int().min(1).max(30).nullable(),
-}).superRefine((value, context) => {
+  ignoreDefensePercent: z.number().min(0, "无视防御比例不得低于0%").max(100, "无视防御比例不得超过100%").multipleOf(.01, "无视防御比例最多保留两位小数").default(0),
+  duration: z.number().int().positive().safe().nullable(),
+  probability: z.number().min(0).max(100).multipleOf(.01).optional(),
+};
+const actionSchema = z.object(actionFields);
+function validateAction(value: z.infer<typeof actionSchema>, context: z.RefinementCtx) {
+  if (isCardBattleStun(value.type) && value.probability == null) value.probability = 100;
+  if (!isCardBattleStun(value.type) && value.probability != null) {
+    context.addIssue({ code: "custom", path: ["probability"], message: "仅眩晕技能可配置生效概率" });
+  }
+  if (!isCardBattleDamageEffect(value.type) && value.ignoreDefensePercent !== 0) {
+    context.addIssue({ code: "custom", path: ["ignoreDefensePercent"], message: "仅伤害性技能可配置无视防御比例" });
+  }
   if (cardBattleProcStat(value.type) && (value.value == null || value.value > 100)) {
     context.addIssue({ code: "custom", path: ["value"], message: "吸血、击晕与再动属性技能必须填写1-100" });
   }
   if (isCardBattleDebuff(value.type) && (value.value == null || value.value > 100)) {
     context.addIssue({ code: "custom", path: ["value"], message: "减益比例必须填写1-100（%）" });
   }
+  if (cardBattleEffectNeedsValue(value.type) && value.value == null) {
+    context.addIssue({ code: "custom", path: ["value"], message: "当前技能类型必须填写技能数值" });
+  }
+  if (!cardBattleEffectNeedsValue(value.type) && value.value != null) {
+    context.addIssue({ code: "custom", path: ["value"], message: "当前技能类型不需要技能数值" });
+  }
+  if (durationEffects.has(value.type) && value.duration == null) {
+    context.addIssue({ code: "custom", path: ["duration"], message: "当前技能类型必须填写持续／生效回合" });
+  }
+  if (!durationEffects.has(value.type) && value.duration != null) {
+    context.addIssue({ code: "custom", path: ["duration"], message: "当前技能类型不需要持续回合" });
+  }
+}
+const additionalActionSchema = actionSchema.strict().superRefine(validateAction);
+export const cardBattleEffectSchema = z.object({
+  ...actionFields,
+  order: z.number().int().min(0).max(999),
+  condition: z.enum(cardBattleConditionCodes),
+  conditionValue: z.number().int().min(1).max(100).nullable(),
+  additionalEffects: z.array(additionalActionSchema).max(49).optional(),
+}).superRefine((value, context) => {
+  validateAction(value, context);
   if (thresholdConditions.has(value.condition) && value.conditionValue == null) {
     context.addIssue({ code: "custom", path: ["conditionValue"], message: "生命值百分比条件必须填写 1-100" });
   }
   if (!thresholdConditions.has(value.condition) && value.conditionValue != null) {
     context.addIssue({ code: "custom", path: ["conditionValue"], message: "当前条件不需要条件数值" });
   }
-  if (numericValueEffects.has(value.type) && value.value == null) {
-    context.addIssue({ code: "custom", path: ["value"], message: "当前技能类型必须填写技能数值" });
+  if (isCardBattleAttachedOnly(value.type)) {
+    context.addIssue({ code: "custom", path: ["type"], message: "该技能类型只能作为附加类型" });
   }
-  if (!numericValueEffects.has(value.type) && value.value != null) {
-    context.addIssue({ code: "custom", path: ["value"], message: "当前技能类型不需要技能数值" });
-  }
-  if (durationEffects.has(value.type) && value.duration == null) {
-    context.addIssue({ code: "custom", path: ["duration"], message: "属性提升与所有减益状态必须填写持续回合" });
-  }
-  if (!durationEffects.has(value.type) && value.duration != null) {
-    context.addIssue({ code: "custom", path: ["duration"], message: "当前技能类型不需要持续回合" });
-  }
-  if (value.type === "revive_self" && !selfDeathConditions.has(value.condition)) {
-    context.addIssue({ code: "custom", path: ["type"], message: "复活自己只能绑定本卡片死亡条件" });
+  const actions = [value, ...value.additionalEffects ?? []];
+  for (const [index, action] of actions.entries()) {
+    const path = index === 0 ? ["type"] : ["additionalEffects", index - 1, "type"];
+    if (action.type === "revive_self" && !selfDeathConditions.has(value.condition)) {
+      context.addIssue({ code: "custom", path, message: "复活自己只能绑定本卡片死亡条件" });
+    }
+    if (action.type === "revival_block_damaged" && !actions.some((item) => isCardBattleDamageEffect(item.type))) {
+      context.addIssue({ code: "custom", path, message: "本技能须配置伤害性技能类型，才能附加禁止受伤单位复活" });
+    }
   }
 });
 
@@ -151,7 +179,10 @@ export async function loadCardBattleTiers(cardId: string, db: mysql.Pool | mysql
       conditionValue: effect.condition_value == null ? null : Number(effect.condition_value),
       type: String(effect.effect_code) as CardBattleSkillEffect["type"],
       value: effect.effect_value == null ? null : Number(effect.effect_value),
+      ignoreDefensePercent: Number(effect.ignore_defense_percent ?? 0),
       duration: effect.duration_rounds == null ? null : Number(effect.duration_rounds),
+      ...(effect.probability == null ? {} : { probability: Number(effect.probability) }),
+      ...(effect.additional_effects == null ? {} : { additionalEffects: typeof effect.additional_effects === "string" ? JSON.parse(effect.additional_effects) : effect.additional_effects }),
     })),
   }));
 }
@@ -172,15 +203,17 @@ export async function saveCardBattleTiers(cardId: string, tiers: CardBattleTierI
     for (const [index, effect] of [...tier.effects].sort((left, right) => left.order - right.order).entries()) {
       await db.query(
         `INSERT INTO asset_card_battle_effects
-          (id, card_id, star_level, effect_order, condition_code, condition_value, effect_code, effect_value, duration_rounds)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, card_id, star_level, effect_order, condition_code, condition_value, effect_code, effect_value, duration_rounds, ignore_defense_percent, probability, additional_effects)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [effect.id || nanoid(), cardId, tier.starLevel, index, effect.condition, effect.conditionValue,
-          effect.type, effect.value, effect.duration],
+          effect.type, effect.value, effect.duration, isCardBattleDamageEffect(effect.type) ? effect.ignoreDefensePercent ?? 0 : 0,
+          isCardBattleStun(effect.type) ? effect.probability ?? 100 : null,
+          effect.additionalEffects?.length ? JSON.stringify(effect.additionalEffects.map((action) => ({ ...action, id: action.id || nanoid() }))) : null],
       );
     }
   }
 }
 
-export const cardBattleEffectNeedsValue = (type: string) => numericValueEffects.has(type);
+export const cardBattleEffectNeedsValue = (type: string) => isCardBattleDamageEffect(type) || numericValueEffects.has(type);
 export const cardBattleEffectNeedsDuration = (type: string) => durationEffects.has(type);
 export const cardBattleConditionNeedsValue = (condition: string) => thresholdConditions.has(condition);

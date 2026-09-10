@@ -35,6 +35,19 @@ import { filterCardBattleSelection } from "../src/shared/cardBattleSelection.js"
 import { cardBattleEventTiming, seekCardBattleAnimations } from "../src/shared/cardBattlePlayback.js";
 import type { OnlineCardBattlePlayback } from "../src/shared/types.js";
 import { defaultCardBattleTiersForRarity } from "../src/shared/digitalAssets.js";
+import { cardBattleSelectionError, type CardBattleTierDraft } from "../src/components/admin/cardBattleEditorDraft.js";
+
+test("卡牌保存核对所有星级的有效选择，未选草稿不得借切换星级提交", () => {
+  const tiers: CardBattleTierDraft[] = defaultCardBattleTiersForRarity("epic");
+  assert.equal(cardBattleSelectionError(tiers), null);
+  tiers[2]!.effects = [{ order: 0, condition: "", conditionValue: null, type: "damage_single", value: 1, duration: null }];
+  assert.equal(cardBattleSelectionError(tiers), "请为2星条件1从下拉列表选择技能条件");
+  tiers[2]!.effects[0]!.condition = "energy_full";
+  tiers[2]!.effects[0]!.type = "";
+  assert.equal(cardBattleSelectionError(tiers), "请为2星条件1从下拉列表选择技能类型");
+  tiers[2]!.effects[0]!.type = "damage_all";
+  assert.equal(cardBattleSelectionError(tiers), null);
+});
 
 const view = readFileSync(new URL("../src/components/CardBattleRoomView.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");

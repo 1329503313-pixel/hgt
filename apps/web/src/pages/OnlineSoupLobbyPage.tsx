@@ -31,6 +31,7 @@ type PendingInvite = { roomId: string; inviteToken: string; room: InvitePreview 
 type MysteryEntry = { id: string; title: string; coverUrl: string | null; tags: string[] };
 
 export default function OnlineSoupLobbyPage() {
+  const [cardRoomType, setCardRoomType] = useState<"normal" | "tower">("normal");
   const { user, openAuth, showToast } = useApp();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -203,6 +204,7 @@ export default function OnlineSoupLobbyPage() {
   }
 
   function openCreate() {
+    setCardRoomType("normal");
     if (!user) { openAuth(); return; }
     setEntryMystery(null);
     setMysteryChoice("restart");
@@ -218,14 +220,15 @@ export default function OnlineSoupLobbyPage() {
   async function createRoom() {
     if (!form.contentType) return showToast("请选择房间类型");
     if (!form.name.trim()) return showToast("请填写房间名称");
-    if (form.type === "password" && form.password.length !== 4) return showToast("房间密码必须为 4 位");
+    const tower = form.contentType === "card_battle" && cardRoomType === "tower";
+    if (!tower && form.type === "password" && form.password.length !== 4) return showToast("房间密码必须为 4 位");
     setCreating(true);
     try {
-      const data = await api<{ roomId: string }>("/api/online-soup/rooms", {
+      const data = await api<{ roomId: string }>(tower ? "/api/online-soup/card-tower/rooms" : "/api/online-soup/rooms", {
         method: "POST",
-        body: entryMystery ? { ...form, contentType: "mystery", hostMode: "human", mysteryId: entryMystery.id, mysteryChoice } : form,
+        body: tower ? { name: form.name } : entryMystery ? { ...form, contentType: "mystery", hostMode: "human", mysteryId: entryMystery.id, mysteryChoice } : form,
       });
-      navigate(`/online-soup/rooms/${data.roomId}`);
+      navigate(tower ? `/online-soup/tower/${data.roomId}` : `/online-soup/rooms/${data.roomId}`);
     } catch (error) { showToast(error instanceof Error ? error.message : "创建房间失败"); }
     finally { setCreating(false); }
   }
@@ -336,9 +339,10 @@ export default function OnlineSoupLobbyPage() {
             <label className="block text-sm font-bold text-ink">房间名称<input className="field mt-1 w-full" maxLength={50} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：周五夜猫局" /></label>
             {form.contentType === "soup" && <fieldset><legend className="mb-2 text-sm font-bold text-ink">主持方式</legend><div className="grid grid-cols-2 gap-2"><button type="button" aria-pressed={form.hostMode === "human"} className={`btn segmented-choice ${form.hostMode === "human" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "human" })}><Crown size={16} />真人主持</button><button type="button" aria-pressed={form.hostMode === "ai"} className={`btn segmented-choice ${form.hostMode === "ai" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, hostMode: "ai" })}><Bot size={16} />AI 主持</button></div><p className="mt-2 text-xs leading-5 text-muted">AI 主持房只能选择已开放 AI 主持的作品。</p></fieldset>}
             {form.contentType === "impostor" && <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold leading-5 text-violet-800"><span className="font-black">4–6 人阵营推理</span> · 系统自动发放侦探、平民与伪人身份；开局后新成员只能旁观。</div>}
-            {form.contentType === "card_battle" && <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-semibold leading-5 text-cyan-900"><span className="font-black">1v1 自动卡牌对战</span> · 拥有至少五张启用中的史诗或传说卡时自动进入对战席，否则进入观战席。</div>}
-            <fieldset><legend className="mb-2 text-sm font-bold text-ink">房间权限</legend><div className="grid grid-cols-2 gap-2"><button type="button" aria-pressed={form.type === "public"} className={`btn segmented-choice ${form.type === "public" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "public", password: "" })}><DoorOpen size={16} />公开房</button><button type="button" aria-pressed={form.type === "password"} className={`btn segmented-choice ${form.type === "password" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "password" })}><LockKeyhole size={16} />密码房</button></div></fieldset>
-            {form.type === "password" && <label className="block text-sm font-bold text-ink">4 位房间密码<input className="field mt-1 w-full text-center tracking-[.3em]" type="password" inputMode="numeric" maxLength={4} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value.replace(/\D/g, "") })} placeholder="••••" /></label>}
+            {form.contentType === "card_battle" && <fieldset><legend className="mb-2 text-sm font-bold text-ink">房间类型</legend><div className="grid grid-cols-2 gap-2">{([["normal", "普通对战"], ["tower", "卡牌闯关"]] as const).map(([value, label]) => <button key={value} type="button" className={`btn segmented-choice ${cardRoomType === value ? "btn-primary" : "btn-secondary"}`} aria-pressed={cardRoomType === value} onClick={() => setCardRoomType(value)}>{label}</button>)}</div>{cardRoomType === "tower" && <p className="mt-2 text-xs leading-5 text-muted">仅本人可进入的隐藏房间，三个五卡阵容依次接力，首次通关赢取贝壳。</p>}</fieldset>}
+            {form.contentType === "card_battle" && cardRoomType === "normal" && <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-semibold leading-5 text-cyan-900"><span className="font-black">1v1 自动卡牌对战</span> · 拥有至少五张启用中的史诗或传说卡时自动进入对战席，否则进入观战席。</div>}
+            {!(form.contentType === "card_battle" && cardRoomType === "tower") && <fieldset><legend className="mb-2 text-sm font-bold text-ink">房间权限</legend><div className="grid grid-cols-2 gap-2"><button type="button" aria-pressed={form.type === "public"} className={`btn segmented-choice ${form.type === "public" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "public", password: "" })}><DoorOpen size={16} />公开房</button><button type="button" aria-pressed={form.type === "password"} className={`btn segmented-choice ${form.type === "password" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "password" })}><LockKeyhole size={16} />密码房</button></div></fieldset>}
+            {!(form.contentType === "card_battle" && cardRoomType === "tower") && form.type === "password" && <label className="block text-sm font-bold text-ink">4 位房间密码<input className="field mt-1 w-full text-center tracking-[.3em]" type="password" inputMode="numeric" maxLength={4} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value.replace(/\D/g, "") })} placeholder="••••" /></label>}
           </>}
           <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={closeCreate}>取消</button><button className="btn btn-primary" disabled={creating || !form.contentType} onClick={createRoom}>{creating ? "创建中…" : "创建并进入"}</button></div>
         </div>
