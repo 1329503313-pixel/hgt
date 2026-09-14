@@ -19,7 +19,8 @@
     "start:prod": "node dist/index.js",
     "test:card-battle-boss:mysql": "tsx tests/cardBattleBoss.mysql.ts",
     "test:online-soup-history:mysql": "tsx tests/onlineSoupHistory.mysql.ts",
-    "test:card-tower:mysql": "tsx tests/cardTower.mysql.ts"
+    "test:card-tower:mysql": "tsx tests/cardTower.mysql.ts",
+    "test:game-records:mysql": "tsx tests/gameRecords.mysql.ts"
   },
   "dependencies": {
     "ali-oss": "^6.23.0",

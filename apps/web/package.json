@@ -14,6 +14,8 @@
     "test:impostor": "tsx --test tests/impostorActions.test.ts",
     "test:media": "tsx --test tests/mediaUrls.test.ts",
     "test:chat": "tsx --test src/shared/giftTimeline.test.ts",
+    "test:gift-drawer": "cd ../.. && node apps/web/tests/giftDrawer.browser.mjs",
+    "test:game-records": "cd ../.. && node apps/web/tests/gameRecords.browser.mjs",
     "test:online-soup-invite": "tsx --test tests/onlineSoupInviteRecovery.test.ts",
     "test:online-soup-avatar-navigation": "tsx --test tests/onlineSoupAvatarNavigation.test.ts",
     "test:online-soup-question-remaining-snapshot": "tsx --test tests/onlineSoupQuestionRemainingSnapshot.test.ts",

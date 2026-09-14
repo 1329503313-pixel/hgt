@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Award, Check, GalleryVerticalEnd, ListChecks, Medal, Plus, Settings2, Shell, ShoppingBag, Trophy } from "lucide-react";
+import { ArrowLeft, ArrowRight, Award, Check, GalleryVerticalEnd, History, ListChecks, Medal, Plus, Settings2, Shell, ShoppingBag, Trophy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, prefetchApi, SoupsResponse } from "../api";
 import { useApp } from "../context/AppContext";
@@ -197,11 +197,12 @@ export default function MinePage() {
   }
 
   const features = [
-    { label: "数字商城", description: "探索卡包与限定收藏", icon: ShoppingBag, color: "bg-rose-100 text-rose-600", path: "/mine/store" },
+    { label: "商城", description: "探索卡包与限定收藏", icon: ShoppingBag, color: "bg-rose-100 text-rose-600", path: "/mine/store" },
     { label: "收藏", description: "管理收藏卡与收藏品", icon: GalleryVerticalEnd, color: "bg-indigo-100 text-indigo-700", path: "/mine/collection" },
+    { label: "成就", description: "回顾里程碑与徽章", icon: Trophy, color: "bg-violet-100 text-violet-600", path: "/mine/achievements" },
+    { label: "排行", description: "查看热度与收藏排名", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" },
+    { label: "游戏记录", description: "回看会话、结算与对局", icon: History, color: "bg-blue-100 text-blue-600", path: "/mine/game-records" },
     { label: "优秀作者", description: "查看认证进度与权益", icon: Award, color: "bg-amber-100 text-amber-600", path: "/mine/excellent-author" },
-    { label: "我的成就", description: "回顾里程碑与徽章", icon: Trophy, color: "bg-violet-100 text-violet-600", path: "/mine/achievements" },
-    { label: "排行榜", description: "查看热度与收藏排名", icon: Medal, color: "bg-orange-100 text-orange-600", path: "/mine/rankings" },
     { label: "任务中心", description: "完成今日任务赚贝壳", icon: ListChecks, color: "bg-sky-100 text-sky-600", path: "/mine/tasks" }
   ];
 
@@ -304,7 +305,7 @@ export default function MinePage() {
           <div><p className="text-xs font-black tracking-[0.16em] text-primary">PERSONAL HUB</p><h2 className="mt-1 text-xl font-black text-ink">功能导航</h2></div>
           <p className="text-sm text-muted">管理成长记录、数字资产与创作权益</p>
         </div>
-        <div className="mine-feature-grid grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-3">
+        <div className="mine-feature-grid grid grid-cols-4 gap-2">
         {features.map((feature) => { const Icon = feature.icon; return (
           <button key={feature.path} className={`mine-feature-card flex flex-col items-center gap-2 ${desktopHiddenFeaturePaths.has(feature.path) ? "lg:hidden" : ""}`} onClick={() => navigate(feature.path)}>
             <span className={`mine-feature-icon grid h-12 w-12 place-items-center rounded-2xl ${feature.color}`}><Icon size={23} /></span>

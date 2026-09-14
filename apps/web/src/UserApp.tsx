@@ -21,6 +21,7 @@ const NoticeDetailPage = lazy(() => import("./pages/NoticeDetailPage"));
 const RankingRewardDetailPage = lazy(() => import("./pages/RankingRewardDetailPage"));
 const ChatPage = lazy(() => import("./pages/ChatPage"));
 const MinePage = lazy(() => import("./pages/MinePage"));
+const GameRecordsPage = lazy(() => import("./pages/GameRecordsPage"));
 const MySoupsPage = lazy(() => import("./pages/MySoupsPage"));
 const MyFavoritesPage = lazy(() => import("./pages/MyFavoritesPage"));
 const MyEvaluationsPage = lazy(() => import("./pages/MyEvaluationsPage"));
@@ -83,6 +84,7 @@ export default function UserApp() {
               <Route path="home/played" element={<HomePage key="home-played" category="played" />} />
               <Route path="home/mystery" element={<HomePage key="home-mystery" category="mystery" />} />
               <Route path="mine" element={<MinePage />} />
+              <Route path="mine/game-records" element={<GameRecordsPage />} />
               <Route path="mine/soups" element={<MySoupsPage />} />
               <Route path="mine/favorites" element={<MyFavoritesPage />} />
               <Route path="mine/evaluations" element={<MyEvaluationsPage />} />

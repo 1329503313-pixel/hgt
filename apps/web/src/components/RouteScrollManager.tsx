@@ -14,7 +14,7 @@ export function RouteScrollManager() {
 
   useLayoutEffect(() => {
     // POP 交给浏览器恢复历史位置；新进入或替换的页面统一从顶部展示。
-    if (navigationType === "POP") return;
+    if (navigationType === "POP" || location.state?.preserveScroll === true) return;
     scrollWindowToTop();
     const frame = window.requestAnimationFrame(scrollWindowToTop);
     return () => window.cancelAnimationFrame(frame);

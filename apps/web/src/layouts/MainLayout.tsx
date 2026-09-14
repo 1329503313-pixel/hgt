@@ -19,6 +19,7 @@ const desktopModules: Record<string, { active: DesktopModuleKey; title: string; 
   "/mine/tasks": { active: "tasks", title: "完成每日挑战，积累属于你的奖励", eyebrow: "任务 · MISSIONS" },
   "/mine/shells/transactions": { active: "tasks", title: "查看每一笔贝壳收入与支出", eyebrow: "贝壳明细 · SHELL HISTORY" },
   "/mine": { active: "mine", title: "管理作品、互动与个人资料", eyebrow: "个人中心 · PROFILE" },
+  "/mine/game-records": { active: "mine", title: "回顾每一局的故事、推理与对战", eyebrow: "游戏记录 · GAME HISTORY" },
   "/mine/soups": { active: "mine", title: "整理并回顾你发布的每一个故事", eyebrow: "我的作品 · MY SOUPS" },
   "/mine/favorites": { active: "mine", title: "收藏值得再次推理的精彩故事", eyebrow: "我的收藏 · FAVORITES" },
   "/mine/evaluations": { active: "mine", title: "回看你留下的判断与评价", eyebrow: "我的评价 · REVIEWS" },

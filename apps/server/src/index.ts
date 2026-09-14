@@ -5259,9 +5259,11 @@ app.delete("/api/admin/soup-topics/:id", async (req, res) => {
 });
 
 app.get("/api/soups", async (req, res) => {
-  // 首页数据会因当前用户的点赞/收藏状态而不同，只允许浏览器私有短缓存。
-  // 前端另有 30 秒内存缓存；这里主要覆盖刷新、返回导航和重复 GET。
-  res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=45");
+  // 后台审核列表必须实时读取，避免删除或审核后刷新仍显示旧记录。
+  // 首页继续使用浏览器私有短缓存。
+  res.setHeader("Cache-Control", req.query.reviewStatus !== undefined
+    ? "private, no-store"
+    : "private, max-age=15, stale-while-revalidate=45");
   const user = await currentUser(req);
   const homeCategory = parseHomeSoupCategory(req.query.category);
   if (homeSoupCategoryRequiresAuth(homeCategory) && !user) {

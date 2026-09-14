@@ -1,4 +1,5 @@
 import mysql from "mysql2/promise";
+import { archiveBattleRecord } from "./gameRecords.js";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
 import { lockAndCompactCardBattleRanking, lockRankingForCardBattleRoom } from "./cardBattleRankingState.js";
@@ -103,6 +104,7 @@ export async function forfeitCardBattle(roomId: string, userId: string, db: mysq
   const forfeited = surrenderCardBattleResult(result, userId, game.started_at, new Date(game.db_now).getTime());
   if (!forfeited) return false;
   await db.query("UPDATE online_card_battles SET status = 'ended', result_json = ?, playback_ends_at = NOW(3), ended_at = NOW(3) WHERE id = ? AND status = 'playing'", [JSON.stringify(forfeited), game.id]);
+  await archiveBattleRecord(db, String(game.id));
   await db.query("UPDATE online_card_battle_seats SET is_ready = 0 WHERE room_id = ?", [roomId]);
   await releaseCardBattleSeat(roomId, userId, db);
   await db.query("UPDATE online_soup_rooms SET status = 'ended', last_action_at = NOW() WHERE id = ? AND status <> 'closed'", [roomId]);
@@ -509,9 +511,11 @@ export async function startCardBattle(roomId: string, hostId: string | null, db:
 
 /** Called while holding the room lock, after a ready/seat transition. */
 export async function startBossIfReady(roomId: string, db: mysql.PoolConnection) {
-  const [[room]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM online_soup_rooms WHERE id = ?", [roomId]);
+  const [[room]] = await db.query<mysql.RowDataPacket[]>("SELECT * FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
   if (!room || !isBossRoom(room) || !["preparing", "ended"].includes(String(room.status))) return null;
-  const [seats] = await db.query<mysql.RowDataPacket[]>("SELECT is_ready FROM online_card_battle_seats WHERE room_id = ?", [roomId]);
+  // Concurrent ready requests can establish a repeatable-read snapshot before the
+  // room lock. Read the committed seats under that lock to see the final readiness.
+  const [seats] = await db.query<mysql.RowDataPacket[]>("SELECT is_ready FROM online_card_battle_seats WHERE room_id = ? FOR UPDATE", [roomId]);
   if (!seats.length || seats.some((seat) => !Boolean(seat.is_ready))) return null;
   return startCardBattle(roomId, null, db);
 }
@@ -584,6 +588,7 @@ export async function finalizeCardBattleIfDue(roomId: string) {
          AND (members.user_id IS NULL OR members.is_active = 0 OR members.member_role <> 'player')`,
       [roomId],
     );
+    await archiveBattleRecord(connection, String(locked.id));
     await connection.commit();
     emitBossRewards(rewards);
     return true;

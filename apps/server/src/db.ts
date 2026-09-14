@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { initCardBattleBossSchema } from "./cardBattleBossSchema.js";
 import { initCardTowerSchema } from "./cardTowerSchema.js";
 import { initOnlineSoupHistory } from "./onlineSoupHistory.js";
+import { initGameRecords } from "./gameRecords.js";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
@@ -3552,6 +3553,7 @@ export async function initDatabase() {
   await seedAdmin();
   await backfillInviteCodes();
   await seedDefaultCircles();
+  await initGameRecords(pool);
 }
 
 const VIP_GROWTH_INITIALIZATION_MIGRATION = "vip-growth-initialization-v1";

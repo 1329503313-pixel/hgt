@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Trash2, ThumbsUp, Star, ExternalLink, ArrowUpDown, Flame } from "lucide-react";
 import type { SoupSummary } from "../../shared/types";
 import { api, SoupsResponse } from "../../api";
-import { soupDifficulties, soupTypes } from "../../context/AppContext";
+import { soupDifficulties, soupTypes, useApp } from "../../context/AppContext";
 import { AdminColumn, ColumnSelector, gridTemplate } from "./ColumnSelector";
 import { AdminPageSize, AdminPagination } from "./AdminPagination";
 import { ListSkeleton } from "../Skeletons";
@@ -28,11 +28,15 @@ const soupColumns: readonly AdminColumn<SoupColumn>[] = [
 
 function SoupListManagement({ canDelete }: { canDelete: boolean }) {
   const navigate = useNavigate();
+  const { showToast } = useApp();
   const [soups, setSoups] = useState<SoupSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<AdminPageSize>(10);
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const loadSequence = useRef(0);
 
   const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -48,6 +52,7 @@ function SoupListManagement({ canDelete }: { canDelete: boolean }) {
 
   const loadSoups = useCallback(
     async () => {
+      const sequence = ++loadSequence.current;
       setLoading(true);
       try {
         const params = new URLSearchParams();
@@ -60,19 +65,24 @@ function SoupListManagement({ canDelete }: { canDelete: boolean }) {
         if (originalFilter !== "all") params.set("original", originalFilter);
         params.set("limit", String(pageSize));
         params.set("offset", String((page - 1) * pageSize));
-        const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`);
+        const data = await api<SoupsResponse>(`/api/soups?${params.toString()}`, { bypassCache: true });
+        if (sequence !== loadSequence.current) return;
         setSoups(data.soups);
         setTotal(data.total);
+        setPage((current) => Math.min(current, Math.max(1, Math.ceil(data.total / pageSize))));
+      } catch (error) {
+        if (sequence === loadSequence.current) showToast(error instanceof Error ? error.message : "汤品加载失败");
       } finally {
-        setLoading(false);
+        if (sequence === loadSequence.current) setLoading(false);
       }
     },
-    [submittedKeyword, submittedType, reviewFilter, difficultyFilter, originalFilter, sortBy, order, page, pageSize]
+    [submittedKeyword, submittedType, reviewFilter, difficultyFilter, originalFilter, sortBy, order, page, pageSize, showToast]
   );
 
   useEffect(() => {
-    loadSoups();
-  }, [loadSoups]);
+    void loadSoups();
+    return () => { loadSequence.current += 1; };
+  }, [loadSoups, refreshRevision]);
 
   function handleSearch() {
     setPage(1);
@@ -81,10 +91,23 @@ function SoupListManagement({ canDelete }: { canDelete: boolean }) {
   }
 
   async function handleDelete(id: string, title: string) {
+    if (deletingId) return;
     if (!confirm(`确定删除《${title}》吗？相关评价也会删除。`)) return;
-    await api(`/api/soups/${id}`, { method: "DELETE" });
-    setSoups((old) => old.filter((s) => s.id !== id));
-    setTotal((old) => Math.max(0, old - 1));
+    setDeletingId(id);
+    try {
+      const result = await api<{ ok: boolean }>(`/api/soups/${id}`, { method: "DELETE" });
+      if (result.ok !== true) throw new Error("删除未成功，请刷新后重试");
+      // 丢弃删除前发起的列表请求，再从服务端补齐当前页和总数。
+      loadSequence.current += 1;
+      setSoups((old) => old.filter((s) => s.id !== id));
+      setTotal((old) => Math.max(0, old - 1));
+      setRefreshRevision((old) => old + 1);
+      showToast("汤品已删除");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "删除汤品失败");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -180,9 +203,9 @@ function SoupListManagement({ canDelete }: { canDelete: boolean }) {
                     <span>查看</span>
                   </button>
                   {canDelete && (
-                    <button className="btn btn-danger h-8 w-[78px] flex-none px-2 text-xs whitespace-nowrap" onClick={() => handleDelete(s.id, s.title)} title="删除">
+                    <button className="btn btn-danger h-8 w-[78px] flex-none px-2 text-xs whitespace-nowrap" disabled={deletingId !== null} onClick={() => handleDelete(s.id, s.title)} title="删除">
                       <Trash2 size={14} />
-                      <span>删除</span>
+                      <span>{deletingId === s.id ? "删除中" : "删除"}</span>
                     </button>
                   )}
                 </div>}

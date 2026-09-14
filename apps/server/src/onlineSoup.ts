@@ -1,4 +1,6 @@
 import { BattleCollectibleRuleError, battleCollectibleBindingsSchema } from "./battleCollectibles.js";
+import { appendImpostorRecordStep, archiveImpostorRecord, startGameRecord, recallGameRecordMessage, type ImpostorRecordAction } from "./gameRecords.js";
+import { registerGameRecordRoutes } from "./gameRecordRoutes.js";
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
@@ -133,6 +135,7 @@ export function setOnlineSoupBadgeProgressListener(listener: BadgeProgressListen
 }
 
 const router = Router();
+registerGameRecordRoutes(router);
 const HOST_ONLINE_SECONDS = 75;
 export const HOST_OFFLINE_GRACE_MINUTES = 15;
 const MESSAGE_PAGE_SIZE = 100;
@@ -1921,6 +1924,8 @@ async function currentImpostorGame(roomId: string, advanceExpired = true) {
         [roomId],
       );
       changedState = state;
+      await appendImpostorRecordStep(connection, String(row.id), state);
+      if (ended) await archiveImpostorRecord(connection, String(row.id));
     }
     await connection.commit();
     if (changedState) notifyRoom(roomId, "impostor_state_changed", { phase: changedState.phase, day: changedState.day });
@@ -2125,6 +2130,7 @@ async function mutateImpostorGame(
   roomId: string,
   mutate: (state: ImpostorGameState) => ImpostorGameState,
   actorUserId: string | null = null,
+  recordAction?: ImpostorRecordAction,
 ) {
   const connection = await pool.getConnection();
   try {
@@ -2138,6 +2144,7 @@ async function mutateImpostorGame(
     if (!stored) throw new Error("谁是伪人对局状态损坏");
     const current = advanceExpiredImpostorGame(stored);
     const next = mutate(current);
+    if (JSON.stringify(current) !== JSON.stringify(stored)) await appendImpostorRecordStep(connection, String(row.id), current);
     await writeImpostorTransitionMessages(connection, roomId, stored, next);
     const activityType = impostorTransitionActivityType(stored, next);
     if (activityType) await recordRoomActivity(roomId, activityType, actorUserId, `impostor:${next.gameNumber}:${next.day}:${next.phase}`, connection);
@@ -2151,6 +2158,9 @@ async function mutateImpostorGame(
       "UPDATE online_soup_rooms SET status = ?, last_action_at = NOW() WHERE id = ? AND content_type = 'impostor'",
       [ended ? "ended" : "playing", roomId],
     );
+    await appendImpostorRecordStep(connection, String(row.id), next,
+      recordAction && actorUserId ? {...recordAction,userId:actorUserId,day:current.day}:undefined);
+    if (ended) await archiveImpostorRecord(connection, String(row.id));
     await connection.commit();
     return next;
   } catch (error) {
@@ -4135,6 +4145,8 @@ router.post("/rooms/:roomId/start", async (req, res) => {
          WHERE id = ?`,
         [context.room.id],
       );
+      await startGameRecord(connection, gameId, String(context.room.id));
+      await appendImpostorRecordStep(connection, gameId, state);
       await systemMessage(context.room.id, null, `“谁是伪人”第 ${state.gameNumber} 局开始，身份已秘密发放`, connection);
       await impostorEventMessage(context.room.id, "天黑了，等待行动中", {
         kind: "night_action", gameNumber: state.gameNumber, day: state.day,
@@ -4286,6 +4298,7 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       [roundId, context.room.id]
     );
     await recordOnlineSoupRoundViewers(connection, String(context.room.id));
+    await startGameRecord(connection, roundId, String(context.room.id));
     await systemMessage(
       context.room.id,
       roundId,
@@ -4331,7 +4344,7 @@ router.post("/rooms/:roomId/impostor/night-action", async (req, res) => {
       current,
       context.user.id,
       parsed.data as ImpostorNightAction,
-    ), context.user.id);
+    ), context.user.id, {kind:'nightActions',label:parsed.data.type,targets:parsed.data.targetUserIds});
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -4344,7 +4357,7 @@ router.post("/rooms/:roomId/impostor/ready", async (req, res) => {
   if (!context) return;
   if (!isImpostorRoom(context.room)) return fail(res, 409, "当前不是谁是伪人房间");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorReady(current, context.user.id), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorReady(current, context.user.id), context.user.id, {kind:'ready',label:'准备完成'});
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -4359,7 +4372,7 @@ router.post("/rooms/:roomId/impostor/clue", async (req, res) => {
   const parsed = z.object({ content: z.string().max(20).nullable() }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "线索内容不正确");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorClue(current, context.user.id, parsed.data.content), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorClue(current, context.user.id, parsed.data.content), context.user.id, {kind:'clues',label:'提交线索',content:parsed.data.content});
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -4377,7 +4390,7 @@ router.post("/rooms/:roomId/impostor/nomination", async (req, res) => {
   }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "任务人选投票不正确");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorNomination(current, context.user.id, parsed.data.candidateUserIds, new Date(), parsed.data.attempt), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorNomination(current, context.user.id, parsed.data.candidateUserIds, new Date(), parsed.data.attempt), context.user.id, {kind:'nomination',label:'任务投票',targets:parsed.data.candidateUserIds,attempt:parsed.data.attempt});
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -4392,7 +4405,7 @@ router.post("/rooms/:roomId/impostor/mission", async (req, res) => {
   const parsed = z.object({ choice: z.enum(["protect", "sabotage"]) }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "任务选择不正确");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorMissionChoice(current, context.user.id, parsed.data.choice), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorMissionChoice(current, context.user.id, parsed.data.choice), context.user.id, {kind:'missionChoices',label:parsed.data.choice});
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -4409,6 +4422,7 @@ router.post("/rooms/:roomId/impostor/start-assassination", async (req, res) => {
       context.room.id,
       (current) => startImpostorAssassination(current, context.user.id),
       context.user.id,
+      {kind:'assassination',label:'发起刺杀'},
     );
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
@@ -4424,7 +4438,7 @@ router.post("/rooms/:roomId/impostor/assassinate", async (req, res) => {
   const parsed = z.object({ targetUserId: z.string().min(1).max(64) }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "刺杀目标不正确");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorAssassination(current, context.user.id, parsed.data.targetUserId), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorAssassination(current, context.user.id, parsed.data.targetUserId), context.user.id, {kind:'assassination',label:'刺杀',targets:[parsed.data.targetUserId]});
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -4442,7 +4456,7 @@ router.post("/rooms/:roomId/impostor/accuse", async (req, res) => {
   }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "指认目标不正确");
   try {
-    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorAccusation(current, context.user.id, parsed.data.targetUserId, new Date(), parsed.data.attempt), context.user.id);
+    const state = await mutateImpostorGame(context.room.id, (current) => submitImpostorAccusation(current, context.user.id, parsed.data.targetUserId, new Date(), parsed.data.attempt), context.user.id, {kind:'accusation',label:'最终指认',targets:parsed.data.targetUserId?[parsed.data.targetUserId]:[],attempt:parsed.data.attempt});
     res.json({ ok: true, game: impostorClientState(state, context.user.id) });
     void notifyRoom(context.room.id, "impostor_state_changed", { phase: state.phase, day: state.day });
   } catch (error) {
@@ -4794,6 +4808,7 @@ router.patch("/rooms/:roomId/messages/:messageId/recall", async (req, res) => {
       [req.params.messageId]
     );
     recalledAt = iso(stored.recalled_at) ?? new Date().toISOString();
+    await recallGameRecordMessage(connection, String(context.room.id), String(req.params.messageId));
     await connection.commit();
   } catch (error) {
     await connection.rollback().catch(() => {});

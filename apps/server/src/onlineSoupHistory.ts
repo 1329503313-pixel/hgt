@@ -1,4 +1,5 @@
 import type mysql from "mysql2/promise";
+import { archiveSoupRecord } from "./gameRecords.js";
 
 type Database = mysql.Pool | mysql.PoolConnection;
 
@@ -48,6 +49,7 @@ export async function sealOnlineSoupRoundHistory(db: Database, roomId: string, r
      FROM online_soup_messages messages WHERE messages.room_id = ?`,
     [roundId, roomId, roomId, roomId]
   );
+  await archiveSoupRecord(db, roundId);
 }
 
 export async function canViewOnlineSoupRoundHistory(db: Database, roundId: string | null, userId: string) {

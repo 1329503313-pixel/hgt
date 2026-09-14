@@ -19,8 +19,9 @@ let server: ReturnType<ReturnType<typeof express>["listen"]> | undefined;
 const fixtureTables = new Set<string>();
 try {
   const [tables] = await admin.query<mysql.RowDataPacket[]>("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [sourceDatabase]);
-  const sourceTables = tables.filter((table) => !String(table.TABLE_NAME).startsWith("bt_") && !String(table.TABLE_NAME).startsWith("card_battle_boss"));
-  const names = [...sourceTables.map((table) => String(table.TABLE_NAME)), "card_battle_boss_covers", "card_battle_bosses", "card_battle_boss_participants", "card_battle_boss_rewards"];
+  const recordTables = ['game_records','game_record_users','game_record_impostor_steps','game_record_starts'];
+  const sourceTables = tables.filter((table) => !/^(bt_|rh_|gr_)/.test(String(table.TABLE_NAME)) && !String(table.TABLE_NAME).startsWith("card_battle_boss") && !recordTables.includes(String(table.TABLE_NAME)));
+  const names = [...sourceTables.map((table) => String(table.TABLE_NAME)), ...recordTables, "card_battle_boss_covers", "card_battle_bosses", "card_battle_boss_participants", "card_battle_boss_rewards"];
   for (const name of names) { assert.match(name, /^[a-zA-Z0-9_]+$/); assert.ok((fixturePrefix + name).length <= 64); fixtureTables.add(fixturePrefix + name); }
   for (const table of sourceTables) await admin.query(`CREATE TABLE \`${fixturePrefix}${table.TABLE_NAME}\` LIKE \`${table.TABLE_NAME}\``);
   // LIKE generates its own CHECK name; name the copied old seat constraint explicitly.
@@ -51,6 +52,8 @@ try {
   for (const table of ["online_card_battle_seats", "user_card_battle_decks", "card_battle_ranking_entries"]) await ensure(table, "collectible_bindings_json", binding);
   const { initCardBattleBossSchema } = await import("../src/cardBattleBossSchema.js");
   await initCardBattleBossSchema(pool); await initCardBattleBossSchema(pool);
+  const { initGameRecordSchema } = await import('../src/gameRecords.js');
+  await initGameRecordSchema(pool);
   const { default: router, recoverCardBattleGames, cleanupOnlineSoupStaleSeats, cleanupOnlineSoupInactiveHostRooms } = await import("../src/onlineSoup.js");
   const { finalizeCardBattleIfDue, cardBattleClientState } = await import("../src/cardBattleRoom.js");
   const { defaultCardBattleTiers } = await import("../src/cardBattleConfig.js");
@@ -111,6 +114,12 @@ try {
   assert.equal((await request("/rooms", "u0")).rooms.some((room: any) => room.id === boss.roomId), false);
   await pool.query("UPDATE online_card_battles SET playback_ends_at=NOW(3)-INTERVAL 1 SECOND WHERE id=?", [first.id]);
   await Promise.all(Array.from({ length: 5 }, () => finalizeCardBattleIfDue(boss.roomId)));
+  const [recordOwners] = await pool.query<mysql.RowDataPacket[]>("SELECT user_id FROM game_record_users WHERE record_id=? ORDER BY user_id", [`card_battle:${first.id}`]);
+  assert.deepEqual(recordOwners.map(row=>row.user_id), ['u0','u2'], 'BOSS archive excludes explicit departure and spectators, retaining disconnected players');
+  const archivedReplay = await request(`/game-records/${encodeURIComponent(`card_battle:${first.id}`)}`, 'u2');
+  assert.equal(archivedReplay.record.subtype, 'boss');
+  assert.equal(archivedReplay.replay.lineups.length, 4);
+  await request(`/game-records/${encodeURIComponent(`card_battle:${first.id}`)}`, 'u1', 'GET', undefined, 404);
   const [rewards] = await pool.query<mysql.RowDataPacket[]>("SELECT user_id, amount FROM card_battle_boss_rewards WHERE room_id=? ORDER BY user_id", [boss.roomId]);
   assert.deepEqual(rewards.map((r) => [r.user_id, r.amount]), [["u0", 123], ["u2", 123]]);
   assert.equal((await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM shell_transactions"))[0][0]!.total, 2);

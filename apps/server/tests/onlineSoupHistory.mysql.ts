@@ -17,7 +17,7 @@ try {
   const [source] = await admin.query<mysql.RowDataPacket[]>(
     "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [config.db.database]
   );
-  const newTables = ["online_soup_round_history", "online_soup_round_viewers"];
+  const newTables = ["online_soup_round_history", "online_soup_round_viewers", "game_records", "game_record_users", "game_record_impostor_steps", "game_record_starts"];
   const sourceNames = source.map(row => String(row.TABLE_NAME)).filter(name => !/^(bt_|rh_)/.test(name) && !newTables.includes(name));
   const names = [...sourceNames, ...newTables];
   for (const name of names) { assert.match(name, /^[a-zA-Z0-9_]+$/); assert.ok((prefix + name).length <= 64); }
@@ -41,6 +41,8 @@ try {
   };
   for (const name of newTables) created.add(prefix + name);
   await initOnlineSoupHistorySchema(pool);
+  const { initGameRecordSchema } = await import('../src/gameRecords.js');
+  await initGameRecordSchema(pool);
   const { default: router } = await import("../src/onlineSoup.js");
   for (const id of ["host", "x", "stay", "prep", "late", "watch", "new-ai"]) {
     await pool.query("INSERT INTO users (id, username, password, nickname, role) VALUES (?, ?, 'unused', ?, ?)", [id, id, id, id === "host" ? "super_admin" : "user"]);

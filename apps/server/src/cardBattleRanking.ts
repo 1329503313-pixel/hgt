@@ -3,6 +3,7 @@ import { BattleCollectibleRuleError, parseBattleCollectibleBindings, resolveBatt
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { pool } from "./db.js";
+import { freezeBattleRecordRanks } from "./gameRecords.js";
 import { calculateCardBattlePower, type CardBattlePlayerInput } from "./cardBattle.js";
 import {
   buildCardBattlePlayerInput,
@@ -379,6 +380,8 @@ export async function abandonCardBattleRankingChallenge(roomId: string, userId: 
     await db.query("UPDATE card_battle_ranking_challenges SET status = 'abandoned' WHERE id = ?", [challenge.id]);
   }
   await db.query("UPDATE online_card_battles SET status = 'aborted', ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'", [roomId]);
+  await db.query(`UPDATE game_record_users owners JOIN game_records records ON records.id=owners.record_id
+    SET owners.rank_state='known' WHERE records.room_id=? AND owners.rank_state='pending'`,[roomId]);
   await db.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ?", [roomId, userId]);
   await db.query("UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ?", [roomId]);
   return true;
@@ -388,6 +391,8 @@ async function invalidateRankingRooms(roomIds: string[], connection: mysql.PoolC
   for (const roomId of [...roomIds].sort()) {
     await connection.query("UPDATE online_soup_rooms SET status = 'ended', last_action_at = NOW() WHERE id = ? AND status <> 'closed'", [roomId]);
     await connection.query("UPDATE card_battle_ranking_challenges SET status = 'stale' WHERE room_id = ? AND status = 'active'", [roomId]);
+    await connection.query(`UPDATE game_record_users owners JOIN game_records records ON records.id=owners.record_id
+      SET owners.rank_state='known' WHERE records.room_id=? AND owners.rank_state='pending'`,[roomId]);
     await connection.query("UPDATE online_card_battles SET status = 'aborted', playback_ends_at = NOW(3), ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'", [roomId]);
     await connection.query("UPDATE online_card_battle_seats SET is_ready = 0 WHERE room_id = ?", [roomId]);
   }
@@ -474,6 +479,7 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
     );
     notificationRecipientId = defenderId;
     await connection.query("UPDATE card_battle_ranking_challenges SET status = 'won', confirmed_at = NOW(3) WHERE id = ?", [challenge.id]);
+    await freezeBattleRecordRanks(connection, String(game.id));
     const [otherChallenges] = await connection.query<mysql.RowDataPacket[]>("SELECT room_id, challenger_id, defender_id, target_rank FROM card_battle_ranking_challenges WHERE status = 'active' ORDER BY room_id FOR UPDATE");
     const nextOccupants = new Map(next.map((entry) => [entry.rank, entry.userId]));
     const invalidatedRoomIds = otherChallenges.filter((other) => String(other.challenger_id) === userId || nextOccupants.get(Number(other.target_rank)) !== String(other.defender_id)).map((other) => String(other.room_id));
