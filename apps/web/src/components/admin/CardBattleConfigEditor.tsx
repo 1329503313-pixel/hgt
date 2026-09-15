@@ -5,6 +5,7 @@ import { CARD_BATTLE_DEBUFF_LABELS, isCardBattleDebuff } from "../../shared/card
 import type { CardBattleCondition, CardBattleEffectType } from "../../shared/digitalAssets";
 
 import { SearchableSkillSelect } from "./SearchableSkillSelect";
+import { CardBattleBondsEditor } from "./CardBattleBondsEditor";
 import type { CardBattleActionDraft, CardBattleTierDraft } from "./cardBattleEditorDraft";
 
 const conditionLabels: Record<CardBattleCondition, string> = {
@@ -122,6 +123,7 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
         </div>
       </section>)}
     </div>
+    <CardBattleBondsEditor key={activeStar} bonds={tier.bonds ?? []} onChange={bonds=>updateTier({bonds})}/>
   </fieldset>;
 }
 

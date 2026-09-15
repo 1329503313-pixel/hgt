@@ -186,7 +186,7 @@ test("新字段保存和读取按原值往返，不丢失零或小数", async ()
   } } as unknown as PoolConnection;
   await saveCardBattleTiers("card", defaultCardBattleTiers().map(tier => ({ ...tier, lifestealRate: 12.25, stunRate: 0, extraActionRate: 99.99 })), db);
   assert.equal(saved.length, 4);
-  for (const args of saved) assert.deepEqual(args.slice(12), [12.25, 0, 99.99]);
+  for (const args of saved) assert.deepEqual(args.slice(12, 15), [12.25, 0, 99.99]);
   const loaded = (await loadCardBattleTiers("card", db))[0]!;
   assert.deepEqual(CARD_BATTLE_PROC_STATS.map(({ key }) => loaded[key]), [12.25, 0, 99.99]);
 });

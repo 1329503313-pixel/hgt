@@ -25,7 +25,7 @@ else if(url.includes('/admin/card-tower/floors'))data={floors:[floor],total:1,ca
 else if(url.includes('/ranking'))data={entries:[{userId:'u2',nickname:'挑战者',ranking:1,totalPower:90000,floorNumber:12,clearedAt:'2026-09-10T01:02:03Z',vipLevel:0,vipActive:false}],me:null};
 else if(url.endsWith('/formation')){window.tower.formations=replaceCardTowerFormation(window.tower.formations,body.index,body.formation);window.tower.revision++;data={formations:window.tower.formations,revision:window.tower.revision};}
 else if(url.includes('/collectibles'))data={collectibles:[]};
-else if(url.endsWith('/start')){const lineups=window.tower.formations.filter(f=>f.cardIds.some(Boolean)).map((f,i)=>({seat:1,userId:'u1:formation:'+i,nickname:'阵容 '+(i+1),cards:f.cardIds.map(id=>cards.find(c=>c.id===id))}));lineups.push({seat:2,userId:'boss',nickname:'卡牌闯关第 1 层',cards:bosses});const states=[lineups[0],lineups.at(-1)].flatMap(p=>p.cards.map((c,i)=>({...c.stats,instanceId:p.userId+':'+i,userId:p.userId,seat:p.seat,slot:i+1,row:i<2?'front':'rear',hp:3000,maxHp:3000,energy:0,alive:true})));const event={sequence:1,round:1,kind:'round',visual:'round',actorId:null,skillName:null,effects:[],states,durationMs:500000,text:'第一回合开始'};window.tower.game={id:'game',status:'playing',floorNumber:1,totalPower:90000,rewardShells:50,lineups,settlement:null,playback:{completedSequence:0,totalEvents:1,complete:false,states,activeEvent:event,activeEventStartedAt:new Date().toISOString(),activeEventElapsedMs:0,serverNow:new Date().toISOString()}};}
+else if(url.endsWith('/start')){const lineups=window.tower.formations.map((f,i)=>({seat:1,userId:'u1:formation:'+(i+1),nickname:'阵容 '+(i+1),cards:f.cardIds.filter(Boolean).map(id=>cards.find(c=>c.id===id))})).filter(p=>p.cards.length);lineups.push({seat:2,userId:'boss',nickname:'卡牌闯关第 1 层',cards:bosses});const states=[lineups[0],lineups.at(-1)].flatMap(p=>p.cards.map((c,i)=>({...c.stats,instanceId:p.userId+':'+i,userId:p.userId,seat:p.seat,slot:i+1,row:i<2?'front':'rear',hp:3000,maxHp:3000,energy:0,alive:true})));const event={sequence:1,round:1,kind:'round',visual:'round',actorId:null,skillName:null,effects:[],states,durationMs:500000,text:'第一回合开始'};window.tower.game={id:'game',status:'playing',floorNumber:1,totalPower:90000,rewardShells:50,lineups,settlement:null,playback:{completedSequence:0,totalEvents:1,complete:false,states,activeEvent:event,activeEventStartedAt:new Date().toISOString(),activeEventElapsedMs:0,serverNow:new Date().toISOString()}};}
 else if(url.includes('/playback'))data={gameId:'game',playback:window.tower.game?.playback};
 else if(url.includes('/rooms/'))data=window.tower;
 return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});};
@@ -83,10 +83,42 @@ try {
   assert.equal(await page.evaluate(() => window.locationState.state.returnTo), '/mine/rankings?tab=card_battle&mode=tower');
   await page.evaluate(() => window.go('/online-soup/tower/room'));
   await expect(page.getByRole('button', { name: '阵容 3 · 5/5', exact: true })).toBeVisible();
+  // Preparing on squad three must still start combat with squad one.
+  await page.getByRole('button', { name: '阵容 3 · 5/5', exact: true }).click();
   await page.getByRole('button', { name: '开始挑战第 1 层', exact: true }).click();
   await expect(page.getByText('第 1 / 50 回合', { exact: false })).toBeVisible();
   await expect(page.locator('[data-battle-instance]')).toHaveCount(10);
   await expect(page.getByRole('button', { name: '配置阵容', exact: true })).toHaveCount(0);
+  const expectSquad = async n => {
+    await expect(page.getByRole('button', { name: `阵容 ${n} · 5/5`, exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[aria-label="闯关阵容"] [aria-pressed="true"]')).toHaveCount(1);
+    await expect(page.locator(`[data-battle-instance^="u1:formation:${n}:"]`)).toHaveCount(5);
+    await expect(page.locator('[data-battle-instance^="u1:formation:"]')).toHaveCount(5);
+    await expect(page.getByText(`阵容 ${n}正在战斗`, { exact: false })).toBeVisible();
+    const displayedNames = await page.locator(`[data-battle-instance^="u1:formation:${n}:"]`).allTextContents();
+    const expectedNames = await page.evaluate(n => window.tower.game.lineups.find(p => p.userId === `u1:formation:${n}`).cards.map(c => c.name), n);
+    for (const name of expectedNames) assert.ok(displayedNames.some(text => text.includes(name)), name);
+  };
+  const switchSquad = async n => page.evaluate(n => {
+    const game = window.tower.game, old = game.playback;
+    const states = game.lineups.filter(p => p.userId === `u1:formation:${n}` || p.seat === 2).flatMap(p => p.cards.map((c, i) => ({ ...c.stats, instanceId: p.userId + ':' + i, userId: p.userId, seat: p.seat, slot: i + 1, row: i < 2 ? 'front' : 'rear', hp: 3000, maxHp: 3000, energy: 0, alive: true })));
+    game.playback = { ...old, completedSequence: n, totalEvents: 100, states, activeEvent: { ...old.activeEvent, sequence: n + 1, states, text: `阵容 ${n} 接替上场` }, activeEventElapsedMs: 0, activeEventStartedAt: new Date().toISOString(), serverNow: new Date().toISOString() };
+    window.dispatchEvent(new Event('focus'));
+  }, n);
+  await expectSquad(1);
+  await switchSquad(2); await expectSquad(2);
+  await switchSquad(3); await expectSquad(3);
+  // Remounting during combat restores the active squad, not the default selection.
+  await page.evaluate(() => window.go('/away'));
+  await expect(page.getByText('目标页面', { exact: true })).toBeVisible();
+  await page.evaluate(() => window.go('/online-soup/tower/room'));
+  await expectSquad(3);
+  await page.evaluate(() => {
+    const game = window.tower.game;
+    game.playback = { ...game.playback, complete: true, completedSequence: 100, activeEvent: null, activeEventStartedAt: null, serverNow: new Date().toISOString() };
+    window.dispatchEvent(new Event('focus'));
+  });
+  await expectSquad(3);
   await page.setViewportSize({ width: 375, height: 812 }); await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.screenshot({ path: resolve(output, 'mobile-playing.png') });
   await page.evaluate(() => window.go('/admin/card-battle/tower'));
@@ -101,5 +133,5 @@ try {
   await expect(page.getByRole('combobox', { name: '上架状态', exact: true })).toBeDisabled();
   await page.screenshot({ path: resolve(output, 'mobile-admin.png') });
   assert.deepEqual(errors, []);
-  console.log('PASS: tower autosave/import/duplicate movement, remembered formations, four viewports, 50-round playback, profile ranking navigation, admin direct URL and second-precision clears. Screenshots: ' + output);
+  console.log('PASS: tower autosave/import/duplicate movement, remembered formations, four viewports, ordered squad 1/2/3 display, mid-battle reentry and completed playback, 50-round playback, profile ranking navigation, admin direct URL and second-precision clears. Screenshots: ' + output);
 } finally { await browser.close(); }

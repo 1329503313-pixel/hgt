@@ -100,8 +100,15 @@ function TowerRoom({ roomId }: { roomId: string }) {
     const binding = value.collectibleBindings.find((item) => item.cardId === id);
     return card ? battleCardWithCollectible(card, resources.collectibles.find((item) => item.id === binding?.collectibleId) ?? null) : null;
   });
-  const currentUserId = cardStates.find((state) => state.seat === 1)?.userId;
-  const activeSquad = playing ? data.game?.lineups.find((lineup) => lineup.userId === currentUserId) ?? data.game?.lineups.find((lineup) => lineup.seat === 1) : null;
+  // Arena cards and the formation indicator share the applied playback snapshot,
+  // independently of the formation selected while preparing.
+  const battleStates = cardStates.some((state) => state.seat === 1 && data.game?.lineups.some((lineup) => lineup.userId === state.userId))
+    ? cardStates : data.game?.playback.states ?? [];
+  const currentUserId = battleStates.find((state) => state.seat === 1)?.userId;
+  const activeSquad = playing ? data.game?.lineups.find((lineup) => lineup.seat === 1 && lineup.userId === currentUserId) ?? data.game?.lineups.find((lineup) => lineup.seat === 1) : null;
+  const displayedFormation = playing
+    ? data.formations.findIndex((_, index) => activeSquad?.userId === `${user.id}:formation:${index + 1}`)
+    : selected;
   const boss = playing ? data.game?.lineups.find((lineup) => lineup.seat === 2) : null;
   const ownCards = activeSquad?.cards ?? preparedCards(formation), bossCards = boss?.cards ?? data.nextFloor?.lineup ?? [];
   const seat = (side: 1 | 2, name: string, cards: Array<OnlineCardBattleCard | null>): Battle["seats"][number] => ({ seat: side, ready: false,
@@ -116,12 +123,12 @@ function TowerRoom({ roomId }: { roomId: string }) {
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 border-b border-white/10 px-3 py-2 text-xs"><strong>{playing ? `卡牌闯关第 ${data.game!.floorNumber} 层` : data.nextFloor ? `卡牌闯关第 ${data.nextFloor.floorNumber} 层` : data.message}</strong><span className="flex items-center gap-1 text-amber-200"><Shell size={14} />通关奖励 {playing ? data.game!.rewardShells : data.nextFloor?.rewardShells ?? 0} 贝壳</span></div>
     {error && <p role="alert" className="shrink-0 bg-red-950 px-3 py-2 text-sm text-red-100">{error}</p>}
     <main ref={arenaRef} className="card-battle-arena-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
-      <HalfArena seat={2} battleSeat={seat(2, boss?.nickname ?? `第 ${data.nextFloor?.floorNumber ?? data.clearedFloor} 层 BOSS`, bossCards)} states={playing ? cardStates : []} activeEvent={playing ? activeEvent : null} showPower={!playing} isOwn={false} position="top" canSelect={false} onPick={() => {}} onReorder={async () => false} />
+      <HalfArena seat={2} battleSeat={seat(2, boss?.nickname ?? `第 ${data.nextFloor?.floorNumber ?? data.clearedFloor} 层 BOSS`, bossCards)} states={playing ? battleStates : []} activeEvent={playing ? activeEvent : null} showPower={!playing} isOwn={false} position="top" canSelect={false} onPick={() => {}} onReorder={async () => false} />
       <div className="z-30 flex min-h-8 shrink-0 items-center justify-center border-y border-cyan-300/30 bg-slate-900 px-3 py-1 text-center text-xs text-cyan-200" role="status">{playing ? syncing ? "正在同步战斗进度…" : activeEvent?.text ?? "自动战斗中" : "三个阵容依次接力 · 每层共用 50 回合"}</div>
-      <HalfArena seat={1} battleSeat={seat(1, activeSquad?.nickname ?? `阵容 ${selected + 1}`, ownCards)} states={playing ? cardStates : []} activeEvent={playing ? activeEvent : null} showPower={!playing} isOwn position="bottom" canSelect={!playing && !busy} onPick={() => { void loadResources(); setEditor(true); }} onReorder={async (from, to) => { const ids = [...formation.cardIds]; [ids[from - 1], ids[to - 1]] = [ids[to - 1]!, ids[from - 1]!]; try { await saveFormation({ ...formation, cardIds: ids }); return true; } catch (reason) { showToast(reason instanceof Error ? reason.message : "换位失败"); return false; } }} />
+      <HalfArena seat={1} battleSeat={seat(1, activeSquad?.nickname ?? `阵容 ${selected + 1}`, ownCards)} states={playing ? battleStates : []} activeEvent={playing ? activeEvent : null} showPower={!playing} isOwn position="bottom" canSelect={!playing && !busy} onPick={() => { void loadResources(); setEditor(true); }} onReorder={async (from, to) => { const ids = [...formation.cardIds]; [ids[from - 1], ids[to - 1]] = [ids[to - 1]!, ids[from - 1]!]; try { await saveFormation({ ...formation, cardIds: ids }); return true; } catch (reason) { showToast(reason instanceof Error ? reason.message : "换位失败"); return false; } }} />
     </main>
     <footer className="shrink-0 space-y-2 border-t border-white/10 bg-slate-900 p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-      <div className="grid grid-cols-3 gap-2" aria-label="闯关阵容">{data.formations.map((value, i) => <button key={i} disabled={playing || busy} aria-pressed={selected === i} className={`min-h-11 rounded-xl border px-2 text-xs font-bold ${selected === i ? "border-cyan-300 bg-cyan-900 text-white" : "border-white/20 text-slate-200"}`} onClick={() => setSelected(i)}>阵容 {i + 1} · {value.cardIds.filter(Boolean).length}/5</button>)}</div>
+      <div className="grid grid-cols-3 gap-2" aria-label="闯关阵容">{data.formations.map((value, i) => <button key={i} disabled={playing || busy} aria-pressed={displayedFormation === i} className={`min-h-11 rounded-xl border px-2 text-xs font-bold ${displayedFormation === i ? "border-cyan-300 bg-cyan-900 text-white" : "border-white/20 text-slate-200"}`} onClick={() => setSelected(i)}>阵容 {i + 1} · {value.cardIds.filter(Boolean).length}/5</button>)}</div>
       {!playing && <><div className="flex flex-wrap gap-2"><button className="min-h-11 flex-1 rounded-xl bg-white/10 px-3 text-sm font-bold" disabled={busy} onClick={() => { void loadResources(); setEditor(true); }}>配置阵容</button><button className="min-h-11 flex-1 rounded-xl bg-white/10 px-3 text-sm font-bold" disabled={busy} onClick={() => { void loadResources(); setDeckPicker(true); }}>调用卡组</button><button className="min-h-11 rounded-xl bg-white/10 px-3 text-sm" disabled={busy || !formation.cardIds.some(Boolean)} onClick={() => { void saveFormation({ cardIds: Array(5).fill(null), collectibleBindings: [] }).catch((reason) => showToast(reason.message)); }}>清空</button></div><p className="text-center text-xs text-slate-300">总战力 {totalPower.toLocaleString()} · 阵容自动保存</p>
       {resourceError && <button className="min-h-11 text-sm text-red-200" onClick={() => void loadResources()}>{resourceError} · 点击重试</button>}
       <p className="text-center text-xs text-amber-200">{data.message ?? (invalidAssets ? "阵容有失效卡牌或收藏品，请重新配置" : formationError)}</p>

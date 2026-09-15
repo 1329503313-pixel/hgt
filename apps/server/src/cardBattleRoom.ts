@@ -119,7 +119,7 @@ export function publicFrozenCard(card: CardBattleDeckCard) {
     lifestealRate: card.tier.lifestealRate ?? 0, stunRate: card.tier.stunRate ?? 0, extraActionRate: card.tier.extraActionRate ?? 0,
   }, card.collectible);
   return {
-    id: card.cardId, instanceId: card.instanceId, cardNo: "", name: card.name, rarity: card.rarity, starLevel: card.starLevel,
+    id: card.cardId, instanceId: card.instanceId, cardNo: card.cardNo ?? "", name: card.name, rarity: card.rarity, starLevel: card.starLevel,
     battleRole: card.battleRole ?? "damage", imageUrl: card.imageUrl,
     motionMp4Url: card.motionMp4Url ?? null,
     motionWebmUrl: card.motionWebmUrl ?? null,
@@ -386,7 +386,7 @@ export async function setCardBattleReady(roomId: string, userId: string, ready: 
 
 async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId: string, db: mysql.PoolConnection): Promise<CardBattleDeckCard> {
   const [[row]] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT cards.id, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
+    `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
        cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level
      FROM user_asset_cards owned JOIN asset_cards cards ON cards.id = owned.card_id
      WHERE owned.user_id = ? AND cards.id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend') LIMIT 1`,
@@ -400,6 +400,7 @@ async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId:
   return {
     instanceId: `${seat}:${slot}:${cardId}`,
     cardId,
+    cardNo: String(row.card_no),
     name: String(row.name),
     imageUrl: `/api/media/assets/cards/${encodeURIComponent(cardId)}/thumbnail?v=${new Date(row.updated_at).getTime()}`,
     rarity: String(row.rarity) as "epic" | "legend",

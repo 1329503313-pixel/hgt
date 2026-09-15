@@ -6,6 +6,8 @@ import { cardBattleEffectiveProc, cardBattleLifesteal } from "./cardBattleMath.j
 import { cardBattleSupportShares, type CardBattleSupportShare } from "./cardBattleSupport.js";
 import type { CardBattleSupportBreakdown, CardBattleSupportKind } from "@hgt/shared";
 import { CARD_BATTLE_CONTROL_CODES, isCardBattleStun, isCardBattleRevivalBlock, isCardBattleImmunity, isCardBattleCleanse } from "@hgt/shared";
+import { CARD_BATTLE_BOND_ACTIONS, type CardBattleBond, type CardBattleBondTarget } from "@hgt/shared";
+import { createCardBattleBondQueue } from "./cardBattleBondQueue.js";
 
 export const CARD_BATTLE_MAX_ROUNDS = 30;
 export const CARD_BATTLE_LINEUP_SIZE = 5;
@@ -107,12 +109,14 @@ export type CardBattleTier = CardBattleProcStats & {
   skillName: string;
   skillDescription: string;
   effects: CardBattleSkillEffect[];
+  bonds?: CardBattleBond[];
 };
 
 export type CardBattleDeckCard = {
   collectible?: BattleCollectible | null;
   instanceId: string;
   cardId: string;
+  cardNo?: string;
   name: string;
   imageUrl: string;
   rarity: "epic" | "legend";
@@ -167,6 +171,7 @@ export type CardBattleVisualEffect = {
 };
 
 export type CardBattleEvent = {
+  bond?: { ownerId: string; triggerId: string };
   sequence: number;
   round: number;
   kind: "round" | "attack" | "skill" | "end" | "extra_action" | "stun";
@@ -433,6 +438,14 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
   const extraActionSupport = new Map<number, { actorId: string; sourceId: string }>();
   let buffSequence = 0;
   const isStunned = (card: RuntimeCard) => card.buffs.some((buff) => buff.stat === "stunned" && buff.expiresAfterRound >= currentRound);
+  const bonds = createCardBattleBondQueue(() => cards, card => card.alive && !isStunned(card));
+  let activeBond: CardBattleEvent["bond"];
+  const bondObserved = new Map(allCards.map(card => [card.instanceId, { energy: card.energy, hpRatio: card.hp / card.maxHp, alive: card.alive }]));
+  const clearEnergy = (card: RuntimeCard, root: number) => {
+    if (card.energy > 0) bonds.emit("energy_empty", card, root);
+    card.energy = 0;
+    bondObserved.get(card.instanceId)!.energy = 0;
+  };
 
   const byId = (id: string) => allCards.find((card) => card.instanceId === id)!;
   const creditSupport = (sourceId: string | null | undefined, kind: CardBattleSupportKind, amount: number) => {
@@ -483,12 +496,32 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     const eventLimitReached = finalEvent ? events.length >= maxEvents : events.length >= maxEvents - 1;
     return !eventLimitReached && playbackDurationMs + durationMs + reservedEndDuration <= (mode === "tower" ? 28 * 60_000 : mode === "boss" ? 14 * 60_000 : CARD_BATTLE_MAX_PLAYBACK_MS);
   };
-  const addEvent = (event: Omit<CardBattleEvent, "sequence" | "states">, finalEvent = false) => {
+  const addEvent = (event: Omit<CardBattleEvent, "sequence" | "states">, finalEvent = false, root = 0) => {
     if (!canAddEvent(event.durationMs, finalEvent)) {
       safetyStopped = true;
       return false;
     }
-    events.push({ ...event, sequence: events.length + 1, states: states() });
+    events.push({ ...event, ...(activeBond ? { bond: activeBond, skillName: "羁绊技能", text: `【羁绊】${event.text}` } : {}), sequence: events.length + 1, states: states() });
+    if (root) {
+      for (const card of cards) {
+        const before = bondObserved.get(card.instanceId)!;
+        if (before.alive && !card.alive) bonds.emit("death", card, root);
+        if (before.hpRatio > .5 && card.hp / card.maxHp <= .5) bonds.emit("hp_half", card, root);
+        if (before.energy < card.tier.energyRequired && card.energy >= card.tier.energyRequired) bonds.emit("energy_full", card, root);
+        if (before.energy > 0 && card.energy === 0) bonds.emit("energy_empty", card, root);
+      }
+      for (const effect of event.effects) {
+        const target = byId(effect.targetId);
+        if (event.visual === "damage" && (effect.amount ?? 0) < 0) bonds.emit("damaged", target, root);
+        if (event.visual === "heal" && (effect.amount ?? 0) > 0) bonds.emit("healed", target, root);
+        if (effect.stunned) {
+          bonds.emit("stunned", target, root);
+          if (event.actorId) bonds.emit("stun", byId(event.actorId), root);
+        }
+      }
+      if (event.lifesteal && event.actorId) bonds.emit("healed", byId(event.actorId), root);
+    }
+    for (const card of cards) bondObserved.set(card.instanceId, { energy: card.energy, hpRatio: card.hp / card.maxHp, alive: card.alive });
     playbackDurationMs += event.durationMs;
     return true;
   };
@@ -576,6 +609,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
   const onHit = (actor: RuntimeCard, target: RuntimeCard, damage: number, round: number, root: number) => {
     let lifesteal = 0;
     if (actor.alive && damage > 0) {
+      if (cardBattleLifesteal(damage, cardBattleEffectiveProc(actor.tier, actor.buffs, "lifestealRate")) > 0) bonds.emit("lifesteal", actor, root);
       const measure = ([buffs]: CardBattleBuff[][]) => {
         const base = cardBattleLifesteal(damage, cardBattleEffectiveProc(actor.tier, buffs!, "lifestealRate"));
         const received = cardBattleEffectiveStat(base * (1 + battleCollectibleBonus(actor.collectible, "healing_received") / 100), buffs!, "healingReceived");
@@ -637,7 +671,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     });
   };
 
-  const applyEffect = (actor: RuntimeCard, effect: CardBattleSkillAction, round: number, root: number, damaged?: Set<RuntimeCard>) => {
+  const applyEffect = (actor: RuntimeCard, effect: CardBattleSkillAction, round: number, root: number, damaged?: Set<RuntimeCard>, bondTargets?: RuntimeCard[]) => {
     if (safetyStopped) return;
     const visual = visualForEffect(effect.type);
     const durationMs = visual === "damage" ? 1300 : 1000;
@@ -647,7 +681,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       safetyStopped = true;
       return;
     }
-    const targets = effect.type === "revival_block_damaged" ? [...damaged ?? []] : targetsFor(actor, effect.type);
+    const targets = bondTargets ?? (effect.type === "revival_block_damaged" ? [...damaged ?? []] : targetsFor(actor, effect.type));
     const amount = Math.max(0, effect.value ?? 0);
     const visuals: CardBattleVisualEffect[] = [];
     const deadCards: RuntimeCard[] = [];
@@ -748,7 +782,8 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         const previousSpeed = effectiveStat(target, "speed");
         const previousHp = target.hp;
         const applicationId = ++buffSequence;
-        grantBuff(actor, target, { stat, value: Math.min(100, amount), expiresAfterRound, debuff: true, applicationId });
+        grantBuff(actor, target, { stat, value: bondTargets ? amount : Math.min(100, amount), expiresAfterRound, debuff: true, applicationId,
+          ...(bondTargets ? { independent: true, flat: true } : {}) });
         if (stat === "attack") grantBuff(actor, target, { stat: "skillDamage", value: Math.min(100, amount), expiresAfterRound, debuff: true, applicationId });
         if (stat === "maxHp") {
           target.maxHp = cardBattleEffectiveStat(target.tier.maxHp, target.buffs, "maxHp", 1);
@@ -757,14 +792,14 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         }
         if (stat === "speed") creditSupport(actor.instanceId, "speed", (previousSpeed - effectiveStat(target, "speed")) * 100);
         const applied = Math.min(100, cardBattleBuffBonus(target.buffs, stat, true)) - before;
-        visuals.push({ targetId: target.instanceId, amount: applied, label: `${debuff.label} -${applied}%` });
+        visuals.push({ targetId: target.instanceId, amount: bondTargets ? amount : applied, label: `${debuff.label} -${bondTargets ? amount : applied}${bondTargets ? "" : "%"}` });
       }
     } else if (visual === "buff") {
       for (const target of targets) {
         const procStat = cardBattleProcStat(effect.type);
         if (procStat) {
           const before = cardBattleEffectiveProc(target.tier, target.buffs, procStat);
-          grantBuff(actor, target, { stat: procStat, value: amount, expiresAfterRound: round + Math.max(1, effect.duration ?? 1) - 1 });
+          grantBuff(actor, target, { stat: procStat, value: amount, expiresAfterRound: round + Math.max(1, effect.duration ?? 1) - 1, ...(bondTargets ? { independent: true } : {}) });
           const gained = cardBattleEffectiveProc(target.tier, target.buffs, procStat) - before;
           visuals.push({ targetId: target.instanceId, amount: gained, label: effectLabel(effect.type, gained) });
           continue;
@@ -774,7 +809,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         let label = "";
         if (effect.type.startsWith("max_hp_")) {
           // Max-HP increases keep their existing lifetime: until this life ends.
-          grantBuff(actor, target, { stat: "maxHp", value: amount, expiresAfterRound: Infinity });
+          grantBuff(actor, target, { stat: "maxHp", value: amount, expiresAfterRound: bondTargets ? expiresAfterRound : Infinity, ...(bondTargets ? { independent: true } : {}) });
           target.maxHp = cardBattleEffectiveStat(target.tier.maxHp, target.buffs, "maxHp", 1);
           gained = target.maxHp - before.maxHp;
           target.hp += gained;
@@ -788,7 +823,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
           label = gained === skillGained ? effectLabel(effect.type, gained) : `攻击 +${gained} / 技能伤害 +${skillGained}`;
         } else {
           const stat = effect.type.startsWith("attack_") ? "attack" : effect.type.startsWith("defense_") ? "defense" : "speed";
-          grantBuff(actor, target, { stat, value: amount, expiresAfterRound: round + Math.max(1, effect.duration ?? 1) - 1 });
+          grantBuff(actor, target, { stat, value: amount, expiresAfterRound: round + Math.max(1, effect.duration ?? 1) - 1, ...(bondTargets ? { independent: true } : {}) });
           gained = effectiveStat(target, stat) - before[stat];
           if (stat === "speed") creditSupport(actor.instanceId, "speed", gained * 100);
         }
@@ -824,7 +859,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       extraAction: extraActionRoots.has(root),
       durationMs,
       text: `${actor.name} 使用${actor.tier.skillName ? `「${actor.tier.skillName}」` : "技能"}`,
-    });
+    }, false, root);
     queueDeaths(deadCards, actor, "skill_kill", root);
     for (const target of crossedThresholds) triggerQueue.push({
       kind: "hp_below",
@@ -882,22 +917,29 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         return true;
       });
       if (!matching.length) continue;
-      if (matching.some((effect) => isEnergyCondition(effect.condition))) card.energy = 0;
+      if (matching.some((effect) => isEnergyCondition(effect.condition))) clearEnergy(card, trigger.root);
       for (const effect of matching) {
         applySkill(card, effect, round, trigger.root);
         if (safetyStopped) break;
       }
+      bonds.emit("skill", card, trigger.root);
+      drainBonds(round);
       tryExtraAction(card, round, trigger.root);
     }
   };
 
-  const performAction = (actor: RuntimeCard, round: number, root: number) => {
+  const performAction = (actor: RuntimeCard, round: number, root: number, forced?: "attack" | "skill") => {
+      if (!actor.alive || isStunned(actor) || safetyStopped) return;
       const energyEffects = actor.tier.effects
         .filter((effect) => effect.condition === "energy_full")
         .sort((left, right) => left.order - right.order);
-      if (actor.energy >= actor.tier.energyRequired && energyEffects.length) {
-        actor.energy = 0;
+      if (forced === "skill" || (forced !== "attack" && actor.energy >= actor.tier.energyRequired && energyEffects.length)) {
+        clearEnergy(actor, root);
         for (const effect of energyEffects) applySkill(actor, effect, round, root);
+        if (forced === "skill") clearEnergy(actor, root);
+        // Include final energy clearing even when no damage/effect event follows it.
+        if (forced === "skill") addEvent({round,kind:"skill",visual:"energy",actorId:actor.instanceId,skillName:null,effects:[],durationMs:300,text:`${actor.name} 清空能量`}, false, root);
+        bonds.emit("skill", actor, root);
         processTriggers(round);
       } else {
         const target = randomOne(basicTargets(actor));
@@ -926,7 +968,8 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
           effects: [{ targetId: target.instanceId, amount: -damage, blocked: damage === 0, critical, stunned: proc.stunned, stunResisted: proc.stunResisted,
             ...(hit.unprotectedDamage > damage ? { label: collectibleProtection(target, "invincible", round) ? "无敌" : "免死" } : {}) }], durationMs: 1100,
           text: `${actor.name} 攻击 ${target.name}`,
-        });
+        }, false, root);
+        bonds.emit("attack", actor, root);
         if (died) queueDeaths([target], actor, "normal_kill", root);
         else if (target.hp / target.maxHp < beforeRatio) triggerQueue.push({
           kind: "hp_below",
@@ -937,6 +980,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         });
         processTriggers(round);
       }
+    drainBonds(round);
     tryExtraAction(actor, round, root);
   };
 
@@ -960,17 +1004,86 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     if (!canAddEvent(650)) { safetyStopped = true; return; }
     completedExtras.add(key);
     const extraRoot = ++rootSequence;
+    bonds.inherit(root, extraRoot);
     extraActionRoots.add(extraRoot);
     const source = cardBattleSupportShares([{ buffs: actor.buffs,
       accepts: (buff) => buff.stat === "extraActionRate" && !buff.debuff }], measure)[0];
     if (guaranteed || source) extraActionSupport.set(extraRoot, { actorId: actor.instanceId, sourceId: guaranteed ? actor.instanceId : source!.sourceId });
     addEvent({ round, kind: "extra_action", visual: "extra_action", actorId: actor.instanceId, skillName: null,
-      effects: [{ targetId: actor.instanceId, label: "再动" }], extraAction: true, durationMs: 650, text: `${actor.name} 立即再次行动` });
+      effects: [{ targetId: actor.instanceId, label: "再动" }], extraAction: true, durationMs: 650, text: `${actor.name} 立即再次行动` }, false, extraRoot);
+    bonds.emit("extra_action", actor, extraRoot);
     performAction(actor, round, extraRoot);
   };
 
   const sideAlive = (seat: 1 | 2) => cards.some((card) => card.seat === seat && card.alive);
+  const bondRandom = seededRandom(`${seed}:bond-targets`);
+  const bondTargetsFor = (owner: RuntimeCard, trigger: RuntimeCard, target: CardBattleBondTarget) => {
+    if (target === "self") return owner.alive ? [owner] : [];
+    if (target === "trigger") return trigger.alive ? [trigger] : [];
+    if (target.startsWith("random_")) return shuffled(allies(owner), bondRandom).slice(0, Number(target.slice(-1)));
+    const side = target.startsWith("enemies") ? enemies(owner) : allies(owner);
+    // Explicit front/rear targets never fall back to a different row.
+    return target.endsWith("_front") ? side.filter(card => card.row === "front")
+      : target.endsWith("_rear") ? side.filter(card => card.row === "rear") : side;
+  };
+  const bondEffectTypes = {
+    attack_up: "attack_self", defense_up: "defense_self", speed_up: "speed_self", max_hp_up: "max_hp_self",
+    heal: "heal_self", energy: "energy_self", extra_action_up: "extra_action_self",
+    lifesteal_up: "lifesteal_self", stun_up: "stun_self", speed_down: "speed_down_all",
+  } as const;
+  const drainBonds = (round: number) => bonds.drain(({owner,trigger,bond,root}) => {
+    const previousBond = activeBond;
+    activeBond = {ownerId:owner.instanceId, triggerId:trigger.instanceId};
+    try {
+      for (const action of bond.actions) {
+        if (safetyStopped || !owner.alive || isStunned(owner)) break;
+        const count = (triggerEffectsByRoot.get(root) ?? 0) + 1;
+        triggerEffectsByRoot.set(root, count);
+        if (count > CARD_BATTLE_MAX_TRIGGER_EFFECTS) { safetyStopped = true; break; }
+        const targets = bondTargetsFor(owner, trigger, action.target);
+        if (!targets.length) continue;
+        if (action.type === "attack" || action.type === "skill" || action.type === "act_again") {
+          for (const target of targets) {
+            if (safetyStopped || !owner.alive || isStunned(owner)) break;
+            if (!target.alive || isStunned(target) || !enemies(target).length) continue;
+            const child = ++rootSequence;
+            bonds.inherit(root, child);
+            extraActionRoots.add(child);
+            extraActionSupport.set(child, {actorId:target.instanceId, sourceId:owner.instanceId});
+            if (!addEvent({round,kind:"extra_action",visual:"extra_action",actorId:target.instanceId,skillName:"羁绊技能",
+              effects:[{targetId:target.instanceId,label:CARD_BATTLE_BOND_ACTIONS[action.type]}],extraAction:true,durationMs:650,
+              text:`${owner.name} 令 ${target.name} ${CARD_BATTLE_BOND_ACTIONS[action.type]}`}, false, child)) break;
+            if (action.type === "act_again") bonds.emit("extra_action", target, child);
+            performAction(target, round, child, action.type === "act_again" ? undefined : action.type);
+          }
+        } else {
+          applyEffect(owner, {type:bondEffectTypes[action.type],value:action.value,duration:action.duration}, round, root, undefined, targets);
+          processTriggers(round);
+        }
+      }
+    } finally { activeBond = previousBond; }
+  }, () => safetyStopped);
+  const openBonds = (incoming: RuntimeCard[], round: number) => {
+    const root = ++rootSequence;
+    for (const card of incoming) {
+      if (card.energy === 0) bonds.emit("energy_empty", card, root);
+      if (card.energy >= card.tier.energyRequired) bonds.emit("energy_full", card, root);
+    }
+    drainBonds(round);
+  };
   const winnerAfterChains = () => sideAlive(1) === sideAlive(2) ? null : sideAlive(1) ? 1 as const : 2 as const;
+  const advanceSquads = (round: number) => {
+    const joined: RuntimeCard[] = [];
+    while (mode === "tower" && !safetyStopped && !sideAlive(1) && sideAlive(2) && squadIndex + 1 < squadIds.length) {
+      const nextIds = squadIds[++squadIndex]!;
+      const incoming = allCards.filter(card => nextIds.has(card.instanceId));
+      cards = [...cards.filter(card => card.seat === 2), ...incoming];
+      addEvent({round,kind:"round",visual:"round",actorId:null,skillName:null,effects:[],durationMs:900,text:`${challengers[squadIndex]!.nickname} 接替上场`});
+      joined.push(...incoming);
+      openBonds(incoming, round);
+    }
+    return joined;
+  };
   let completedRounds = 0;
   let winnerSeat: 1 | 2 | null = null;
   let endReason: CardBattleResult["endReason"] = "round_limit";
@@ -979,6 +1092,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     currentRound = round;
     completedRounds = round;
     if (!addEvent({ round, kind: "round", visual: "round", actorId: null, skillName: null, effects: [], durationMs: 500, text: `第 ${round} 回合` })) break;
+    if (round === 1) { openBonds(cards, round); advanceSquads(round); }
     const initiative = shuffled(cards.filter((card) => card.alive), random)
       .sort((left, right) => effectiveStat(right, "speed") - effectiveStat(left, "speed"));
     for (const actor of initiative) {
@@ -1001,15 +1115,9 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       performAction(actor, round, ++rootSequence);
       // Finish death/revival chains before retiring this squad. Retired cards are
       // absent from targeting, but remain in allCards for historical contribution.
-      if (mode === "tower" && !safetyStopped && !sideAlive(1) && sideAlive(2) && squadIndex + 1 < squadIds.length) {
-        const nextIds = squadIds[++squadIndex]!;
-        const incoming = allCards.filter((card) => nextIds.has(card.instanceId));
-        cards = [...cards.filter((card) => card.seat === 2), ...incoming];
-        addEvent({ round, kind: "round", visual: "round", actorId: null, skillName: null, effects: [], durationMs: 900,
-          text: `${challengers[squadIndex]!.nickname} 接替上场` });
-        // New squad acts in this same round; surviving BOSS actions are not replayed.
-        initiative.push(...shuffled(incoming, random).sort((a, b) => effectiveStat(b, "speed") - effectiveStat(a, "speed")));
-      }
+      const incoming = advanceSquads(round);
+      // New squad acts in this same round; surviving BOSS actions are not replayed.
+      initiative.push(...shuffled(incoming, random).sort((a, b) => effectiveStat(b, "speed") - effectiveStat(a, "speed")));
       if (!sideAlive(1) || !sideAlive(2)) {
         winnerSeat = winnerAfterChains();
         endReason = winnerSeat ? "elimination" : "simultaneous_elimination";
@@ -1054,6 +1162,9 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
   } else if (!sideAlive(1) && !sideAlive(2)) {
     winnerSeat = null;
     endReason = "simultaneous_elimination";
+  } else if (sideAlive(1) !== sideAlive(2)) {
+    winnerSeat = winnerAfterChains();
+    endReason = "elimination";
   }
 
   addEvent({

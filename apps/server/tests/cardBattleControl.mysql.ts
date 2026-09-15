@@ -26,7 +26,8 @@ try {
   const widening = source.match(/pool.query\("(ALTER TABLE asset_card_battle_effects MODIFY COLUMN duration_rounds [^"]+)"\)/)![1]!;
   await connection.query(widening);
   await connection.query(widening);
-  const tiers = cardBattleTiersSchema.parse(defaultCardBattleTiers().map((tier) => ({ ...tier, effects: [{
+  const tiers = cardBattleTiersSchema.parse(defaultCardBattleTiers().map((tier) => ({ ...tier,
+    bonds: [{cardNos:['001','002'],event:'energy_empty',actions:[{target:'trigger',type:'attack_up',value:123,duration:2},{target:'random_4',type:'skill',value:null,duration:null}]}], effects: [{
     order: 0, condition: "energy_full", conditionValue: null, type: "stun_enemy_all", value: null, duration: 5_000_000_000, probability: 12.25,
     additionalEffects: [
       { type: "damage_all", value: 1000, duration: null, ignoreDefensePercent: 75.25 },
@@ -38,6 +39,7 @@ try {
   const loaded = await loadCardBattleTiers("control-integration", db);
   assert.equal(loaded.length, 4);
   for (const tier of loaded) {
+    assert.deepEqual(tier.bonds, tiers[0]!.bonds);
     assert.equal(tier.effects[0]!.duration, 5_000_000_000);
     assert.equal(tier.effects[0]!.probability, 12.25);
     assert.equal(tier.effects[0]!.additionalEffects?.[0]?.ignoreDefensePercent, 75.25);
@@ -51,4 +53,3 @@ try {
 } finally {
   await connection.end(); // Automatically drops only this connection's temporary tables.
 }
-

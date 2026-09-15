@@ -22,6 +22,7 @@ export type CardBattleStatus = {
   value: number;
   remainingRounds: number | null;
   multiplier: number;
+  flat?: boolean;
 };
 
 const debuffSet = new Set<string>(cardBattleDebuffCodes);

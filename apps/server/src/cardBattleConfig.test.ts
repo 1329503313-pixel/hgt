@@ -106,7 +106,7 @@ test("配置持久化写入暴击字段，读取保留0%和百分比小数", asy
   } } as unknown as PoolConnection;
   await saveCardBattleTiers("card", defaultCardBattleTiers().map((tier) => ({ ...tier, critRate: 0, critDamage: 175.25 })), db);
   assert.equal(inserts.length, 4);
-  assert.ok(inserts.every((args) => args.length === 15 && args[10] === 0 && args[11] === 175.25));
+  assert.ok(inserts.every((args) => args.length === 16 && args[10] === 0 && args[11] === 175.25));
   const loaded = await loadCardBattleTiers("card", db);
   assert.equal(loaded[0]!.critRate, 0);
   assert.equal(loaded[0]!.critDamage, 175.25);

@@ -1,0 +1,63 @@
+export declare const CARD_BATTLE_BOND_EVENTS: {
+    readonly attack: "普通攻击";
+    readonly skill: "使用技能";
+    readonly death: "死亡";
+    readonly damaged: "受到伤害";
+    readonly hp_half: "生命值降低至50%及以下";
+    readonly energy_full: "能量为满";
+    readonly energy_empty: "能量为空";
+    readonly extra_action: "触发再动";
+    readonly lifesteal: "触发吸血";
+    readonly stun: "触发击晕";
+    readonly stunned: "被击晕";
+    readonly healed: "被治疗";
+    readonly shielded: "被增加护盾";
+};
+export declare const CARD_BATTLE_BOND_TARGETS: {
+    readonly self: "自己";
+    readonly trigger: "羁绊卡";
+    readonly random_1: "随机一张卡";
+    readonly random_2: "随机两张卡";
+    readonly random_3: "随机三张卡";
+    readonly random_4: "随机四张卡";
+    readonly allies: "全体友军";
+    readonly allies_rear: "全体友方后排";
+    readonly allies_front: "全体友方前排";
+    readonly enemies_front: "全体敌方前排";
+    readonly enemies_rear: "全体敌方后排";
+    readonly enemies: "全体敌方";
+};
+export declare const CARD_BATTLE_BOND_ACTIONS: {
+    readonly act_again: "立即再次行动";
+    readonly attack: "立即普通攻击";
+    readonly skill: "立即无视能量释放技能并清空能量";
+    readonly attack_up: "立即增加攻击力";
+    readonly defense_up: "立即增加防御力";
+    readonly speed_up: "立即增加速度";
+    readonly max_hp_up: "立即增加生命值上限";
+    readonly heal: "立即恢复生命值";
+    readonly energy: "立即恢复能量";
+    readonly extra_action_up: "立即增加再动率";
+    readonly lifesteal_up: "立即增加吸血率";
+    readonly stun_up: "立即增加击晕率";
+    readonly speed_down: "立即降低速度";
+};
+export type CardBattleBondEvent = keyof typeof CARD_BATTLE_BOND_EVENTS;
+export type CardBattleBondTarget = keyof typeof CARD_BATTLE_BOND_TARGETS;
+export type CardBattleBondActionType = keyof typeof CARD_BATTLE_BOND_ACTIONS;
+export type CardBattleBondAction = {
+    target: CardBattleBondTarget;
+    type: CardBattleBondActionType;
+    value: number | null;
+    duration: number | null;
+};
+export type CardBattleBond = {
+    id?: string;
+    cardNos: string[];
+    event: CardBattleBondEvent;
+    actions: CardBattleBondAction[];
+};
+export declare const bondNeedsValue: (type: string) => boolean;
+export declare const bondNeedsDuration: (type: string) => boolean;
+export declare const bondIsRate: (type: string) => boolean;
+export declare const parseBondCardNos: (input: string) => string[];

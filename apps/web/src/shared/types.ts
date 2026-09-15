@@ -663,6 +663,7 @@ export type OnlineCardBattleCardState = import("@hgt/shared").CardBattleProcStat
   statuses?: import("./cardBattleEffects").CardBattleStatus[];
 };
 export type OnlineCardBattleEvent = {
+  bond?: { ownerId: string; triggerId: string };
   sequence: number; round: number; kind: "round" | "attack" | "skill" | "end" | "extra_action" | "stun";
   visual: "round" | "damage" | "heal" | "energy" | "buff" | "debuff" | "revive" | "end" | "extra_action" | "stun";
   lifesteal?: number;

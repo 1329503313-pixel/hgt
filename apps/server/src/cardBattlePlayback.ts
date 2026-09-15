@@ -53,6 +53,8 @@ export function resolveCardBattlePlaybackStates(
   status: string,
 ): CardBattleResult["initialStates"] {
   const complete = completedSequence >= result.events.length;
+  // Keep the last tower squad visible while the room loads its settlement.
+  if (complete && status !== "aborted" && result.mode === "tower") return result.finalStates;
   if (complete || status === "aborted") return result.initialStates;
   return completedSequence > 0
     ? result.events[completedSequence - 1]!.states

@@ -12,7 +12,7 @@ export const isCardBattleDebuff = (type: string): type is CardBattleDebuffType =
 
 export const CARD_BATTLE_STATUS_ORDER = ["attack_up", "skill_damage_up", "max_hp_up", "defense_up", "speed_up", "speed_down", "attack_skill_damage_down", "defense_down", "max_hp_down", "healing_received_down", "debuff_resistance", "invincible", "death_protection", "lifesteal_up", "stun_up", "extra_action_up", "lifesteal_down", "stun_down", "extra_action_down", "stunned", "immunity", "revival_block"] as const;
 export type CardBattleStatusType = typeof CARD_BATTLE_STATUS_ORDER[number];
-export type CardBattleStatus = { type: CardBattleStatusType; category?: import("@hgt/shared").CardBattleStatusCategory; value: number; remainingRounds: number | null; multiplier: number };
+export type CardBattleStatus = { type: CardBattleStatusType; category?: import("@hgt/shared").CardBattleStatusCategory; value: number; remainingRounds: number | null; multiplier: number; flat?: boolean };
 export const CARD_BATTLE_STATUS_LABELS: Record<CardBattleStatusType, string> = {
   lifesteal_up: "吸血比例提升", stun_up: "击晕概率提升", extra_action_up: "再动概率提升",
   lifesteal_down: "吸血比例降低", stun_down: "击晕概率降低", extra_action_down: "再动概率降低", stunned: "眩晕",
@@ -30,6 +30,6 @@ export function cardBattleStatusText(status: CardBattleStatus) {
   if (status.type === "revival_block") return `${prefix}禁止复活：剩余${status.remainingRounds}回合，无法通过任何方式复活`;
   if (["debuff_resistance", "invincible", "death_protection"].includes(status.type)) return `${prefix}${CARD_BATTLE_STATUS_LABELS[status.type]}：剩余${status.remainingRounds}回合（收藏品效果）`;
   const remaining = status.remainingRounds === null ? "持续本条生命" : `剩余${status.remainingRounds}回合`;
-  const unit = /^(lifesteal|stun|extra_action)_/.test(status.type) ? "个百分点" : status.type.endsWith("_down") ? "%" : "点";
+  const unit = /^(lifesteal|stun|extra_action)_/.test(status.type) ? "个百分点" : status.type.endsWith("_down") && !status.flat ? "%" : "点";
   return `${prefix}${CARD_BATTLE_STATUS_LABELS[status.type]}：${status.value}${unit}，本层${status.multiplier === .5 ? "半效50%" : "全效100%"}，${remaining}`;
 }

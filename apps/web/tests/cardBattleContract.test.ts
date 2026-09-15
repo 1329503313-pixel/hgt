@@ -271,7 +271,7 @@ test("备战支持保存、编辑和按固定位置使用卡组", () => {
 });
 
 test("卡牌施放技能时在血条上方展示技能名称", () => {
-  assert.match(view, /activeEvent\?\.kind === "skill" && isActiveActor && activeEvent\.skillName/);
+  assert.match(view, /\(activeEvent\?\.kind === "skill" \|\| activeEvent\?\.bond\) && isActiveActor && activeEvent\.skillName/);
   assert.match(view, /card-battle-skill-name/);
   assert.match(styles, /@keyframes card-battle-skill-name/);
 });

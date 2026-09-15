@@ -2807,6 +2807,7 @@ export async function initDatabase() {
       can_attack_rear TINYINT(1) NOT NULL DEFAULT 0,
       skill_name VARCHAR(50) NULL,
       skill_description VARCHAR(500) NULL,
+      bonds_json JSON NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (card_id, star_level),
@@ -2851,6 +2852,7 @@ export async function initDatabase() {
   await ensureColumn("asset_card_battle_tiers", "lifesteal_rate", "lifesteal_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
   await ensureColumn("asset_card_battle_tiers", "stun_rate", "stun_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
   await ensureColumn("asset_card_battle_tiers", "extra_action_rate", "extra_action_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
+  await ensureColumn("asset_card_battle_tiers", "bonds_json", "bonds_json JSON NULL");
   // 普通与稀有卡不参与卡牌对战；史诗与传说卡保留战斗配置。
   await pool.query(`
     DELETE battle_tiers

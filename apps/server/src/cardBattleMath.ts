@@ -7,6 +7,9 @@ export type CardBattleBuff = {
   applicationId?: number;
   sourceId?: string;
   sourceOrder?: number;
+  /** Bond layers retain their full individual value; flat debuffs subtract points. */
+  independent?: boolean;
+  flat?: boolean;
   /** Only a stun caused by a skill's extra probability has a support owner. */
   stunSupportSourceId?: string;
 };
@@ -17,6 +20,8 @@ export function cardBattleBuffBonus(buffs: readonly CardBattleBuff[], stat: Card
   let total = 0;
   for (const buff of buffs) {
     if (buff.stat !== stat || buff.value <= 0 || Boolean(buff.debuff) !== debuff) continue;
+    if (buff.debuff && buff.flat) continue;
+    if (buff.independent) { total += buff.value; continue; }
     total += buff.value * (first ? 1 : .5);
     first = false;
   }
@@ -35,7 +40,8 @@ export function cardBattleLifesteal(damage: number, rate: number) {
 export function cardBattleEffectiveStat(base: number, buffs: readonly CardBattleBuff[], stat: CardBattleBuffStat, minimum = 0) {
   const positive = base + cardBattleBuffBonus(buffs, stat);
   const reduction = Math.min(100, cardBattleBuffBonus(buffs, stat, true));
-  return Math.max(minimum, Math.round(positive * (1 - reduction / 100)));
+  const flatReduction = buffs.filter(buff => buff.stat === stat && buff.debuff && buff.flat).reduce((sum, buff) => sum + buff.value, 0);
+  return Math.max(minimum, Math.round(positive * (1 - reduction / 100) - flatReduction));
 }
 
 export function cardBattleStatuses(buffs: readonly CardBattleBuff[], round: number): CardBattleStatus[] {
@@ -54,9 +60,9 @@ export function cardBattleStatuses(buffs: readonly CardBattleBuff[], round: numb
       : ({ attack: "attack_up", skillDamage: "skill_damage_up", defense: "defense_up", speed: "speed_up", maxHp: "max_hp_up", lifestealRate: "lifesteal_up", stunRate: "stun_up", extraActionRate: "extra_action_up" } as const)[buff.stat as Exclude<CardBattleBuffStat, "healingReceived" | "stunned" | "immunity" | "revivalBlock">];
     if (!type) continue;
     const remainingRounds = Number.isFinite(buff.expiresAfterRound) ? Math.max(1, buff.expiresAfterRound - round + 1) : null;
-    const multiplier = counts.has(type) ? .5 : 1;
-    statuses.push({ type, category: buff.debuff ? "debuff" : "buff", value: buff.value, multiplier, remainingRounds });
-    counts.set(type, (counts.get(type) ?? 0) + 1);
+    const multiplier = buff.independent ? 1 : counts.has(type) ? .5 : 1;
+    statuses.push({ type, category: buff.debuff ? "debuff" : "buff", value: buff.value, multiplier, remainingRounds, ...(buff.flat ? { flat: true } : {}) });
+    if (!buff.independent) counts.set(type, (counts.get(type) ?? 0) + 1);
   }
   return statuses.sort((left, right) => cardBattleStatusOrder.indexOf(left.type) - cardBattleStatusOrder.indexOf(right.type));
 }

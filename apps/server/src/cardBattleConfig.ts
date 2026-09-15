@@ -8,6 +8,7 @@ import {
   type CardBattleTier,
 } from "./cardBattle.js";
 import { pool } from "./db.js";
+import { cardBattleBondsSchema } from "./cardBattleBondSchema.js";
 import { cardBattleDebuffCodes, isCardBattleDebuff } from "./cardBattleStatus.js";
 import { CARD_BATTLE_CONTROL_CODES, cardBattleControlNeedsDuration, isCardBattleCleanse, isCardBattleStun, isCardBattleAttachedOnly, CARD_BATTLE_PROC_BUFF_CODES, cardBattleProcStat, isCardBattleDamageEffect } from "@hgt/shared";
 
@@ -112,6 +113,7 @@ export const cardBattleTierSchema = z.object({
   skillName: z.string().trim().max(50),
   skillDescription: z.string().trim().max(500),
   effects: z.array(cardBattleEffectSchema).max(50),
+  bonds: cardBattleBondsSchema.optional(),
 });
 
 export const cardBattleTiersSchema = z.array(cardBattleTierSchema).length(4).superRefine((tiers, context) => {
@@ -172,6 +174,7 @@ export async function loadCardBattleTiers(cardId: string, db: mysql.Pool | mysql
     canAttackRear: Boolean(row.can_attack_rear),
     skillName: String(row.skill_name ?? ""),
     skillDescription: String(row.skill_description ?? ""),
+    bonds: row.bonds_json == null ? [] : typeof row.bonds_json === "string" ? JSON.parse(row.bonds_json) : row.bonds_json,
     effects: effectRows.filter((effect) => Number(effect.star_level) === Number(row.star_level)).map((effect): CardBattleSkillEffect => ({
       id: String(effect.id),
       order: Number(effect.effect_order),
@@ -194,11 +197,11 @@ export async function saveCardBattleTiers(cardId: string, tiers: CardBattleTierI
   for (const tier of [...tiers].sort((left, right) => left.starLevel - right.starLevel)) {
     await db.query(
       `INSERT INTO asset_card_battle_tiers
-        (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear, skill_name, skill_description, crit_rate, crit_damage, lifesteal_rate, stun_rate, extra_action_rate)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear, skill_name, skill_description, crit_rate, crit_damage, lifesteal_rate, stun_rate, extra_action_rate, bonds_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [cardId, tier.starLevel, tier.maxHp, tier.attack, tier.defense, tier.speed, tier.energyRequired,
         tier.canAttackRear ? 1 : 0, sharedSkillName, tier.skillDescription || null, tier.critRate ?? 25, tier.critDamage ?? 150,
-        tier.lifestealRate ?? 0, tier.stunRate ?? 0, tier.extraActionRate ?? 0],
+        tier.lifestealRate ?? 0, tier.stunRate ?? 0, tier.extraActionRate ?? 0, tier.bonds?.length ? JSON.stringify(tier.bonds) : null],
     );
     for (const [index, effect] of [...tier.effects].sort((left, right) => left.order - right.order).entries()) {
       await db.query(

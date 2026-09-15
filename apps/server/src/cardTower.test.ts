@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { emptyCardTowerFormations, replaceCardTowerFormation, cardTowerFormationError } from "@hgt/shared";
 import { simulateCardBattle, type CardBattlePlayerInput, type CardBattleTier } from "./cardBattle.js";
 import { defaultCardBattleTiers } from "./cardBattleConfig.js";
+import { resolveCardBattlePlayback } from "./cardBattlePlayback.js";
 
 function squad(id: string, seat: 1 | 2, values: Partial<CardBattleTier> = {}): CardBattlePlayerInput {
   return { userId: id, nickname: id, seat, cards: Array.from({ length: 5 }, (_, i) => ({
@@ -62,4 +63,29 @@ test("死亡连锁同时消灭当前阵容与BOSS时，尚存后备阵容仍可�
   const result = simulateCardBattle([first, reserve, boss], "mutual-with-reserves", "tower");
   assert.ok(result.finalStates.every((card) => !card.alive));
   assert.equal(result.winnerSeat, 1); assert.equal(result.endReason, "elimination");
+});
+
+test("后备速度更高仍按一二三队依次上场，回放中途及结束保持实际在场队伍", () => {
+  const inputs = [squad("one", 1, { maxHp: 1, speed: 10 }), squad("two", 1, { maxHp: 1, speed: 2000 }),
+    squad("three", 1, { maxHp: 1, speed: 3000 }), squad("boss", 2, { maxHp: 100000, attack: 10000, speed: 1000 })];
+  const result = simulateCardBattle(inputs, "ordered-relay", "tower");
+  const order = ["one", "two", "three"];
+  assert.deepEqual(result.events.filter((event) => event.text.includes("接替上场")).map((event) => event.text), ["two 接替上场", "three 接替上场"]);
+  let previous = 0, elapsed = 0;
+  const start = new Date("2026-09-15T00:00:00Z");
+  for (const event of result.events) {
+    const squadIds = [...new Set(event.states.filter((state) => state.seat === 1).map((state) => state.userId))];
+    assert.equal(squadIds.length, 1);
+    const current = order.indexOf(squadIds[0]!);
+    assert.ok(current === previous || current === previous + 1);
+    previous = current;
+    elapsed += event.durationMs;
+    const playback = resolveCardBattlePlayback(result, start, "playing", start.getTime() + elapsed);
+    assert.deepEqual(playback.states, event.states);
+  }
+  assert.equal(previous, 2);
+  const completed = resolveCardBattlePlayback(result, start, "ended", start.getTime() + elapsed);
+  assert.equal(completed.complete, true);
+  assert.deepEqual(completed.states, result.finalStates);
+  assert.ok(completed.states.filter((state) => state.seat === 1).every((state) => state.userId === "three"));
 });
