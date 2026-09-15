@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { pool } from "./db.js";
 import { freezeBattleRecordRanks } from "./gameRecords.js";
 import { calculateCardBattlePower, type CardBattlePlayerInput } from "./cardBattle.js";
+import { applyCardBattleCollectionStats, loadCardBattleCollectionBonuses } from "./cardBattleCollection.js";
 import {
   buildCardBattlePlayerInput,
   CardBattleRoomRuleError,
@@ -107,6 +108,8 @@ export async function listCardBattleRanking(
        entries.achieved_at, users.nickname, users.avatar IS NOT NULL AS has_avatar,
        users.role, users.vip_growth_value, users.vip_expires_at, users.vip_legacy_active,
        COALESCE(SUM(owned.star_level), 0) AS star_total,
+       JSON_ARRAYAGG(JSON_OBJECT('cardId', cards.id, 'maxHp', tiers.max_hp,
+         'attack', tiers.attack_value, 'defense', tiers.defense_value, 'speed', tiers.speed_value)) AS power_cards,
        COALESCE(SUM(tiers.max_hp + tiers.attack_value * 3 + tiers.defense_value * 4
          + tiers.speed_value * 7 - tiers.energy_required * 10
          + CASE relic.battle_effect_type
@@ -136,11 +139,21 @@ export async function listCardBattleRanking(
     [limit],
   );
   const byRank = new Map(rows.map((row) => [Number(row.rank_position), row]));
+  const collections = await loadCardBattleCollectionBonuses(rows.map(row => String(row.user_id)), db);
   return Array.from({ length: limit }, (_, index) => {
     const rank = index + 1;
     const row = byRank.get(rank);
     if (!row) return { rank, occupied: false as const };
     const vip = vipGrowthSnapshot(row);
+    const powerCards: Array<{ cardId: string | null; maxHp: number | null; attack: number; defense: number; speed: number }> =
+      typeof row.power_cards === "string" ? JSON.parse(row.power_cards) : row.power_cards ?? [];
+    const collectionPower = powerCards.reduce((sum, card) => {
+      if (!card.cardId || card.maxHp == null) return sum;
+      const base = { maxHp: Number(card.maxHp), attack: Number(card.attack), defense: Number(card.defense), speed: Number(card.speed), energyRequired: 0, critDamage: 150 };
+      const boosted = applyCardBattleCollectionStats(base, card.cardId, collections.get(String(row.user_id))!);
+      // The SQL total already includes equipment; scale only the star tier, then add its power difference.
+      return sum + calculateCardBattlePower(boosted) - calculateCardBattlePower(base);
+    }, 0);
     return {
       rank,
       occupied: true as const,
@@ -152,7 +165,7 @@ export async function listCardBattleRanking(
         vipActive: vip.active,
       },
       starTotal: Number(row.star_total ?? 0),
-      totalPower: Number(row.current_total_power ?? row.saved_total_power ?? 0),
+      totalPower: Number(row.current_total_power ?? row.saved_total_power ?? 0) + collectionPower,
       achievedAt: new Date(row.achieved_at).toISOString(),
     };
   });

@@ -590,7 +590,7 @@ export type OnlineCardBattleCard = {
   motionMp4Url: string | null;
   motionWebmUrl: string | null;
   motionPosterUrl: string | null;
-  stats: import("@hgt/shared").CardBattleProcStats & { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; critRate: number; critDamage: number; canAttackRear: boolean };
+  stats: import("@hgt/shared").CardBattleProcStats & import("@hgt/shared").CardBattleAccuracyStats & { maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; critRate: number; critDamage: number; canAttackRear: boolean };
   combatPower: number;
   skillName: string;
   skillDescription: string;
@@ -655,9 +655,9 @@ export type OnlineCardBattlePlayback = {
   activeEventElapsedMs: number;
   serverNow: string;
 };
-export type OnlineCardBattleCardState = import("@hgt/shared").CardBattleProcStats & {
+export type OnlineCardBattleCardState = import("@hgt/shared").CardBattleProcStats & import("@hgt/shared").CardBattleAccuracyStats & {
   instanceId: string; userId: string; seat: 1 | 2; slot: 1 | 2 | 3 | 4 | 5; row: "front" | "rear";
-  hp: number; maxHp: number; energy: number; energyRequired: number; attack: number; defense: number; speed: number; alive: boolean;
+  critRate?: number; critDamage?: number; shield?: number; hp: number; maxHp: number; energy: number; energyRequired: number; attack: number; defense: number; speed: number; alive: boolean;
   damageDealt?: number; damageTaken?: number; healingDone?: number;
   supportDone?: number; supportBreakdown?: import("@hgt/shared").CardBattleSupportBreakdown;
   statuses?: import("./cardBattleEffects").CardBattleStatus[];
@@ -669,7 +669,7 @@ export type OnlineCardBattleEvent = {
   lifesteal?: number;
   extraAction?: boolean;
   actorId: string | null; skillName: string | null;
-  effects: Array<{ targetId: string; amount?: number; blocked?: boolean; critical?: boolean; label?: string; stunned?: boolean; stunResisted?: boolean }>;
+  effects: Array<{ dodged?: boolean; shieldDamage?: number; hpDamage?: number; shieldGained?: number; targetId: string; amount?: number; blocked?: boolean; critical?: boolean; label?: string; stunned?: boolean; stunResisted?: boolean }>;
   effectType?: import("./digitalAssets").CardBattleEffectType;
   states: OnlineCardBattleCardState[]; durationMs: number; text: string;
 };

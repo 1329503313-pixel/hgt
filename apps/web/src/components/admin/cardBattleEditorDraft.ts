@@ -1,5 +1,5 @@
 import { isCardBattleDamageEffect, isCardBattleAttachedOnly } from "@hgt/shared";
-import { bondNeedsValue, bondNeedsDuration, bondIsRate, type CardBattleBond, type CardBattleBondAction } from "@hgt/shared";
+import { bondNeedsValue, bondNeedsDuration, bondIsRate, bondValueMaximum, type CardBattleBond, type CardBattleBondAction } from "@hgt/shared";
 import type { CardBattleCondition, CardBattleEffectType, CardBattleSkillAction, CardBattleSkillEffect, CardBattleTier } from "../../shared/digitalAssets";
 
 // Empty selections belong to the editor only; persisted battle types remain strict.
@@ -20,8 +20,8 @@ export function cardBattleBondError(bond: CardBattleBondDraft) {
   for (const action of bond.actions) {
     if (!action.target) return "请选择羁绊技能对象";
     if (!action.type) return "请选择羁绊技能类型";
-    if (bondNeedsValue(action.type) && (action.value == null || !Number.isFinite(action.value) || action.value <= 0 || action.value > (bondIsRate(action.type) ? 100 : 1_000_000_000)
-      || (bondIsRate(action.type) ? Math.abs(action.value * 100 - Math.round(action.value * 100)) > 1e-6 : !Number.isInteger(action.value)))) return "请填写有效羁绊数值：属性为正整数，概率不超过100且最多两位小数";
+    if (bondNeedsValue(action.type) && (action.value == null || !Number.isFinite(action.value) || action.value <= 0 || action.value > bondValueMaximum(action.type)
+      || (bondIsRate(action.type) ? Math.abs(action.value * 100 - Math.round(action.value * 100)) > 1e-6 : !Number.isInteger(action.value)))) return "请填写有效羁绊数值：属性为正整数，概率不超过100、暴击伤害不超过10000个百分点，最多两位小数";
     if (bondNeedsDuration(action.type) && (action.duration == null || !Number.isSafeInteger(action.duration) || action.duration < 1)) return "羁绊持续回合必须为正整数";
   }
   return null;

@@ -1,0 +1,19 @@
+export const CARD_BATTLE_ACCURACY_STATS = [
+    { key: "dodgeRate", column: "dodge_rate", label: "闪避率" },
+    { key: "hitRate", column: "hit_rate", label: "命中率" },
+];
+export const CARD_BATTLE_DEFENSE_EFFECT_LABELS = {
+    shield_self: "为自己增加护盾值", shield_front: "为友军前排增加护盾值",
+    shield_rear: "为友军后排增加护盾值", shield_all: "为友军全员增加护盾值",
+    damage_true_single: "造成真实伤害", damage_true_random: "对1名随机敌人造成真实伤害",
+    damage_true_random_2: "对2名随机敌人造成真实伤害", damage_true_random_3: "对3名随机敌人造成真实伤害",
+    damage_true_all: "对全体敌人造成真实伤害",
+    dodge_self: "为自己增加闪避率", dodge_front: "为友军前排增加闪避率", dodge_all: "为友军全员增加闪避率",
+    hit_self: "为自己增加命中率", hit_rear: "为友军后排增加命中率", hit_all: "为友军全员增加命中率",
+};
+export const CARD_BATTLE_DEFENSE_EFFECT_CODES = Object.keys(CARD_BATTLE_DEFENSE_EFFECT_LABELS);
+export const isCardBattleTrueDamage = (type) => type.startsWith("damage_true_");
+export const isCardBattleShield = (type) => type.startsWith("shield_");
+export const cardBattleAccuracyStat = (type) => type.startsWith("dodge_") ? "dodgeRate" : type.startsWith("hit_") ? "hitRate" : null;
+export const cardBattleDefenseNeedsDuration = (type) => isCardBattleShield(type) || cardBattleAccuracyStat(type) !== null;
+export const cardBattleDodgeChance = (dodge, hit) => Math.min(100, Math.max(0, dodge - hit));

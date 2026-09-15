@@ -1,4 +1,5 @@
 export declare const CARD_BATTLE_SUPPORT_LABELS: {
+    readonly shield: "护盾抵挡";
     readonly healing: "有效治疗";
     readonly speed: "速度增减";
     readonly revival: "复活贡献";

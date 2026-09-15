@@ -5967,3 +5967,9 @@ textarea {
 /* Cooperative BOSS: each third of the allied half contains one front and two rear cards. */
 .card-battle-half.card-battle-team-member { min-height:244px; gap:20px; padding:56px 2px 8px; }
 .card-battle-team-member .card-battle-formation-row { gap:4px; }
+
+.card-battle-dodge { z-index: 74; animation: card-battle-dodge 700ms ease-out 280ms both; }
+.card-battle-dodge-1 { --dodge-y: 18px; }
+.card-battle-dodge-2 { --dodge-y: -18px; }
+@keyframes card-battle-dodge { 0%,100% { transform: translateY(0) scale(1); } 35%,60% { transform: translateY(var(--dodge-y)) scale(.94); } }
+@media (prefers-reduced-motion: reduce) { .card-battle-dodge { animation-name: card-battle-hit-reduced; } }

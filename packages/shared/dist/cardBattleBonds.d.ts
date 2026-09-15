@@ -41,6 +41,11 @@ export declare const CARD_BATTLE_BOND_ACTIONS: {
     readonly lifesteal_up: "立即增加吸血率";
     readonly stun_up: "立即增加击晕率";
     readonly speed_down: "立即降低速度";
+    readonly shield: "立即增加护盾值";
+    readonly dodge_up: "立即增加闪避率";
+    readonly hit_up: "立即增加命中率";
+    readonly crit_rate_up: "立即增加暴击率";
+    readonly crit_damage_up: "立即增加暴击伤害";
 };
 export type CardBattleBondEvent = keyof typeof CARD_BATTLE_BOND_EVENTS;
 export type CardBattleBondTarget = keyof typeof CARD_BATTLE_BOND_TARGETS;
@@ -60,4 +65,5 @@ export type CardBattleBond = {
 export declare const bondNeedsValue: (type: string) => boolean;
 export declare const bondNeedsDuration: (type: string) => boolean;
 export declare const bondIsRate: (type: string) => boolean;
+export declare const bondValueMaximum: (type: string) => 100 | 10000 | 1000000000;
 export declare const parseBondCardNos: (input: string) => string[];

@@ -14,11 +14,12 @@ export function AssetPackCard({ card, packType, selected, selecting, onSelectUp 
   const descriptionId = useId();
   const interactive = card.rarity === "epic" || card.rarity === "legend";
   const tier = card.battleTier;
-  const label = `${card.name}，${assetRarityLabel(card.rarity, packType)}，${card.owned ? `${card.starLevel ?? 0}星` : "未获得"}${selected ? "，当前UP" : ""}${interactive ? `，${expanded ? "点击收起介绍" : "点击查看属性与技能"}${card.rarity === "epic" && !selected ? "并选择为UP" : ""}` : ""}`;
+  const canSelectUp = card.rarity === "epic" && (card.starLevel ?? 0) < 3;
+  const label = `${card.name}，${assetRarityLabel(card.rarity, packType)}，${card.owned ? `${card.starLevel ?? 0}星` : "未获得"}${selected ? "，当前UP" : ""}${interactive ? `，${expanded ? "点击收起介绍" : "点击查看属性与技能"}${canSelectUp && !selected ? "并选择为UP" : ""}` : ""}`;
 
   function toggle() {
     setExpanded((current) => !current);
-    if (card.rarity === "epic" && !selected) onSelectUp(card.id);
+    if (canSelectUp && !selected) onSelectUp(card.id);
   }
 
   return <div className="asset-pack-card relative min-w-0">
@@ -44,6 +45,7 @@ export function AssetPackCard({ card, packType, selected, selecting, onSelectUp 
               ["暴击率", `${tier.critRate ?? 25}%`], ["暴击伤害", `${tier.critDamage ?? 150}%`],
               ["吸血比例", `${tier.lifestealRate ?? 0}%`], ["击晕概率", `${tier.stunRate ?? 0}%`],
               ["再动概率", `${tier.extraActionRate ?? 0}%`],
+                    ["闪避率", `${tier.dodgeRate ?? 0}%`], ["命中率", `${tier.hitRate ?? 0}%`],
             ].map(([name, value]) => <span key={name} className="flex flex-wrap justify-between gap-x-1"><span>{name}</span><span className="font-bold tabular-nums">{value}</span></span>)}
           </span>
           <span className="mt-3 block font-black">技能：{tier.skillName || "未配置技能"}</span>

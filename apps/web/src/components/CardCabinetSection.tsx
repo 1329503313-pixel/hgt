@@ -75,7 +75,7 @@ export function CardCabinetSection({
 
   useEffect(() => {
     const endpoint = `${editable ? "/api/me/card-cabinet" : `/api/users/${userId}/card-cabinet`}${compact ? "?compact=true" : ""}`;
-    api<{ cabinet: CardCabinet }>(endpoint, { cacheTtlMs: 30_000 })
+    api<{ cabinet: CardCabinet }>(endpoint, { bypassCache: true })
       .then(({ cabinet: next }) => { setCabinet(next); setSelected(next.showcase.map((card) => card.id)); })
       .catch((error) => onError?.((error as Error).message));
   }, [userId, editable]);
@@ -275,6 +275,7 @@ export function CardCabinetSection({
                     ["吸血比例", `${detail.battleTier.lifestealRate ?? 0}%`],
                     ["击晕概率", `${detail.battleTier.stunRate ?? 0}%`],
                     ["再动概率", `${detail.battleTier.extraActionRate ?? 0}%`],
+                    ["闪避率", `${detail.battleTier.dodgeRate ?? 0}%`], ["命中率", `${detail.battleTier.hitRate ?? 0}%`],
                   ].map(([label, value]) => <div key={label} className="rounded-xl bg-field px-3 py-3">
                     <dt className="text-sm font-medium text-muted">{label}</dt>
                     <dd className="mt-1 font-mono text-lg font-black tabular-nums text-ink">{value}</dd>

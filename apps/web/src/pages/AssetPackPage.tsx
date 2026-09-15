@@ -70,7 +70,7 @@ export default function AssetPackPage() {
   }
 
   async function selectUpCard(cardId: string) {
-    if (!data || upSelectingCardId || data.pack.upCardId === cardId) return;
+    if (!data || upSelectingCardId || data.pack.upCardId === cardId || (data.pack.cards?.find(card => card.id === cardId)?.starLevel ?? 0) >= 3) return;
     setUpSelectingCardId(cardId);
     try {
       const result = await api<{ upCardId: string; epicUpGuaranteed: boolean }>(`/api/asset-store/packs/${packId}/up-card`, {
@@ -110,7 +110,9 @@ export default function AssetPackPage() {
           <div className="card p-4">
             <h2 className="font-black text-ink">卡包内容</h2>
             <p className="mt-1 text-xs leading-5 text-muted">点击史诗或传说卡查看属性与技能，再次点击收起；介绍可上下滑动。</p>
-            {pack.upCardId && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900"><p>点击任意史诗卡可选择一张UP。每次抽到史诗卡时，UP与非UP各占50%；若抽到非UP史诗卡，下一张史诗必定为当前UP。</p>{pack.epicUpGuaranteed && <p className="mt-1 font-black text-orange-700">下一张史诗卡必定为当前UP，切换UP后状态仍保留。</p>}</div>}
+            {pack.upCardId && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900"><p>点击未满星史诗卡可选择UP。多张可抽史诗时，UP与非UP各占50%；若抽到非UP史诗卡，下一张史诗必定为当前UP。仅剩一张未满星史诗时，史诗结果必定为该卡。</p>{pack.epicUpGuaranteed && <p className="mt-1 font-black text-orange-700">下一张史诗卡必定为当前UP，切换UP后状态仍保留。</p>}</div>}
+            <p className="mt-3 text-xs leading-5 text-muted">有未满星史诗时，已满星史诗不再抽出，也不能设为 UP；当前 UP 满星后自动切换下一张。全部史诗满星后取消 UP，允许重复抽取，史诗保底继续生效。抽到传说不会清空史诗保底进度。</p>
+            <p className="mt-2 text-xs leading-5 text-muted">当前卡包所有传说卡满星且仍有未满星史诗时，传说保底改为必出当前 UP 史诗，并重置传说、史诗保底。普通抽出的传说不转换；全部史诗满星后恢复传说保底。</p>
             <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">
               {(pack.cards ?? []).map((card) => <AssetPackCard key={`${pack.id}:${user?.id}:${card.id}`} card={card} packType={pack.packType} selected={card.id === pack.upCardId} selecting={card.id === upSelectingCardId} onSelectUp={(cardId) => void selectUpCard(cardId)} />)}
             </div>

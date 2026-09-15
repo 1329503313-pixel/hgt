@@ -5,6 +5,7 @@ import { cardBattleBondsSchema } from './cardBattleBondSchema.js';
 import { createCardBattleBondQueue } from './cardBattleBondQueue.js';
 import { simulateCardBattle, type CardBattleDeckCard, type CardBattlePlayerInput, type CardBattleSkillEffect } from './cardBattle.js';
 import { cardBattleEffectiveStat, cardBattleEffectiveProc, cardBattleStatuses, type CardBattleBuff } from './cardBattleMath.js';
+import { cardBattleEffectiveCritical } from './cardBattleMath.js';
 const action = (type:CardBattleBondAction['type']='attack_up', target:CardBattleBondAction['target']='self', value=100, duration=1):CardBattleBondAction => ({type,target,value:bondNeedsValue(type)?value:null,duration:bondNeedsDuration(type)?duration:null});
 const bond = (event:CardBattleBond['event'], actions=[action()], cardNos=['A1']):CardBattleBond => ({event,cardNos,actions});
 const card = (id:string,slot:number,bonds:CardBattleBond[]=[]):CardBattleDeckCard => ({
@@ -14,6 +15,52 @@ const card = (id:string,slot:number,bonds:CardBattleBond[]=[]):CardBattleDeckCar
 });
 const players = ():CardBattlePlayerInput[] => ['A','B'].map((prefix,index)=>({userId:prefix,nickname:prefix,seat:(index+1) as 1|2,cards:[1,2,3,4,5].map(slot=>card(`${prefix}${slot}`,slot))}));
 const skill = (type:CardBattleSkillEffect['type'],value:number|null,extra:Partial<CardBattleSkillEffect>={}):CardBattleSkillEffect => ({id:'skill',order:0,condition:'energy_full',conditionValue:null,type,value,duration:null,...extra});
+
+test('暴击羁绊按百分点全额叠加、独立到期，暴击伤害可以超过100个百分点',()=>{
+  assert.ok(cardBattleBondsSchema.safeParse([bond('attack',[action('crit_damage_up','self',250.25,2)])]).success);
+  assert.equal(cardBattleBondsSchema.safeParse([bond('attack',[action('crit_rate_up','self',100.01,2)])]).success,false);
+  assert.equal(cardBattleBondsSchema.safeParse([bond('attack',[action('crit_damage_up','self',10000.01,2)])]).success,false);
+  const buffs:CardBattleBuff[]=[{stat:'critRate',value:70,expiresAfterRound:1,independent:true},{stat:'critRate',value:40,expiresAfterRound:2,independent:true},
+    {stat:'critDamage',value:50.25,expiresAfterRound:1,independent:true},{stat:'critDamage',value:25.5,expiresAfterRound:2,independent:true}];
+  assert.deepEqual(cardBattleEffectiveCritical({critRate:0,critDamage:150},buffs),{critRate:100,critDamage:225.75});
+  assert.deepEqual(cardBattleEffectiveCritical({critRate:0,critDamage:150},buffs.filter(b=>b.expiresAfterRound>1)),{critRate:40,critDamage:175.5});
+  assert.ok(cardBattleStatuses(buffs,1).every(s=>s.multiplier===1));
+});
+
+test('暴击羁绊作用于普攻、伤害技能和治疗，回合到期后恢复原值',()=>{
+  for(const mode of ['attack','damage','heal'] as const) {
+    const input=players(), owner=input[0]!.cards[0]!;
+    owner.tier.bonds=[bond('energy_empty',[action('crit_rate_up','self',100,1),action('crit_damage_up','self',50,2)],['A2'])];
+    if(mode!=='attack') { owner.tier.energyRequired=10;owner.tier.effects=[skill(mode==='damage'?'damage_all':'heal_all_allies',100)]; }
+    const result=simulateCardBattle(input,`critical-bond-${mode}`);
+    const events=result.events.filter(e=>e.actorId==='A1'&&e.round===1&&e.visual===(mode==='heal'?'heal':'damage')&&e.effects.length);
+    assert.ok(events.length>0,mode);assert.ok(events.every(e=>e.effects.every(h=>h.critical===true)),mode);
+    if(mode!=='heal') assert.ok(events.every(e=>e.effects.every(h=>-(h.amount??0)>=196&&-(h.amount??0)<=204)),mode);
+    const round2=result.events.find(e=>e.kind==='round'&&e.round===2)!.states.find(c=>c.instanceId==='A1')!;
+    assert.equal(round2.critRate,0);assert.equal(round2.critDamage,200);
+    const round3=result.events.find(e=>e.kind==='round'&&e.round===3)!.states.find(c=>c.instanceId==='A1')!;
+    assert.equal(round3.critRate,0);assert.equal(round3.critDamage,150);
+  }
+});
+
+test('羁绊护盾、闪避和命中全额叠加且独立到期，护盾能触发其他己方羁绊',()=>{
+  const input=players(), owner=input[0]!.cards[0]!, listener=input[0]!.cards[1]!;
+  for(const player of input) for(const card of player.cards) card.tier.attack=0;
+  owner.tier.bonds=[bond('energy_empty',[
+    action('shield','allies',100,1),action('shield','allies',200,2),
+    action('dodge_up','allies',20.25,1),action('dodge_up','allies',30.5,2),
+    action('hit_up','allies',10.25,1),action('hit_up','allies',15.5,2),
+  ])];
+  listener.tier.bonds=[bond('shielded',[action('defense_up','self',7,1)])];
+  const result=simulateCardBattle(input,'bond-defenses');
+  assert.ok(result.events.some(e=>e.bond?.ownerId==='A2'&&e.effectType==='defense_self'));
+  const lastOpening=result.events.filter(e=>e.round===1&&e.bond?.ownerId==='A1').at(-1)!;
+  assert.ok(lastOpening.states.filter(c=>c.seat===1).every(c=>c.shield===300&&c.dodgeRate===50.75&&c.hitRate===25.75));
+  for(const round of [2,3]) {
+    const states=result.events.find(e=>e.kind==='round'&&e.round===round)!.states.filter(c=>c.seat===1);
+    assert.ok(states.every(c=>c.shield===(round===2?200:0)&&c.dodgeRate===(round===2?30.5:0)&&c.hitRate===(round===2?15.5:0)));
+  }
+});
 
 test('所有羁绊类型按数值/回合要求校验，旧技能字段不能混入羁绊',()=>{
   for(const type of Object.keys(CARD_BATTLE_BOND_ACTIONS) as CardBattleBondAction['type'][]) {

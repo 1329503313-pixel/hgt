@@ -6,6 +6,7 @@ import { lockAndCompactCardBattleRanking, lockRankingForCardBattleRoom } from ".
 import { isBossRoom } from "./cardBattleBossRules.js";
 import { bossBattlePlayer, bossPublic, emitBossRewards, loadBoss, requireAvailableBoss, settleBossRewards } from "./cardBattleBoss.js";
 import { loadCardBattleTiers } from "./cardBattleConfig.js";
+import { applyCardBattleCollectionStats, applyCardBattlePlayerCollection, loadCardBattleCollectionBonus } from "./cardBattleCollection.js";
 import { CARD_BATTLE_LINEUP_SIZE, calculateCardBattlePower, simulateCardBattle, type CardBattleDeckCard, type CardBattlePlayerInput, type CardBattleResult } from "./cardBattle.js";
 import { resolveCardBattlePlayback, surrenderCardBattleResult } from "./cardBattlePlayback.js";
 import { resolveCardBattleSettlementPlayers } from "./cardBattleSettlement.js";
@@ -116,6 +117,7 @@ export function publicFrozenCard(card: CardBattleDeckCard) {
     maxHp: card.tier.maxHp, attack: card.tier.attack, defense: card.tier.defense, speed: card.tier.speed,
     energyRequired: card.tier.energyRequired, canAttackRear: card.tier.canAttackRear,
     critRate: card.tier.critRate ?? 25, critDamage: card.tier.critDamage ?? 150,
+    dodgeRate: card.tier.dodgeRate ?? 0, hitRate: card.tier.hitRate ?? 0,
     lifestealRate: card.tier.lifestealRate ?? 0, stunRate: card.tier.stunRate ?? 0, extraActionRate: card.tier.extraActionRate ?? 0,
   }, card.collectible);
   return {
@@ -180,11 +182,12 @@ export async function releaseCardBattleSeat(roomId: string, userId: string, db: 
 }
 
 export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | mysql.PoolConnection = pool) {
+  const collection = await loadCardBattleCollectionBonus(userId, db);
   const [rows] = await db.query<mysql.RowDataPacket[]>(
     `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
        cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level,
        tiers.max_hp, tiers.attack_value, tiers.defense_value, tiers.speed_value, tiers.energy_required, tiers.can_attack_rear, tiers.crit_rate, tiers.crit_damage,
-       tiers.lifesteal_rate, tiers.stun_rate, tiers.extra_action_rate,
+       tiers.lifesteal_rate, tiers.stun_rate, tiers.extra_action_rate, tiers.dodge_rate, tiers.hit_rate,
        tiers.skill_name, tiers.skill_description
      FROM user_asset_cards owned
      JOIN asset_cards cards ON cards.id = owned.card_id
@@ -195,12 +198,13 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
   );
   return rows.map((row) => {
     const starLevel = Number(row.star_level);
-    const stats = {
+    const stats = applyCardBattleCollectionStats({
       maxHp: Number(row.max_hp), attack: Number(row.attack_value), defense: Number(row.defense_value), speed: Number(row.speed_value),
       energyRequired: Number(row.energy_required), canAttackRear: Boolean(row.can_attack_rear),
       critRate: Number(row.crit_rate ?? 25), critDamage: Number(row.crit_damage ?? 150),
+      dodgeRate: Number(row.dodge_rate ?? 0), hitRate: Number(row.hit_rate ?? 0),
       lifestealRate: Number(row.lifesteal_rate ?? 0), stunRate: Number(row.stun_rate ?? 0), extraActionRate: Number(row.extra_action_rate ?? 0),
-    };
+    }, String(row.id), collection);
     return {
       id: String(row.id),
       cardNo: String(row.card_no),
@@ -432,7 +436,10 @@ export async function buildCardBattlePlayerInput(
       ...(bossPlayerSeat ? { instanceId: `team:${userId}:${index + 1}:${cardIds[index]}` } : {}),
       collectible: collectibles.get(cardIds[index]!) ?? null });
   }
-  return { userId, nickname, seat, ...(bossPlayerSeat ? { playerSeat: bossPlayerSeat } : {}), cards };
+  return applyCardBattlePlayerCollection(
+    { userId, nickname, seat, ...(bossPlayerSeat ? { playerSeat: bossPlayerSeat } : {}), cards },
+    await loadCardBattleCollectionBonus(userId, db),
+  );
 }
 
 export async function startCardBattle(roomId: string, hostId: string | null, db: mysql.PoolConnection) {
@@ -477,7 +484,7 @@ export async function startCardBattle(roomId: string, hostId: string | null, db:
       if (!frozen || frozen.userId !== String(row.user_id) || frozen.seat !== seat || frozen.cards.length !== CARD_BATTLE_LINEUP_SIZE) {
         throw new CardBattleRoomRuleError("榜单对手阵容快照不可用，请退出后重新发起挑战");
       }
-      playerInputs.push(frozen);
+      playerInputs.push(applyCardBattlePlayerCollection(frozen, await loadCardBattleCollectionBonus(frozen.userId, db)));
     } else {
       playerInputs.push(await buildCardBattlePlayerInput(String(row.user_id), String(row.nickname), boss ? 1 : seat, cardIds.filter((cardId): cardId is string => Boolean(cardId)), db, parseBattleCollectibleBindings(row.collectible_bindings_json), boss ? Number(row.seat_number) as 1 | 2 | 3 : undefined));
     }

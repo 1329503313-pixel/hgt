@@ -1,3 +1,4 @@
+import { CARD_BATTLE_DEFENSE_EFFECT_CODES, cardBattleDefenseNeedsDuration, cardBattleAccuracyStat, isCardBattleTrueDamage } from "@hgt/shared";
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -13,6 +14,7 @@ import { cardBattleDebuffCodes, isCardBattleDebuff } from "./cardBattleStatus.js
 import { CARD_BATTLE_CONTROL_CODES, cardBattleControlNeedsDuration, isCardBattleCleanse, isCardBattleStun, isCardBattleAttachedOnly, CARD_BATTLE_PROC_BUFF_CODES, cardBattleProcStat, isCardBattleDamageEffect } from "@hgt/shared";
 
 const numericValueEffects = new Set([
+  ...CARD_BATTLE_DEFENSE_EFFECT_CODES,
   ...CARD_BATTLE_PROC_BUFF_CODES,
   ...CARD_BATTLE_CONTROL_CODES.filter(isCardBattleCleanse),
   ...cardBattleDebuffCodes,
@@ -22,6 +24,7 @@ const numericValueEffects = new Set([
   "attack_skill_damage_self", "attack_skill_damage_all_allies",
 ]);
 const durationEffects = new Set([
+  ...CARD_BATTLE_DEFENSE_EFFECT_CODES.filter(cardBattleDefenseNeedsDuration),
   ...CARD_BATTLE_CONTROL_CODES.filter(cardBattleControlNeedsDuration),
   ...CARD_BATTLE_PROC_BUFF_CODES,
   ...cardBattleDebuffCodes,
@@ -45,11 +48,11 @@ function validateAction(value: z.infer<typeof actionSchema>, context: z.Refineme
   if (!isCardBattleStun(value.type) && value.probability != null) {
     context.addIssue({ code: "custom", path: ["probability"], message: "仅眩晕技能可配置生效概率" });
   }
-  if (!isCardBattleDamageEffect(value.type) && value.ignoreDefensePercent !== 0) {
-    context.addIssue({ code: "custom", path: ["ignoreDefensePercent"], message: "仅伤害性技能可配置无视防御比例" });
+  if ((!isCardBattleDamageEffect(value.type) || isCardBattleTrueDamage(value.type)) && value.ignoreDefensePercent !== 0) {
+    context.addIssue({ code: "custom", path: ["ignoreDefensePercent"], message: "仅非真实伤害技能可配置无视防御比例" });
   }
-  if (cardBattleProcStat(value.type) && (value.value == null || value.value > 100)) {
-    context.addIssue({ code: "custom", path: ["value"], message: "吸血、击晕与再动属性技能必须填写1-100" });
+  if ((cardBattleProcStat(value.type) || cardBattleAccuracyStat(value.type)) && (value.value == null || value.value > 100)) {
+    context.addIssue({ code: "custom", path: ["value"], message: "概率属性技能必须填写1-100" });
   }
   if (isCardBattleDebuff(value.type) && (value.value == null || value.value > 100)) {
     context.addIssue({ code: "custom", path: ["value"], message: "减益比例必须填写1-100（%）" });
@@ -109,6 +112,8 @@ export const cardBattleTierSchema = z.object({
   lifestealRate: z.number().min(0).max(100).multipleOf(.01).default(0),
   stunRate: z.number().min(0).max(100).multipleOf(.01).default(0),
   extraActionRate: z.number().min(0).max(100).multipleOf(.01).default(0),
+  dodgeRate: z.number().min(0).max(100).multipleOf(.01).default(0),
+  hitRate: z.number().min(0).max(100).multipleOf(.01).default(0),
   canAttackRear: z.boolean(),
   skillName: z.string().trim().max(50),
   skillDescription: z.string().trim().max(500),
@@ -134,15 +139,15 @@ export const cardBattleTiersSchema = z.array(cardBattleTierSchema).length(4).sup
 });
 
 export const defaultCardBattleTiers = (rarity: "epic" | "legend" = "legend"): CardBattleTier[] => rarity === "epic" ? [
-  { starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 1, maxHp: 1200, attack: 375, defense: 60, speed: 95, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 2, maxHp: 1500, attack: 500, defense: 90, speed: 110, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 3, maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 1, maxHp: 1200, attack: 375, defense: 60, speed: 95, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 2, maxHp: 1500, attack: 500, defense: 90, speed: 110, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 3, maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
 ] : [
-  { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 1, maxHp: 1500, attack: 750, defense: 150, speed: 150, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 2, maxHp: 2000, attack: 1000, defense: 200, speed: 200, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 3, maxHp: 3000, attack: 1500, defense: 300, speed: 300, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 1, maxHp: 1500, attack: 750, defense: 150, speed: 150, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 2, maxHp: 2000, attack: 1000, defense: 200, speed: 200, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 3, maxHp: 3000, attack: 1500, defense: 300, speed: 300, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
 ];
 
 export type CardBattleTierInput = Omit<CardBattleTier, "effects"> & {
@@ -171,6 +176,8 @@ export async function loadCardBattleTiers(cardId: string, db: mysql.Pool | mysql
     lifestealRate: Number(row.lifesteal_rate ?? 0),
     stunRate: Number(row.stun_rate ?? 0),
     extraActionRate: Number(row.extra_action_rate ?? 0),
+    dodgeRate: Number(row.dodge_rate ?? 0),
+    hitRate: Number(row.hit_rate ?? 0),
     canAttackRear: Boolean(row.can_attack_rear),
     skillName: String(row.skill_name ?? ""),
     skillDescription: String(row.skill_description ?? ""),
@@ -197,11 +204,11 @@ export async function saveCardBattleTiers(cardId: string, tiers: CardBattleTierI
   for (const tier of [...tiers].sort((left, right) => left.starLevel - right.starLevel)) {
     await db.query(
       `INSERT INTO asset_card_battle_tiers
-        (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear, skill_name, skill_description, crit_rate, crit_damage, lifesteal_rate, stun_rate, extra_action_rate, bonds_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (card_id, star_level, max_hp, attack_value, defense_value, speed_value, energy_required, can_attack_rear, skill_name, skill_description, crit_rate, crit_damage, lifesteal_rate, stun_rate, extra_action_rate, bonds_json, dodge_rate, hit_rate)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [cardId, tier.starLevel, tier.maxHp, tier.attack, tier.defense, tier.speed, tier.energyRequired,
         tier.canAttackRear ? 1 : 0, sharedSkillName, tier.skillDescription || null, tier.critRate ?? 25, tier.critDamage ?? 150,
-        tier.lifestealRate ?? 0, tier.stunRate ?? 0, tier.extraActionRate ?? 0, tier.bonds?.length ? JSON.stringify(tier.bonds) : null],
+        tier.lifestealRate ?? 0, tier.stunRate ?? 0, tier.extraActionRate ?? 0, tier.bonds?.length ? JSON.stringify(tier.bonds) : null, tier.dodgeRate ?? 0, tier.hitRate ?? 0],
     );
     for (const [index, effect] of [...tier.effects].sort((left, right) => left.order - right.order).entries()) {
       await db.query(

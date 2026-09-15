@@ -1,4 +1,5 @@
 export const CARD_BATTLE_SUPPORT_LABELS = {
+  shield: "护盾抵挡",
   healing: "有效治疗",
   speed: "速度增减",
   revival: "复活贡献",

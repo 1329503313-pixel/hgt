@@ -1,3 +1,4 @@
+import { isCardBattleTrueDamage } from "@hgt/shared";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cardBattleBuffBonus, cardBattleEffectiveStat, cardBattleStatuses, rollCardBattleDamage, rollCardBattleCritical, type CardBattleBuff } from "./cardBattleMath.js";
@@ -173,7 +174,7 @@ test("忽防仅缩减本次有效防御，保留伤害浮动、暴击、最终�
 });
 
 test("所有伤害类型对各目标应用本行忽防比例，普攻和其他技能行保持原防御规则", () => {
-  const damageTypes = cardBattleEffectCodes.filter((type) => type.startsWith("damage_"));
+  const damageTypes = cardBattleEffectCodes.filter((type) => type.startsWith("damage_") && !isCardBattleTrueDamage(type));
   const targetCounts: Record<string, number> = { damage_single: 1, damage_rear: 1, damage_random: 1, damage_all_front: 2,
     damage_all_rear: 3, damage_random_2: 2, damage_random_3: 3, damage_random_4: 4, damage_all: 5 };
   for (const type of damageTypes) {

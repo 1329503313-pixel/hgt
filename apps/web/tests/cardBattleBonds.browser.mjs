@@ -44,7 +44,27 @@ try {
   await page.getByRole('tab',{name:'3 星',exact:true}).click();await expect(page.getByText('尚未配置羁绊技能')).toBeVisible();
   await page.getByRole('tab',{name:'0 星',exact:true}).click();await expect(page.getByLabel('羁绊条件1卡牌序号')).toHaveValue('001 002');
   assert.equal((await data())[0].bonds[0].actions[1].value,12.25);
-  await choose('卡牌行动','被增加护盾');await expect(page.getByText('此条件已预留，将在新增护盾机制后生效。')).toBeVisible();
+  await choose('羁绊技能类型','立即增加暴击伤害',1);
+  await page.getByLabel('羁绊条件1效果2数值').fill('250.25');
+  await page.getByLabel('羁绊条件1效果2回合').fill('3');
+  await expect(page.locator('#validation')).toHaveText('');
+  await expect(page.getByText('按百分点增加，例如 150% 增加 50 后为 200%；各层全额叠加、独立到期。')).toBeVisible();
+  await choose('羁绊技能类型','立即增加暴击率',1);
+  await page.getByLabel('羁绊条件1效果2数值').fill('100.01');
+  await expect(page.locator('#validation')).toContainText('概率不超过100');
+  await page.getByLabel('羁绊条件1效果2数值').fill('100');
+  await expect(page.locator('#validation')).toHaveText('');
+  for (const [label,type,value] of [['立即增加护盾值','shield',1000],['立即增加闪避率','dodge_up',12.25],['立即增加命中率','hit_up',33.5]]) {
+    await choose('羁绊技能类型',label,1);
+    await page.getByLabel('羁绊条件1效果2数值').fill(String(value));
+    await page.getByLabel('羁绊条件1效果2回合').fill('2');
+    await expect(page.locator('#validation')).toHaveText('');
+    assert.deepEqual((await data())[0].bonds[0].actions[1],{target:'trigger',type,value,duration:2});
+    await page.getByLabel('羁绊条件1效果2回合').fill('0');
+    await expect(page.locator('#validation')).not.toHaveText('');
+    await page.getByLabel('羁绊条件1效果2回合').fill('2');
+  }
+  await choose('卡牌行动','被增加护盾');await expect(page.getByText('己方指定卡牌实际获得护盾时触发；多张卡牌分别判定。')).toBeVisible();
   await choose('卡牌行动','能量为空');
   await page.getByRole('button',{name:'新增条件',exact:true}).click();
   assert.equal((await data())[0].effects.length,1);assert.equal((await data())[0].bonds.length,1);
@@ -60,5 +80,5 @@ try {
     await page.getByRole('region',{name:'羁绊技能配置'}).screenshot({path:`artifacts/card-battle-bonds/editor-${viewport.width}.png`});
   }
   assert.deepEqual(errors,[]);
-  console.log('PASS: 羁绊编辑、空格序号、渐进字段、附加效果、数值验证、星级隔离、护盾预留、Buff单位、目标动画及三个宽度');
+  console.log('PASS: 羁绊编辑、空格序号、渐进字段、附加效果、数值验证、星级隔离、护盾触发说明、Buff单位、目标动画及三个宽度');
 } finally {await browser.close();}

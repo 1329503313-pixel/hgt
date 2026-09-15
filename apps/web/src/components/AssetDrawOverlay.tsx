@@ -119,7 +119,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
                 <p className="text-lg font-black">{current.name}</p>
                 <p className="mt-1 text-sm text-cyan-100">
                   {current.firstObtained ? "首次获得" : current.fullStarDuplicate ? `满星转化 +${current.shellRefund} 贝壳` : current.starUpgraded ? `升至 ${current.starAfter} 星` : "重复卡 · 升星进度已增加"}
-                  {current.pityType ? ` · ${current.pityType === "legend" ? "传说" : current.pityType === "epic" ? "史诗" : "稀有"}保底` : ""}
+                  {current.pityType === "legend" && current.rarity === "epic" ? " · 传说保底转 UP 史诗" : current.pityType ? ` · ${current.pityType === "legend" ? "传说" : current.pityType === "epic" ? "史诗" : "稀有"}保底` : ""}
                 </p>
                 <p className="mt-3 text-xs font-bold text-white/55">{Math.min(revealed, order.results.length)} / {order.results.length}</p>
                 {waitingForLegend && <p className="mt-4 animate-pulse text-sm font-black tracking-[0.16em] text-fuchsia-200">传说降临 · 点击屏幕继续</p>}

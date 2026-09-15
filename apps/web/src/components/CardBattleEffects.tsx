@@ -48,6 +48,7 @@ export function CardBattleSkillFx({ event, instanceId }: { event: OnlineCardBatt
   const spec = CARD_BATTLE_MOTIONS[event.effectType ?? fallback];
   const targetIndex = event.effects.findIndex((effect) => effect.targetId === instanceId);
   const caster = event.actorId === instanceId;
+  if (targetIndex >= 0 && event.effects[targetIndex]?.dodged && !caster) return null;
   if (!spec || targetIndex < 0 && !caster) return null;
   const sourceOnly = targetIndex < 0;
   return <BattleFx spec={spec} durationMs={event.durationMs} effectType={event.effectType ?? fallback} sourceOnly={sourceOnly} targetIndex={targetIndex} />;

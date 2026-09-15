@@ -27,9 +27,12 @@ try {
   await connection.query(widening);
   await connection.query(widening);
   const tiers = cardBattleTiersSchema.parse(defaultCardBattleTiers().map((tier) => ({ ...tier,
-    bonds: [{cardNos:['001','002'],event:'energy_empty',actions:[{target:'trigger',type:'attack_up',value:123,duration:2},{target:'random_4',type:'skill',value:null,duration:null}]}], effects: [{
+    dodgeRate: 20.25, hitRate: 10.5,
+    bonds: [{cardNos:['001','002'],event:'energy_empty',actions:[{target:'trigger',type:'attack_up',value:123,duration:2},{target:'random_4',type:'skill',value:null,duration:null},{target:'self',type:'crit_rate_up',value:20.25,duration:2},{target:'allies',type:'crit_damage_up',value:250.5,duration:3},{target:'allies',type:'shield',value:1000,duration:2},{target:'self',type:'dodge_up',value:12.25,duration:1},{target:'trigger',type:'hit_up',value:33.5,duration:3}]}], effects: [{
     order: 0, condition: "energy_full", conditionValue: null, type: "stun_enemy_all", value: null, duration: 5_000_000_000, probability: 12.25,
     additionalEffects: [
+      { type: "shield_all", value: 1234, duration: 2 },
+      { type: "damage_true_random_3", value: 456, duration: null },
       { type: "damage_all", value: 1000, duration: null, ignoreDefensePercent: 75.25 },
       { type: "revival_block_damaged", value: null, duration: 365 },
       { type: "act_again", value: null, duration: null },
@@ -39,12 +42,15 @@ try {
   const loaded = await loadCardBattleTiers("control-integration", db);
   assert.equal(loaded.length, 4);
   for (const tier of loaded) {
+    assert.equal(tier.dodgeRate, 20.25); assert.equal(tier.hitRate, 10.5);
+    assert.equal(tier.effects[0]!.additionalEffects?.[0]?.type, "shield_all");
+    assert.equal(tier.effects[0]!.additionalEffects?.[1]?.type, "damage_true_random_3");
     assert.deepEqual(tier.bonds, tiers[0]!.bonds);
     assert.equal(tier.effects[0]!.duration, 5_000_000_000);
     assert.equal(tier.effects[0]!.probability, 12.25);
-    assert.equal(tier.effects[0]!.additionalEffects?.[0]?.ignoreDefensePercent, 75.25);
-    assert.equal(tier.effects[0]!.additionalEffects?.[1]?.duration, 365);
-    assert.equal(tier.effects[0]!.additionalEffects?.[2]?.type, "act_again");
+    assert.equal(tier.effects[0]!.additionalEffects?.[2]?.ignoreDefensePercent, 75.25);
+    assert.equal(tier.effects[0]!.additionalEffects?.[3]?.duration, 365);
+    assert.equal(tier.effects[0]!.additionalEffects?.[4]?.type, "act_again");
   }
   assert.ok(cardBattleTiersSchema.safeParse(loaded).success);
   await saveCardBattleTiers("control-integration", loaded, db);

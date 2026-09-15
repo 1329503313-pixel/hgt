@@ -1,3 +1,4 @@
+import { isCardBattleTrueDamage } from "@hgt/shared";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { cardBattleDebuffCodes } from "./cardBattleStatus.js";
@@ -29,7 +30,7 @@ import { cardBattleEffectCodes } from "./cardBattle.js";
 import { bossCardSchema } from "./cardBattleBossRules.js";
 
 test("所有直接伤害技能默认忽防0%，允许0至100%的两位小数，非伤害技能不能配置忽防", () => {
-  const damageTypes = cardBattleEffectCodes.filter(isCardBattleDamageEffect);
+  const damageTypes = cardBattleEffectCodes.filter(type => isCardBattleDamageEffect(type) && !isCardBattleTrueDamage(type));
   assert.ok(damageTypes.length >= 9);
   for (const type of damageTypes) {
     const effect = { order: 0, condition: "energy_full", conditionValue: null, type, value: 800, duration: null };
@@ -106,7 +107,7 @@ test("配置持久化写入暴击字段，读取保留0%和百分比小数", asy
   } } as unknown as PoolConnection;
   await saveCardBattleTiers("card", defaultCardBattleTiers().map((tier) => ({ ...tier, critRate: 0, critDamage: 175.25 })), db);
   assert.equal(inserts.length, 4);
-  assert.ok(inserts.every((args) => args.length === 16 && args[10] === 0 && args[11] === 175.25));
+  assert.ok(inserts.every((args) => args.length === 18 && args[10] === 0 && args[11] === 175.25));
   const loaded = await loadCardBattleTiers("card", db);
   assert.equal(loaded[0]!.critRate, 0);
   assert.equal(loaded[0]!.critDamage, 175.25);

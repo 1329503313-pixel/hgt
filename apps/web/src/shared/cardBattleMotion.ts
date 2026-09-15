@@ -1,3 +1,4 @@
+import { CARD_BATTLE_DEFENSE_EFFECT_LABELS, isCardBattleTrueDamage, isCardBattleShield } from "@hgt/shared";
 import { CARD_BATTLE_CONTROL_LABELS, isCardBattleStun, isCardBattleRevivalBlock, isCardBattleImmunity } from "@hgt/shared";
 import type { CardBattleEffectType } from "./digitalAssets";
 import { CARD_BATTLE_DEBUFF_LABELS, type CardBattleStatusType } from "./cardBattleEffects";
@@ -62,9 +63,17 @@ const controls = Object.fromEntries(Object.entries(CARD_BATTLE_CONTROL_LABELS).m
     label, pattern === "all" ? 5 : pattern === "front" ? 2 : pattern === "rear" ? 3 : 1)];
 })) as Record<keyof typeof CARD_BATTLE_CONTROL_LABELS, BattleMotion>;
 
+const defenseEffects = Object.fromEntries(Object.entries(CARD_BATTLE_DEFENSE_EFFECT_LABELS).map(([type, label]) => {
+  const pattern: BattleMotion["pattern"] = type.includes("random") ? "random" : type.endsWith("_self") ? "self" : type.endsWith("_front") ? "front" : type.endsWith("_rear") ? "rear" : type.endsWith("_all") ? "all" : "single";
+  const count = type.endsWith("_2") ? 2 : type.endsWith("_3") ? 3 : pattern === "all" ? 5 : pattern === "front" ? 2 : pattern === "rear" ? 3 : 1;
+  return [type, motion(isCardBattleTrueDamage(type) ? "arcane" : isCardBattleShield(type) ? "shield" : type.startsWith("dodge_") ? "wings" : "sword", "#67e8f9", pattern, isCardBattleTrueDamage(type) ? "impact" : "guard", label, count)];
+})) as Record<keyof typeof CARD_BATTLE_DEFENSE_EFFECT_LABELS, BattleMotion>;
+
 /** Every supported effect has an explicit family and a scope/count-specific choreography. */
-export const CARD_BATTLE_MOTIONS: Record<CardBattleEffectType, BattleMotion> = { ...existing, ...debuffs, ...controls };
+export const CARD_BATTLE_MOTIONS: Record<CardBattleEffectType, BattleMotion> = { ...existing, ...debuffs, ...controls, ...defenseEffects };
 export const CARD_BATTLE_STATUS_GLYPHS: Record<CardBattleStatusType, BattleGlyphName> = {
+  crit_rate_up: "sword", crit_damage_up: "arcane",
+  shield: "shield", dodge_up: "wings", hit_up: "sword",
   lifesteal_up: "blood", stun_up: "dizzy", extra_action_up: "repeat", lifesteal_down: "blood-block", stun_down: "dizzy-block", extra_action_down: "repeat-block", stunned: "dizzy",
   immunity: "shield", revival_block: "broken-heart",
   debuff_resistance: "shield", invincible: "energy", death_protection: "heart",

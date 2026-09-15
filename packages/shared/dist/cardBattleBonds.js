@@ -16,8 +16,11 @@ export const CARD_BATTLE_BOND_ACTIONS = {
     max_hp_up: "立即增加生命值上限", heal: "立即恢复生命值", energy: "立即恢复能量",
     extra_action_up: "立即增加再动率", lifesteal_up: "立即增加吸血率", stun_up: "立即增加击晕率",
     speed_down: "立即降低速度",
+    shield: "立即增加护盾值", dodge_up: "立即增加闪避率", hit_up: "立即增加命中率",
+    crit_rate_up: "立即增加暴击率", crit_damage_up: "立即增加暴击伤害",
 };
 export const bondNeedsValue = (type) => Boolean(type) && !["act_again", "attack", "skill"].includes(type);
 export const bondNeedsDuration = (type) => bondNeedsValue(type) && !["heal", "energy"].includes(type);
-export const bondIsRate = (type) => ["extra_action_up", "lifesteal_up", "stun_up"].includes(type);
+export const bondIsRate = (type) => ["extra_action_up", "lifesteal_up", "stun_up", "crit_rate_up", "crit_damage_up", "dodge_up", "hit_up"].includes(type);
+export const bondValueMaximum = (type) => type === "crit_damage_up" ? 10000 : bondIsRate(type) ? 100 : 1_000_000_000;
 export const parseBondCardNos = (input) => [...new Set(input.trim().split(/\s+/).filter(Boolean))];

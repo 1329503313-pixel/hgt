@@ -10,7 +10,7 @@ export const cardBattleDebuffCodes = [
 ] as const;
 
 export const cardBattleStatusOrder = [
-  "attack_up", "skill_damage_up", "max_hp_up", "defense_up", "speed_up",
+  "shield", "dodge_up", "hit_up", "crit_rate_up", "crit_damage_up", "attack_up", "skill_damage_up", "max_hp_up", "defense_up", "speed_up",
   "speed_down", "attack_skill_damage_down", "defense_down", "max_hp_down", "healing_received_down",
   "debuff_resistance", "invincible", "death_protection",
   "lifesteal_up", "stun_up", "extra_action_up", "lifesteal_down", "stun_down", "extra_action_down", "stunned", "immunity", "revival_block",

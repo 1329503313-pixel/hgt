@@ -121,3 +121,5 @@ export * from "./battleCollectibles.js";
 export * from "./cardBattleSkills.js";
 export * from "./cardBattleBonds.js";
 export * from "./cardTower.js";
+
+export * from "./cardBattleDefense.js";

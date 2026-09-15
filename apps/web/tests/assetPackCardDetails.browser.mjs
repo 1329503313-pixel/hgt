@@ -11,10 +11,10 @@ const bundle = await build({
     import { MemoryRouter, Routes, Route } from 'react-router-dom';
     import AssetPackPage from './src/pages/AssetPackPage';
     const image = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="150" height="210"><rect width="150" height="210" fill="#8bb5be"/><circle cx="75" cy="85" r="45" fill="#e4ecde"/></svg>');
-    const cards = ['legend', 'legend', 'epic', 'epic', 'normal', 'rare', 'legend'].map((rarity, index) => ({
+    const cards = ['legend', 'legend', 'epic', 'epic', 'normal', 'rare', 'legend', 'epic'].map((rarity, index) => ({
       id: 'c' + index, cardNo: String(index + 1).padStart(3, '0'), name: '测试卡' + index,
       rarity, imageUrl: image, thumbnailUrl: image, story: '', status: 'active', battleRole: 'damage',
-      owned: index % 2 === 0, ...(index % 2 === 0 ? { starLevel: 2 } : {}),
+      owned: index === 7 || index % 2 === 0, ...(index === 7 ? {starLevel:3} : index % 2 === 0 ? { starLevel: 2 } : {}),
       battleTier: index === 6 ? null : { starLevel: index % 2 === 0 ? 2 : 0, maxHp: index % 2 === 0 ? 2000 : 800,
         attack: 250, defense: 30, speed: 80, energyRequired: 40, critRate: 0, critDamage: 150,
         lifestealRate: 12.5, stunRate: 0, extraActionRate: 0, skillName: '潮汐' + index,
@@ -59,7 +59,12 @@ try {
     await page.addScriptTag({content: bundle.outputFiles[0].text});
     const cards = page.locator('.asset-pack-card');
     const button = index => cards.nth(index).getByRole('button');
-    await expect(cards).toHaveCount(7);
+    await expect(cards).toHaveCount(8);
+    await button(7).click();
+    await expect(button(7)).toHaveAttribute('aria-expanded','true');
+    await expect(button(7)).not.toHaveAccessibleName(/并选择为UP/);
+    assert.deepEqual(await page.evaluate(() => window.upRequests), []);
+    await button(7).click();
     for (const index of [0, 1]) {
       await button(index).click();
       await expect(button(index)).toHaveAttribute('aria-expanded', 'true');

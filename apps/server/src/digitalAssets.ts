@@ -30,6 +30,7 @@ import { awardCollectiblesForDraw, collectibleAwardsForOrder, collectiblePackCou
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import { cardBattleRoleCodes } from "./cardBattle.js";
 import { cardBattleTiersSchema, loadCardBattleTiers, saveCardBattleTiers } from "./cardBattleConfig.js";
+import { applyCardBattleCollectionStats, loadCardBattleCollectionBonus } from "./cardBattleCollection.js";
 
 type RouteUser = { id: string; role: UserRole };
 type RouteDependencies = {
@@ -320,6 +321,7 @@ function packCardBattlePreview(row: mysql.RowDataPacket | undefined) {
     lifestealRate: Number(row.lifesteal_rate ?? 0),
     stunRate: Number(row.stun_rate ?? 0),
     extraActionRate: Number(row.extra_action_rate ?? 0),
+    dodgeRate: Number(row.dodge_rate ?? 0), hitRate: Number(row.hit_rate ?? 0),
     skillName: String(row.skill_name ?? ""),
     skillDescription: String(row.skill_description ?? "")
   };
@@ -419,7 +421,7 @@ function updatePity(current: PityState, drawn: Rarity) {
   const rank = RARITY_RANK[drawn];
   return {
     rare: rank >= RARITY_RANK.rare ? 0 : Number(current.rare_count ?? 0) + 1,
-    epic: rank >= RARITY_RANK.epic ? 0 : Number(current.epic_count ?? 0) + 1,
+    epic: drawn === "epic" ? 0 : Math.min(PITY_LIMITS.epic, Number(current.epic_count ?? 0) + 1),
     legend: rank >= RARITY_RANK.legend ? 0 : Number(current.legend_count ?? 0) + 1
   };
 }
@@ -527,6 +529,7 @@ function actualCardProbability(
   card: mysql.RowDataPacket,
   epicUp: EpicUpState | null = null
 ) {
+  if (!configuration.enabled.some(candidate => String(candidate.id) === String(card.id))) return 0;
   const cardRarity = rarity(card.rarity);
   const count = configuration.enabled.filter((candidate) => rarity(candidate.rarity) === cardRarity).length;
   if (cardRarity === "epic" && epicUp && count > 0) {
@@ -542,12 +545,13 @@ function formatProbability(value: number) {
   return Number(value.toFixed(8)).toString();
 }
 
-function probabilityDisclosure(configuration: Awaited<ReturnType<typeof packConfiguration>>) {
+function probabilityDisclosure(configuration: Awaited<ReturnType<typeof packConfiguration>>, epicUp?: EpicUpState | null) {
   return (Object.keys(RARITY_RANK) as Rarity[]).map((candidate) => {
     const count = configuration.enabled.filter((card) => rarity(card.rarity) === candidate).length;
     const rarityProbability = configuration.rarityProbabilities[candidate];
     const actualProbability = count > 0 ? rarityProbability / count : 0;
-    if (candidate === "epic" && count > 0) {
+    if (candidate === "epic" && count > 0 && epicUp !== null) {
+      if (epicUp?.guaranteed) return `${RARITY_LABELS[candidate]}：${formatProbability(rarityProbability)}%（下一张史诗必出当前UP）`;
       return count === 1
         ? `${RARITY_LABELS[candidate]}：${formatProbability(rarityProbability)}%（1张，唯一史诗卡为UP，史诗结果必定为该卡）`
         : `${RARITY_LABELS[candidate]}：${formatProbability(rarityProbability)}%（${count}张，当前UP占史诗结果50%，其余${count - 1}张平分另外50%；抽到非UP后下一张史诗必出UP）`;
@@ -556,35 +560,83 @@ function probabilityDisclosure(configuration: Awaited<ReturnType<typeof packConf
   }).join("\n");
 }
 
+type OwnedStarLevels = ReadonlyMap<string, number>;
+
+function userDrawConfiguration(configuration: Awaited<ReturnType<typeof packConfiguration>>, owned: OwnedStarLevels) {
+  const hasUnmaxedEpic = configuration.enabled.some(card => rarity(card.rarity) === "epic" && (owned.get(String(card.id)) ?? 0) < 3);
+  const enabled = configuration.enabled.filter(card => !hasUnmaxedEpic || rarity(card.rarity) !== "epic" || (owned.get(String(card.id)) ?? 0) < 3);
+  return { ...configuration, enabled };
+}
+
+function resolveEpicUp(cards: mysql.RowDataPacket[], owned: OwnedStarLevels, current: EpicUpState | null): EpicUpState | null {
+  const epics = cards.filter(card => rarity(card.rarity) === "epic");
+  const currentIndex = epics.findIndex(card => String(card.id) === current?.cardId);
+  for (let offset = 0; offset < epics.length; offset += 1) {
+    const card = epics[((currentIndex < 0 ? 0 : currentIndex) + offset) % epics.length];
+    if ((owned.get(String(card.id)) ?? 0) < 3) return { cardId: String(card.id), guaranteed: current?.guaranteed ?? false };
+  }
+  return null;
+}
+
+function chooseUserDraw(
+  configuration: Awaited<ReturnType<typeof packConfiguration>>,
+  owned: OwnedStarLevels,
+  pity: PityState,
+  epicUp: EpicUpState | null
+) {
+  const triggeredPity = pityTrigger(pity);
+  const drawConfiguration = userDrawConfiguration(configuration, owned);
+  const legends = configuration.enabled.filter(card => rarity(card.rarity) === "legend");
+  const upCard = epicUp && drawConfiguration.enabled.find(card => String(card.id) === epicUp.cardId
+    && rarity(card.rarity) === "epic" && (owned.get(String(card.id)) ?? 0) < 3);
+  const legendPityConvertedToEpic = triggeredPity === "legend" && Boolean(upCard)
+    && legends.length > 0 && legends.every(card => (owned.get(String(card.id)) ?? 0) >= 3);
+  // A converted guarantee is exactly the selected UP, not an epic-or-higher roll.
+  const selection = legendPityConvertedToEpic && upCard && epicUp ? {
+    card: upCard,
+    normalizedProbability: 1,
+    originalProbability: actualCardProbability(drawConfiguration, upCard, epicUp),
+    epicUpResult: chooseEpicUpCard([upCard], epicUp.cardId, epicUp.guaranteed)
+  } : chooseWeighted(drawConfiguration.enabled, configuration.rarityProbabilities, triggeredPity, epicUp);
+  const nextPity = updatePity(pity, rarity(selection.card.rarity));
+  if (legendPityConvertedToEpic) nextPity.legend = 0;
+  return { ...selection, triggeredPity, legendPityConvertedToEpic, nextPity };
+}
+
+async function saveEpicUpState(queryable: mysql.PoolConnection, userId: string, packId: string, state: EpicUpState | null) {
+  if (!state) {
+    await queryable.query("DELETE FROM user_asset_pack_up_selections WHERE user_id = ? AND pack_id = ?", [userId, packId]);
+    return;
+  }
+  await queryable.query(
+    `INSERT INTO user_asset_pack_up_selections (user_id, pack_id, up_card_id, epic_guaranteed) VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE up_card_id = VALUES(up_card_id), epic_guaranteed = VALUES(epic_guaranteed)`,
+    [userId, packId, state.cardId, state.guaranteed ? 1 : 0]
+  );
+}
+
 async function userPackEpicUpState(
   userId: string,
   packId: string,
   configuration: Awaited<ReturnType<typeof packConfiguration>>,
   connection: mysql.Pool | mysql.PoolConnection = pool,
-  lock = false
+  lock = false,
+  owned?: OwnedStarLevels
 ): Promise<EpicUpState | null> {
-  const epicCards = configuration.enabled.filter((card) => rarity(card.rarity) === "epic");
-  const defaultCard = epicCards[0];
-  if (!defaultCard) return null;
   const queryable = connection as mysql.PoolConnection;
-  await queryable.query(
-    `INSERT IGNORE INTO user_asset_pack_up_selections (user_id, pack_id, up_card_id, epic_guaranteed)
-     VALUES (?, ?, ?, 0)`,
-    [userId, packId, defaultCard.id]
-  );
+  if (!owned) {
+    const [rows] = await queryable.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ?", [userId]);
+    owned = new Map(rows.map(row => [String(row.card_id), Number(row.star_level)]));
+  }
   const [[row]] = await queryable.query<mysql.RowDataPacket[]>(
     `SELECT up_card_id, epic_guaranteed FROM user_asset_pack_up_selections
      WHERE user_id = ? AND pack_id = ? LIMIT 1${lock ? " FOR UPDATE" : ""}`,
     [userId, packId]
   );
-  const selectedCard = epicCards.find((card) => String(card.id) === String(row?.up_card_id)) ?? defaultCard;
-  if (String(selectedCard.id) !== String(row?.up_card_id)) {
-    await queryable.query(
-      "UPDATE user_asset_pack_up_selections SET up_card_id = ? WHERE user_id = ? AND pack_id = ?",
-      [selectedCard.id, userId, packId]
-    );
-  }
-  return { cardId: String(selectedCard.id), guaranteed: bool(row?.epic_guaranteed) };
+  const state = resolveEpicUp(configuration.enabled, owned, row ? { cardId: String(row.up_card_id), guaranteed: bool(row.epic_guaranteed) } : null);
+  // Read-only detail requests must not overwrite a concurrent draw's UP state.
+  if (lock) await saveEpicUpState(queryable, userId, packId, state);
+  return state;
 }
 
 async function syncCardPacks(cardId: string, packIds: string[], connection: mysql.PoolConnection) {
@@ -703,11 +755,13 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
     if (packStatus(pack) !== "on_sale") throw new Error("ASSET_PACK_NOT_ON_SALE");
     const configuration = await packConfiguration(packId, connection);
     if (!configuration.ready) throw new Error("ASSET_PACK_CONFIGURATION_INVALID");
-    const epicUpState = await userPackEpicUpState(userId, packId, configuration, connection, true);
-
     const drawCount = mode === "ten" ? 10 : 1;
     const [[userRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT shell_balance, role FROM users WHERE id = ? FOR UPDATE", [userId]);
     if (!userRow) throw new Error("ASSET_USER_NOT_FOUND");
+    // Serialize ownership and UP decisions across different packs for this user.
+    const [ownedRows] = await connection.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ? FOR UPDATE", [userId]);
+    const ownedStarLevels = new Map(ownedRows.map(row => [String(row.card_id), Number(row.star_level)]));
+    let epicUpState = await userPackEpicUpState(userId, packId, configuration, connection, true, ownedStarLevels);
     let balance = Number(userRow.shell_balance ?? 0);
     let usedFreeDraw = false;
     let shellCost = mode === "ten" ? Number(pack.ten_price) : Number(pack.single_price);
@@ -811,13 +865,8 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
     const completedDrawCountBeforeOrder = Number(packDrawProgress?.completed_draw_count ?? 0);
 
     for (let index = 1; index <= drawCount; index += 1) {
-      const triggeredPity = pityTrigger(pityState);
-      const { card, normalizedProbability, originalProbability, epicUpResult } = chooseWeighted(
-        configuration.enabled,
-        configuration.rarityProbabilities,
-        triggeredPity,
-        epicUpState
-      );
+      const { card, normalizedProbability, originalProbability, epicUpResult, triggeredPity, legendPityConvertedToEpic, nextPity }
+        = chooseUserDraw(configuration, ownedStarLevels, pityState, epicUpState);
       if (epicUpState && epicUpResult) epicUpState.guaranteed = epicUpResult.guaranteedNext;
       const cardRarity = rarity(card.rarity);
       const [[owned]] = await connection.query<mysql.RowDataPacket[]>(
@@ -867,7 +916,6 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
         }
       }
 
-      const nextPity = updatePity(pityState, cardRarity);
       pityState = { rare_count: nextPity.rare, epic_count: nextPity.epic, legend_count: nextPity.legend };
       await connection.query(
         `INSERT INTO asset_draw_results
@@ -882,6 +930,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
             normalizedProbability,
             rarityProbability: configuration.rarityProbabilities[cardRarity],
             pityType: triggeredPity,
+            legendPityConvertedToEpic,
             ...(epicUpResult ? {
               upCardId: epicUpState?.cardId,
               upHit: epicUpResult.hitUp,
@@ -891,6 +940,8 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
         ]
       );
       await awardCollectiblesForDraw(connection, userId, packId, orderId, index, completedDrawCountBeforeOrder + index - 1);
+      ownedStarLevels.set(String(card.id), starAfter);
+      epicUpState = resolveEpicUp(configuration.enabled, ownedStarLevels, epicUpState);
     }
 
     await connection.query(
@@ -898,13 +949,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
        WHERE user_id = ? AND pack_type = ?`,
       [pityState.rare_count, pityState.epic_count, pityState.legend_count, userId, pityScope]
     );
-    if (epicUpState) {
-      await connection.query(
-        `UPDATE user_asset_pack_up_selections SET epic_guaranteed = ?
-         WHERE user_id = ? AND pack_id = ?`,
-        [epicUpState.guaranteed ? 1 : 0, userId, packId]
-      );
-    }
+    await saveEpicUpState(connection, userId, packId, epicUpState);
     if (collectionDelta > 0 || unlockedDelta > 0) {
       await connection.query(
         `UPDATE user_asset_summaries
@@ -981,7 +1026,7 @@ async function cabinetPayload(userId: string, compact = false) {
               battle_tier.speed_value AS battle_speed,
               battle_tier.energy_required AS battle_energy_required,
               battle_tier.crit_rate AS battle_crit_rate, battle_tier.crit_damage AS battle_crit_damage,
-              battle_tier.lifesteal_rate AS battle_lifesteal_rate, battle_tier.stun_rate AS battle_stun_rate, battle_tier.extra_action_rate AS battle_extra_action_rate,
+              battle_tier.lifesteal_rate AS battle_lifesteal_rate, battle_tier.stun_rate AS battle_stun_rate, battle_tier.extra_action_rate AS battle_extra_action_rate, battle_tier.dodge_rate AS battle_dodge_rate, battle_tier.hit_rate AS battle_hit_rate,
               battle_tier.skill_name AS battle_skill_name,
               battle_tier.skill_description AS battle_skill_description
        FROM user_asset_cards uc INNER JOIN asset_cards c ON c.id = uc.card_id
@@ -1000,6 +1045,7 @@ async function cabinetPayload(userId: string, compact = false) {
   ]);
   const user = userRows[0];
   if (!user) return null;
+  const collection = await loadCardBattleCollectionBonus(userId);
   const packsByCard = new Map<string, Array<{ id: string; name: string; packType: PackType; coverUrl: string }>>();
   for (const row of packRows) {
     const list = packsByCard.get(String(row.card_id)) ?? [];
@@ -1016,7 +1062,7 @@ async function cabinetPayload(userId: string, compact = false) {
     firstObtainedAt: iso(row.first_obtained_at),
     lastObtainedAt: iso(row.last_obtained_at),
     displayOrder: row.display_order == null ? null : Number(row.display_order),
-    battleTier: row.battle_star_level == null ? null : {
+    battleTier: row.battle_star_level == null ? null : applyCardBattleCollectionStats({
       starLevel: Number(row.battle_star_level),
       maxHp: Number(row.battle_max_hp),
       attack: Number(row.battle_attack),
@@ -1024,10 +1070,11 @@ async function cabinetPayload(userId: string, compact = false) {
       speed: Number(row.battle_speed),
       energyRequired: Number(row.battle_energy_required),
       critRate: Number(row.battle_crit_rate ?? 25), critDamage: Number(row.battle_crit_damage ?? 150),
+      dodgeRate: Number(row.battle_dodge_rate ?? 0), hitRate: Number(row.battle_hit_rate ?? 0),
       lifestealRate: Number(row.battle_lifesteal_rate ?? 0), stunRate: Number(row.battle_stun_rate ?? 0), extraActionRate: Number(row.battle_extra_action_rate ?? 0),
       skillName: String(row.battle_skill_name ?? ""),
       skillDescription: String(row.battle_skill_description ?? "")
-    },
+    }, String(row.id), collection),
     packs: packsByCard.get(String(row.id)) ?? []
   }));
   return {
@@ -1048,7 +1095,7 @@ function errorMessage(error: unknown) {
     ASSET_PACK_NOT_ON_SALE: "卡包当前不可抽取，请刷新商城",
     ASSET_PACK_CONFIGURATION_INVALID: "卡包配置不完整，暂时无法抽取",
     ASSET_PACK_PITY_CONFIGURATION_INVALID: "卡包缺少保底品质卡片",
-    ASSET_UP_CARD_INVALID: "请选择当前卡包中的史诗卡作为UP",
+    ASSET_UP_CARD_INVALID: "请选择当前卡包中未满星的史诗卡作为UP",
     ASSET_INSUFFICIENT_SHELLS: "贝壳余额不足",
     ASSET_USER_NOT_FOUND: "用户不存在",
     ASSET_REQUEST_ID_CONFLICT: "请求编号冲突，请重试",
@@ -1179,7 +1226,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     ]);
     if (!pack || packStatus(pack) !== "on_sale") return sendError(res, 404, "卡包不存在或已下架");
     const pityScope = pityScopeForPackType(pack.pack_type);
-    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus, collectibleRewards, drawCountRows, epicUpState, battleRows] = await Promise.all([
+    const [pityRows, usageRows, userRows, ownedRows, extraFreeStatus, collectibleRewards, drawCountRows, battleRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>("SELECT * FROM asset_pity_progress WHERE user_id = ? AND pack_type = ? LIMIT 1", [user.id, pityScope]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT used_count FROM asset_daily_free_usage WHERE user_id = ? AND pack_id = ? AND usage_date = ? LIMIT 1", [user.id, pack.id, beijingTaskDate()]).then(([rows]) => rows),
       pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id = ? LIMIT 1", [user.id]).then(([rows]) => rows),
@@ -1190,7 +1237,6 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
         "SELECT COALESCE(SUM(draw_count), 0) AS total_draw_count FROM asset_draw_count_events WHERE user_id = ? AND pack_id = ?",
         [user.id, pack.id]
       ).then(([rows]) => rows),
-      userPackEpicUpState(user.id, String(pack.id), configuration),
       pool.query<mysql.RowDataPacket[]>(
         `SELECT tier.*, c.rarity
          FROM asset_pack_cards pc
@@ -1205,7 +1251,14 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const usage = usageRows[0];
     const userRow = userRows[0];
     const ownedStarLevels = new Map(ownedRows.map((row: mysql.RowDataPacket) => [String(row.card_id), Number(row.star_level)]));
-    const battlePreviews = new Map(battleRows.map((row) => [String(row.card_id), packCardBattlePreview(row)]));
+    const epicUpState = await userPackEpicUpState(user.id, String(pack.id), configuration, pool, false, ownedStarLevels);
+    const drawConfiguration = userDrawConfiguration(configuration, ownedStarLevels);
+    const collection = await loadCardBattleCollectionBonus(user.id);
+    const battlePreviews = new Map(battleRows.map((row) => {
+      const preview = packCardBattlePreview(row);
+      const cardId = String(row.card_id);
+      return [cardId, preview && ownedStarLevels.has(cardId) ? applyCardBattleCollectionStats(preview, cardId, collection) : preview];
+    }));
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
       balance: Number(userRow?.shell_balance ?? 0),
@@ -1215,7 +1268,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           const card = packCoverCard(configuration);
           return card ? cardPayload(card, true) : null;
         })(),
-        probabilityNotice: probabilityDisclosure(configuration),
+        probabilityNotice: probabilityDisclosure(drawConfiguration, epicUpState),
         freeDrawsRemaining: Math.max(0, Number(pack.daily_free_draws) - Number(usage?.used_count ?? 0)) + (extraFreeStatus.remaining ?? 0),
         freeDrawsUnlimited: extraFreeStatus.remaining == null,
         totalDrawCount: Number(drawCountRows[0]?.total_draw_count ?? 0),
@@ -1233,7 +1286,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
           const starLevel = ownedStarLevels.get(String(card.id));
           return {
             ...cardPayload({ ...card, story: "" }, true),
-            actualProbability: actualCardProbability(configuration, card, epicUpState),
+            actualProbability: actualCardProbability(drawConfiguration, card, epicUpState),
             owned: starLevel != null,
             battleTier: battlePreviews.get(String(card.id)) ?? null,
             ...(starLevel == null ? {} : { starLevel })
@@ -1258,11 +1311,14 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       if (!pack) throw new Error("ASSET_PACK_NOT_FOUND");
       if (packStatus(pack) !== "on_sale") throw new Error("ASSET_PACK_NOT_ON_SALE");
       const configuration = await packConfiguration(req.params.id, connection);
+      await connection.query("SELECT id FROM users WHERE id = ? FOR UPDATE", [user.id]);
+      const [ownedRows] = await connection.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ? FOR UPDATE", [user.id]);
+      const ownedStarLevels = new Map(ownedRows.map(row => [String(row.card_id), Number(row.star_level)]));
       const selectedCard = configuration.enabled.find((card) =>
-        String(card.id) === parsed.data.cardId && rarity(card.rarity) === "epic"
+        String(card.id) === parsed.data.cardId && rarity(card.rarity) === "epic" && (ownedStarLevels.get(String(card.id)) ?? 0) < 3
       );
       if (!selectedCard) throw new Error("ASSET_UP_CARD_INVALID");
-      const current = await userPackEpicUpState(user.id, req.params.id, configuration, connection, true);
+      const current = await userPackEpicUpState(user.id, req.params.id, configuration, connection, true, ownedStarLevels);
       if (!current) throw new Error("ASSET_UP_CARD_INVALID");
       await connection.query(
         "UPDATE user_asset_pack_up_selections SET up_card_id = ? WHERE user_id = ? AND pack_id = ?",
@@ -1304,6 +1360,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
   app.get("/api/me/card-cabinet", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
+    res.setHeader("Cache-Control", "private, no-store");
     res.json({ cabinet: await cabinetPayload(user.id, req.query.compact === "true") });
   });
 
@@ -1482,6 +1539,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
 
   app.get("/api/users/:id/card-cabinet", async (req, res) => {
     if (!(await requireAuth(req, res))) return;
+    res.setHeader("Cache-Control", "private, no-store");
     const cabinet = await cabinetPayload(req.params.id, req.query.compact === "true");
     if (!cabinet) return sendError(res, 404, "用户不存在");
     res.json({ cabinet });
@@ -2110,5 +2168,12 @@ export const digitalAssetRules = {
   pityScopeForPackType,
   updatePity,
   chooseEpicUpCard,
+  chooseWeighted,
+  chooseUserDraw,
+  userDrawConfiguration,
+  resolveEpicUp,
+  userPackEpicUpState,
+  actualCardProbability,
+  probabilityDisclosure,
   packCardBattlePreview
 };

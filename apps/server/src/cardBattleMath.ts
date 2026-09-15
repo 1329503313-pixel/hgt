@@ -1,7 +1,8 @@
+import type { CardBattleAccuracyStat, CardBattleAccuracyStats } from "@hgt/shared";
 import { cardBattleStatusOrder, type CardBattleStatus, type CardBattleStatusType } from "./cardBattleStatus.js";
 import type { CardBattleProcStat, CardBattleProcStats } from "@hgt/shared";
 
-export type CardBattleBuffStat = "attack" | "skillDamage" | "defense" | "speed" | "maxHp" | "healingReceived" | CardBattleProcStat | "stunned" | "immunity" | "revivalBlock";
+export type CardBattleBuffStat = "critRate" | "critDamage" | "attack" | "skillDamage" | "defense" | "speed" | "maxHp" | "healingReceived" | CardBattleProcStat | CardBattleAccuracyStat | "stunned" | "immunity" | "revivalBlock";
 export type CardBattleBuff = {
   stat: CardBattleBuffStat; value: number; expiresAfterRound: number; debuff?: boolean;
   applicationId?: number;
@@ -25,7 +26,7 @@ export function cardBattleBuffBonus(buffs: readonly CardBattleBuff[], stat: Card
     total += buff.value * (first ? 1 : .5);
     first = false;
   }
-  return debuff || ["lifestealRate", "stunRate", "extraActionRate"].includes(stat) ? total : Math.round(total);
+  return debuff || ["lifestealRate", "stunRate", "extraActionRate", "dodgeRate", "hitRate", "critRate", "critDamage"].includes(stat) ? total : Math.round(total);
 }
 
 /** Rate modifiers are percentage points, not a percentage of the base rate. */
@@ -56,8 +57,8 @@ export function cardBattleStatuses(buffs: readonly CardBattleBuff[], round: numb
     // The two components of an attack+skill-damage debuff share one status icon.
     if (buff.debuff && buff.stat === "skillDamage") continue;
     const type: CardBattleStatusType | undefined = buff.debuff
-      ? ({ attack: "attack_skill_damage_down", defense: "defense_down", speed: "speed_down", maxHp: "max_hp_down", healingReceived: "healing_received_down", lifestealRate: "lifesteal_down", stunRate: "stun_down", extraActionRate: "extra_action_down" } as const)[buff.stat as Exclude<CardBattleBuffStat, "skillDamage" | "stunned" | "immunity" | "revivalBlock">]
-      : ({ attack: "attack_up", skillDamage: "skill_damage_up", defense: "defense_up", speed: "speed_up", maxHp: "max_hp_up", lifestealRate: "lifesteal_up", stunRate: "stun_up", extraActionRate: "extra_action_up" } as const)[buff.stat as Exclude<CardBattleBuffStat, "healingReceived" | "stunned" | "immunity" | "revivalBlock">];
+      ? ({ attack: "attack_skill_damage_down", defense: "defense_down", speed: "speed_down", maxHp: "max_hp_down", healingReceived: "healing_received_down", lifestealRate: "lifesteal_down", stunRate: "stun_down", extraActionRate: "extra_action_down", dodgeRate: undefined, hitRate: undefined, critRate: undefined, critDamage: undefined } as const)[buff.stat as Exclude<CardBattleBuffStat, "skillDamage" | "stunned" | "immunity" | "revivalBlock">]
+      : ({ attack: "attack_up", skillDamage: "skill_damage_up", defense: "defense_up", speed: "speed_up", maxHp: "max_hp_up", lifestealRate: "lifesteal_up", stunRate: "stun_up", extraActionRate: "extra_action_up", dodgeRate: "dodge_up", hitRate: "hit_up", critRate: "crit_rate_up", critDamage: "crit_damage_up" } as const)[buff.stat as Exclude<CardBattleBuffStat, "healingReceived" | "stunned" | "immunity" | "revivalBlock">];
     if (!type) continue;
     const remainingRounds = Number.isFinite(buff.expiresAfterRound) ? Math.max(1, buff.expiresAfterRound - round + 1) : null;
     const multiplier = buff.independent ? 1 : counts.has(type) ? .5 : 1;
@@ -80,4 +81,14 @@ export function rollCardBattleDamage(baseDamage: number, defense: number, hp: nu
   const effectiveDefense = defense * ((100 - ignoredPercent) / 100);
   const damage = Math.min(hp, Math.max(0, Math.round(incomingDamage - effectiveDefense)));
   return { incomingDamage, damage };
+}
+
+/** Accuracy buffs stack fully; clamp only the final defender-minus-attacker probability. */
+export function cardBattleEffectiveAccuracy(stats: CardBattleAccuracyStats, buffs: readonly CardBattleBuff[], stat: CardBattleAccuracyStat) {
+  return Math.max(0, (stats[stat] ?? 0) + buffs.filter(buff => buff.stat === stat).reduce((sum, buff) => sum + buff.value, 0));
+}
+
+export function cardBattleEffectiveCritical(stats: { critRate?: number; critDamage?: number }, buffs: readonly CardBattleBuff[]) {
+  return { critRate: Math.min(100, Math.max(0, (stats.critRate ?? 25) + cardBattleBuffBonus(buffs, "critRate"))),
+    critDamage: Math.max(100, (stats.critDamage ?? 150) + cardBattleBuffBonus(buffs, "critDamage")) };
 }
