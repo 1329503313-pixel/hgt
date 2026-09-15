@@ -1,6 +1,9 @@
 package com.caqis.hgt;
 
 import android.content.Context;
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -18,8 +21,15 @@ final class AndroidUpdateInstaller {
     static void openInstallPermissionSettings(Context context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.getPackageName()));
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        context.startActivity(intent);
+        if (!(context instanceof Activity)) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            context.startActivity(intent);
+        } catch (ActivityNotFoundException error) {
+            Intent fallback = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + context.getPackageName()));
+            if (!(context instanceof Activity)) fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(fallback);
+        }
     }
 
     static boolean openInstaller(Context context, File apk) {
@@ -27,30 +37,11 @@ final class AndroidUpdateInstaller {
         Uri contentUri = FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", apk);
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setDataAndType(contentUri, "application/vnd.android.package-archive");
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.setClipData(ClipData.newRawUri("APK", contentUri));
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (!(context instanceof Activity)) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         context.startActivity(intent);
         return true;
     }
 
-    static boolean openPendingInstaller(Context context) {
-        if (!canInstallPackages(context)) return false;
-
-        long downloadId = context.getSharedPreferences(ApkDownloadReceiver.PREFERENCES, Context.MODE_PRIVATE)
-            .getLong(ApkDownloadReceiver.DOWNLOAD_ID, -1L);
-        if (!ApkDownloadReceiver.downloadSucceeded(context, downloadId)) return false;
-
-        String path = context.getSharedPreferences(ApkDownloadReceiver.PREFERENCES, Context.MODE_PRIVATE)
-            .getString(ApkDownloadReceiver.DOWNLOAD_PATH, "");
-        if (path.isEmpty()) return false;
-
-        File apk = new File(path);
-        if (!apk.isFile() || apk.length() <= 0) {
-            ApkDownloadReceiver.clearPendingDownload(context);
-            return false;
-        }
-
-        if (!openInstaller(context, apk)) return false;
-        ApkDownloadReceiver.clearPendingDownload(context);
-        return true;
-    }
 }

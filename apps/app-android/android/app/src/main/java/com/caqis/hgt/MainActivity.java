@@ -12,9 +12,4 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
     }
 
-    @Override
-    public void onResume() {
-        super.onResume();
-        AndroidUpdateInstaller.openPendingInstaller(this);
-    }
 }

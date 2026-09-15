@@ -1,279 +1,235 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCw, ShieldCheck } from "lucide-react";
 import { Modal } from "./Modal";
-import { checkForHotUpdate, downloadHotUpdate, extractAndVerifyHotUpdate, type HotUpdateManifest } from "../android/hotUpdate";
-import { downloadAndInstallAndroidUpdate, getAndroidUpdate, type AndroidUpdateManifest, IS_NATIVE_ANDROID } from "../android/platform";
-import { useApp } from "../context/AppContext";
+import {
+  downloadAndInstallAndroidUpdate, getAndroidUpdate, getAndroidDownloadStatus,
+  installDownloadedAndroidUpdate, openAndroidUpdateDownload, IS_NATIVE_ANDROID,
+  type AndroidDownloadStatus, type AndroidUpdateManifest
+} from "../android/platform";
 
-type UpdateState =
-  | { phase: "checking" }
-  | { phase: "hot-update-available"; manifest: HotUpdateManifest }
-  | { phase: "hot-update-downloading"; manifest: HotUpdateManifest; progress: number; total: number }
-  | { phase: "hot-update-extracting"; manifest: HotUpdateManifest }
-  | { phase: "hot-update-done"; manifest: HotUpdateManifest }
-  | { phase: "apk-update-available"; manifest: AndroidUpdateManifest }
-  | { phase: "apk-installing" }
-  | { phase: "apk-download-started" }
-  | { phase: "error"; message: string };
+type UpdateView = {
+  manifest: AndroidUpdateManifest;
+  download: AndroidDownloadStatus;
+  legacy: boolean;
+  message?: string;
+  statusMessage?: string;
+};
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message
+    : (error as { message?: string })?.message || "更新暂时不可用，请重试";
+}
+
+async function withTimeout<T>(action: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      action,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("系统响应超时，请重试或通过浏览器下载安装")), 15000);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function AndroidUpdateGate() {
-  const { showToast, user } = useApp();
-  const [state, setState] = useState<UpdateState | null>(null);
+  const [view, setView] = useState<UpdateView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const current = useRef<UpdateView | null>(null);
+  const actionPending = useRef(false);
+  const checking = useRef(false);
+  const generation = useRef(0);
+  const statusRequest = useRef(0);
+  const mounted = useRef(false);
+  const lastProgress = useRef({ received: 0, time: Date.now() });
 
-  const checkForUpdates = useCallback(async () => {
-    if (!IS_NATIVE_ANDROID) return;
-    setState({ phase: "checking" });
-
-    try {
-      const appInfoModule = await import("@capacitor/app");
-      const info = await appInfoModule.App.getInfo();
-      const currentVersionCode = Number.parseInt(info.build, 10);
-      if (!Number.isSafeInteger(currentVersionCode) || currentVersionCode < 1) {
-        throw new Error("无法读取 APP 版本号");
-      }
-
-      const hotManifest = await checkForHotUpdate(currentVersionCode);
-      if (hotManifest) {
-        setState({ phase: "hot-update-available", manifest: hotManifest });
-        return;
-      }
-
-      const apkManifest = await getAndroidUpdate();
-      if (apkManifest?.updateAvailable) {
-        setState({ phase: "apk-update-available", manifest: apkManifest });
-        return;
-      }
-
-      setState(null);
-    } catch {
-      setState(null);
-    }
+  const updateView = useCallback((value: UpdateView | null) => {
+    current.current = value;
+    if (mounted.current) setView(value);
   }, []);
 
-  useEffect(() => {
-    if (!IS_NATIVE_ANDROID) return;
-    void checkForUpdates();
-    const onActive = (event: Event) => {
-      if ((event as CustomEvent<{ isActive: boolean }>).detail?.isActive && user) {
-        void checkForUpdates();
+  const refreshDownload = useCallback(async () => {
+    const existing = current.current;
+    if (!existing || existing.legacy || actionPending.current) return;
+    const version = generation.current;
+    const request = ++statusRequest.current;
+    try {
+      const download = await withTimeout(getAndroidDownloadStatus(existing.manifest.apkUrl));
+      if (!mounted.current || version !== generation.current || request !== statusRequest.current || actionPending.current) return;
+      const latest = current.current;
+      if (!latest || latest.manifest.apkUrl !== existing.manifest.apkUrl) return;
+      const received = download?.received ?? 0;
+      if (received !== lastProgress.current.received) lastProgress.current = { received, time: Date.now() };
+      const stalled = download && ["pending", "downloading", "paused"].includes(download.status)
+        && Date.now() - lastProgress.current.time > 30000;
+      updateView({
+        ...latest, download: download ?? latest.download, legacy: download === null,
+        statusMessage: stalled ? "下载暂时没有进展，请检查网络；也可通过浏览器下载安装" : undefined
+      });
+    } catch (error) {
+      if (mounted.current && version === generation.current && request === statusRequest.current && current.current) {
+        updateView({ ...current.current, statusMessage: errorMessage(error) });
       }
+    }
+  }, [updateView]);
+
+  const checkForUpdates = useCallback(async () => {
+    if (!IS_NATIVE_ANDROID || checking.current || current.current || actionPending.current) return;
+    checking.current = true;
+    try {
+      // The hot-update path does not yet extract or activate a bundle. Use the complete
+      // APK flow until that capability is implemented and verified end to end.
+      const manifest = await withTimeout(getAndroidUpdate());
+      if (!mounted.current || !manifest?.updateAvailable) return;
+      updateView({ manifest, download: { status: "none" }, legacy: false });
+      lastProgress.current = { received: 0, time: Date.now() };
+      await refreshDownload();
+    } catch {
+      // Startup checks are silent; explicit download / install failures stay in the dialog.
+    } finally {
+      checking.current = false;
+    }
+  }, [refreshDownload, updateView]);
+
+  useEffect(() => {
+    mounted.current = true;
+    if (IS_NATIVE_ANDROID) void checkForUpdates();
+    const onActive = (event: Event) => {
+      if (!(event as CustomEvent<{ isActive: boolean }>).detail?.isActive) return;
+      if (current.current) void refreshDownload();
+      else void checkForUpdates();
     };
     window.addEventListener("hgt:app-state", onActive);
-    return () => window.removeEventListener("hgt:app-state", onActive);
-  }, [checkForUpdates, user]);
+    return () => {
+      mounted.current = false;
+      generation.current++;
+      window.removeEventListener("hgt:app-state", onActive);
+    };
+  }, [checkForUpdates, refreshDownload]);
 
-  if (!state || state.phase === "checking") return null;
+  const apkUrl = view?.manifest.apkUrl;
+  useEffect(() => {
+    if (!apkUrl) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (cancelled) return;
+      if (document.visibilityState !== "hidden") await refreshDownload();
+      if (!cancelled) timer = setTimeout(() => { void poll(); }, 1500);
+    };
+    timer = setTimeout(() => { void poll(); }, 1500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [apkUrl, refreshDownload]);
 
-  // --- Hot Update flow ---
-  async function startHotUpdateDownload(manifest: HotUpdateManifest) {
-    setState({ phase: "hot-update-downloading", manifest, progress: 0, total: manifest.zipSize });
+  async function runAction(action: "download" | "install" | "browser") {
+    const existing = current.current;
+    if (!existing || actionPending.current) return;
+    actionPending.current = true;
+    generation.current++;
+    setBusy(true);
+    updateView({ ...existing, message: undefined, statusMessage: undefined });
     try {
-      const downloadedPath = await downloadHotUpdate(
-        manifest.zipUrl,
-        manifest.zipSha256,
-        (received, total) => setState({ phase: "hot-update-downloading", manifest, progress: received, total })
-      );
-
-      setState({ phase: "hot-update-extracting", manifest });
-      await extractAndVerifyHotUpdate(downloadedPath, manifest.latestVersionCode);
-      setState({ phase: "hot-update-done", manifest });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setState({ phase: "error", message });
-    }
-  }
-
-  function restartApp() {
-    void import("@capacitor/app").then(async (m) => {
-      try {
-        await m.App.exitApp();
-      } catch {
-        window.location.reload();
-      }
-    });
-  }
-
-  // --- APK fallback flow ---
-  async function installApk(manifest: AndroidUpdateManifest) {
-    setState({ phase: "apk-installing" });
-    try {
-      await downloadAndInstallAndroidUpdate(manifest.apkUrl);
-      setState({ phase: "apk-download-started" });
-      showToast("新版 APK 正在下载，完成后将打开系统安装页");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("INSTALL_PERMISSION_REQUIRED")) {
-        showToast(`请允许"安装未知应用"，返回后再次点击立即更新`);
+      if (action === "browser") {
+        await withTimeout(openAndroidUpdateDownload(existing.manifest.apkUrl));
+        updateView({ ...existing, message: "请在浏览器中完成下载并打开 APK 安装；返回 APP 后仍可继续安装更新。" });
+      } else if (action === "install") {
+        await withTimeout(installDownloadedAndroidUpdate(existing.manifest.apkUrl));
+        updateView({ ...existing, message: "已请求打开系统安装页。如未显示或取消了安装，请再次点击安装更新。" });
       } else {
-        showToast(message || "更新下载失败，请稍后重试");
+        const download = await withTimeout(downloadAndInstallAndroidUpdate(existing.manifest.apkUrl));
+        lastProgress.current = { received: 0, time: Date.now() };
+        updateView({
+          ...existing,
+          download: download.status ? download : { status: "pending", downloadId: download.downloadId },
+          message: existing.legacy ? "下载已交给系统处理。若安装页未弹出，可通过浏览器下载安装。" : undefined
+        });
       }
-      setState({ phase: "apk-update-available", manifest });
+    } catch (error) {
+      updateView({ ...existing, message: errorMessage(error) });
+    } finally {
+      actionPending.current = false;
+      if (mounted.current) setBusy(false);
     }
   }
 
-  // --- Render ---
-  function dismissIfAllowed() {
-    if (state === null) return;
-    switch (state.phase) {
-      case "hot-update-downloading":
-      case "hot-update-extracting":
-      case "hot-update-done":
-      case "apk-installing":
-        return;
-      default:
-        setState(null);
-    }
-  }
-
-  function renderContent() {
-    if (!state) return null;
-
-    switch (state.phase) {
-      case "hot-update-available": {
-        const m = state.manifest;
-        const sizeInMB = (m.zipSize / (1024 * 1024)).toFixed(1);
-        return (
-          <div className="space-y-4" role="alertdialog" aria-modal="true" aria-labelledby="hu-title">
-            <div className="flex items-start gap-3 pr-1">
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-blue-50 text-blue-700">
-                <RefreshCw size={24} />
-              </span>
-              <div>
-                <h2 id="hu-title" className="text-xl font-black text-ink">发现新版 {m.latestVersionName}</h2>
-                <p className="mt-1 text-sm text-muted">应用内更新无需重新安装，下载仅约 {sizeInMB}MB。</p>
-              </div>
-            </div>
-            {m.releaseNotes.length > 0 && (
-              <ul className="list-disc space-y-1 rounded-2xl bg-slate-50 px-8 py-4 text-sm leading-6 text-ink">
-                {m.releaseNotes.map((note: string, i: number) => <li key={`${i}-${note}`}>{note}</li>)}
-              </ul>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" className="btn btn-secondary min-h-11" onClick={() => setState(null)}>稍后</button>
-              <button type="button" className="btn btn-primary min-h-11" onClick={() => { void startHotUpdateDownload(m); }}>
-                <Download size={18} />立即更新
-              </button>
-            </div>
-          </div>
-        );
-      }
-
-      case "hot-update-downloading": {
-        const dm = state;
-        const pct = dm.total > 0 ? Math.min(99, Math.round((dm.progress / dm.total) * 100)) : 0;
-        const downloaded = (dm.progress / (1024 * 1024)).toFixed(1);
-        const totalMB = (dm.total / (1024 * 1024)).toFixed(1);
-        return (
-          <div className="space-y-4" role="alertdialog" aria-modal="true" aria-labelledby="hu-dl-title">
-            <h2 id="hu-dl-title" className="text-lg font-black text-ink">正在下载 {dm.manifest.latestVersionName}</h2>
-            <div className="h-3 w-full overflow-hidden rounded-full bg-slate-200">
-              <div className="h-full rounded-full bg-blue-600 transition-all duration-300" style={{ width: `${pct}%` }} />
-            </div>
-            <p className="text-center text-sm text-muted">{downloaded}MB / {totalMB}MB ({pct}%)</p>
-          </div>
-        );
-      }
-
-      case "hot-update-extracting":
-        return (
-          <div className="space-y-4 text-center" role="alertdialog" aria-modal="true">
-            <RefreshCw size={36} className="mx-auto animate-spin text-blue-700" />
-            <h2 className="text-lg font-black text-ink">正在解压资源…</h2>
-            <p className="text-sm text-muted">请勿关闭 APP</p>
-          </div>
-        );
-
-      case "hot-update-done":
-        return (
-          <div className="space-y-4" role="alertdialog" aria-modal="true" aria-labelledby="hu-done-title">
-            <div className="flex items-start gap-3 pr-1">
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
-                <ShieldCheck size={24} />
-              </span>
-              <div>
-                <h2 id="hu-done-title" className="text-xl font-black text-ink">更新完成</h2>
-                <p className="mt-1 text-sm text-muted">关闭 APP 后重新打开即生效。</p>
-              </div>
-            </div>
-            <button type="button" className="btn btn-primary w-full min-h-11" onClick={restartApp}>
-              <RefreshCw size={18} />立即重启
-            </button>
-          </div>
-        );
-
-      case "apk-update-available": {
-        const am = state.manifest;
-        return (
-          <div className="space-y-4" role="alertdialog" aria-modal="true" aria-labelledby="apk-title">
-            <div className="flex items-start gap-3 pr-1">
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
-                <ShieldCheck size={24} />
-              </span>
-              <div>
-                <h2 id="apk-title" className="text-xl font-black text-ink">系统更新 {am.latestVersionName}</h2>
-                <p className="mt-1 text-sm text-muted">
-                  {am.forceUpdate ? "当前版本已停止支持。" : "需要下载完整安装包，约 27MB。"}
-                </p>
-              </div>
-            </div>
-            {am.releaseNotes.length > 0 && (
-              <ul className="list-disc space-y-1 rounded-2xl bg-slate-50 px-8 py-4 text-sm leading-6 text-ink">
-                {am.releaseNotes.map((note: string, i: number) => <li key={`${i}-${note}`}>{note}</li>)}
-              </ul>
-            )}
-            <div className={`grid gap-2 ${am.forceUpdate ? "grid-cols-1" : "grid-cols-2"}`}>
-              {!am.forceUpdate && (
-                <button type="button" className="btn btn-secondary min-h-11" onClick={() => setState(null)}>稍后</button>
-              )}
-              <button type="button" className="btn btn-primary min-h-11" onClick={() => { void installApk(am); }}>
-                <Download size={18} />立即更新
-              </button>
-            </div>
-            <p className="text-center text-xs text-muted">APK 仅从官方 OSS 下载，安装由系统确认。</p>
-          </div>
-        );
-      }
-
-      case "apk-installing":
-        return (
-          <div className="space-y-4 text-center" role="alertdialog" aria-modal="true">
-            <RefreshCw size={36} className="mx-auto animate-spin text-emerald-700" />
-            <h2 className="text-lg font-black text-ink">正在启动下载…</h2>
-          </div>
-        );
-
-      case "apk-download-started":
-        return (
-          <div className="space-y-4 text-center" role="alertdialog" aria-modal="true">
-            <ShieldCheck size={36} className="mx-auto text-emerald-700" />
-            <h2 className="text-lg font-black text-ink">下载已启动</h2>
-            <p className="text-sm text-muted">完成后在通知栏中点击安装。</p>
-            <button type="button" className="btn btn-secondary min-h-11" onClick={() => setState(null)}>关闭</button>
-          </div>
-        );
-
-      case "error":
-        return (
-          <div className="space-y-4 text-center" role="alertdialog" aria-modal="true">
-            <h2 className="text-lg font-black text-ink">更新失败</h2>
-            <p className="text-sm text-muted">{state.message}</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" className="btn btn-secondary min-h-11" onClick={() => setState(null)}>取消</button>
-              <button type="button" className="btn btn-primary min-h-11" onClick={() => { void checkForUpdates(); }}>
-                <RefreshCw size={18} />重试
-              </button>
-            </div>
-          </div>
-        );
-
-      default:
-        return null;
-    }
-  }
+  if (!view) return null;
+  const { manifest, download, legacy } = view;
+  const message = view.message || view.statusMessage;
+  const downloading = ["pending", "downloading", "paused"].includes(download.status);
+  const ready = download.status === "ready";
+  const total = download.total ?? 0;
+  const received = download.received ?? 0;
+  const percent = total > 0 ? Math.min(99, Math.max(0, Math.round(received / total * 100))) : undefined;
+  const dismiss = () => {
+    if (manifest.forceUpdate || actionPending.current) return;
+    generation.current++;
+    updateView(null);
+  };
 
   return (
-    <Modal onClose={dismissIfAllowed} hideClose={state?.phase === "hot-update-downloading" || state?.phase === "hot-update-extracting" || state?.phase === "hot-update-done"}>
-      {renderContent()}
+    <Modal onClose={dismiss} hideCloseButton={manifest.forceUpdate || busy}>
+      <div className="space-y-4" role="alertdialog" aria-modal="true" aria-labelledby="apk-title">
+        <div className="flex items-start gap-3 pr-1">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
+            <ShieldCheck size={24} />
+          </span>
+          <div>
+            <h2 id="apk-title" className="text-xl font-black text-ink">
+              {ready ? "下载完成，等待安装" : downloading ? "正在下载更新" : "发现新版 " + manifest.latestVersionName}
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              {ready ? "点击安装更新，由系统确认安装。"
+                : manifest.forceUpdate ? "当前版本已停止支持，请完成更新后继续使用。"
+                : "下载完整安装包，安装后保留原有数据。"}
+            </p>
+          </div>
+        </div>
+        {!downloading && !ready && manifest.releaseNotes.length > 0 && (
+          <ul className="list-disc space-y-1 rounded-2xl bg-slate-50 px-8 py-4 text-sm leading-6 text-ink">
+            {manifest.releaseNotes.map((note, i) => <li key={i}>{note}</li>)}
+          </ul>
+        )}
+        {downloading && !legacy && (
+          <div className="space-y-2">
+            <div role="progressbar" aria-label="安装包下载进度" aria-valuemin={0} aria-valuemax={100}
+              aria-valuenow={percent} className="h-3 w-full overflow-hidden rounded-full bg-slate-200">
+              <div className="h-full rounded-full bg-emerald-600" style={{ width: percent === undefined ? "0%" : percent + "%" }} />
+            </div>
+            <p className="text-sm text-muted">
+              {(received / 1048576).toFixed(1)} MB{total > 0 ? " / " + (total / 1048576).toFixed(1) + " MB" : " · 正在获取文件大小"}
+            </p>
+            <p className="text-sm text-muted">{download.message || "下载完成后，点击安装更新。"}</p>
+          </div>
+        )}
+        {(message || download.status === "failed") && (
+          <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+            {message || download.message || "下载失败，请重试"}
+          </p>
+        )}
+        {busy && <p role="status" className="flex items-center gap-2 text-sm text-muted">
+          <RefreshCw size={18} className="animate-spin motion-reduce:animate-none" />正在处理，请稍候…
+        </p>}
+        <div className="grid gap-2">
+          {(!downloading || ready) && (
+            <button type="button" disabled={busy} className="btn btn-primary min-h-12 disabled:opacity-50"
+              onClick={() => { void runAction(ready ? "install" : "download"); }}>
+              <Download size={18} />{ready ? "安装更新" : download.status === "failed" ? "重新下载" : "立即更新"}
+            </button>
+          )}
+          <button type="button" disabled={busy} className="btn btn-secondary min-h-12 disabled:opacity-50"
+            onClick={() => { void runAction("browser"); }}>通过浏览器下载安装</button>
+          {!manifest.forceUpdate && (
+            <button type="button" disabled={busy} className="btn btn-secondary min-h-12 disabled:opacity-50" onClick={dismiss}>
+              {downloading ? "稍后查看" : "稍后"}
+            </button>
+          )}
+        </div>
+        <p className="text-xs leading-5 text-muted">
+          安装包来自官方。若系统提示安装权限，请允许“汤物语”安装未知应用，返回后再次点击安装更新。
+        </p>
+      </div>
     </Modal>
   );
 }

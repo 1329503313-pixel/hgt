@@ -19,8 +19,19 @@ export type AndroidUpdateManifest = {
   forceUpdate: boolean;
 };
 
+export type AndroidDownloadStatus = {
+  status: "none" | "pending" | "downloading" | "paused" | "ready" | "failed";
+  downloadId?: string;
+  received?: number;
+  total?: number;
+  reason?: number;
+  message?: string;
+};
+
 type AndroidUpdatePlugin = {
-  downloadAndInstall(options: { url: string }): Promise<{ downloadId: string }>;
+  downloadAndInstall(options: { url: string }): Promise<AndroidDownloadStatus>;
+  getDownloadStatus(options: { url: string }): Promise<AndroidDownloadStatus>;
+  installDownloaded(options: { url: string }): Promise<void>;
 };
 
 type WechatSharePlugin = {
@@ -122,6 +133,29 @@ export async function getAndroidUpdate(): Promise<AndroidUpdateManifest | null> 
 export async function downloadAndInstallAndroidUpdate(apkUrl: string) {
   if (!IS_NATIVE_ANDROID) throw new Error("仅 Android APP 支持安装更新");
   return AndroidUpdate.downloadAndInstall({ url: apkUrl });
+}
+
+export async function getAndroidDownloadStatus(apkUrl: string): Promise<AndroidDownloadStatus | null> {
+  try {
+    return await AndroidUpdate.getDownloadStatus({ url: apkUrl });
+  } catch (error) {
+    // Older installed shells do not expose progress / retry-install methods.
+    if ((error as { code?: string })?.code === "UNIMPLEMENTED") return null;
+    throw error;
+  }
+}
+
+export function installDownloadedAndroidUpdate(apkUrl: string) {
+  return AndroidUpdate.installDownloaded({ url: apkUrl });
+}
+
+export function openAndroidUpdateDownload(apkUrl: string) {
+  const url = new URL(apkUrl);
+  if (url.protocol !== "https:" || url.hostname !== "zgkc-storage.kjcxchina.com"
+    || url.username || url.password || url.hash || !url.pathname.startsWith("/hgt/apps/") || !url.pathname.toLowerCase().endsWith(".apk")) {
+    throw new Error("安装包地址无效");
+  }
+  return Browser.open({ url: url.href });
 }
 
 export function initializeAndroidPlatform() {

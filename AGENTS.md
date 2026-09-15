@@ -333,3 +333,11 @@ npm run check                 # TypeScript 类型检查
 | `DB_HOST/PORT/USER/PASSWORD/NAME` | 本地 MySQL | 数据库连接 |
 | `ADMIN_DEFAULT_PASSWORD` | — | 首次启动时创建 admin 用户 |
 | `DEEPSEEK_API_KEY` | — | DeepSeek API 密钥，用于 AI 玩汤功能 |
+
+### 2026-09-15 全量部署与 Android APP p0.43 一次性授权
+
+- 状态：当前任务执行中，仅本次有效。
+- 用户明确要求“全量部署并更新APP”。
+- 发布范围：基于已发布 p0.42，完整构建和部署 Web、Server 与 Android 1.0.0-p0.43（versionCode=100043），包含本次 APP 下载与安装流程修复，发布非强制更新记录。
+- 生产 JWT_SECRET 原样继承并显式注入，Cookie 属性、登录有效期及现有会话保持不变；本地与线上门禁通过后方可切换。
+- 本次完成、失败或中止后授权失效，记录最终结果，不得沿用。

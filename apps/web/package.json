@@ -15,6 +15,7 @@
     "test:card-battle-bonds": "cd ../.. && node apps/web/tests/cardBattleBonds.browser.mjs",
     "test:impostor": "tsx --test tests/impostorActions.test.ts",
     "test:media": "tsx --test tests/mediaUrls.test.ts",
+    "test:android-update": "cd ../.. && node apps/web/tests/androidUpdate.browser.mjs",
     "test:chat": "tsx --test src/shared/giftTimeline.test.ts",
     "test:gift-drawer": "cd ../.. && node apps/web/tests/giftDrawer.browser.mjs",
     "test:game-records": "cd ../.. && node apps/web/tests/gameRecords.browser.mjs",

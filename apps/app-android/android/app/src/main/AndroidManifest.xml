@@ -46,13 +46,6 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
-        <receiver
-            android:name=".ApkDownloadReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
-            </intent-filter>
-        </receiver>
     </application>
 
     <!-- Permissions -->
