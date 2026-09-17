@@ -1,4 +1,5 @@
 import { isCardBattleDamageEffect, isCardBattleAttachedOnly } from "@hgt/shared";
+import { auditCardBattleFormula, cardBattleFormulaPreviewValues } from "@hgt/shared";
 import { bondNeedsValue, bondNeedsDuration, bondIsRate, bondValueMaximum, type CardBattleBond, type CardBattleBondAction } from "@hgt/shared";
 import type { CardBattleCondition, CardBattleEffectType, CardBattleSkillAction, CardBattleSkillEffect, CardBattleTier } from "../../shared/digitalAssets";
 
@@ -34,6 +35,11 @@ export function cardBattleSelectionError(tiers: readonly CardBattleTierDraft[] |
       if (error) return `${tier.starLevel}星羁绊条件${index + 1}：${error}`;
     }
     for (const [index, effect] of tier.effects.entries()) {
+      for (const [addition, action] of [effect, ...effect.additionalEffects ?? []].entries()) {
+        if (action.damageType !== "formula") continue;
+        const audit = auditCardBattleFormula(action.damageFormula ?? "", cardBattleFormulaPreviewValues(tier));
+        if (!audit.ok) return `${tier.starLevel}星条件${index + 1}${addition ? `附加类型${addition}` : ""}：计算公式不正确：${audit.reason}`;
+      }
       if (!effect.condition || !effect.type) {
         return `请为${tier.starLevel}星条件${index + 1}从下拉列表选择${!effect.condition ? "技能条件" : "技能类型"}`;
       }

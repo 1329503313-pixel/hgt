@@ -44,7 +44,8 @@ export function AssetPackCard({ card, packType, selected, selecting, onSelectUp 
               ["速度", tier.speed], ["能量", tier.energyRequired],
               ["暴击率", `${tier.critRate ?? 25}%`], ["暴击伤害", `${tier.critDamage ?? 150}%`],
               ["吸血比例", `${tier.lifestealRate ?? 0}%`], ["击晕概率", `${tier.stunRate ?? 0}%`],
-              ["再动概率", `${tier.extraActionRate ?? 0}%`],
+              ["反击率", `${tier.counterRate ?? 0}%`],
+                    ["再动概率", `${tier.extraActionRate ?? 0}%`],
                     ["闪避率", `${tier.dodgeRate ?? 0}%`], ["命中率", `${tier.hitRate ?? 0}%`],
             ].map(([name, value]) => <span key={name} className="flex flex-wrap justify-between gap-x-1"><span>{name}</span><span className="font-bold tabular-nums">{value}</span></span>)}
           </span>

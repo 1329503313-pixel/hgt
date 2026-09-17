@@ -54,7 +54,7 @@ try {
   await expect(page.locator('#validation')).toContainText('概率不超过100');
   await page.getByLabel('羁绊条件1效果2数值').fill('100');
   await expect(page.locator('#validation')).toHaveText('');
-  for (const [label,type,value] of [['立即增加护盾值','shield',1000],['立即增加闪避率','dodge_up',12.25],['立即增加命中率','hit_up',33.5]]) {
+  for (const [label,type,value] of [['立即增加技能伤害','skill_damage_up',150],['立即增加攻击力和技能伤害','attack_skill_damage_up',200],['立即增加护盾值','shield',1000],['立即增加闪避率','dodge_up',12.25],['立即增加命中率','hit_up',33.5]]) {
     await choose('羁绊技能类型',label,1);
     await page.getByLabel('羁绊条件1效果2数值').fill(String(value));
     await page.getByLabel('羁绊条件1效果2回合').fill('2');

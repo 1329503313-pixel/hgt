@@ -1,12 +1,14 @@
 import { CARD_BATTLE_DEFENSE_EFFECT_LABELS, CARD_BATTLE_ACCURACY_STATS, cardBattleDefenseNeedsDuration, cardBattleAccuracyStat, isCardBattleTrueDamage, isCardBattleShield } from "@hgt/shared";
 import { CARD_BATTLE_CONTROL_LABELS, cardBattleControlNeedsDuration, isCardBattleControlEffect, isCardBattleStun, isCardBattleImmunity, isCardBattleCleanse, isCardBattleAttachedOnly } from "@hgt/shared";
-import { Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import { CARD_BATTLE_PROC_BUFF_LABELS, CARD_BATTLE_PROC_BUFF_CODES, CARD_BATTLE_PROC_STATS, cardBattleProcStat, isCardBattleDamageEffect } from "@hgt/shared";
 import { CARD_BATTLE_DEBUFF_LABELS, isCardBattleDebuff } from "../../shared/cardBattleEffects";
 import type { CardBattleCondition, CardBattleEffectType } from "../../shared/digitalAssets";
 
 import { SearchableSkillSelect } from "./SearchableSkillSelect";
 import { CardBattleBondsEditor } from "./CardBattleBondsEditor";
+import { CardDamageValueEditor } from "./CardDamageValueEditor";
 import type { CardBattleActionDraft, CardBattleTierDraft } from "./cardBattleEditorDraft";
 
 const conditionLabels: Record<CardBattleCondition, string> = {
@@ -65,8 +67,22 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
   onActiveStar: (star: 0 | 1 | 2 | 3) => void;
   onChange: (tiers: CardBattleTierDraft[]) => void;
 }) {
+  const [copyState, setCopyState] = useState({ star: -1, revision: 0 });
   const tier = tiers.find((item) => item.starLevel === activeStar) ?? tiers[0];
+  const zeroStarTier = tiers.find((item) => item.starLevel === 0);
   const updateTier = (changes: Partial<CardBattleTierDraft>) => onChange(tiers.map((item) => item.starLevel === activeStar ? { ...item, ...changes } : item));
+  const copyZeroStarSkills = () => {
+    if (fixedStar || activeStar === 0 || !zeroStarTier) return;
+    updateTier(structuredClone({
+      energyRequired: zeroStarTier.energyRequired,
+      skillName: zeroStarTier.skillName,
+      skillDescription: zeroStarTier.skillDescription,
+      effects: zeroStarTier.effects,
+      bonds: zeroStarTier.bonds ?? [],
+    }));
+    // Remount uncontrolled bond card-number inputs, including on repeated copies.
+    setCopyState((current) => ({ star: activeStar, revision: current.revision + 1 }));
+  };
   const updateSharedSkillName = (skillName: string) => onChange(tiers.map((item) => ({ ...item, skillName })));
   const updateEffect = (index: number, changes: Partial<CardBattleTierDraft["effects"][number]>) => updateTier({
     effects: tier.effects.map((effect, effectIndex) => effectIndex === index ? { ...effect, ...changes } : effect),
@@ -75,6 +91,11 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
     <div><legend className="text-base font-black text-ink">卡牌对战配置{fixedStar && " · 固定三星"}</legend><p className="mt-1 text-xs leading-5 text-muted">{fixedStar ? "上架前须填写技能名称、描述及至少一条技能效果。" : "0–3 星必须完整配置。技能可留空；"}每一行条件独立触发，主技能与本行附加类型共用该条件。</p></div>
     {!fixedStar && <div className="mt-3 grid grid-cols-4 gap-2" role="tablist" aria-label="选择卡牌星级">
       {([0, 1, 2, 3] as const).map((star) => <button key={star} type="button" role="tab" aria-selected={activeStar === star} className={`min-h-11 rounded-xl text-sm font-black transition ${activeStar === star ? "bg-violet-600 text-white" : "border border-violet-200 bg-white text-violet-800 hover:bg-violet-100"}`} onClick={() => onActiveStar(star)}>{star} 星</button>)}
+    </div>}
+    {!fixedStar && activeStar > 0 && <div className="mt-3 flex flex-wrap items-center gap-3">
+      <button type="button" className="btn btn-secondary min-h-11 shrink-0 px-3 text-xs" disabled={!zeroStarTier} onClick={copyZeroStarSkills}><Copy aria-hidden="true" size={15} />复制零星技能</button>
+      <p className="min-w-0 flex-1 text-xs leading-5 text-muted">覆盖当前 {activeStar} 星的能量要求、技能描述、技能条件及附加效果、全部羁绊配置；其他属性不变，保存后生效。</p>
+      {copyState.star === activeStar && <p role="status" className="w-full text-xs text-violet-800">已将零星技能和羁绊配置复制到 {activeStar} 星。</p>}
     </div>}
     <div className="mt-4 grid gap-3 sm:grid-cols-3">
       <label><span className="text-xs font-bold">生命值</span><input aria-label={`${activeStar}星生命值`} type="number" min="1" className="field mt-1" value={tier.maxHp} onChange={(event) => updateTier({ maxHp: numberValue(event.target.value, 1) })} /></label>
@@ -91,7 +112,7 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
     </div>
     <div className="mt-3 grid gap-3 sm:grid-cols-3">
       {[...CARD_BATTLE_PROC_STATS, ...CARD_BATTLE_ACCURACY_STATS].map(({ key, label }) => <label key={key}><span className="text-xs font-bold">{label}（%）</span><input aria-label={`${activeStar}星${label}`} type="number" min="0" max="100" step="0.01" className="field mt-1 min-h-11" value={tier[key] ?? 0} onChange={(event) => updateTier({ [key]: Math.min(100, Math.max(0, Math.round(Number(event.target.value) * 100) / 100 || 0)) })} /></label>)}
-      <p className="text-xs leading-5 text-muted sm:col-span-3">默认均为 0%。吸血按实际扣血与扣盾之和逐目标计算并四舍五入；击晕仅阻止本回合剩余行动；再动立即行动一次，再动及其触发链不再触发再动。闪避率减去对方命中率后，得到最终闪避概率（0%–100%）。</p>
+      <p className="text-xs leading-5 text-muted sm:col-span-3">默认均为 0%。吸血按实际扣血与扣盾之和逐目标计算并四舍五入；击晕仅阻止本回合剩余行动；再动立即行动一次，再动及其触发链不再触发再动。反击按每次实际受伤独立判定，立即普攻伤害来源，双方均不因反击回能，反击不连锁反击或再动。闪避率减去对方命中率后，得到最终闪避概率（0%–100%）。</p>
     </div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
       <label><span className="text-xs font-bold">{fixedStar ? "技能名称" : "技能名称（四星共用，可空）"}</span><input maxLength={50} className="field mt-1" value={tier.skillName} onChange={(event) => updateSharedSkillName(event.target.value)} />{!fixedStar && <span className="mt-1 block text-[11px] leading-5 text-muted">修改后同步到全部星级；技能描述、条件和效果仍按星级独立配置。</span>}</label>
@@ -111,7 +132,7 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
               ...(effect.type === "revive_self" && !selfDeathConditions.has(condition) ? { type: "revive_ally_1" as const } : {}),
             })} />
           {thresholdConditions.has(effect.condition) && <label><span className="text-xs font-bold">生命值阈值（%）</span><input type="number" min="1" max="100" className="field mt-1" value={effect.conditionValue ?? 50} onChange={(event) => updateEffect(index, { conditionValue: Math.min(100, numberValue(event.target.value, 1)) })} /></label>}
-          <SkillActionFields action={effect} onChange={(changes) => updateEffect(index, changes)} condition={effect.condition} fieldPrefix={`${activeStar}星条件${index + 1}`} />
+          <SkillActionFields tier={tier} action={effect} onChange={(changes) => updateEffect(index, changes)} condition={effect.condition} fieldPrefix={`${activeStar}星条件${index + 1}`} />
 
         </div>
         <div className="mt-4 border-t border-violet-100 pt-3">
@@ -119,18 +140,19 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
           <p className="mt-1 text-xs leading-5 text-muted">共用本行技能条件，按顺序执行；立刻再次行动在其他效果结算后执行。</p>
           {(effect.additionalEffects ?? []).map((action, addition) => <div key={action.id ?? addition} className="mt-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
             <div className="mb-2 flex items-center justify-between"><strong className="text-xs">附加类型 {addition + 1}</strong><button type="button" aria-label={`删除条件${index + 1}附加类型${addition + 1}`} className="grid min-h-11 min-w-11 place-items-center rounded-lg text-red-600 hover:bg-red-50" onClick={() => updateEffect(index, { additionalEffects: effect.additionalEffects!.filter((_, n) => n !== addition) })}><Trash2 size={16} /></button></div>
-            <div className="grid gap-3 sm:grid-cols-2"><SkillActionFields action={action} attached condition={effect.condition} fieldPrefix={`${activeStar}星条件${index + 1}附加类型${addition + 1}`}
+            <div className="grid gap-3 sm:grid-cols-2"><SkillActionFields tier={tier} action={action} attached condition={effect.condition} fieldPrefix={`${activeStar}星条件${index + 1}附加类型${addition + 1}`}
               groupHasDamage={[effect, ...effect.additionalEffects ?? []].some((item) => isCardBattleDamageEffect(item.type))}
               onChange={(changes) => updateEffect(index, { additionalEffects: effect.additionalEffects!.map((item, n) => n === addition ? { ...item, ...changes } : item) })} /></div>
           </div>)}
         </div>
       </section>)}
     </div>
-    <CardBattleBondsEditor key={activeStar} bonds={tier.bonds ?? []} onChange={bonds=>updateTier({bonds})}/>
+    <CardBattleBondsEditor key={`${activeStar}-${copyState.revision}`} bonds={tier.bonds ?? []} onChange={bonds=>updateTier({bonds})}/>
   </fieldset>;
 }
 
-function SkillActionFields({ action, onChange, condition, fieldPrefix, attached = false, groupHasDamage = false }: {
+function SkillActionFields({ action, tier, onChange, condition, fieldPrefix, attached = false, groupHasDamage = false }: {
+  tier: CardBattleTierDraft;
   action: CardBattleActionDraft; onChange: (changes: Partial<CardBattleActionDraft>) => void;
   condition: CardBattleCondition | ""; fieldPrefix: string; attached?: boolean; groupHasDamage?: boolean;
 }) {
@@ -139,12 +161,14 @@ function SkillActionFields({ action, onChange, condition, fieldPrefix, attached 
             options={Object.entries(effectLabels).filter(([value]) => attached || !isCardBattleAttachedOnly(value)).map(([value, label]) => ({ value: value as CardBattleEffectType, label, disabled: value === "revive_self" && !selfDeathConditions.has(condition) || value === "revival_block_damaged" && !groupHasDamage }))}
             onChange={(type) => onChange(type === "" ? { type } : {
               type, value: numericEffects.has(type) ? Math.min(effectMaximum(type), action.value ?? 1) : null,
+              damageType: undefined, damageFormula: undefined,
               ignoreDefensePercent: isCardBattleDamageEffect(type) && !isCardBattleTrueDamage(type) ? (action.ignoreDefensePercent ?? 0) : 0,
               probability: isCardBattleStun(type) ? (action.probability ?? 100) : undefined,
               duration: durationEffects.has(type) ? (action.duration ?? 1) : null,
             })}
             hint={action.type === "revival_block_damaged" ? groupHasDamage ? "仅禁止本技能实际扣血或扣盾的单位复活，包含本次击杀的单位。" : "请先为本技能配置伤害类型，否则无法保存。" : action.type === "act_again" ? "本技能其他效果结算后再行动一次；与概率再动合并，额外行动不再触发再动。" : !selfDeathConditions.has(condition) ? "“复活自己”仅在本卡片死亡条件下可选，避免技能空放并清空能量。" : undefined} />
-          {numericEffects.has(action.type) && <label><span className="text-xs font-bold">{isCardBattleCleanse(action.type) ? "清除 debuff 数量" : (cardBattleProcStat(action.type) || cardBattleAccuracyStat(action.type)) ? "属性变化（百分点）" : isCardBattleDebuff(action.type) ? "降低比例（%）" : "技能数值"}</span><input type="number" min="1" max={effectMaximum(action.type)} className="field mt-1" value={action.value ?? 1} onChange={(event) => onChange({ value: Math.min(effectMaximum(action.type), numberValue(event.target.value, 1)) })} />{!isCardBattleDebuff(action.type) && action.type.startsWith("attack_skill_damage_") && <span className="mt-1 block text-[11px] leading-4 text-muted">该数值同时增加普通攻击力与攻击性技能伤害。</span>}{cardBattleProcStat(action.type) ? <span className="mt-1 block text-[11px] leading-4 text-muted">直接增减百分点，例如 20% 降低 10 后为 10%；同属性同方向首层全效、后续半效，首层到期后下一层恢复全效，最终属性限制在 0%–100%。</span> : isCardBattleDebuff(action.type) && <span className="mt-1 block text-[11px] leading-4 text-muted">按包含增益的当前属性降低此百分比；同属性减益首层全效、后续半效，合计最多100%。</span>}</label>}
+          {isCardBattleDamageEffect(action.type) && <CardDamageValueEditor action={action} tier={tier} onChange={onChange} fieldPrefix={fieldPrefix} />}
+          {numericEffects.has(action.type) && !isCardBattleDamageEffect(action.type) && <label><span className="text-xs font-bold">{isCardBattleCleanse(action.type) ? "清除 debuff 数量" : (cardBattleProcStat(action.type) || cardBattleAccuracyStat(action.type)) ? "属性变化（百分点）" : isCardBattleDebuff(action.type) ? "降低比例（%）" : "技能数值"}</span><input type="number" min="1" max={effectMaximum(action.type)} className="field mt-1" value={action.value ?? 1} onChange={(event) => onChange({ value: Math.min(effectMaximum(action.type), numberValue(event.target.value, 1)) })} />{!isCardBattleDebuff(action.type) && action.type.startsWith("attack_skill_damage_") && <span className="mt-1 block text-[11px] leading-4 text-muted">该数值同时增加普通攻击力与攻击性技能伤害。</span>}{cardBattleProcStat(action.type) ? <span className="mt-1 block text-[11px] leading-4 text-muted">直接增减百分点，例如 20% 降低 10 后为 10%；同属性同方向首层全效、后续半效，首层到期后下一层恢复全效，最终属性限制在 0%–100%。</span> : isCardBattleDebuff(action.type) && <span className="mt-1 block text-[11px] leading-4 text-muted">按包含增益的当前属性降低此百分比；同属性减益首层全效、后续半效，合计最多100%。</span>}</label>}
           {isCardBattleTrueDamage(action.type) && <p className="text-xs leading-5 text-muted sm:col-span-2">真实伤害直接扣除生命值，跳过护盾；仍可被闪避，并正常计算防御、暴击与技能伤害加成。</p>}
           {isCardBattleShield(action.type) && <p className="text-xs leading-5 text-muted sm:col-span-2">护盾全额叠加、独立到期；优先消耗最早到期的一层，到期仅清除该层剩余护盾。</p>}
           {cardBattleAccuracyStat(action.type) && <p className="text-xs leading-5 text-muted sm:col-span-2">按百分点全额叠加，各层独立计算持续回合。</p>}

@@ -320,7 +320,7 @@ function packCardBattlePreview(row: mysql.RowDataPacket | undefined) {
     critDamage: Number(row.crit_damage ?? 150),
     lifestealRate: Number(row.lifesteal_rate ?? 0),
     stunRate: Number(row.stun_rate ?? 0),
-    extraActionRate: Number(row.extra_action_rate ?? 0),
+    extraActionRate: Number(row.extra_action_rate ?? 0), counterRate: Number(row.counter_rate ?? 0),
     dodgeRate: Number(row.dodge_rate ?? 0), hitRate: Number(row.hit_rate ?? 0),
     skillName: String(row.skill_name ?? ""),
     skillDescription: String(row.skill_description ?? "")
@@ -1026,7 +1026,7 @@ async function cabinetPayload(userId: string, compact = false) {
               battle_tier.speed_value AS battle_speed,
               battle_tier.energy_required AS battle_energy_required,
               battle_tier.crit_rate AS battle_crit_rate, battle_tier.crit_damage AS battle_crit_damage,
-              battle_tier.lifesteal_rate AS battle_lifesteal_rate, battle_tier.stun_rate AS battle_stun_rate, battle_tier.extra_action_rate AS battle_extra_action_rate, battle_tier.dodge_rate AS battle_dodge_rate, battle_tier.hit_rate AS battle_hit_rate,
+              battle_tier.lifesteal_rate AS battle_lifesteal_rate, battle_tier.stun_rate AS battle_stun_rate, battle_tier.extra_action_rate AS battle_extra_action_rate, battle_tier.counter_rate AS battle_counter_rate, battle_tier.dodge_rate AS battle_dodge_rate, battle_tier.hit_rate AS battle_hit_rate,
               battle_tier.skill_name AS battle_skill_name,
               battle_tier.skill_description AS battle_skill_description
        FROM user_asset_cards uc INNER JOIN asset_cards c ON c.id = uc.card_id
@@ -1071,7 +1071,7 @@ async function cabinetPayload(userId: string, compact = false) {
       energyRequired: Number(row.battle_energy_required),
       critRate: Number(row.battle_crit_rate ?? 25), critDamage: Number(row.battle_crit_damage ?? 150),
       dodgeRate: Number(row.battle_dodge_rate ?? 0), hitRate: Number(row.battle_hit_rate ?? 0),
-      lifestealRate: Number(row.battle_lifesteal_rate ?? 0), stunRate: Number(row.battle_stun_rate ?? 0), extraActionRate: Number(row.battle_extra_action_rate ?? 0),
+      lifestealRate: Number(row.battle_lifesteal_rate ?? 0), stunRate: Number(row.battle_stun_rate ?? 0), extraActionRate: Number(row.battle_extra_action_rate ?? 0), counterRate: Number(row.battle_counter_rate ?? 0),
       skillName: String(row.battle_skill_name ?? ""),
       skillDescription: String(row.battle_skill_description ?? "")
     }, String(row.id), collection),

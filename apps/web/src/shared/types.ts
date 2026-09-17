@@ -618,6 +618,7 @@ export type OnlineCardBattleState = {
     challengerUserId: string;
     defenderUserId: string;
     targetRank: number;
+    consecutiveWins?: number;
     status: "active" | "won" | "abandoned" | "stale";
     fallbackRank?: number | null;
     fallbackFull?: boolean;
@@ -668,13 +669,15 @@ export type OnlineCardBattleEvent = {
   visual: "round" | "damage" | "heal" | "energy" | "buff" | "debuff" | "revive" | "end" | "extra_action" | "stun";
   lifesteal?: number;
   extraAction?: boolean;
+  counterattack?: boolean;
   actorId: string | null; skillName: string | null;
   effects: Array<{ dodged?: boolean; shieldDamage?: number; hpDamage?: number; shieldGained?: number; targetId: string; amount?: number; blocked?: boolean; critical?: boolean; label?: string; stunned?: boolean; stunResisted?: boolean }>;
   effectType?: import("./digitalAssets").CardBattleEffectType;
   states: OnlineCardBattleCardState[]; durationMs: number; text: string;
 };
 
-export type OnlineSoupAiHonors = {
+export type OnlineSoupAiHonors = OnlineSoupTextHonors | { version: 2; communicationMode: "voice"; mvp: OnlineSoupTextHonors["mvp"]; bestQuestion: null };
+export type OnlineSoupTextHonors = {
   version: 1;
   mvp: {
     userId: string;
@@ -701,6 +704,7 @@ export type OnlineSoupLobbyRoom = {
   type: "public" | "password";
   status: OnlineSoupRoomStatus;
   hostMode: OnlineSoupHostMode;
+  communicationMode?: "text" | "voice";
   contentType: "soup" | "mystery" | "impostor" | "card_battle";
   cardBattleMode?: "1v1" | "boss";
   host: { id: string; nickname: string } | null;
@@ -801,6 +805,7 @@ export type OnlineSoupSnapshot = {
     type: "public" | "password";
     status: OnlineSoupRoomStatus;
     hostMode: OnlineSoupHostMode;
+  communicationMode?: "text" | "voice";
     contentType: "soup" | "mystery" | "impostor" | "card_battle";
     aiProgress: number | null;
     finishVote: {
@@ -855,7 +860,7 @@ export type OnlineSoupSnapshot = {
     createdAt: string;
   };
   me: { role: OnlineSoupMemberRole; isHost: boolean };
-  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; isRoomHost: boolean; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; mutedUntil: string | null; joinedAt: string }>;
+  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; isRoomHost: boolean; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; voiceSeat?: number | null; mutedUntil: string | null; joinedAt: string }>;
   messages: OnlineSoupMessage[];
   messagesHasMore: boolean;
   messagesNextCursor: string | null;

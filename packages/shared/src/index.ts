@@ -118,6 +118,8 @@ export type ViewRequestItem = {
   handledBy: string | null;
 };
 export * from "./battleCollectibles.js";
+export * from "./cardBattlePower.js";
+export * from "./cardBattleFormula.js";
 export * from "./cardBattleSkills.js";
 export * from "./cardBattleBonds.js";
 export * from "./cardTower.js";

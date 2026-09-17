@@ -15,9 +15,10 @@ function expectedTrackTime(track: OnlineSoupBackgroundMusic, duration: number) {
   return elapsedSeconds % duration;
 }
 
-export function useOnlineSoupBackgroundMusic(track: OnlineSoupBackgroundMusic | null) {
+export function useOnlineSoupBackgroundMusic(track: OnlineSoupBackgroundMusic | null, duck = false) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef(track);
+  useEffect(() => { if (audioRef.current) audioRef.current.volume = duck ? 0.08 : BACKGROUND_MUSIC_VOLUME; }, [duck]);
   const mutedRef = useRef(false);
   const [muted, setMuted] = useState(storedMuted);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);

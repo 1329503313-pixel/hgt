@@ -29,6 +29,8 @@ export function CardBattleBondsEditor({bonds, onChange}: {bonds:CardBattleBondDr
               <SearchableSkillSelect label="羁绊技能对象" value={action.target} options={options(CARD_BATTLE_BOND_TARGETS)} onChange={target=>change({target})}/>
               {action.target && <SearchableSkillSelect label="羁绊技能类型" value={action.type} options={options(CARD_BATTLE_BOND_ACTIONS)} onChange={type=>change({type,value:bondNeedsValue(type)?action.value??1:null,duration:bondNeedsDuration(type)?action.duration??1:null})}/>}
               {action.target && bondNeedsValue(action.type) && <label><span className="text-xs font-bold">羁绊技能数值（{bondIsRate(action.type)?"百分点":"固定数值"}）</span><input aria-label={`羁绊条件${index+1}效果${actionIndex+1}数值`} type="number" className="field mt-1" min={bondIsRate(action.type)?.01:1} max={bondValueMaximum(action.type)} step={bondIsRate(action.type)?.01:1} value={action.value??""} onChange={event=>change({value:event.target.value===""?null:Number(event.target.value)})}/></label>}
+              {action.type === "skill_damage_up" && <p className="text-xs text-muted">按固定数值增加伤害技能的伤害，不增加普通攻击或治疗；各层全额叠加、独立到期。</p>}
+              {action.type === "attack_skill_damage_up" && <p className="text-xs text-muted">攻击力和技能伤害各增加填写的固定数值；各层全额叠加、独立到期。</p>}
               {action.type === "shield" && <p className="text-xs text-muted">护盾按固定数值全额叠加、独立到期；实际获得护盾会触发对应羁绊。</p>}
               {(action.type === "dodge_up" || action.type === "hit_up") && <p className="text-xs text-muted">按百分点全额叠加、独立到期；实际闪避概率为闪避率减去对方命中率，限制在 0%–100%。</p>}
               {action.type === "crit_damage_up" && <p className="text-xs text-muted">按百分点增加，例如 150% 增加 50 后为 200%；各层全额叠加、独立到期。</p>}

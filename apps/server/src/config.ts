@@ -24,6 +24,14 @@ function readSecret(envKey: string, fileEnvKey: string): string {
 }
 
 export const config = {
+  voice: {
+    enabled: process.env.VOICE_ROOMS_ENABLED === "true",
+    advancedPermission: process.env.TRTC_ADVANCED_PERMISSION === "true",
+    sdkAppId: Number(process.env.TRTC_SDK_APP_ID ?? 0),
+    sdkSecret: readSecret("TRTC_SDK_SECRET", "TRTC_SDK_SECRET_FILE"),
+    secretId: readSecret("TRTC_SECRET_ID", "TRTC_SECRET_ID_FILE"),
+    secretKey: readSecret("TRTC_SECRET_KEY", "TRTC_SECRET_KEY_FILE"),
+  },
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: Number(process.env.PORT ?? 4000),
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",

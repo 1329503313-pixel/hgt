@@ -238,6 +238,14 @@ npm run release:android:publish -- -Descriptor artifacts/android/<version>/andro
 
 ## 10. 进一步优化
 
+### RTC 配置发布（2026-09-17）
+
+- 本次授权包含语音服务时，总入口可传入 `-VoiceEnvironmentFile <本地受忽略配置路径>`。文件必须为 UTF-8 无 BOM、LF 行尾，仅包含六项：`VOICE_ROOMS_ENABLED`、`TRTC_ADVANCED_PERMISSION`、`TRTC_SDK_APP_ID`、`TRTC_SDK_SECRET`、`TRTC_SECRET_ID`、`TRTC_SECRET_KEY`。不得传入完整 `.env`。
+- 部署包装器在认证预检通过后，将 RTC 配置传入权限为 700 的专用目录并设置文件权限 600，部署结束清理。远端脚本不执行配置文件，只按白名单合并；候选和正式环境必须与“原环境 + 六项 RTC 配置”完全一致。JWT、Cookie、数据库及其他业务配置继续原样继承。
+- RTC 凭据只存在于本地受忽略配置及服务端运行环境，不得进入源码包、镜像层、APK 或日志。后续部署默认继承当前容器中的 RTC 配置。
+- 启用前验证专用临时房的真实 SDK 进房、双向音频与移出用户权限；自动模拟音频验证不能替代手机听感、弱网和满员测试。
+- 有其他未提交工作时，可使用独立临时 Git 索引与 detached worktree 创建明确范围的发布快照，原工作区和原暂存区保留。发布 worktree 必须保持干净，仍执行标准总入口全部门禁。
+
 1. 使用受信任私有镜像仓库，在 CI 构建后让服务器只 `docker pull`，预计再省 1–2 分钟。
 2. 生成 SBOM/镜像签名，把提交、镜像 digest、APK SHA 和证书指纹关联为发布证明。
 3. 建立只允许 Android 发布 API 的专用服务账号，凭据使用只读 secret mount。

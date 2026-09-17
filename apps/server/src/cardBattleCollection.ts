@@ -76,6 +76,9 @@ const boostedSkillTypes = new Set([
 export function applyCardBattleCollectionTier(tier: CardBattleTier, cardId: string, bonus: CardBattleCollectionBonus): CardBattleTier {
   const action = <T extends CardBattleSkillAction>(effect: T): T => ({
     ...effect,
+    ...(isCardBattleDamageEffect(effect.type) && effect.damageType === "formula" ? {
+      formulaMultiplier: (200 + bonus.completePackCount + (bonus.threeStarPackCardIds.has(cardId) ? 6 : 0)) / 200,
+    } : {}),
     value: effect.value != null && (isCardBattleDamageEffect(effect.type) || boostedSkillTypes.has(effect.type))
       ? scale(effect.value, cardId, bonus) : effect.value,
   });

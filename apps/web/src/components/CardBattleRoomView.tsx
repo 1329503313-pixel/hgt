@@ -10,7 +10,7 @@ import { seekCardBattleAnimations } from "../shared/cardBattlePlayback";
 import { CardBattleSkillFx, CardBattleProcFx, CardBattleStatusIcons } from "./CardBattleEffects";
 import { CardBattleSettlementTable } from "./CardBattleSettlementTable";
 import { cardBattleFormationSize } from "../shared/cardBattleLayout";
-import { ArrowUpDown, Gem, Check, ChevronDown, Eye, GripVertical, Layers, LogOut, Menu, Save, Search, Send, Share2, Smile, Sparkles, Swords, Users, X } from "lucide-react";
+import { Gem, Check, ChevronDown, Eye, GripVertical, Layers, LogOut, Menu, Save, Search, Send, Share2, Smile, Sparkles, Swords, Users, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { reorderCardBattleLineup } from "../shared/cardBattleLineup";
@@ -43,7 +43,7 @@ type ChatBubble = {
   expiresAt: number;
 };
 
-type CardSort = "number" | "rarity" | "star" | "power";
+type CardSort = "number" | "latest" | "rarity" | "star" | "power";
 type CardView = "stats" | "skill";
 type DeckEditorState = { name: string; cardIds: string[]; collectibleBindings: BattleCollectibleBinding[] };
 
@@ -125,7 +125,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
     {state && !cardBack && <CardBattleSkillFx event={activeEvent} instanceId={state.instanceId} />}
     {state && !cardBack && <CardBattleProcFx event={activeEvent} instanceId={state.instanceId} />}
     {state && !cardBack && !showPower && <CardBattleStatusIcons statuses={state.statuses ?? []} />}
-    {card && !cardBack && (activeEvent?.kind === "skill" || activeEvent?.bond) && isActiveActor && activeEvent.skillName && <span className="card-battle-skill-name pointer-events-none absolute inset-x-[-8px] -top-6 z-[85] truncate rounded-full border border-amber-200/70 bg-amber-400 px-2 py-1 text-center text-[9px] font-black text-slate-950 shadow-lg" title={activeEvent.skillName}>{activeEvent.skillName}</span>}
+    {card && !cardBack && isActiveActor && (activeEvent?.counterattack || ((activeEvent?.kind === "skill" || activeEvent?.bond) && activeEvent.skillName)) && <span className="card-battle-skill-name pointer-events-none absolute inset-x-[-8px] -top-6 z-[85] truncate rounded-full border border-amber-200/70 bg-amber-400 px-2 py-1 text-center text-[9px] font-black text-slate-950 shadow-lg" title={activeEvent.counterattack ? "反击" : activeEvent.skillName ?? undefined}>{activeEvent.counterattack ? "反击" : activeEvent.skillName}</span>}
     <div className="absolute inset-x-1 top-1 z-20 h-1.5 overflow-hidden rounded-full bg-slate-950/40" aria-label={state ? `生命比例 ${Math.round(state.hp / Math.max(1, state.maxHp) * 100)}%` : undefined}>
       <span className={`block h-full transition-[width,background-color] duration-300 ${state ? hpTone(state.hp, state.maxHp) : "bg-emerald-500"}`} style={{ width: `${state ? Math.max(0, state.hp / Math.max(1, state.maxHp) * 100) : 100}%` }} />
       {state && !cardBack && (state.shield ?? 0) > 0 && <span className="absolute inset-y-0 left-0 bg-white transition-[width] duration-300" style={{ width: `${Math.min(100, (state.shield ?? 0) / Math.max(1, state.maxHp) * 100)}%` }} aria-label={`护盾覆盖比例 ${Math.min(100, Math.round((state.shield ?? 0) / Math.max(1, state.maxHp) * 100))}%`} />}
@@ -316,7 +316,7 @@ export function Settlement({ battle, onClose, onConfirmRankingWin, confirming }:
 }) {
   const settlement = battle.game?.settlement;
   if (!settlement) return null;
-  const rankingWon = Boolean(battle.rankingChallenge && settlement.players.find((player) => player.seat === settlement.winnerSeat)?.userId === battle.me.userId);
+  const rankingWon = Boolean(battle.rankingChallenge && (battle.rankingChallenge.consecutiveWins ?? 0) >= 2 && settlement.players.find((player) => player.seat === settlement.winnerSeat)?.userId === battle.me.userId);
   const bossWon = battle.mode === "boss" && settlement.winnerSeat === 1 && settlement.endReason === "elimination";
   return <div className="absolute inset-0 z-[90] grid place-items-center bg-slate-950/80 p-3 backdrop-blur-sm">
     <div className="relative max-h-[88dvh] w-full max-w-xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-4 text-white shadow-2xl">
@@ -326,10 +326,11 @@ export function Settlement({ battle, onClose, onConfirmRankingWin, confirming }:
       <div className="mt-4 space-y-4">{[...settlement.players].sort((left, right) => Number(right.seat === settlement.winnerSeat) - Number(left.seat === settlement.winnerSeat) || left.seat - right.seat).map((player) => <CardBattleSettlementTable key={player.userId} player={player} winnerSeat={settlement.winnerSeat} />)}</div>
       <p className="mt-3 text-[11px] leading-5 text-slate-400">评分 =（伤害 × 1.5 + 承伤 + 辅助 × 0.7）× 0.001，四舍五入保留 1 位小数。辅助按技能施放者累计有效治疗、增减益、复活及控制贡献，不计过量治疗与无效效果。</p>
       {battle.rankingChallenge && <div className="mt-4">
+        <p role="status" className="mb-3 rounded-xl bg-white/10 p-3 text-sm font-bold text-amber-100">{rankingWon ? "已连续赢得两局，可以确认占榜。" : "目标榜位挑战失败：本次未达成两连胜。重新挑战将从第一局开始。"}</p>
         {battle.rankingChallenge.fallbackRank && <p className="mb-3 rounded-xl bg-violet-400/15 p-3 text-sm font-bold text-violet-100">已使用本次对战卡组自动占据第 {battle.rankingChallenge.fallbackRank} 名，可继续调整卡组挑战更高排名。</p>}
         {battle.rankingChallenge.fallbackFull && <p className="mb-3 rounded-xl bg-white/10 p-3 text-sm text-slate-200">榜单 100 个位置已满，本次未自动占榜。</p>}
         {rankingWon
-          ? <button type="button" className="min-h-12 w-full rounded-xl bg-amber-400 px-4 text-sm font-black text-slate-950 disabled:opacity-60" disabled={confirming} onClick={onConfirmRankingWin}>{confirming ? "确认中…" : `确认胜利并占据第 ${battle.rankingChallenge.targetRank} 名`}</button>
+          ? <button type="button" className="min-h-12 w-full rounded-xl bg-amber-400 px-4 text-sm font-black text-slate-950 disabled:opacity-60" disabled={confirming} onClick={onConfirmRankingWin}>{confirming ? "确认中…" : `确认两连胜并占据第 ${battle.rankingChallenge.targetRank} 名`}</button>
           : <button type="button" className="min-h-12 w-full rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15" onClick={onClose}>返回调整卡组并重新准备</button>}
       </div>}
     </div>
@@ -349,8 +350,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   const [pickSlot, setPickSlot] = useState<number | null>(null);
   const [cardQuery, setCardQuery] = useState("");
   const [cardRoleFilter, setCardRoleFilter] = useState<CardBattleRoleFilter>("all");
-  const [cardSort, setCardSort] = useState<CardSort>("number");
-  const [sortDescending, setSortDescending] = useState(false);
+  const [cardSort, setCardSort] = useState<CardSort>("power");
   const [cardView, setCardView] = useState<CardView>("stats");
   const [decksOpen, setDecksOpen] = useState(false);
   const [collectiblesOpen, setCollectiblesOpen] = useState(false);
@@ -386,7 +386,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
   const visibleEligibleCards = useMemo(() => {
     const filtered = filterCardBattleSelection(eligibleCards, cardQuery, cardRoleFilter);
-    const direction = sortDescending ? -1 : 1;
+    const direction = cardSort === "number" ? 1 : -1;
     return [...filtered].sort((left, right) => {
       const compared = cardSort === "star"
         ? left.starLevel - right.starLevel
@@ -397,7 +397,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
             : left.cardNo.localeCompare(right.cardNo, "zh-CN", { numeric: true });
       return compared * direction || left.name.localeCompare(right.name, "zh-CN");
     });
-  }, [cardQuery, cardRoleFilter, cardSort, eligibleCards, sortDescending]);
+  }, [cardQuery, cardRoleFilter, cardSort, eligibleCards]);
   const enqueueChatBubbles = useCallback((messages: CardBattleChatMessage[]) => {
     const incoming = messages.filter((message) => {
       if (seenBubbleIdsRef.current.has(message.id)) return false;
@@ -644,6 +644,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
         {!snapshot.me.isHost && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); setLeaveOpen(true); }}><LogOut size={16} />退出房间</button>}
       </div>}
     </header>
+      {battle.rankingChallenge && <div role="status" className="shrink-0 border-b border-white/10 bg-slate-900 px-3 py-2 text-center text-xs font-bold text-amber-100">{battle.phase === "playing" ? (battle.rankingChallenge.consecutiveWins ?? 0) === 1 ? "第一局已获胜 · 自动进行第二局 · 连胜 1/2" : "第一局 · 连胜 0/2" : (battle.rankingChallenge.consecutiveWins ?? 0) >= 2 ? "已达成两连胜 · 等待确认占榜" : "需连续赢两局占据目标榜位；首胜后原阵容自动开始第二局"}</div>}
 
     <main className="relative min-h-0 flex-1 overflow-hidden">
       <div ref={arenaRef} className={`card-battle-arena-scroll flex h-full min-h-0 flex-col overflow-y-auto overflow-x-hidden ${showBattleControls ? "pb-[176px] sm:pb-[124px]" : "pb-[68px]"}`}>
@@ -676,7 +677,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
         {stickersOpen && <StickerKeyboard series={stickerSeries} loading={stickersLoading} sending={saving} onClose={() => setStickersOpen(false)} onSend={sendSticker} className="mt-2 max-h-60 overflow-y-auto rounded-xl p-2 text-slate-900" />}
       </div>
 
-      {battle.phase === "ended" && animationComplete && battle.game?.settlement && watchedGameId === battle.game.id && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} onConfirmRankingWin={() => void confirmRankingWin()} confirming={confirmingRankingWin} />}
+      {battle.phase === "ended" && animationComplete && battle.game?.settlement && (watchedGameId === battle.game.id || (battle.rankingChallenge?.consecutiveWins ?? 0) >= 2) && settlementDismissedGameId !== battle.game.id && <Settlement battle={battle} onClose={() => setSettlementDismissedGameId(battle.game!.id)} onConfirmRankingWin={() => void confirmRankingWin()} confirming={confirmingRankingWin} />}
     </main>
 
     {detailsOpen && <BossLineupDetails groups={[{ name: "BOSS", cards: topSeat.lineup.flatMap((item) => item.card ? [item.card] : []) }, ...([1, 2, 3] as const).map((seat) => { const member = displaySeat(seat); return { name: member.user?.nickname ?? `空席 ${seat}`, cards: member.lineup.flatMap((item) => item.card ? [item.card] : []) }; })]} onClose={() => setDetailsOpen(false)} />}
@@ -711,12 +712,13 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
     </Modal>}
     {pickSlot != null && <Modal full onClose={() => setPickSlot(null)}>
       <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-ink">选择第 {pickSlot} 张卡牌</h2><p className="mt-1 text-xs text-muted">只展示你拥有且当前启用的史诗或传说卡；支持搜索、排序和视角切换。</p></div><button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-slate-100" onClick={() => setPickSlot(null)} aria-label="关闭"><X size={18} /></button></div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px_44px]">
-        <label className="relative block"><span className="sr-only">搜索卡牌</span><Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><input type="search" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} className="field min-h-11 w-full pl-10" placeholder="搜索卡牌名称、序号或定位" autoFocus /></label>
-        <label><span className="sr-only">卡牌排序方式</span><select value={cardSort} onChange={(event) => { const next = event.target.value as CardSort; setCardSort(next); setSortDescending(next !== "number"); }} className="field min-h-11 w-full"><option value="number">按序号排序</option><option value="rarity">按品质排序</option><option value="star">按星级排序</option><option value="power">按战力排序</option></select></label>
-        <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-line bg-white text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" onClick={() => setSortDescending((value) => !value)} aria-label={sortDescending ? "当前降序，点击切换为升序" : "当前升序，点击切换为降序"} title={sortDescending ? "降序" : "升序"}><ArrowUpDown size={18} /></button>
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_7rem] gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
+        <label className="relative block min-w-0"><span className="sr-only">搜索卡牌名称、序号或定位</span><input type="search" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} className="field min-h-11 min-w-0 w-full !pr-10 !text-base [&::-webkit-search-cancel-button]:appearance-none" placeholder="搜索卡牌" /><Search aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={18} /></label>
+        <label className="relative block min-w-0"><span className="sr-only">卡牌排序方式</span><select value={cardSort} onChange={(event) => setCardSort(event.target.value as CardSort)} className="field min-h-11 w-full appearance-none !pr-8 font-bold"><option value="number">序号排序</option><option value="latest">最新在前</option><option value="power">战力排序</option><option value="star">星级排序</option><option value="rarity">品质排序</option></select><ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" size={16} /></label>
       </div>
-      <label className="mt-3 flex items-center gap-3 text-sm font-bold text-ink"><span className="shrink-0">卡牌定位</span><select value={cardRoleFilter} onChange={(event) => setCardRoleFilter(event.target.value as CardBattleRoleFilter)} className="field min-h-11 min-w-0 flex-1"><option value="all">全部</option><option value="damage">输出</option><option value="tank">坦克</option><option value="support">辅助</option></select></label>
+      <div className="mt-3 grid grid-cols-4 gap-2" role="group" aria-label="卡牌定位">
+        {(["all", "damage", "tank", "support"] as const).map((role) => <button key={role} type="button" aria-pressed={cardRoleFilter === role} onClick={() => setCardRoleFilter(role)} className={`min-h-11 rounded-full border px-2 text-sm font-bold transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${cardRoleFilter === role ? "border-primary bg-primary text-white shadow-sm" : "border-line bg-slate-50 text-muted hover:border-primary/40 hover:text-primary active:bg-blue-50"}`}>{role === "all" ? "全部" : CARD_BATTLE_ROLE_LABELS[role]}</button>)}
+      </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-bold text-muted" aria-live="polite">共 {visibleEligibleCards.length} 张卡牌</p>
         <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1" role="group" aria-label="卡牌信息视角">
@@ -727,13 +729,13 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{visibleEligibleCards.map((card) => {
         const selected = ownIds.includes(card.id);
         const viewLabel = cardView === "stats"
-          ? `生命${card.stats.maxHp}，攻击${card.stats.attack}，防御${card.stats.defense}，速度${card.stats.speed}，能量${card.stats.energyRequired}，暴击率${card.stats.critRate ?? 25}%，暴击伤害${card.stats.critDamage ?? 150}%，吸血比例${card.stats.lifestealRate ?? 0}%，击晕概率${card.stats.stunRate ?? 0}%，再动概率${card.stats.extraActionRate ?? 0}%，闪避率${card.stats.dodgeRate ?? 0}%，命中率${card.stats.hitRate ?? 0}%`
+          ? `生命${card.stats.maxHp}，攻击${card.stats.attack}，防御${card.stats.defense}，速度${card.stats.speed}，能量${card.stats.energyRequired}，暴击率${card.stats.critRate ?? 25}%，暴击伤害${card.stats.critDamage ?? 150}%，吸血比例${card.stats.lifestealRate ?? 0}%，击晕概率${card.stats.stunRate ?? 0}%，反击率${card.stats.counterRate ?? 0}%，再动概率${card.stats.extraActionRate ?? 0}%，闪避率${card.stats.dodgeRate ?? 0}%，命中率${card.stats.hitRate ?? 0}%`
           : `技能${card.skillName || "未配置技能"}，技能描述${card.skillDescription || "暂无技能说明"}`;
         return <button key={card.id} type="button" aria-pressed={selected} aria-label={`${card.name}，${card.starLevel}星，战力${card.combatPower}，${CARD_BATTLE_ROLE_LABELS[card.battleRole]}，${viewLabel}${selected ? "，已上场" : ""}`} className={`relative overflow-hidden rounded-xl border-2 bg-white text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line hover:border-cyan-300"}`} onClick={() => void chooseCard(card.id)}>
           <div className="relative aspect-[5/7] overflow-hidden bg-slate-100"><img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} loading="lazy" decoding="async" /><span className={`absolute left-2 top-2 rounded-full border px-2 py-1 text-[10px] font-black shadow-md backdrop-blur-sm ${battleRoleTone(card.battleRole)}`}>{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span><span className="absolute bottom-2 right-2 rounded-full bg-amber-400 px-2 py-1 text-[10px] font-black text-slate-950 shadow-md">战力 {combatPowerFormatter.format(card.combatPower)}</span></div>
           <div className="min-h-[128px] p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">序号 {card.cardNo}</p>{cardView === "skill"
             ? <div className="mt-2"><p className="text-xs font-black leading-5 text-cyan-700">{card.skillName || "未配置技能"}</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted">{card.skillDescription || "暂无技能说明"}</p></div>
-            : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-xs leading-5 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div><div className="flex justify-between gap-1"><dt>暴击率</dt><dd className="font-bold text-ink">{card.stats.critRate ?? 25}%</dd></div><div className="flex justify-between gap-1"><dt>暴击伤害</dt><dd className="font-bold text-ink">{card.stats.critDamage ?? 150}%</dd></div><div className="flex justify-between gap-1"><dt>吸血比例</dt><dd className="font-bold text-ink">{card.stats.lifestealRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>击晕概率</dt><dd className="font-bold text-ink">{card.stats.stunRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>再动概率</dt><dd className="font-bold text-ink">{card.stats.extraActionRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>闪避率</dt><dd className="font-bold text-ink">{card.stats.dodgeRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>命中率</dt><dd className="font-bold text-ink">{card.stats.hitRate ?? 0}%</dd></div></dl>}
+            : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-xs leading-5 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div><div className="flex justify-between gap-1"><dt>暴击率</dt><dd className="font-bold text-ink">{card.stats.critRate ?? 25}%</dd></div><div className="flex justify-between gap-1"><dt>暴击伤害</dt><dd className="font-bold text-ink">{card.stats.critDamage ?? 150}%</dd></div><div className="flex justify-between gap-1"><dt>吸血比例</dt><dd className="font-bold text-ink">{card.stats.lifestealRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>击晕概率</dt><dd className="font-bold text-ink">{card.stats.stunRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>反击率</dt><dd className="font-bold text-ink">{card.stats.counterRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>再动概率</dt><dd className="font-bold text-ink">{card.stats.extraActionRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>闪避率</dt><dd className="font-bold text-ink">{card.stats.dodgeRate ?? 0}%</dd></div><div className="flex justify-between gap-1"><dt>命中率</dt><dd className="font-bold text-ink">{card.stats.hitRate ?? 0}%</dd></div></dl>}
           </div>{selected && <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-cyan-500 text-white shadow-md" aria-hidden="true"><Check size={15} /></span>}
         </button>;
       })}</div>

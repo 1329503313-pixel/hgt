@@ -109,17 +109,11 @@ export async function listCardBattleRanking(
        users.role, users.vip_growth_value, users.vip_expires_at, users.vip_legacy_active,
        COALESCE(SUM(owned.star_level), 0) AS star_total,
        JSON_ARRAYAGG(JSON_OBJECT('cardId', cards.id, 'maxHp', tiers.max_hp,
-         'attack', tiers.attack_value, 'defense', tiers.defense_value, 'speed', tiers.speed_value)) AS power_cards,
-       COALESCE(SUM(tiers.max_hp + tiers.attack_value * 3 + tiers.defense_value * 4
-         + tiers.speed_value * 7 - tiers.energy_required * 10
-         + CASE relic.battle_effect_type
-           WHEN 'max_hp' THEN relic.battle_effect_value
-           WHEN 'attack' THEN relic.battle_effect_value * 3
-           WHEN 'attack_skill_damage' THEN relic.battle_effect_value * 3
-           WHEN 'defense' THEN relic.battle_effect_value * 4
-           WHEN 'speed' THEN relic.battle_effect_value * 7
-           WHEN 'energy_reduction' THEN (tiers.energy_required - GREATEST(10, tiers.energy_required - relic.battle_effect_value)) * 10
-           ELSE 0 END), entries.total_power) AS current_total_power
+         'attack', tiers.attack_value, 'defense', tiers.defense_value, 'speed', tiers.speed_value,
+         'energyRequired', tiers.energy_required, 'critRate', tiers.crit_rate, 'critDamage', tiers.crit_damage,
+         'lifestealRate', tiers.lifesteal_rate, 'extraActionRate', tiers.extra_action_rate,
+         'counterRate', tiers.counter_rate, 'dodgeRate', tiers.dodge_rate, 'stunRate', tiers.stun_rate,
+         'battleEffectType', relic.battle_effect_type, 'battleEffectValue', relic.battle_effect_value)) AS power_cards
      FROM card_battle_ranking_entries entries
      JOIN users ON users.id = entries.user_id
      LEFT JOIN JSON_TABLE(entries.lineup_json, '$[*]' COLUMNS(card_id VARCHAR(64) PATH '$')) lineup ON TRUE
@@ -145,14 +139,26 @@ export async function listCardBattleRanking(
     const row = byRank.get(rank);
     if (!row) return { rank, occupied: false as const };
     const vip = vipGrowthSnapshot(row);
-    const powerCards: Array<{ cardId: string | null; maxHp: number | null; attack: number; defense: number; speed: number }> =
+    const powerCards: Array<Parameters<typeof calculateCardBattlePower>[0] & {
+      cardId: string | null;
+      battleEffectType: import("@hgt/shared").BattleCollectibleEffectType | null;
+      battleEffectValue: number | null;
+    }> =
       typeof row.power_cards === "string" ? JSON.parse(row.power_cards) : row.power_cards ?? [];
-    const collectionPower = powerCards.reduce((sum, card) => {
+    const totalPower = powerCards.reduce((sum, card) => {
       if (!card.cardId || card.maxHp == null) return sum;
-      const base = { maxHp: Number(card.maxHp), attack: Number(card.attack), defense: Number(card.defense), speed: Number(card.speed), energyRequired: 0, critDamage: 150 };
+      const base = {
+        maxHp: Number(card.maxHp), attack: Number(card.attack), defense: Number(card.defense), speed: Number(card.speed),
+        energyRequired: Number(card.energyRequired), critRate: Number(card.critRate ?? 25), critDamage: Number(card.critDamage ?? 150),
+        lifestealRate: Number(card.lifestealRate ?? 0), extraActionRate: Number(card.extraActionRate ?? 0),
+        counterRate: Number(card.counterRate ?? 0), dodgeRate: Number(card.dodgeRate ?? 0), stunRate: Number(card.stunRate ?? 0),
+      };
       const boosted = applyCardBattleCollectionStats(base, card.cardId, collections.get(String(row.user_id))!);
-      // The SQL total already includes equipment; scale only the star tier, then add its power difference.
-      return sum + calculateCardBattlePower(boosted) - calculateCardBattlePower(base);
+      const stats = applyBattleCollectibleStats(boosted, {
+        battleEffectDescription: "", battleEffectType: card.battleEffectType,
+        battleEffectValue: card.battleEffectValue == null ? null : Number(card.battleEffectValue),
+      });
+      return sum + calculateCardBattlePower(stats);
     }, 0);
     return {
       rank,
@@ -165,7 +171,7 @@ export async function listCardBattleRanking(
         vipActive: vip.active,
       },
       starTotal: Number(row.star_total ?? 0),
-      totalPower: Number(row.current_total_power ?? row.saved_total_power ?? 0) + collectionPower,
+      totalPower,
       achievedAt: new Date(row.achieved_at).toISOString(),
     };
   });
@@ -441,11 +447,12 @@ export async function confirmCardBattleRankingWin(roomId: string, userId: string
     if (!challenge) throw new CardBattleRankingRuleError("挑战不存在、已结束或无权确认");
     if (challenge.status === "stale") throw new CardBattleRankingRuleError("对方排名已发生变化，请重新打榜。", "RANK_CHANGED");
     if (challenge.status !== "active") throw new CardBattleRankingRuleError("挑战已结束");
+    if (Number(challenge.consecutive_wins ?? 0) < 2) throw new CardBattleRankingRuleError("必须连续赢两局才能确认占榜");
     const [[game]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? AND status = 'ended' ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
+      "SELECT *, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
       [roomId],
     );
-    if (!game) throw new CardBattleRankingRuleError("战斗尚未结束");
+    if (!game || game.status !== "ended") throw new CardBattleRankingRuleError("战斗尚未结束");
     const result = typeof game.result_json === "string" ? JSON.parse(game.result_json) : game.result_json;
     const playerInputs = parsePlayerInputs(game.lineup_snapshot_json);
     const challengerPlayer = playerInputs.find((player) => player.userId === userId);

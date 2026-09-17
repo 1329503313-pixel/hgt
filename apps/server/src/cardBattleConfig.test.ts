@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { cardBattleDebuffCodes } from "./cardBattleStatus.js";
 
-test("全部37种减益必须填写1至100的比例及持续回合", () => {
-  assert.equal(cardBattleDebuffCodes.length, 37);
+test("全部38种减益必须填写1至100的比例及持续回合", () => {
+  assert.equal(cardBattleDebuffCodes.length, 38);
   for (const type of cardBattleDebuffCodes) {
     const effect = { order: 0, condition: "energy_full", conditionValue: null, type, value: 25, duration: 2 };
     assert.equal(cardBattleEffectSchema.safeParse(effect).success, true, type);
@@ -107,7 +107,7 @@ test("配置持久化写入暴击字段，读取保留0%和百分比小数", asy
   } } as unknown as PoolConnection;
   await saveCardBattleTiers("card", defaultCardBattleTiers().map((tier) => ({ ...tier, critRate: 0, critDamage: 175.25 })), db);
   assert.equal(inserts.length, 4);
-  assert.ok(inserts.every((args) => args.length === 18 && args[10] === 0 && args[11] === 175.25));
+  assert.ok(inserts.every((args) => args.length === 19 && args[10] === 0 && args[11] === 175.25 && args[18] === 0));
   const loaded = await loadCardBattleTiers("card", db);
   assert.equal(loaded[0]!.critRate, 0);
   assert.equal(loaded[0]!.critDamage, 175.25);

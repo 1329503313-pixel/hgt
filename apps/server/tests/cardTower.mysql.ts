@@ -8,7 +8,7 @@ import { config } from "../src/config.js";
 
 assert.ok(["localhost", "127.0.0.1", "::1"].includes(config.db.host), "Loopback database required");
 const prefix = `ct_${process.pid}_${Date.now().toString(36)}_`;
-const sourceNames = ["users", "asset_cards", "user_asset_cards", "asset_card_battle_tiers", "asset_card_battle_effects", "collectibles", "user_card_battle_decks", "shell_transactions", "notifications", "card_battle_boss_covers"];
+const sourceNames = ["users", "asset_cards", "user_asset_cards", "asset_packs", "asset_pack_cards", "asset_card_battle_tiers", "asset_card_battle_effects", "collectibles", "user_card_battle_decks", "shell_transactions", "notifications", "card_battle_boss_covers"];
 const towerNames = ["card_tower_admin_lock", "card_tower_floors", "card_tower_profiles", "card_tower_rooms", "card_tower_games", "card_tower_clears"];
 const names = [...sourceNames, ...towerNames];
 const admin = await mysql.createConnection({ ...config.db, timezone: "Z" });
@@ -101,6 +101,16 @@ try {
   const [[balance]] = await pool.query<mysql.RowDataPacket[]>("SELECT shell_balance FROM users WHERE id='u1'"); assert.equal(Number(balance!.shell_balance), 50);
   const [[count]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM shell_transactions WHERE user_id='u1' AND transaction_type='card_tower'"); assert.equal(Number(count!.total), 1);
   const ranking = await api(`${root}/ranking`); assert.equal(ranking.entries[0].userId, "u1"); assert.equal(ranking.me.totalPower, power);
+  // Simulate pre-formula totals and later live card changes. The saved lineup is authoritative.
+  await pool.query("UPDATE card_tower_games SET total_power=123 WHERE id=?", [started.gameId]);
+  await pool.query("UPDATE card_tower_clears SET total_power=456 WHERE game_id=?", [started.gameId]);
+  await pool.query("UPDATE asset_card_battle_tiers SET attack_value=9000");
+  const historicalRanking = await api(`${root}/ranking`);
+  assert.deepEqual(historicalRanking, ranking, "历史榜单仅按冻结阵容重算，当前属性修改不能改变通关战力、排名和时间");
+  assert.equal((await api(path)).game.totalPower, power, "历史对局详情与榜单使用同一公式");
+  const [[stored]] = await pool.query<mysql.RowDataPacket[]>(`SELECT games.total_power AS gamePower, clears.total_power AS clearPower
+    FROM card_tower_games games JOIN card_tower_clears clears ON clears.game_id=games.id WHERE games.id=?`, [started.gameId]);
+  assert.equal(Number(stored!.gamePower), 123); assert.equal(Number(stored!.clearPower), 456, "读取不得改写历史存储");
   const clears = await api(`${floors}/${created.id}/clears`, "admin"); assert.equal(clears.total, 1); assert.equal(clears.clears[0].username, "u1"); assert.match(clears.clears[0].clearedAt, /T\d\d:\d\d:\d\d/);
   await api(`${path}/start`, "u1", "POST", { revision: done.revision, floorId: created.id }, 400);
   await api(`${path}/close`, "u1", "POST", {});

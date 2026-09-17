@@ -20,6 +20,8 @@ const rewrite=(sql:string)=>sql.replace(tokens,name=>prefix+name);
 const db=new Proxy(raw,{get(target,key){if(key==='query')return(sql:string,values?:unknown)=>target.query(rewrite(sql),values as any);if(key==='getConnection')return async()=>{const connection=await raw.getConnection();return new Proxy(connection,{get(target,key){if(key==='query')return(sql:string,values?:unknown)=>target.query(rewrite(sql),values as any);const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});
 try {
   for(const table of source){await raw.query(`CREATE TABLE ${prefix}${table} LIKE ${table}`);created.push(prefix+table);}
+  const [winColumn]=await db.query<mysql.RowDataPacket[]>("SHOW COLUMNS FROM card_battle_ranking_challenges LIKE 'consecutive_wins'");
+  if(!winColumn.length)await db.query("ALTER TABLE card_battle_ranking_challenges ADD COLUMN consecutive_wins TINYINT UNSIGNED NOT NULL DEFAULT 0");
   created.push(...fresh.map(table=>prefix+table));await initGameRecordSchema(db);
   for(const id of ['host','stay','late','left','watch','outsider'])await db.query("INSERT INTO users(id,username,password,nickname,role) VALUES(?,?,'unused',?,'user')",[id,id,id]);
   await db.query("INSERT INTO soups(id,title,author,type,surface,bottom,creator_id,creator_name,supplemental_bottoms) VALUES('s','测试汤','host','本格清汤','汤面','汤底','host','host','[]')");
@@ -59,7 +61,7 @@ try {
 
   const players:CardBattlePlayerInput[]=[1,2].map(seat=>({userId:seat===1?'stay':'outsider',nickname:seat===1?'我方':'对方',seat:seat as 1|2,cards:[1,2,3,4,5].map(slot=>({cardId:`${seat}-${slot}`,instanceId:`${seat}-${slot}`,slot:slot as 1|2|3|4|5,name:`卡${slot}`,rarity:'epic' as const,starLevel:0,imageUrl:'',tier:{starLevel:0,maxHp:100,attack:100,defense:10,speed:seat===1?100:50,energyRequired:100,canAttackRear:false,critRate:0,critDamage:150,skillName:'',skillDescription:'',effects:[]}}))}));
   const result=simulateCardBattle(players,'game-record-test');
-  await db.query("INSERT INTO card_battle_ranking_challenges(id,room_id,challenger_id,defender_id,target_rank,defender_lineup_json,defender_snapshot_json) VALUES('c','r','stay','outsider',5,'[]','[]')");
+  await db.query("INSERT INTO card_battle_ranking_challenges(id,room_id,challenger_id,defender_id,target_rank,defender_lineup_json,defender_snapshot_json,consecutive_wins) VALUES('c','r','stay','outsider',5,'[]','[]',2)");
   await db.query("INSERT INTO online_card_battles(id,room_id,game_number,status,random_seed,lineup_snapshot_json,result_json,started_at,playback_ends_at,ended_at) VALUES('b','r',1,'ended','test',?,?,'2026-09-01 10:00:00','2026-09-01 11:00:00','2026-09-01 11:00:00')",[JSON.stringify(players),JSON.stringify(result)]);
   await archiveBattleRecord(db,'b');
   await db.query("INSERT INTO card_battle_ranking_entries(rank_position,user_id,lineup_json,total_power) VALUES(5,'stay','[]',100),(6,'outsider','[]',100)");

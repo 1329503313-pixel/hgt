@@ -25,12 +25,14 @@ export function createCardBattleBondQueue<Card extends BondCard>(cards: () => Ca
         }
       }
     },
-    drain(execute: (job: Job) => void, stopped: () => boolean) {
+    drain(execute: (job: Job) => void, stopped: () => boolean, accepts: (root: number) => boolean = () => true) {
       if (draining) return;
       draining = true;
       try {
         while (pending.length && !stopped()) {
-          const job = pending.shift()!;
+          const index = pending.findIndex(job => accepts(job.root));
+          if (index < 0) break;
+          const job = pending.splice(index, 1)[0]!;
           if (canAct(job.owner)) execute(job);
         }
       } finally { draining = false; }

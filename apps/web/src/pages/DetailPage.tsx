@@ -1,3 +1,4 @@
+import { OnlineSoupModePicker } from "../components/OnlineSoupModePicker";
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { Bell, Download, Eye, Flame, Lock, Pencil, Pin, PinOff, Shield, Star, ThumbsUp, MessageSquare, User, ChevronDown, ChevronUp, DoorOpen, Share2 } from "lucide-react";
@@ -55,7 +56,7 @@ export default function DetailPage() {
   const [showShare, setShowShare] = useState(false);
   const [showRoomCreate, setShowRoomCreate] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
-  const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "", hostMode: "human" as "human" | "ai" });
+  const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "", hostMode: "human" as "human" | "ai" | "voice" });
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   const [likePending, setLikePending] = useState(false);
   const [favoritePending, setFavoritePending] = useState(false);
@@ -80,7 +81,7 @@ export default function DetailPage() {
     if (roomForm.type === "password" && roomForm.password.length !== 4) return showToast("房间密码必须为 4 位");
     setCreatingRoom(true);
     try {
-      const created = await api<{ roomId: string }>("/api/online-soup/rooms", { method: "POST", body: roomForm });
+      const created = await api<{ roomId: string }>("/api/online-soup/rooms", { method: "POST", body: { ...roomForm, hostMode: roomForm.hostMode === "voice" ? "human" : roomForm.hostMode, communicationMode: roomForm.hostMode === "voice" ? "voice" : "text" } });
       await api(`/api/online-soup/rooms/${created.roomId}/select-soup`, { method: "POST", body: { soupId: soup.id } });
       navigate(`/online-soup/rooms/${created.roomId}`);
     } catch (error) { showToast(error instanceof Error ? error.message : "创建房间失败"); }
@@ -544,7 +545,7 @@ export default function DetailPage() {
       </div>
 
       {showShare && <SoupShareModal soup={soup} onClose={() => setShowShare(false)} />}
-      {showRoomCreate && <Modal onClose={() => !creatingRoom && setShowRoomCreate(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">开房间</h2><p className="mt-1 text-sm text-muted">创建后将自动选择《{soup.title}》</p></div>{soup.enableAiGame && <label className="block space-y-2"><span className="text-xs font-bold text-muted">主持方式</span><select className="field" value={roomForm.hostMode} onChange={(e) => setRoomForm((old) => ({ ...old, hostMode: e.target.value as "human" | "ai" }))}><option value="human">真人主持</option><option value="ai">AI 主持</option></select></label>}<label className="block space-y-2"><span className="text-xs font-bold text-muted">房间名称</span><input className="field" maxLength={50} value={roomForm.name} onChange={(e) => setRoomForm((old) => ({ ...old, name: e.target.value }))} /></label><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间类型</span><select className="field" value={roomForm.type} onChange={(e) => setRoomForm((old) => ({ ...old, type: e.target.value as "public" | "password", password: "" }))}><option value="public">公开房间</option><option value="password">密码房间</option></select></label>{roomForm.type === "password" && <label className="block space-y-2"><span className="text-xs font-bold text-muted">4 位密码</span><input className="field text-center tracking-[.3em]" inputMode="numeric" maxLength={4} value={roomForm.password} onChange={(e) => setRoomForm((old) => ({ ...old, password: e.target.value.replace(/\D/g, "") }))} /></label>}<button className="btn btn-primary w-full" disabled={creatingRoom} onClick={() => void createRoomForSoup()}>{creatingRoom ? "创建中…" : "创建并进入"}</button></div></Modal>}
+      {showRoomCreate && <Modal onClose={() => !creatingRoom && setShowRoomCreate(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">开房间</h2><p className="mt-1 text-sm text-muted">创建后将自动选择《{soup.title}》</p></div><OnlineSoupModePicker value={roomForm.hostMode} aiEnabled={soup.enableAiGame} onChange={hostMode => setRoomForm(old => ({ ...old, hostMode }))} /><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间名称</span><input className="field" maxLength={50} value={roomForm.name} onChange={(e) => setRoomForm((old) => ({ ...old, name: e.target.value }))} /></label><label className="block space-y-2"><span className="text-xs font-bold text-muted">房间类型</span><select className="field" value={roomForm.type} onChange={(e) => setRoomForm((old) => ({ ...old, type: e.target.value as "public" | "password", password: "" }))}><option value="public">公开房间</option><option value="password">密码房间</option></select></label>{roomForm.type === "password" && <label className="block space-y-2"><span className="text-xs font-bold text-muted">4 位密码</span><input className="field text-center tracking-[.3em]" inputMode="numeric" maxLength={4} value={roomForm.password} onChange={(e) => setRoomForm((old) => ({ ...old, password: e.target.value.replace(/\D/g, "") }))} /></label>}<button className="btn btn-primary w-full" disabled={creatingRoom} onClick={() => void createRoomForSoup()}>{creatingRoom ? "创建中…" : "创建并进入"}</button></div></Modal>}
     </section>
   );
 }

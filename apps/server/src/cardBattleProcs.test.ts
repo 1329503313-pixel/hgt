@@ -32,9 +32,9 @@ test("新属性各星级默认0%，范围0-100且最多两位小数，旧快照�
   }
 });
 
-test("18种技能全需数值与回合数，目标范围和独立状态正确且属性增益不暴击", () => {
+test("21种技能全需数值与回合数，目标范围和独立状态正确且属性增益不暴击", () => {
   const codes = [...CARD_BATTLE_PROC_BUFF_CODES, ...CARD_BATTLE_PROC_DEBUFF_CODES];
-  assert.equal(codes.length, 18);
+  assert.equal(codes.length, 21);
   for (const type of codes) {
     const skill = effect(type);
     assert.ok(cardBattleEffectSchema.safeParse(skill).success, type);
@@ -188,5 +188,5 @@ test("新字段保存和读取按原值往返，不丢失零或小数", async ()
   assert.equal(saved.length, 4);
   for (const args of saved) assert.deepEqual(args.slice(12, 15), [12.25, 0, 99.99]);
   const loaded = (await loadCardBattleTiers("card", db))[0]!;
-  assert.deepEqual(CARD_BATTLE_PROC_STATS.map(({ key }) => loaded[key]), [12.25, 0, 99.99]);
+  assert.deepEqual(CARD_BATTLE_PROC_STATS.map(({ key }) => loaded[key]), [12.25, 0, 99.99, 0]);
 });

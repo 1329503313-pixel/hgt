@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { AppProvider } from "./context/AppContext";
 import { OnlineSoupDockProvider } from "./context/OnlineSoupDockContext";
+import { OnlineSoupVoiceProvider } from "./context/OnlineSoupVoiceContext";
 import App from "./App";
 import "./styles.css";
 import { setupPerformanceMonitoring } from "./performance";
@@ -26,10 +27,10 @@ createRoot(rootElement).render(
   <React.StrictMode>
     <BrowserRouter>
       <AppProvider>
-        <OnlineSoupDockProvider>
+        <OnlineSoupVoiceProvider><OnlineSoupDockProvider>
           <ImageFallbackBoundary />
           <App />
-        </OnlineSoupDockProvider>
+        </OnlineSoupDockProvider></OnlineSoupVoiceProvider>
       </AppProvider>
     </BrowserRouter>
   </React.StrictMode>

@@ -118,7 +118,7 @@ export function publicFrozenCard(card: CardBattleDeckCard) {
     energyRequired: card.tier.energyRequired, canAttackRear: card.tier.canAttackRear,
     critRate: card.tier.critRate ?? 25, critDamage: card.tier.critDamage ?? 150,
     dodgeRate: card.tier.dodgeRate ?? 0, hitRate: card.tier.hitRate ?? 0,
-    lifestealRate: card.tier.lifestealRate ?? 0, stunRate: card.tier.stunRate ?? 0, extraActionRate: card.tier.extraActionRate ?? 0,
+    lifestealRate: card.tier.lifestealRate ?? 0, stunRate: card.tier.stunRate ?? 0, extraActionRate: card.tier.extraActionRate ?? 0, counterRate: card.tier.counterRate ?? 0,
   }, card.collectible);
   return {
     id: card.cardId, instanceId: card.instanceId, cardNo: card.cardNo ?? "", name: card.name, rarity: card.rarity, starLevel: card.starLevel,
@@ -187,7 +187,7 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
     `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
        cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level,
        tiers.max_hp, tiers.attack_value, tiers.defense_value, tiers.speed_value, tiers.energy_required, tiers.can_attack_rear, tiers.crit_rate, tiers.crit_damage,
-       tiers.lifesteal_rate, tiers.stun_rate, tiers.extra_action_rate, tiers.dodge_rate, tiers.hit_rate,
+       tiers.lifesteal_rate, tiers.stun_rate, tiers.extra_action_rate, tiers.counter_rate, tiers.dodge_rate, tiers.hit_rate,
        tiers.skill_name, tiers.skill_description
      FROM user_asset_cards owned
      JOIN asset_cards cards ON cards.id = owned.card_id
@@ -203,7 +203,7 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
       energyRequired: Number(row.energy_required), canAttackRear: Boolean(row.can_attack_rear),
       critRate: Number(row.crit_rate ?? 25), critDamage: Number(row.crit_damage ?? 150),
       dodgeRate: Number(row.dodge_rate ?? 0), hitRate: Number(row.hit_rate ?? 0),
-      lifestealRate: Number(row.lifesteal_rate ?? 0), stunRate: Number(row.stun_rate ?? 0), extraActionRate: Number(row.extra_action_rate ?? 0),
+      lifestealRate: Number(row.lifesteal_rate ?? 0), stunRate: Number(row.stun_rate ?? 0), extraActionRate: Number(row.extra_action_rate ?? 0), counterRate: Number(row.counter_rate ?? 0),
     }, String(row.id), collection);
     return {
       id: String(row.id),
@@ -462,9 +462,10 @@ export async function startCardBattle(roomId: string, hostId: string | null, db:
     throw new CardBattleRoomRuleError(boss ? "在席玩家均须选满三张不同卡牌并准备" : "双方都进入对战席、选满五张卡牌并准备后才能开始");
   }
   const [[rankingChallenge]] = await db.query<mysql.RowDataPacket[]>(
-    "SELECT defender_id, defender_snapshot_json FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+    "SELECT defender_id, defender_snapshot_json, consecutive_wins FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
     [roomId],
   );
+  if (Number(rankingChallenge?.consecutive_wins ?? 0) >= 2) throw new CardBattleRoomRuleError("已达成两连胜，请先确认占榜");
   const [[previousGame]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT id, status, result_json, started_at, NOW(3) AS db_now FROM online_card_battles WHERE room_id = ? ORDER BY game_number DESC LIMIT 1 FOR UPDATE",
     [roomId],
@@ -490,6 +491,13 @@ export async function startCardBattle(roomId: string, hostId: string | null, db:
     }
   }
   if (boss) playerInputs.push(bossBattlePlayer(boss));
+  if (rankingChallenge) await db.query("UPDATE card_battle_ranking_challenges SET consecutive_wins = 0 WHERE room_id = ?", [roomId]);
+  return createCardBattleGame(roomId, playerInputs, db, boss);
+}
+
+/** Caller holds the room lock; a rematch reuses the complete frozen inputs. */
+async function createCardBattleGame(roomId: string, playerInputs: CardBattlePlayerInput[], db: mysql.PoolConnection,
+  boss: Awaited<ReturnType<typeof requireAvailableBoss>> | null = null, scheduledStart?: Date) {
   const [[numberRow]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT COALESCE(MAX(game_number), 0) + 1 AS next_number FROM online_card_battles WHERE room_id = ?",
     [roomId],
@@ -498,7 +506,7 @@ export async function startCardBattle(roomId: string, hostId: string | null, db:
   const seed = `${roomId}:${numberRow.next_number}:${nanoid()}`;
   const result = simulateCardBattle(playerInputs, seed, boss ? "boss" : "1v1");
   const [[clock]] = await db.query<mysql.RowDataPacket[]>("SELECT NOW(3) AS db_now");
-  const startedAt = new Date(clock.db_now);
+  const startedAt = scheduledStart ?? new Date(clock.db_now);
   const playbackEndsAt = new Date(startedAt.getTime() + result.playbackDurationMs);
   await db.query(
     `INSERT INTO online_card_battles
@@ -575,11 +583,23 @@ export async function finalizeCardBattleIfDue(roomId: string) {
     const rewards = await settleBossRewards(locked, result, connection);
     await connection.query("UPDATE online_card_battles SET status = 'ended', ended_at = NOW(3) WHERE id = ?", [locked.id]);
     const [[rankingChallenge]] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT defender_id, challenger_id, challenger_was_unranked FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+      "SELECT defender_id, challenger_id, challenger_was_unranked, consecutive_wins FROM card_battle_ranking_challenges WHERE room_id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
       [roomId],
     );
+    let nextRankingInputs: CardBattlePlayerInput[] | null = null;
     if (rankingChallenge) {
       await occupyRankAfterDefeat(locked, rankingChallenge, result, connection);
+      const frozenInputs = parseLineupSnapshot(locked.lineup_snapshot_json);
+      const challenger = frozenInputs.find(player => player.userId === String(rankingChallenge.challenger_id));
+      const won = challenger && result.winnerSeat === challenger.seat && result.endReason !== "surrender";
+      const wins = won ? Math.min(2, Number(rankingChallenge.consecutive_wins ?? 0) + 1) : 0;
+      await connection.query("UPDATE card_battle_ranking_challenges SET consecutive_wins = ? WHERE room_id = ?", [wins, roomId]);
+      if (wins === 1) {
+        if (frozenInputs.length !== 2 || frozenInputs.some(player => player.cards.length !== CARD_BATTLE_LINEUP_SIZE)) {
+          throw new CardBattleRoomRuleError("打榜阵容快照不可用，无法开始第二局");
+        }
+        nextRankingInputs = frozenInputs;
+      }
       await connection.query(
         "UPDATE online_card_battle_seats SET is_ready = IF(user_id = ?, 1, 0) WHERE room_id = ?",
         [rankingChallenge.defender_id, roomId],
@@ -597,6 +617,10 @@ export async function finalizeCardBattleIfDue(roomId: string) {
       [roomId],
     );
     await archiveBattleRecord(connection, String(locked.id));
+    if (nextRankingInputs) {
+      await connection.query("UPDATE online_card_battle_seats SET is_ready = 1 WHERE room_id = ?", [roomId]);
+      await createCardBattleGame(roomId, nextRankingInputs, connection, null, new Date(locked.playback_ends_at));
+    }
     await connection.commit();
     emitBossRewards(rewards);
     return true;
@@ -620,7 +644,7 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
     ).then(([rows]) => rows),
     pool.query<mysql.RowDataPacket[]>(
       `SELECT rooms.status, rooms.card_battle_mode, challenges.id AS challenge_id, challenges.challenger_id,
-         challenges.defender_id, challenges.target_rank, challenges.status AS challenge_status
+         challenges.defender_id, challenges.target_rank, challenges.status AS challenge_status, challenges.consecutive_wins
        FROM online_soup_rooms rooms
        LEFT JOIN card_battle_ranking_challenges challenges ON challenges.room_id = rooms.id
        WHERE rooms.id = ? LIMIT 1`,
@@ -696,6 +720,7 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
       challengerUserId: String(challengeRow.challenger_id),
       defenderUserId: String(challengeRow.defender_id),
       targetRank: Number(challengeRow.target_rank),
+      consecutiveWins: Number(challengeRow.consecutive_wins ?? 0),
       status: String(challengeRow.challenge_status) as "active" | "won" | "abandoned" | "stale",
       fallbackRank: currentGame?.ranking_fallback_rank == null ? null : Number(currentGame.ranking_fallback_rank),
       fallbackFull: Boolean(currentGame?.ranking_fallback_full),

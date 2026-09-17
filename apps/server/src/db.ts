@@ -1242,6 +1242,15 @@ export async function initDatabase() {
     "host_mode",
     "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER host_id"
   );
+  await ensureColumn("online_soup_rooms", "communication_mode", "communication_mode ENUM('text','voice') NOT NULL DEFAULT 'text'");
+  await ensureColumn("online_soup_rounds", "communication_mode", "communication_mode ENUM('text','voice') NOT NULL DEFAULT 'text'");
+  await ensureColumn("online_soup_members", "voice_seat", "voice_seat TINYINT UNSIGNED NULL");
+  await pool.query(`CREATE TABLE IF NOT EXISTS online_soup_voice_sessions (
+    id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, room_id VARCHAR(64) NOT NULL,
+    rtc_user_id VARCHAR(32) NOT NULL, can_publish BOOLEAN NOT NULL, revoked BOOLEAN NOT NULL DEFAULT 0,
+    ticket_expires_at DATETIME(3) NOT NULL, last_seen_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    INDEX idx_voice_user(user_id,revoked), INDEX idx_voice_room(room_id,revoked)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
   await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery','impostor','card_battle') NOT NULL DEFAULT 'soup' AFTER host_mode");
   const [[onlineSoupContentType]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
@@ -2854,6 +2863,9 @@ export async function initDatabase() {
   await ensureColumn("asset_card_battle_tiers", "lifesteal_rate", "lifesteal_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
   await ensureColumn("asset_card_battle_tiers", "stun_rate", "stun_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
   await ensureColumn("asset_card_battle_tiers", "extra_action_rate", "extra_action_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
+  await ensureColumn("asset_card_battle_tiers", "counter_rate", "counter_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
+  await ensureColumn("asset_card_battle_effects", "damage_type", "damage_type VARCHAR(16) NOT NULL DEFAULT 'fixed'");
+  await ensureColumn("asset_card_battle_effects", "damage_formula", "damage_formula VARCHAR(500) NULL");
   await ensureColumn("asset_card_battle_tiers", "dodge_rate", "dodge_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
   await ensureColumn("asset_card_battle_tiers", "hit_rate", "hit_rate DECIMAL(5,2) NOT NULL DEFAULT 0");
   await ensureColumn("asset_card_battle_tiers", "bonds_json", "bonds_json JSON NULL");
@@ -3128,6 +3140,7 @@ export async function initDatabase() {
     await ensureColumn(table, "collectible_bindings_json", "collectible_bindings_json JSON NULL");
   }
   await ensureColumn("card_battle_ranking_challenges", "challenger_was_unranked", "challenger_was_unranked TINYINT(1) NOT NULL DEFAULT 0");
+  await ensureColumn("card_battle_ranking_challenges", "consecutive_wins", "consecutive_wins TINYINT UNSIGNED NOT NULL DEFAULT 0");
   await ensureColumn("online_card_battles", "ranking_fallback_rank", "ranking_fallback_rank TINYINT UNSIGNED NULL");
   await ensureColumn("online_card_battles", "ranking_fallback_full", "ranking_fallback_full TINYINT(1) NOT NULL DEFAULT 0");
   await ensureColumn("collectibles", "collectible_type", "collectible_type ENUM('treasure','commemorative','honor') NOT NULL DEFAULT 'treasure' AFTER rarity");

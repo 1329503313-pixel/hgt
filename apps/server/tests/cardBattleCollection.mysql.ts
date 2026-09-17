@@ -9,7 +9,7 @@ import { loadCardBattleCollectionBonus, loadCardBattleCollectionBonuses, applyCa
 import { buildCardBattlePlayerInput, loadEligibleBattleCards, publicFrozenCard } from "../src/cardBattleRoom.js";
 import { listCardBattleRanking } from "../src/cardBattleRanking.js";
 import { registerDigitalAssetRoutes } from "../src/digitalAssets.js";
-import { saveCardBattleTiers, defaultCardBattleTiers } from "../src/cardBattleConfig.js";
+import { saveCardBattleTiers, loadCardBattleTiers, defaultCardBattleTiers } from "../src/cardBattleConfig.js";
 import { calculateCardBattlePower } from "../src/cardBattle.js";
 
 assert.ok(["localhost", "127.0.0.1", "::1"].includes(config.db.host), "Loopback MySQL required");
@@ -37,6 +37,7 @@ try {
       [id, id, id, id === "a" ? "legend" : ["normal", "missing", "disabled", "unbound"].includes(id) ? "normal" : "epic", id === "disabled" ? "inactive" : "active"]);
     if (ids.includes(id)) await saveCardBattleTiers(id, defaultCardBattleTiers().map(tier => ({ ...tier,
       maxHp: 1000, attack: 100, defense: 100, speed: 100, critDamage: 150.25,
+      critRate: 12.25, lifestealRate: 5.01, extraActionRate: 6.02, dodgeRate: 7.03, stunRate: 8.04, counterRate: 9.05,
       effects: [{ id: `${id}-${tier.starLevel}`, order: 0, condition: "energy_full", conditionValue: null, type: "damage_single", value: 1000, duration: null,
         additionalEffects: [{ type: "heal_self", value: 200, duration: null }] }],
     })), db);
@@ -71,6 +72,8 @@ try {
   assert.equal(frozen.cards[2]!.tier.attack, 102);
   assert.equal(publicFrozenCard(frozen.cards[0]!).stats.attack, 155, "收藏品在取整后相加");
   assert.equal(selected.find(card => card.id === "a")!.stats.attack, 105);
+  assert.equal(selected.find(card => card.id === "a")!.stats.counterRate, 9.05);
+  assert.equal(publicFrozenCard(frozen.cards[0]!).stats.counterRate, 9.05);
   const team = await buildCardBattlePlayerInput("owner", "owner", 1, ids.slice(0, 3), db, bindings, 1);
   assert.equal(team.cards[0]!.tier.attack, 105);
   const other = await buildCardBattlePlayerInput("other", "other", 2, ids, db);
@@ -102,7 +105,17 @@ try {
   const retry = applyCardBattlePlayerCollection(frozen, await loadCardBattleCollectionBonus("owner", db));
   assert.equal(retry.cards[0]!.tier.maxHp, 1010);
   assert.equal(retry.cards[0]!.tier.critDamage, 150.25);
-  console.log("PASS: ownership, pack completion, previews, ranking power, battle snapshots, BOSS teams and rematches; persistent rows unchanged");
+  const formulaTiers = defaultCardBattleTiers().map(tier => ({ ...tier, counterRate: 12.25, effects: [{
+    order: 0, condition: "energy_full" as const, conditionValue: null, type: "damage_all" as const, value: null, duration: null,
+    damageType: "formula" as const, damageFormula: "攻击力*1.1+速度*5",
+    additionalEffects: [{ type: "damage_true_single" as const, value: null, duration: null, damageType: "formula" as const, damageFormula: "生命值/10" }],
+  }] }));
+  await saveCardBattleTiers("a", formulaTiers, db);
+  const reloaded = await loadCardBattleTiers("a", db);
+  assert.ok(reloaded.every(tier => tier.counterRate === 12.25 && tier.effects[0]!.damageType === "formula"
+    && tier.effects[0]!.damageFormula === "攻击力*1.1+速度*5" && tier.effects[0]!.value === null
+    && tier.effects[0]!.additionalEffects![0]!.damageFormula === "生命值/10"));
+  console.log("PASS: ownership, pack completion, previews, ranking power, battle snapshots, BOSS teams, rematches and counter/formula roundtrip; persistent rows unchanged");
 } finally {
   pool.query = originalQuery;
   await connection.end();

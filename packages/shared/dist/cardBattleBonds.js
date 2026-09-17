@@ -12,7 +12,8 @@ export const CARD_BATTLE_BOND_TARGETS = {
 };
 export const CARD_BATTLE_BOND_ACTIONS = {
     act_again: "立即再次行动", attack: "立即普通攻击", skill: "立即无视能量释放技能并清空能量",
-    attack_up: "立即增加攻击力", defense_up: "立即增加防御力", speed_up: "立即增加速度",
+    attack_up: "立即增加攻击力", skill_damage_up: "立即增加技能伤害", attack_skill_damage_up: "立即增加攻击力和技能伤害",
+    defense_up: "立即增加防御力", speed_up: "立即增加速度",
     max_hp_up: "立即增加生命值上限", heal: "立即恢复生命值", energy: "立即恢复能量",
     extra_action_up: "立即增加再动率", lifesteal_up: "立即增加吸血率", stun_up: "立即增加击晕率",
     speed_down: "立即降低速度",

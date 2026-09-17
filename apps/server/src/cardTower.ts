@@ -2,7 +2,7 @@ import mysql from "mysql2/promise";
 import type { Router, Request, Response, NextFunction } from "express";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { applyBattleCollectibleStats, emptyCardTowerFormations, replaceCardTowerFormation, cardTowerFormationError, type CardTowerFormation } from "@hgt/shared";
+import { emptyCardTowerFormations, replaceCardTowerFormation, cardTowerFormationError, type CardTowerFormation } from "@hgt/shared";
 import { pool } from "./db.js";
 import { isSuperAdminRole } from "./roles.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
@@ -10,8 +10,9 @@ import { bossInputSchema, bossCoverPattern } from "./cardBattleBossRules.js";
 import { bossBattlePlayer, emitBossRewards } from "./cardBattleBoss.js";
 import { buildCardBattlePlayerInput, loadEligibleBattleCards, loadSavedCardBattleDecks, publicFrozenCard, CardBattleRoomRuleError } from "./cardBattleRoom.js";
 import { resolveBattleCollectibles, loadBattleCollectibles, BattleCollectibleRuleError } from "./battleCollectibles.js";
-import { calculateCardBattlePower, simulateCardBattle, type CardBattleResult, type CardBattlePlayerInput } from "./cardBattle.js";
+import { simulateCardBattle, type CardBattleResult, type CardBattlePlayerInput } from "./cardBattle.js";
 import { resolveCardBattlePlayback } from "./cardBattlePlayback.js";
+import { calculateCardTowerPower } from "./cardTowerPower.js";
 
 export class CardTowerError extends Error {}
 const json = <T>(value: unknown): T => (typeof value === "string" ? JSON.parse(value) : value) as T;
@@ -82,7 +83,7 @@ export async function finalizeCardTowerRoom(roomId: string, id: string) {
           const amount = Number(game.reward_shells), balance = Number(user!.shell_balance) + amount;
           if (!Number.isSafeInteger(amount) || amount < 0 || balance > 4_294_967_295) throw new CardTowerError("通关奖励暂时无法入账，请联系管理员");
           await db.query(`INSERT INTO card_tower_clears (user_id,floor_id,floor_number,game_id,total_power,reward_shells,cleared_at) VALUES (?,?,?,?,?,?,?)`,
-            [id, game.floor_id, game.floor_number, game.id, game.total_power, amount, game.playback_ends_at]);
+            [id, game.floor_id, game.floor_number, game.id, calculateCardTowerPower(json<CardBattlePlayerInput[]>(game.lineup_json)), amount, game.playback_ends_at]);
           await db.query("UPDATE users SET shell_balance = ? WHERE id = ?", [balance, id]);
           await db.query(`INSERT INTO shell_transactions (id,user_id,transaction_type,amount,balance_after,related_type,related_id,remark,idempotency_key)
             VALUES (?,?,'card_tower',?,?,'card_tower',?,?,?)`, [nanoid(), id, amount, balance, game.floor_id, `卡牌闯关第 ${game.floor_number} 层首次通关`, `tower:${id}:${game.floor_id}`]);
@@ -208,7 +209,7 @@ export function registerCardTowerRoutes(router: Router) {
         player.cards = player.cards.map((card) => ({ ...card, instanceId: `tower:${index + 1}:${card.instanceId}` }));
         players.push(player);
       }
-      const power = players.flatMap((player) => player.cards).reduce((sum, card) => sum + calculateCardBattlePower(applyBattleCollectibleStats(card.tier, card.collectible)), 0);
+      const power = calculateCardTowerPower(players);
       players.push(floorBoss(next.row!));
       const result = simulateCardBattle(players, nanoid(), "tower"), gameId = nanoid();
       const [[clock]] = await db.query<mysql.RowDataPacket[]>("SELECT NOW(3) AS time");
@@ -249,19 +250,20 @@ export function registerCardTowerRoutes(router: Router) {
     res.json({ room: { id: room.id, name: room.name }, formations: json(profile!.formations_json), revision: Number(profile!.revision),
       clearedFloor: next.clearedFloor, message: next.message,
       nextFloor: next.row?.enabled ? { id: next.row.id, floorNumber: next.row.floor_number, rewardShells: next.row.reward_shells, lineup: floorBoss(next.row).cards.map(publicFrozenCard) } : null,
-      game: game && result ? { id: game.id, status: game.status, floorNumber: game.floor_number, totalPower: Number(game.total_power), rewardShells: game.reward_shells,
+      game: game && result ? { id: game.id, status: game.status, floorNumber: game.floor_number, totalPower: calculateCardTowerPower(json<CardBattlePlayerInput[]>(game.lineup_json)), rewardShells: game.reward_shells,
         playback: resolveCardBattlePlayback(result, game.started_at, game.status, new Date(game.db_now).getTime()),
         lineups: json<CardBattlePlayerInput[]>(game.lineup_json).map((player) => ({ ...player, cards: player.cards.map(publicFrozenCard) })),
         settlement: game.status === "ended" ? { winnerSeat: result.winnerSeat, endReason: result.endReason, rounds: result.rounds, players: result.players } : null } : null });
   }));
   router.get(`${base}/ranking`, handler(async (req, res) => {
     const limit = req.query.limit === "100" ? 100 : 10;
-    const sql = `SELECT clears.user_id AS userId, users.nickname, users.role, users.vip_growth_value, users.vip_expires_at, users.vip_legacy_active, clears.total_power AS totalPower, clears.floor_number AS floorNumber, clears.cleared_at AS clearedAt,
+    const sql = `SELECT clears.user_id AS userId, users.nickname, users.role, users.vip_growth_value, users.vip_expires_at, users.vip_legacy_active, clears.game_id AS gameId, clears.floor_number AS floorNumber, clears.cleared_at AS clearedAt,
       ROW_NUMBER() OVER (ORDER BY clears.floor_number DESC,clears.cleared_at,clears.user_id) AS ranking
       FROM card_tower_clears clears JOIN users ON users.id=clears.user_id
       WHERE users.role <> 'super_admin' AND NOT EXISTS (SELECT 1 FROM card_tower_clears later WHERE later.user_id=clears.user_id AND later.floor_number>clears.floor_number)`;
-    const [rows] = await pool.query<mysql.RowDataPacket[]>(`SELECT * FROM (${sql}) ranked WHERE ranking<=? OR userId=? ORDER BY ranking`, [limit, userId(req)]);
-    const entries = rows.map((row) => ({ userId: String(row.userId), nickname: String(row.nickname), vipLevel: vipGrowthSnapshot(row).level, vipActive: vipGrowthSnapshot(row).active, ranking: Number(row.ranking), totalPower: Number(row.totalPower), floorNumber: Number(row.floorNumber), clearedAt: iso(row.clearedAt) }));
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(`SELECT ranked.*, games.lineup_json FROM (${sql}) ranked
+      JOIN card_tower_games games ON games.id=ranked.gameId WHERE ranking<=? OR userId=? ORDER BY ranking`, [limit, userId(req)]);
+    const entries = rows.map((row) => ({ userId: String(row.userId), nickname: String(row.nickname), vipLevel: vipGrowthSnapshot(row).level, vipActive: vipGrowthSnapshot(row).active, ranking: Number(row.ranking), totalPower: calculateCardTowerPower(json<CardBattlePlayerInput[]>(row.lineup_json)), floorNumber: Number(row.floorNumber), clearedAt: iso(row.clearedAt) }));
     res.json({ entries: entries.filter((row) => row.ranking <= limit), me: entries.find((row) => row.userId === userId(req)) ?? null });
   }));
 }

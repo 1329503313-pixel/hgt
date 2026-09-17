@@ -4,6 +4,7 @@ import { emptyCardTowerFormations, replaceCardTowerFormation, cardTowerFormation
 import { simulateCardBattle, type CardBattlePlayerInput, type CardBattleTier } from "./cardBattle.js";
 import { defaultCardBattleTiers } from "./cardBattleConfig.js";
 import { resolveCardBattlePlayback } from "./cardBattlePlayback.js";
+import { calculateCardTowerPower } from "./cardTowerPower.js";
 
 function squad(id: string, seat: 1 | 2, values: Partial<CardBattleTier> = {}): CardBattlePlayerInput {
   return { userId: id, nickname: id, seat, cards: Array.from({ length: 5 }, (_, i) => ({
@@ -12,6 +13,35 @@ function squad(id: string, seat: 1 | 2, values: Partial<CardBattleTier> = {}): C
     tier: { ...defaultCardBattleTiers()[3]!, maxHp: 1000, attack: 100, defense: 0, speed: 100, critRate: 0, effects: [], ...values },
   })) };
 }
+test("历史闯关战力按新公式统计全部冻结阵容与收藏品，排除BOSS且不重叠收藏加成", () => {
+  const stats = { maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50,
+    critRate: 10, critDamage: 150, lifestealRate: 20, extraActionRate: 30, dodgeRate: 40, stunRate: 50 };
+  const players = [squad("first", 1, stats), squad("reserve-2", 1, stats), squad("reserve-3", 1, stats),
+    squad("boss", 2, { maxHp: 1_000_000_000 })];
+  const first = players[0]!.cards[0]!, reserve = players[2]!.cards[0]!;
+  first.collectionBaseTier = { ...first.tier, maxHp: 1, attack: 1 }; // Must use the already boosted frozen tier.
+  first.collectible = { id: "crit", collectibleNo: "1", name: "冻结收藏品", imageUrl: "/fixture",
+    battleEffectDescription: "", battleEffectType: "crit_damage", battleEffectValue: 50 };
+  reserve.collectible = { ...first.collectible, id: "energy", battleEffectType: "energy_reduction", battleEffectValue: 100 };
+  const frozen = structuredClone(players);
+  // 15 cards * 5500, plus 50pp crit damage * 5 and (50 - 10) energy * 20.
+  assert.equal(calculateCardTowerPower(players), 83_550);
+  assert.equal(calculateCardTowerPower(players), 83_550, "重复读取不能叠加收藏品");
+  assert.deepEqual(players, frozen, "重算不能改写冻结属性与历史阵容");
+  assert.equal(calculateCardTowerPower([players[3]!]), 0);
+});
+
+test("历史闯关战力逐卡四舍五入，旧快照缺失暴击属性沿用统一默认值", () => {
+  const player = squad("rounding", 1, { maxHp: 1000, attack: 0, defense: 0, speed: 0, energyRequired: 0,
+    critRate: 0.01, critDamage: 100.03, lifestealRate: 0.01, extraActionRate: 0, dodgeRate: 0, stunRate: 0 });
+  assert.equal(calculateCardTowerPower([player]), 2505, "每卡500.5取501后求和，而非总和2502.5取2503");
+  for (const card of player.cards) {
+    const { critRate, critDamage, ...legacy } = card.tier;
+    card.tier = { ...legacy, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, lifestealRate: 0 } as CardBattleTier;
+  }
+  assert.equal(calculateCardTowerPower([player]), 1725 * 5);
+});
+
 test("闯关专属三阵容：新操作移走其他阵容重复卡牌及收藏品，保留无关卡位与绑定", () => {
   const before = emptyCardTowerFormations();
   before[0] = { cardIds: ["a", "b", "c", "d", "e"], collectibleBindings: [{ cardId: "a", collectibleId: "x" }, { cardId: "b", collectibleId: "y" }, { cardId: "c", collectibleId: "z" }] };

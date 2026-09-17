@@ -15,17 +15,17 @@ export type CardBattleSkillAction = Omit<CardBattleSkillEffect, "order" | "condi
 export type CardBattleTier = import("@hgt/shared").CardBattleProcStats & import("@hgt/shared").CardBattleAccuracyStats & { starLevel: 0 | 1 | 2 | 3; maxHp: number; attack: number; defense: number; speed: number; energyRequired: number; critRate: number; critDamage: number; canAttackRear: boolean; skillName: string; skillDescription: string; effects: CardBattleSkillEffect[]; bonds?: import("@hgt/shared").CardBattleBond[] };
 
 export const DEFAULT_EPIC_CARD_BATTLE_TIERS: CardBattleTier[] = [
-  { starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 1, maxHp: 1200, attack: 375, defense: 60, speed: 95, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 2, maxHp: 1500, attack: 500, defense: 90, speed: 110, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 3, maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 1, maxHp: 1200, attack: 375, defense: 60, speed: 95, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 2, maxHp: 1500, attack: 500, defense: 90, speed: 110, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 3, maxHp: 1900, attack: 625, defense: 120, speed: 125, energyRequired: 40, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
 ];
 
 export const DEFAULT_LEGEND_CARD_BATTLE_TIERS: CardBattleTier[] = [
-  { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 1, maxHp: 1500, attack: 750, defense: 150, speed: 150, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 2, maxHp: 2000, attack: 1000, defense: 200, speed: 200, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
-  { starLevel: 3, maxHp: 3000, attack: 1500, defense: 300, speed: 300, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 0, maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 1, maxHp: 1500, attack: 750, defense: 150, speed: 150, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 2, maxHp: 2000, attack: 1000, defense: 200, speed: 200, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
+  { starLevel: 3, maxHp: 3000, attack: 1500, defense: 300, speed: 300, energyRequired: 50, canAttackRear: false, critRate: 25, critDamage: 150, lifestealRate: 0, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0, skillName: "", skillDescription: "", effects: [] },
 ];
 
 export const DEFAULT_CARD_BATTLE_TIERS = DEFAULT_LEGEND_CARD_BATTLE_TIERS;
@@ -51,7 +51,7 @@ export type AssetCard = {
   battleTiers?: CardBattleTier[] | null;
 };
 
-export type AssetCardBattlePreview = Pick<CardBattleTier, "starLevel" | "maxHp" | "attack" | "defense" | "speed" | "energyRequired" | "critRate" | "critDamage" | "lifestealRate" | "stunRate" | "extraActionRate" | "dodgeRate" | "hitRate" | "skillName" | "skillDescription">;
+export type AssetCardBattlePreview = Pick<CardBattleTier, "starLevel" | "maxHp" | "attack" | "defense" | "speed" | "energyRequired" | "critRate" | "critDamage" | "lifestealRate" | "stunRate" | "extraActionRate" | "counterRate" | "dodgeRate" | "hitRate" | "skillName" | "skillDescription">;
 
 export type OwnedAssetCard = AssetCard & {
   starLevel: number;

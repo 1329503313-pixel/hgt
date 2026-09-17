@@ -32,6 +32,8 @@ export declare const CARD_BATTLE_BOND_ACTIONS: {
     readonly attack: "立即普通攻击";
     readonly skill: "立即无视能量释放技能并清空能量";
     readonly attack_up: "立即增加攻击力";
+    readonly skill_damage_up: "立即增加技能伤害";
+    readonly attack_skill_damage_up: "立即增加攻击力和技能伤害";
     readonly defense_up: "立即增加防御力";
     readonly speed_up: "立即增加速度";
     readonly max_hp_up: "立即增加生命值上限";

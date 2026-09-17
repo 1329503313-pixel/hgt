@@ -67,14 +67,19 @@ try {
   assert.equal(frozen.cards[0]!.tier.energyRequired, 40, "冻结基础值，战斗运行时只叠加一次");
   await connection.query("INSERT INTO card_battle_ranking_entries (rank_position,user_id,lineup_json,collectible_bindings_json,total_power) VALUES (1,'fixture-owner',?,?,0)", [JSON.stringify(cardIds), JSON.stringify(bindings)]);
   pool.query = connection.query.bind(connection) as typeof pool.query;
-  for (const [type, value, bonus] of [["energy_reduction", 100, 300], ["attack", 20, 60], ["attack_skill_damage", 20, 60], ["defense", 20, 80], ["max_hp", 20, 20], ["speed", 20, 140], ["crit_rate", 12.25, 0]] as const) {
+  for (const [type, value, bonus] of [["energy_reduction", 100, 600], ["attack", 20, 40], ["attack_skill_damage", 20, 40], ["defense", 20, 60], ["max_hp", 20, 10], ["speed", 20, 60], ["crit_rate", 12.25, 184], ["crit_damage", 12.25, 61]] as const) {
     await connection.query("UPDATE collectibles SET battle_effect_type=?,battle_effect_value=? WHERE id='fixture-relic'", [type, value]);
     const list = await listCardBattleRanking(10);
     const detail = await cardBattleRankingDetail(1);
-    assert.equal(list[0]!.occupied && list[0]!.totalPower, 1680 * 5 + bonus, `${type}榜单战力`);
-    assert.equal(detail!.totalPower, 1680 * 5 + bonus, `${type}详情战力`);
+    assert.equal(list[0]!.occupied && list[0]!.totalPower, 885 * 5 + bonus, `${type}榜单战力`);
+    assert.equal(detail!.totalPower, 885 * 5 + bonus, `${type}详情战力`);
     assert.equal(detail!.available, true);
   }
+  await connection.query("UPDATE collectibles SET battle_effect_type='crit_rate',battle_effect_value=100 WHERE id='fixture-relic'");
+  await connection.query("UPDATE asset_card_battle_tiers SET lifesteal_rate=12.25,extra_action_rate=0.01,dodge_rate=0.02,stun_rate=0.03");
+  const procRanking = await listCardBattleRanking(10);
+  assert.equal(procRanking[0]!.occupied && procRanking[0]!.totalPower, 1132 * 5 + 1125, "每张卡1131.8先取整为1132，暴击率装配后上限100%");
+  assert.equal((await cardBattleRankingDetail(1))!.totalPower, 1132 * 5 + 1125);
   await connection.query("UPDATE collectibles SET owner_user_id=NULL,status='unowned' WHERE id='fixture-relic'");
   assert.equal((await loadSavedCardBattleDecks("fixture-owner", connection))[0]!.collectiblesAvailable, false);
   assert.equal((await cardBattleRankingDetail(1))!.available, false);

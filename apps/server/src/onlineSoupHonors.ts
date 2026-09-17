@@ -30,6 +30,9 @@ export type OnlineSoupAiHonors = {
   };
 };
 
+export type OnlineSoupVoiceHonors = {
+  version: 2; communicationMode: "voice"; mvp: OnlineSoupAiHonors["mvp"]; bestQuestion: null;
+};
 export type OnlineSoupHumanHonorSelection = {
   mvpUserId: string;
   bestQuestionMessageId: string;
@@ -151,10 +154,13 @@ export function selectOnlineSoupHumanHonors(
   };
 }
 
-export function parseOnlineSoupAiHonors(value: unknown): OnlineSoupAiHonors | null {
+export function parseOnlineSoupAiHonors(value: unknown): OnlineSoupAiHonors | OnlineSoupVoiceHonors | null {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
     if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.version === 2 && parsed.communicationMode === "voice" && parsed.bestQuestion === null
+      && typeof parsed.mvp?.userId === "string" && parsed.mvp.userId
+      && typeof parsed.mvp.nickname === "string" && parsed.mvp.nickname) return parsed as OnlineSoupVoiceHonors;
     const candidate = parsed as Partial<OnlineSoupAiHonors>;
     if (candidate.version !== 1 || !candidate.mvp || !candidate.bestQuestion) return null;
     if (!candidate.mvp.userId || !candidate.mvp.nickname) return null;

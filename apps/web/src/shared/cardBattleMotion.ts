@@ -8,6 +8,8 @@ export type BattleMotion = { glyph: BattleGlyphName; color: string; pattern: "si
 const motion = (glyph: BattleGlyphName, color: string, pattern: BattleMotion["pattern"], animation: BattleMotion["motion"], label: string, count = 1): BattleMotion => ({ glyph, color, pattern, motion: animation, label, count });
 
 const existing = {
+  counter_self: motion("sword", "#fbbf24", "self", "guard", "反击准备"),
+  counter_all_allies: motion("sword", "#fcd34d", "all", "guard", "群体反击准备", 5),
   lifesteal_self: motion("blood", "#fb7185", "self", "drain", "嗜血回流"),
   lifesteal_all_allies: motion("blood", "#fda4af", "all", "drain", "群体血契", 5),
   stun_self: motion("dizzy", "#fde68a", "self", "daze", "震荡星环"),
@@ -74,7 +76,7 @@ export const CARD_BATTLE_MOTIONS: Record<CardBattleEffectType, BattleMotion> = {
 export const CARD_BATTLE_STATUS_GLYPHS: Record<CardBattleStatusType, BattleGlyphName> = {
   crit_rate_up: "sword", crit_damage_up: "arcane",
   shield: "shield", dodge_up: "wings", hit_up: "sword",
-  lifesteal_up: "blood", stun_up: "dizzy", extra_action_up: "repeat", lifesteal_down: "blood-block", stun_down: "dizzy-block", extra_action_down: "repeat-block", stunned: "dizzy",
+  lifesteal_up: "blood", stun_up: "dizzy", extra_action_up: "repeat", counter_up: "sword", counter_down: "broken-sword", lifesteal_down: "blood-block", stun_down: "dizzy-block", extra_action_down: "repeat-block", stunned: "dizzy",
   immunity: "shield", revival_block: "broken-heart",
   debuff_resistance: "shield", invincible: "energy", death_protection: "heart",
   attack_up: "sword", skill_damage_up: "arcane", max_hp_up: "heart", defense_up: "shield", speed_up: "wings",

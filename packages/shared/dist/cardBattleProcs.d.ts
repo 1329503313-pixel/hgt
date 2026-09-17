@@ -10,11 +10,17 @@ export declare const CARD_BATTLE_PROC_STATS: readonly [{
     readonly key: "extraActionRate";
     readonly column: "extra_action_rate";
     readonly label: "再动概率";
+}, {
+    readonly key: "counterRate";
+    readonly column: "counter_rate";
+    readonly label: "反击率";
 }];
 export type CardBattleProcStat = typeof CARD_BATTLE_PROC_STATS[number]["key"];
 /** Optional only for frozen lineups saved before these attributes existed. */
 export type CardBattleProcStats = Partial<Record<CardBattleProcStat, number>>;
 export declare const CARD_BATTLE_PROC_BUFF_LABELS: {
+    readonly counter_self: "增加自身反击率";
+    readonly counter_all_allies: "增加全体友军反击率";
     readonly lifesteal_self: "增加自己吸血比例";
     readonly lifesteal_all_allies: "增加己方全员吸血比例";
     readonly stun_self: "增加自己击晕概率";
@@ -23,6 +29,7 @@ export declare const CARD_BATTLE_PROC_BUFF_LABELS: {
     readonly extra_action_all_allies: "增加己方全员再动概率";
 };
 export declare const CARD_BATTLE_PROC_DEBUFF_LABELS: {
+    readonly counter_down_all: "降低全体敌军反击率";
     readonly lifesteal_down_single: "降低一名敌方吸血比例";
     readonly lifesteal_down_front: "降低敌方前排吸血比例";
     readonly lifesteal_down_rear: "降低敌方后排吸血比例";

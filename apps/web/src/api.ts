@@ -63,6 +63,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 
   const request = (async () => {
     const headers = new Headers(fetchOptions.headers);
+    if (path.startsWith("/api/online-soup")) headers.set("X-HGT-Voice-Version", "1");
     if (fetchOptions.body && !isBodyInit(fetchOptions.body)) headers.set("Content-Type", "application/json");
     const response = await fetch(apiEndpoint(path), {
       ...fetchOptions,

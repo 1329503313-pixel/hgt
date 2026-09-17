@@ -274,6 +274,7 @@ export function CardCabinetSection({
                     ["暴击伤害", `${detail.battleTier.critDamage ?? 150}%`],
                     ["吸血比例", `${detail.battleTier.lifestealRate ?? 0}%`],
                     ["击晕概率", `${detail.battleTier.stunRate ?? 0}%`],
+                    ["反击率", `${detail.battleTier.counterRate ?? 0}%`],
                     ["再动概率", `${detail.battleTier.extraActionRate ?? 0}%`],
                     ["闪避率", `${detail.battleTier.dodgeRate ?? 0}%`], ["命中率", `${detail.battleTier.hitRate ?? 0}%`],
                   ].map(([label, value]) => <div key={label} className="rounded-xl bg-field px-3 py-3">

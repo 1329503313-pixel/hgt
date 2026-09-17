@@ -1,3 +1,5 @@
+import { useOnlineSoupVoice } from "./OnlineSoupVoiceContext";
+import { OnlineSoupVoiceControls } from "../components/OnlineSoupVoiceRoom";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Ban, LogOut, Maximize2, MessageCircle, Minimize2, Send, Sparkles, Volume2, VolumeX, Wifi, WifiOff } from "lucide-react";
@@ -66,6 +68,7 @@ function storageKey(userId: string) {
 
 export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   const { user, showToast } = useApp();
+  const voice = useOnlineSoupVoice();
   const navigate = useNavigate();
   const location = useLocation();
   const [session, setSession] = useState<DockSession | null>(null);
@@ -82,9 +85,9 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   const refreshRequestStartedRef = useRef(0);
   const refreshRequestAppliedRef = useRef(0);
   const activeBackgroundMusic = session ? session.snapshot.room.backgroundMusic : fullRoomBackgroundMusic?.track ?? null;
-  const backgroundMusicPlayback = useOnlineSoupBackgroundMusic(activeBackgroundMusic);
+  const backgroundMusicPlayback = useOnlineSoupBackgroundMusic(activeBackgroundMusic, Boolean(voice.transmitting || voice.speakers.length));
 
-  useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => { sessionRef.current = session; if (session) voice.sync(session.snapshot); }, [session]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => {
     if (["impostor", "card_battle"].includes(session?.snapshot.room.contentType ?? "")) setMessageMode("discussion");
@@ -94,6 +97,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
   }, [session?.snapshot.room.remainingQuestionCount]);
 
   const clearDock = useCallback(() => {
+    voice.disconnect();
     if (user) localStorage.removeItem(storageKey(user.id));
     minimizedRoomIdRef.current = null;
     setSession(null);
@@ -281,6 +285,7 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
         title={session.snapshot.room.name}
       >
         <MessageCircle size={34} fill="currentColor" />
+        {session.snapshot.room.communicationMode === "voice" && <small className="absolute -top-5 rounded bg-white px-2 text-xs text-ink">{voice.transmitting ? "麦克风开启" : "语音"}</small>}
         {session.unreadCount > 0 && <span>{session.unreadCount > 99 ? "99+" : session.unreadCount}</span>}
       </button> : <section className="online-soup-mini-chat" aria-label={`${session.snapshot.room.name}迷你聊天窗口`}>
         <header>
@@ -310,7 +315,8 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
           <span>第 {miniImpostorGame.day} 天 · {impostorPhaseLabels[miniImpostorGame.phase]}</span>
           <strong>{miniImpostorGame.me ? "返回完整房间操作" : "返回完整房间查看"}<Maximize2 size={14} /></strong>
         </button>}
-        {(session.snapshot.me.role !== "spectator" || session.snapshot.room.contentType === "card_battle") && !currentMemberMuted && <div className="online-soup-mini-composer">
+        {session.snapshot.room.communicationMode === "voice" && <OnlineSoupVoiceControls roomId={session.snapshot.room.id} />}
+        {session.snapshot.room.communicationMode !== "voice" && (session.snapshot.me.role !== "spectator" || session.snapshot.room.contentType === "card_battle") && !currentMemberMuted && <div className="online-soup-mini-composer">
           {session.snapshot.me.role === "player" && !["impostor", "card_battle"].includes(session.snapshot.room.contentType) && <button
             type="button"
             className={messageMode === "question" ? "is-question" : ""}

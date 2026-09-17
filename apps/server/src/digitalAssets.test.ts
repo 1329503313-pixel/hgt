@@ -251,7 +251,7 @@ test("卡包介绍使用数据库属性，兼容零值和缺失配置且不暴�
   } as never;
   assert.deepEqual(digitalAssetRules.packCardBattlePreview(row), {
     starLevel: 0, maxHp: 800, attack: 250, defense: 30, speed: 80, energyRequired: 40,
-    critRate: 0, critDamage: 150, lifestealRate: 12.5, stunRate: 0, extraActionRate: 0, dodgeRate: 0, hitRate: 0,
+    critRate: 0, critDamage: 150, lifestealRate: 12.5, stunRate: 0, extraActionRate: 0, counterRate: 0, dodgeRate: 0, hitRate: 0,
     skillName: "潮汐", skillDescription: "第一段\n第二段"
   });
   assert.equal(digitalAssetRules.packCardBattlePreview(undefined), null);

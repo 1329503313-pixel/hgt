@@ -2,6 +2,25 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { cardBattleFormationSize } from "../src/shared/cardBattleLayout.js";
+import { battleCardWithCollectible } from "../src/shared/battleCollectibles.js";
+import type { OnlineCardBattleCard } from "../src/shared/types.js";
+
+test("选卡装配使用完整属性的新战力公式，包含暴击伤害和百分比属性", () => {
+  const card: OnlineCardBattleCard = {
+    id: "power", cardNo: "001", name: "测试卡", rarity: "epic", battleRole: "damage", starLevel: 0,
+    imageUrl: "", motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null,
+    skillName: "", skillDescription: "", combatPower: 0,
+    stats: { maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50,
+      critRate: 10, critDamage: 150, lifestealRate: 20, extraActionRate: 30, dodgeRate: 40, stunRate: 50,
+      canAttackRear: false, hitRate: 0 },
+  };
+  assert.equal(battleCardWithCollectible(card, null).combatPower, 5500);
+  const equipped = battleCardWithCollectible(card, { id: "relic", collectibleNo: "001", name: "暴伤收藏品",
+    imageUrl: "", battleEffectDescription: "", battleEffectType: "crit_damage", battleEffectValue: 12.25 });
+  assert.equal(equipped.stats.critDamage, 162.25);
+  assert.equal(equipped.combatPower, 5561);
+  assert.equal(card.stats.critDamage, 150);
+});
 
 test("阵容按半场空间放大，保持两排和横向安全间距", () => {
   for (const [width, height] of [[892, 260], [375, 300], [1440, 420], [320, 200]]) {
@@ -19,9 +38,9 @@ import { CARD_BATTLE_DEBUFF_LABELS, CARD_BATTLE_STATUS_ORDER } from "../src/shar
 import { cardBattleEffectCodes } from "../../server/src/cardBattle.js";
 import { cardBattleStatusOrder } from "../../server/src/cardBattleStatus.js";
 
-test("动画穷举服务端全部技能类型含全部复活与37种减益，状态顺序一致", () => {
+test("动画穷举服务端全部技能类型含全部复活与38种减益，状态顺序一致", () => {
   assert.deepEqual(Object.keys(CARD_BATTLE_MOTIONS).sort(), [...cardBattleEffectCodes].sort());
-  assert.equal(Object.keys(CARD_BATTLE_DEBUFF_LABELS).length, 37);
+  assert.equal(Object.keys(CARD_BATTLE_DEBUFF_LABELS).length, 38);
   assert.deepEqual(CARD_BATTLE_STATUS_ORDER, cardBattleStatusOrder);
   for (const type of cardBattleEffectCodes) {
     assert.ok(CARD_BATTLE_MOTIONS[type].glyph);
@@ -224,9 +243,12 @@ test("备战卡牌支持鼠标和触控拖动换位并保留点击选卡", () =>
   assert.doesNotMatch(view, /准备完成/);
 });
 
-test("选卡支持搜索、四种排序并在选卡和战场展示战力", () => {
-  assert.match(view, /placeholder="搜索卡牌名称、序号或定位"/);
-  for (const sort of ["按序号排序", "按品质排序", "按星级排序", "按战力排序"]) assert.match(view, new RegExp(sort));
+test("选卡支持搜索、五种固定方向排序并默认按战力降序", () => {
+  assert.match(view, />搜索卡牌名称、序号或定位<\/span>/);
+  for (const sort of ["序号排序", "最新在前", "战力排序", "星级排序", "品质排序"]) assert.match(view, new RegExp(sort));
+  assert.match(view, /useState<CardSort>\("power"\)/);
+  assert.match(view, /const direction = cardSort === "number" \? 1 : -1/);
+  assert.doesNotMatch(view, /sortDescending|setSortDescending/);
   assert.match(view, /cardRarityRank\[left\.rarity\] - cardRarityRank\[right\.rarity\]/);
   assert.match(view, /card\.combatPower/);
   assert.match(view, /战力 \{combatPowerFormatter\.format\(card\.combatPower\)\}/);
@@ -249,10 +271,10 @@ test("卡牌定位默认全部，三类定位筛选与搜索叠加且不改变�
   assert.deepEqual(cards.map((card) => card.cardNo), ["002", "004", "026"]);
   assert.match(view, /useState<CardBattleRoleFilter>\("all"\)/);
   assert.match(view, /filterCardBattleSelection\(eligibleCards, cardQuery, cardRoleFilter\)/);
-  assert.match(view, />卡牌定位<\/span><select value=\{cardRoleFilter\}/);
-  for (const [value, label] of [["all", "全部"], ["damage", "输出"], ["tank", "坦克"], ["support", "辅助"]]) {
-    assert.ok(view.includes(`<option value="${value}">${label}</option>`));
-  }
+  assert.match(view, /role="group" aria-label="卡牌定位"/);
+  assert.match(view, /\["all", "damage", "tank", "support"\] as const/);
+  assert.match(view, /aria-pressed=\{cardRoleFilter === role\}/);
+  assert.match(view, /onClick=\{\(\) => setCardRoleFilter\(role\)\}/);
 });
 
 test("备战支持保存、编辑和按固定位置使用卡组", () => {
@@ -271,7 +293,8 @@ test("备战支持保存、编辑和按固定位置使用卡组", () => {
 });
 
 test("卡牌施放技能时在血条上方展示技能名称", () => {
-  assert.match(view, /\(activeEvent\?\.kind === "skill" \|\| activeEvent\?\.bond\) && isActiveActor && activeEvent\.skillName/);
+  assert.match(view, /isActiveActor && \(activeEvent\?\.counterattack/);
+  assert.match(view, /\(activeEvent\?\.kind === "skill" \|\| activeEvent\?\.bond\) && activeEvent\.skillName/);
   assert.match(view, /card-battle-skill-name/);
   assert.match(styles, /@keyframes card-battle-skill-name/);
 });
@@ -300,7 +323,7 @@ test("游戏榜提供固定百名卡牌对战榜、卡组详情和私密打榜�
   assert.match(rankingBoard, />更换卡组<\/button>/);
   assert.doesNotMatch(rankingBoard, /这是我的榜位/);
   assert.match(rankingBoard, /使用并打榜/);
-  assert.match(view, /确认胜利并占据第/);
+  assert.match(view, /确认两连胜并占据第/);
   assert.match(view, /私密打榜 · 目标第/);
   assert.match(view, /!battle\.rankingChallenge && <button[^\n]+aria-label="分享房间"/);
 });

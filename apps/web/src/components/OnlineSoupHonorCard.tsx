@@ -75,7 +75,7 @@ export function OnlineSoupHonorCard({
   onOpenUser?: (userId: string) => void;
 }) {
   const best = honors.bestQuestion;
-  const bestAnswer = answerLabels[best.answer] ?? best.answer;
+  const bestAnswer = best ? answerLabels[best.answer] ?? best.answer : "";
   return (
     <article className={`overflow-hidden border border-indigo-400/40 bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-900 text-white shadow-soft ${compact ? "rounded-2xl p-3" : "rounded-3xl p-4 sm:p-5"}`} aria-label="本轮高光荣誉卡片">
       <header className={`flex items-center gap-2.5 border-b border-white/10 ${compact ? "pb-2.5" : "pb-3"}`}>
@@ -91,7 +91,7 @@ export function OnlineSoupHonorCard({
           identity={<HonorUser avatar={honors.mvp.avatar} nickname={honors.mvp.nickname} userId={honors.mvp.userId} compact={compact} onOpenUser={onOpenUser} />}
         />
 
-        <HonorSection
+        {best && <HonorSection
           title="最具价值提问"
           icon={<MessageCircleQuestion size={compact ? 14 : 16} strokeWidth={2.25} />}
           compact={compact}
@@ -102,7 +102,7 @@ export function OnlineSoupHonorCard({
             <span>答案</span>
             <strong className="rounded-full border border-blue-300/35 bg-blue-400/20 px-2.5 py-1 font-black text-white">{bestAnswer}</strong>
           </div>
-        </HonorSection>
+        </HonorSection>}
       </div>
     </article>
   );

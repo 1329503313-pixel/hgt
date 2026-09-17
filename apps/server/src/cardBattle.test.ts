@@ -157,8 +157,26 @@ test("同次连续治疗不受属性增益50%规则影响", () => {
   assert.deepEqual(firstTwo.map((event) => event.effects[0]?.amount), [100, 100]);
 });
 
-test("卡牌战力按生命、攻击、防御、速度和能量统一计算", () => {
-  assert.equal(calculateCardBattlePower({ maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50 }), 3100);
+test("战力包含全部指定属性，百分比换算为小数，暴击伤害扣除基础倍率", () => {
+  const stats = { maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50,
+    critRate: 10, critDamage: 150, lifestealRate: 20, extraActionRate: 30, dodgeRate: 40, stunRate: 50 };
+  assert.equal(calculateCardBattlePower(stats), 5500);
+  const zero = { maxHp: 0, attack: 0, defense: 0, speed: 0, energyRequired: 0, critRate: 0, critDamage: 100 };
+  assert.equal(calculateCardBattlePower(zero), 0);
+  for (const [field, value, expected] of [
+    ["maxHp", 100, 50], ["attack", 100, 200], ["defense", 100, 300], ["speed", 100, 300],
+    ["critRate", 10, 150], ["critDamage", 150, 250], ["critDamage", 100, 0],
+    ["lifestealRate", 10, 200], ["extraActionRate", 10, 300], ["dodgeRate", 10, 300],
+    ["stunRate", 10, 300], ["energyRequired", 10, -200],
+  ] as const) assert.equal(calculateCardBattlePower({ ...zero, [field]: value }), expected, field);
+  assert.equal(calculateCardBattlePower({ maxHp: 1000, attack: 500, defense: 100, speed: 100, energyRequired: 50 }), 1725, "旧快照沿用暴击率25%、暴伤150%的战斗默认值");
+});
+
+test("单卡各项加总后再四舍五入，保留百分比的小数贡献", () => {
+  const stats = { maxHp: 1000, attack: 0, defense: 0, speed: 0, energyRequired: 0, critRate: 0.01, critDamage: 100.01, lifestealRate: 0.01 };
+  assert.equal(calculateCardBattlePower(stats), 500, "500.4向下取整");
+  assert.equal(calculateCardBattlePower({ ...stats, maxHp: 1001 }), 501, "500.9向上取整，不能逐项取整");
+  assert.equal(calculateCardBattlePower({ ...stats, critDamage: 100.03 }), 501, "500.5四舍五入");
 });
 
 test("忽防仅缩减本次有效防御，保留伤害浮动、暴击、最终取整与生命截断", () => {

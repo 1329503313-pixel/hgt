@@ -128,7 +128,7 @@ export function CardBattleRankingBoard({ currentUserId, showToast }: { currentUs
   return <div className="rankings-workspace">
     <aside className="rankings-spotlight is-card-battle hidden lg:flex">
       <div className="rankings-spotlight-heading"><span><Crown size={19} /></span><div><p>RANKED DUEL</p><h2>卡牌对战榜</h2></div></div>
-      <div className="rankings-rule-card"><Swords size={17} /><div><strong>当前榜位</strong><p>榜单最多 100 人，空缺会自动收拢并保持用户先后顺序。空位可直接配置或选择五张卡组占据；已有人时可发起私密 1v1 挑战。未上榜用户正常战败后，会用本局卡组占据最靠前的空位。</p></div></div>
+      <div className="rankings-rule-card"><Swords size={17} /><div><strong>当前榜位</strong><p>榜单最多 100 人，空缺会自动收拢并保持用户先后顺序。空位可直接配置或选择五张卡组占据；已有人时可发起私密 1v1 挑战，连续赢两局才能占据目标榜位；首胜后自动以当前阵容开始第二局，任意一局战败或平局即挑战失败。未上榜用户正常战败后，会用本局卡组占据最靠前的空位。</p></div></div>
       <div className="rankings-rule-card"><Sparkles size={17} /><div><strong>奖励结算</strong><p>复用排行榜礼物奖励：每周一 00:00 和每月首日 00:00 按当时榜位结算；月结算第一额外获得史诗限时徽章“游戏王”。</p></div></div>
       <div className="rankings-own-summary"><span>我的当前排名</span><strong>{data == null ? "加载中…" : ownRank ? `第 ${ownRank} 名` : "暂未上榜"}</strong></div>
     </aside>

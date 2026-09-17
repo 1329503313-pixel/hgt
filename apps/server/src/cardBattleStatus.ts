@@ -13,7 +13,7 @@ export const cardBattleStatusOrder = [
   "shield", "dodge_up", "hit_up", "crit_rate_up", "crit_damage_up", "attack_up", "skill_damage_up", "max_hp_up", "defense_up", "speed_up",
   "speed_down", "attack_skill_damage_down", "defense_down", "max_hp_down", "healing_received_down",
   "debuff_resistance", "invincible", "death_protection",
-  "lifesteal_up", "stun_up", "extra_action_up", "lifesteal_down", "stun_down", "extra_action_down", "stunned", "immunity", "revival_block",
+  "lifesteal_up", "stun_up", "extra_action_up", "counter_up", "lifesteal_down", "stun_down", "extra_action_down", "counter_down", "stunned", "immunity", "revival_block",
 ] as const;
 export type CardBattleStatusType = typeof cardBattleStatusOrder[number];
 export type CardBattleStatus = {
@@ -35,6 +35,6 @@ export function cardBattleDebuff(type: string) {
   const split = type.lastIndexOf("_");
   const status = type.slice(0, split) as Extract<CardBattleStatusType, `${string}_down`>;
   const target = type.slice(split + 1) as "single" | "random" | "all" | "front" | "rear";
-  const label = { speed_down: "速度", max_hp_down: "生命上限", defense_down: "防御", healing_received_down: "受治疗量", attack_skill_damage_down: "攻击与技能伤害", lifesteal_down: "吸血比例", stun_down: "击晕概率", extra_action_down: "再动概率" }[status];
+  const label = { speed_down: "速度", max_hp_down: "生命上限", defense_down: "防御", healing_received_down: "受治疗量", attack_skill_damage_down: "攻击与技能伤害", lifesteal_down: "吸血比例", stun_down: "击晕概率", counter_down: "反击率", extra_action_down: "再动概率" }[status];
   return { status, target, label };
 }

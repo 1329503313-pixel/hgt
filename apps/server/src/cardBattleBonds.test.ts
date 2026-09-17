@@ -154,6 +154,48 @@ test('独立Buff全额叠加且分别到期；生命上限到期只截断超出�
   assert.ok(events.every(e=>e.states.every(s=>s.hp<=s.maxHp)));
 });
 
+test('技能伤害羁绊全额叠加并独立到期，组合类型同时增攻且不增强治疗',()=>{
+  for (const type of ['skill_damage_up','attack_skill_damage_up'] as const) {
+    for (const mode of ['attack','damage','heal'] as const) {
+      const input=players(), target=input[0]!.cards[0]!;
+      target.tier.bonds=[bond('energy_empty',[action(type,'self',100,1),action(type,'self',200,2)],['A2'])];
+      if (mode!=='attack') {
+        target.tier.energyRequired=10;
+        target.tier.effects=[skill(mode==='damage'?'damage_all':'heal_all_allies',100)];
+      }
+      if (mode==='heal') {
+        target.tier.speed=1;
+        for (const enemy of input[1]!.cards) {
+          enemy.tier.energyRequired=10;
+          enemy.tier.effects=[skill('damage_all',200)];
+        }
+      }
+      const events=simulateCardBattle(input,`damage-bond-${type}-${mode}`).events;
+      const opening=events.filter(e=>e.bond?.ownerId==='A1').at(-1)!;
+      assert.deepEqual(opening.effects.map(effect=>effect.targetId),['A1']);
+      assert.match(opening.effects[0]!.label!,/技能伤害 \+200/);
+      for (const round of [1,2,3]) {
+        const bonus=round===1?300:round===2?200:0;
+        const event=events.find(e=>e.actorId==='A1'&&e.round===round&&e.visual===(mode==='heal'?'heal':'damage')&&e.effects.length)!;
+        assert.ok(event,`${type}/${mode}/round${round}`);
+        const state=event.states.find(s=>s.instanceId==='A1')!;
+        assert.equal(state.attack,100+(type==='attack_skill_damage_up'?bonus:0));
+        const statuses=state.statuses!.filter(status=>status.type==='skill_damage_up');
+        assert.equal(statuses.reduce((sum,status)=>sum+status.value,0),bonus);
+        assert.ok(statuses.every(status=>status.multiplier===1));
+        const expected=100+(mode==='damage'||mode==='attack'&&type==='attack_skill_damage_up'?bonus:0);
+        for (const effect of event.effects) {
+          const amount=Math.abs(effect.amount??0);
+          assert.ok(amount>=Math.round(expected*.98)&&amount<=Math.round(expected*1.02),`${type}/${mode}/round${round}: ${amount}, expected ${expected}`);
+        }
+      }
+    }
+    for (const value of [0,1.5,1_000_000_001]) {
+      assert.equal(cardBattleBondsSchema.safeParse([bond('attack',[action(type,'self',value)])]).success,false);
+    }
+  }
+});
+
 test('固定值减速不变成百分比，概率使用百分点，状态提示保留单位',()=>{
   const buffs:CardBattleBuff[]=[{stat:'speed',value:30,expiresAfterRound:2,debuff:true,independent:true,flat:true},
     {stat:'speed',value:20,expiresAfterRound:1,debuff:true,independent:true,flat:true},

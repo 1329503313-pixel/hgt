@@ -124,7 +124,7 @@ export async function archiveSoupRecord(db: DB, roundId: string, historical = fa
   const [[start]] = await db.query<Row[]>("SELECT title,host_id FROM game_record_starts WHERE source_id=?",[roundId]);
   // AI room owners are players; a real human host is shown as host.
   const users = participants.map(p=>({...p,role:row.host_mode==='ai'?'player':p.role}));
-  await persist(db,'soup',String(row.host_mode),row,
+  await persist(db,'soup',row.communication_mode === 'voice' ? 'voice' : String(row.host_mode),row,
     {title:snapshot?.title ?? start?.title ?? row.title,coverUrl:publicOssUrl(row.cover_image),
       honors,startedAt:iso(row.started_at),hostId:start?.host_id ?? row.host_id},
     {messages:await messages(db,row,String(honor.message_sequence))},users);
@@ -160,7 +160,7 @@ export async function archiveImpostorRecord(db: DB, gameId: string, historical =
 export async function archiveBattleRecord(db: DB, gameId: string, historical = false) {
   if (await exists(db,`card_battle:${gameId}`)) return;
   const [[row]] = await db.query<Row[]>(`SELECT g.*,rooms.name,rooms.card_battle_mode,
-    c.challenger_id,c.defender_id,c.status AS challenge_status,c.target_rank,c.confirmed_at,
+    c.challenger_id,c.defender_id,c.status AS challenge_status,c.target_rank,c.confirmed_at,c.consecutive_wins,
     (SELECT MAX(latest.game_number) FROM online_card_battles latest WHERE latest.room_id=g.room_id) AS latest_game_number
     FROM online_card_battles g JOIN online_soup_rooms rooms ON rooms.id=g.room_id
     LEFT JOIN card_battle_ranking_challenges c ON c.room_id=g.room_id WHERE g.id=? AND g.status='ended'`,[gameId]);
@@ -180,7 +180,7 @@ export async function archiveBattleRecord(db: DB, gameId: string, historical = f
   if(subtype==='ranking' && !historical) {
     await freezeBattleRecordRanks(db,gameId);
     const challenger = players.find(p=>p.userId===String(row.challenger_id));
-    if(challenger?.seat===result.winnerSeat) await db.query("UPDATE game_record_users SET rank_state='pending' WHERE record_id=?",[`card_battle:${gameId}`]);
+    if(challenger?.seat===result.winnerSeat && Number(row.consecutive_wins ?? 0)>=2) await db.query("UPDATE game_record_users SET rank_state='pending' WHERE record_id=?",[`card_battle:${gameId}`]);
   }
   // Old current leaderboard positions are never substituted for historical ranks.
   if(subtype==='ranking' && historical && row.ranking_fallback_rank) await db.query(

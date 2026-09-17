@@ -1,6 +1,6 @@
 import type mysql from "mysql2/promise";
 import { z } from "zod";
-import { applyBattleCollectibleStats, battleCollectibleConfigError, type BattleCollectible, type BattleCollectibleBinding, type BattleCollectibleEffectType } from "@hgt/shared";
+import { applyBattleCollectibleStats, calculateCardBattlePower, battleCollectibleConfigError, type BattleCollectible, type BattleCollectibleBinding, type BattleCollectibleEffectType } from "@hgt/shared";
 
 export class BattleCollectibleRuleError extends Error {}
 export const battleCollectibleBindingsSchema = z.array(z.object({
@@ -54,5 +54,5 @@ export async function resolveBattleCollectibles(userId: string, cardIds: Array<s
 
 export function withBattleCollectible<T extends { stats: Parameters<typeof applyBattleCollectibleStats>[0]; combatPower: number }>(card: T, collectible: BattleCollectible | null) {
   const stats = applyBattleCollectibleStats(card.stats, collectible);
-  return { ...card, collectible, stats, combatPower: stats.maxHp + stats.attack * 3 + stats.defense * 4 + stats.speed * 7 - stats.energyRequired * 10 };
+  return { ...card, collectible, stats, combatPower: calculateCardBattlePower(stats) };
 }

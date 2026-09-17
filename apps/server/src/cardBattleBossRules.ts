@@ -8,7 +8,7 @@ export const bossCoverPattern = /^\/api\/online-soup\/card-battle-boss\/covers\/
 export const bossCardSchema = z.object({
   name: z.string().trim().min(1, "请输入卡牌名称").max(100),
   imageUrl: z.string().regex(bossCoverPattern, "请上传卡牌封面"),
-  tier: cardBattleTierSchema.extend({ starLevel: z.literal(3) }),
+  tier: cardBattleTierSchema.refine((tier) => tier.starLevel === 3, { message: "BOSS卡牌固定三星", path: ["starLevel"] }),
 });
 export const bossInputSchema = z.object({
   name: z.string().trim().min(1, "请输入房间名称").max(50),

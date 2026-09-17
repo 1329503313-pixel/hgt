@@ -942,7 +942,7 @@ export async function bulkAdjustShellBalances(userIds: string[], operatorId: str
 
 export async function settleOnlineSoupRound(connection: QueryConnection, roundId: string) {
   const [[round]] = await connection.query<mysql.RowDataPacket[]>(
-    `SELECT r.id, r.room_id, r.soup_id, r.host_mode, r.started_at, r.ended_at, rooms.host_id, soups.creator_id AS soup_creator_id
+    `SELECT r.id, r.room_id, r.soup_id, r.host_mode, r.communication_mode, r.started_at, r.ended_at, rooms.host_id, soups.creator_id AS soup_creator_id
      FROM online_soup_rounds r
      INNER JOIN online_soup_rooms rooms ON rooms.id = r.room_id
      INNER JOIN soups ON soups.id = r.soup_id
@@ -950,6 +950,7 @@ export async function settleOnlineSoupRound(connection: QueryConnection, roundId
      LIMIT 1`,
     [roundId]
   );
+  if (round?.communication_mode === "voice") return { eligible: false, completed: false, awardedUsers: [] as string[] };
   if (!round?.started_at || !round?.ended_at) return { eligible: false, completed: false, awardedUsers: [] as string[] };
   const startedAt = new Date(round.started_at);
   const endedAt = new Date(round.ended_at);
