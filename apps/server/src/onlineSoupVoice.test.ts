@@ -5,6 +5,20 @@ import { inflateSync } from "node:zlib";
 import { assignVoiceSeats, voiceAvailable, voicePrivileges } from "./onlineSoupVoicePolicy.js";
 import { parseOnlineSoupAiHonors } from "./onlineSoupHonors.js";
 import { settleOnlineSoupRound } from "./shellCurrency.js";
+import { config } from "./config.js";
+import { pool } from "./db.js";
+import { Router } from "express";
+import { reconcileVoiceSessions, registerVoiceRoutes } from "./onlineSoupVoice.js";
+
+test("release candidates never start voice cleanup or mutate shared sessions", async (t) => {
+  const previous = config.releaseCandidate;
+  config.releaseCandidate = true;
+  t.after(() => { config.releaseCandidate = previous; });
+  t.mock.method(pool, "query", () => { assert.fail("Candidate must not query or write voice sessions"); });
+  t.mock.method(globalThis, "setInterval", () => { assert.fail("Candidate must not start voice cleanup timers"); });
+  registerVoiceRoutes(Router(), () => null);
+  await reconcileVoiceSessions();
+});
 
 test("voice requires explicit switch, room permission verification and complete provider config", () => {
   const complete = { enabled: true, advancedPermission: true, sdkAppId: 123, sdkSecret: "test", secretId: "test", secretKey: "test" };

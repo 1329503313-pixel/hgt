@@ -29,7 +29,7 @@ export async function syncVoiceSeats(db: mysql.PoolConnection, roomId: string) {
 // Revoked identities are removed repeatedly until their last entry ticket expires.
 let reconciling = false;
 export async function reconcileVoiceSessions() {
-  if (reconciling || !config.voice.sdkAppId || !config.voice.secretId || !config.voice.secretKey) return;
+  if (config.releaseCandidate || reconciling || !config.voice.sdkAppId || !config.voice.secretId || !config.voice.secretKey) return;
   reconciling = true;
   try {
     await pool.query(`UPDATE online_soup_voice_sessions s LEFT JOIN online_soup_members m ON m.room_id=s.room_id AND m.user_id=s.user_id
@@ -126,5 +126,7 @@ export function registerVoiceRoutes(router: Router, userOf: (req: Request) => { 
     await pool.query("UPDATE online_soup_voice_sessions SET revoked=1 WHERE id=? AND room_id=? AND user_id=?", [String(req.body?.sessionId ?? ""), req.params.roomId, userOf(req)?.id ?? ""]);
     res.json({ ok: true }); void reconcileVoiceSessions().catch(() => {});
   });
-  const timer = setInterval(() => { void reconcileVoiceSessions().catch(() => {}); }, 5000); timer.unref();
+  if (!config.releaseCandidate) {
+    const timer = setInterval(() => { void reconcileVoiceSessions().catch(() => {}); }, 5000); timer.unref();
+  }
 }
