@@ -9,7 +9,7 @@ const bundle = await build({stdin:{resolveDir:resolve("apps/web"),loader:"tsx",c
   import React,{useState}from'react';import{createRoot}from'react-dom/client';import{Settlement}from'./src/components/CardBattleRoomView';
   const cards=Array.from({length:5},(_,index)=>({slot:index+1,cardId:'c'+index,name:index===1?'八字超级治疗使者':'星辉骑士',damageDealt:index===2?1234567890:1500,damageTaken:2000,healingDone:5000,supportDone:8000}));
   const players=[{seat:1,userId:'u1',nickname:'胜利玩家',cards},{seat:2,userId:'u2',nickname:'失败玩家',cards:cards.map(card=>({...card,damageDealt:0,damageTaken:0,healingDone:5000,supportDone:0,score:0}))}];
-  function Harness(){const[mode,setMode]=useState('normal');window.setMode=setMode;return<main style={{height:'100dvh',position:'relative',background:'#071426'}}><Settlement battle={{me:{userId:'u1'},rankingChallenge:mode==='ranking'?{targetRank:7}:null,game:{settlement:{winnerSeat:1,rounds:8,endReason:'elimination',players}}}} confirming={mode==='confirming'} onClose={()=>window.closedSettlement=true} onConfirmRankingWin={()=>window.confirmedRanking=true}/></main>};
+  function Harness(){const[mode,setMode]=useState('normal');window.setMode=setMode;return<main style={{height:'100dvh',position:'relative',background:'#071426'}}><Settlement battle={{me:{userId:'u1'},rankingChallenge:mode==='ranking'?{targetRank:7,consecutiveWins:2}:null,game:{settlement:{winnerSeat:1,rounds:8,endReason:'elimination',players}}}} confirming={mode==='confirming'} onClose={()=>window.closedSettlement=true} onConfirmRankingWin={()=>window.confirmedRanking=true}/></main>};
   createRoot(document.getElementById('root')).render(<Harness/>);
 `},bundle:true,write:false,format:"iife",define:{"import.meta.env":"{}"}});
 const css=readdirSync(resolve("apps/web/dist/assets")).find(file=>file.startsWith("index-")&&file.endsWith(".css"));
@@ -34,6 +34,6 @@ try{
  await page.getByRole('button',{name:'关闭结算'}).click();assert.equal(await page.evaluate(()=>window.closedSettlement),true);
  await page.evaluate(()=>window.setMode('ranking'));
  await expect(page.getByRole('button',{name:'关闭结算'})).toHaveCount(0);
- await page.getByRole('button',{name:'确认胜利并占据第 7 名'}).click();assert.equal(await page.evaluate(()=>window.confirmedRanking),true);
+ await page.getByRole('button',{name:'确认两连胜并占据第 7 名'}).click();assert.equal(await page.evaluate(()=>window.confirmedRanking),true);
  assert.deepEqual(errors,[]);console.log('PASS: four numeric columns, score rounding and trailing zero, large numbers, long names, four viewports, close and ranking flow. Screenshots: '+output);
 }finally{await browser.close();}

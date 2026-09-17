@@ -1,6 +1,8 @@
 import { cardBattleStatusCategory } from "@hgt/shared";
 import { useId, type CSSProperties } from "react";
-import { CARD_BATTLE_MOTIONS, CARD_BATTLE_PROC_MOTIONS, CARD_BATTLE_STATUS_GLYPHS, type BattleGlyphName, type BattleMotion } from "../shared/cardBattleMotion";
+import { useCardBattleFx } from "./CardBattleFxContext";
+import { eventFx, fxParticles, targetFeedback, FX_MATERIALS, type FxFamily } from "../shared/cardBattleFx";
+import { CARD_BATTLE_PROC_MOTIONS, CARD_BATTLE_STATUS_GLYPHS, type BattleGlyphName, type BattleMotion } from "../shared/cardBattleMotion";
 import { CARD_BATTLE_STATUS_ORDER, cardBattleStatusText, type CardBattleStatus } from "../shared/cardBattleEffects";
 import type { OnlineCardBattleEvent } from "../shared/types";
 
@@ -41,35 +43,83 @@ export function CardBattleStatusIcons({ statuses }: { statuses: CardBattleStatus
   </div>;
 }
 
-export function CardBattleSkillFx({ event, instanceId }: { event: OnlineCardBattleEvent | null; instanceId: string }) {
-  if (!event || event.kind !== "skill") return null;
-  // Older persisted games still get semantic effects without inventing a gameplay type.
-  const fallback = event.visual === "revive" ? "revive_ally_1" : event.visual === "heal" ? "heal_self" : event.visual === "energy" ? "energy_self" : event.visual === "buff" ? "attack_self" : "damage_single";
-  const spec = CARD_BATTLE_MOTIONS[event.effectType ?? fallback];
-  const targetIndex = event.effects.findIndex((effect) => effect.targetId === instanceId);
-  const caster = event.actorId === instanceId;
-  if (targetIndex >= 0 && event.effects[targetIndex]?.dodged && !caster) return null;
-  if (!spec || targetIndex < 0 && !caster) return null;
-  const sourceOnly = targetIndex < 0;
-  return <BattleFx spec={spec} durationMs={event.durationMs} effectType={event.effectType ?? fallback} sourceOnly={sourceOnly} targetIndex={targetIndex} />;
-}
 
+// Compound paths keep every family recognizable without multiplying SVG nodes.
+const motifs: Record<FxFamily, string> = {
+  slash: 'M8 80Q36 12 94 16Q43 25 8 80ZM21 84 84 29',
+  fire: 'M50 6C70 35 45 35 67 51L76 30C104 77 69 96 48 93C10 89 15 55 32 33L30 62Q52 55 50 6ZM49 60Q70 82 49 91Q30 82 49 60',
+  ice: 'M50 5 61 43 91 25 67 54 95 73 60 64 50 97 40 64 6 74 33 54 9 25 40 43ZM50 5V97M9 25 95 73M91 25 6 74',
+  lightning: 'M62 0 19 54H47L37 100 84 41H56ZM12 22 24 34 9 52M83 59 94 73 83 91',
+  arcane: 'M50 6 90 28V73L50 96 10 73V28ZM50 17 77 64H23ZM50 83 23 36H77Z',
+  pierce: 'M50 0 55 40 93 50 55 54 50 100 45 55 7 50 45 45ZM30 26 50 18 70 26M30 74 50 82 70 74',
+  heal: 'M44 26H56V44H74V56H56V74H44V56H26V44H44ZM12 85Q70 68 19 44M88 83Q30 64 81 25',
+  energy: 'M59 13 29 54H49L40 88 73 43H53ZM19 34A35 35 0 0 1 82 35M81 66A35 35 0 0 1 18 65',
+  armor: 'M50 10 83 27 78 65 50 91 22 65 17 27ZM50 10V91M17 27 50 44 83 27M22 65 50 44 78 65',
+  shield: 'M50 7 87 22 80 66 50 94 20 66 13 22ZM50 18 75 29 70 61 50 80 30 61 25 29Z',
+  attack: 'M20 79 71 14 86 11 85 27 30 84ZM18 60 42 83M15 90 27 77',
+  skill: 'M50 5 58 36 89 44 58 52 50 84 42 52 11 44 42 36ZM76 64 80 75 92 79 80 83 76 95 72 83 60 79 72 75Z',
+  skill_attack: 'M15 85 69 10 84 8 83 26 26 88M14 62 43 85M69 49 74 63 89 68 74 73 69 89 64 73 49 68 64 63Z',
+  focus: 'M50 10 59 38 88 50 59 62 50 91 41 62 12 50 41 38ZM27 13 17 27M73 13 83 27M73 87 83 73M27 87 17 73',
+  speed: 'M45 50Q21 15 5 12L12 52 37 73M55 50Q79 15 95 12L88 52 63 73M15 31 37 54M85 31 63 54M50 40V89',
+  life: 'M50 83 20 55C-6 19 32 6 50 31C68 6 106 19 80 55ZM30 51H42L49 39 57 64 64 51H77',
+  critical: 'M50 5 57 32 82 18 68 42 97 50 68 58 82 82 57 68 50 97 43 68 18 82 32 58 3 50 32 42 18 18 43 32Z',
+  precision: 'M50 17A33 33 0 1 1 49.9 17M50 3V29M50 71V97M3 50H29M71 50H97M40 50 48 58 64 38',
+  dodge: 'M9 40Q46 14 86 34M16 58Q52 34 95 53M10 76Q41 54 77 72',
+  blood: 'M50 7C38 34 23 49 23 67A27 27 0 0 0 77 67C77 49 62 34 50 7ZM36 64Q33 78 47 82',
+  stun: 'M17 58C-9 36 106 29 88 60C77 84 11 78 17 58ZM31 11 35 23 48 23 38 31 42 43 31 36 20 43 24 31 14 23 27 23ZM78 59 82 69 94 71 84 78 86 90 77 83 67 89 70 77 62 69 74 68Z',
+  time: 'M79 30A35 35 0 1 0 84 66M79 10V30H59M50 27V51L67 62',
+  counter: 'M82 75Q97 24 41 32V13L7 43 41 71V51Q78 43 82 75Z',
+  debuff: 'M18 15H82V85H18ZM57 13 42 37 62 48 37 64 50 88M7 37 19 43M81 57 94 64',
+  immunity: 'M50 6 88 25 81 69 50 95 19 69 12 25ZM32 51 45 64 70 36M4 9 14 18M86 81 96 90',
+  cleanse: 'M50 7 57 40 90 47 57 54 50 87 43 54 10 47 43 40ZM14 84 31 72M74 21 90 9',
+  seal: 'M50 8A42 42 0 1 1 49.9 8M21 21 79 79M79 21 21 79M35 35H65V65H35Z',
+  revive: 'M50 3V95M15 67Q28 32 44 51L50 74 56 51Q72 32 85 67M20 90Q50 72 80 90M37 21 50 9 63 21',
+  neutral: 'M50 15 85 50 50 85 15 50ZM50 29 71 50 50 71 29 50Z',
+};
+export function FxMotif({ family }: { family: FxFamily }) {
+  return <svg className="card-battle-fx-motif" viewBox="0 0 100 100" fill="currentColor" fillOpacity=".08" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true"><path d={motifs[family]} /></svg>;
+}
+export function CardBattleSkillFx({ event, instanceId }: { event: OnlineCardBattleEvent | null; instanceId: string }) {
+  const context = useCardBattleFx();
+  if (!event || !context.visible || !['skill','attack'].includes(event.kind)) return null;
+  const target = event.effects.find(e => e.targetId === instanceId);
+  const caster = event.actorId === instanceId;
+  if (!target && !caster) return null;
+  const recipe = eventFx(event);
+  const feedback = targetFeedback(event, instanceId);
+  const family: FxFamily = feedback === 'dodge' ? 'dodge' : feedback === 'resisted' || feedback === 'invincible' ? 'immunity' : feedback === 'death_protection' ? 'life' : feedback === 'blocked' ? 'armor' : feedback?.startsWith('shield') ? 'shield' : event.counterattack && caster ? 'counter' : recipe.family;
+  return <BattleFx key={context.eventKey+':'+event.sequence+':'+instanceId} event={event} instanceId={instanceId} family={family} color={recipe.color} spec={recipe.spec} effectType={event.effectType ?? (event.bond?.actionType ? 'bond:'+event.bond.actionType : event.kind)} sourceOnly={!target} feedback={feedback} />;
+}
 export function CardBattleProcFx({ event, instanceId }: { event: OnlineCardBattleEvent | null; instanceId: string }) {
-  if (!event) return null;
+  const context = useCardBattleFx();
+  if (!event || !context.visible) return null;
   const actor = event.actorId === instanceId;
-  const stunned = event.effects.some((effect) => effect.targetId === instanceId && effect.stunned);
+  const stunned = event.effects.some(e => e.targetId === instanceId && e.stunned);
   return <>
-    {actor && Boolean(event.lifesteal) && <BattleFx spec={CARD_BATTLE_PROC_MOTIONS.lifesteal} durationMs={event.durationMs} effectType="lifesteal" />}
-    {(stunned || actor && event.kind === "stun") && <BattleFx spec={CARD_BATTLE_PROC_MOTIONS.stun} durationMs={event.durationMs} effectType="stun" />}
-    {actor && event.kind === "extra_action" && <BattleFx spec={CARD_BATTLE_PROC_MOTIONS.extra_action} durationMs={event.durationMs} effectType="extra_action" />}
+    {actor && Boolean(event.lifesteal) && <BattleFx key={context.eventKey+':'+event.sequence+':blood'} event={event} instanceId={instanceId} family="blood" color="#ff7696" spec={CARD_BATTLE_PROC_MOTIONS.lifesteal} effectType="lifesteal" compact />}
+    {(stunned || actor && event.kind === 'stun') && <BattleFx key={context.eventKey+':'+event.sequence+':stun'} event={event} instanceId={instanceId} family="stun" color="#f5d894" spec={CARD_BATTLE_PROC_MOTIONS.stun} effectType="stun" compact />}
+    {actor && event.kind === 'extra_action' && <BattleFx key={context.eventKey+':'+event.sequence+':time'} event={event} instanceId={instanceId} family="time" color="#9cdced" spec={CARD_BATTLE_PROC_MOTIONS.extra_action} effectType="extra_action" compact />}
   </>;
 }
-
-function BattleFx({ spec, durationMs, effectType, sourceOnly = false, targetIndex = 0 }: { spec: BattleMotion; durationMs: number; effectType: string; sourceOnly?: boolean; targetIndex?: number }) {
-  return <div aria-hidden="true" data-skill-effect={effectType} data-motion={spec.motion} data-pattern={spec.pattern} className={`card-battle-skill-fx motion-${spec.motion} pattern-${spec.pattern} ${sourceOnly ? "is-source" : "is-target"}`} style={{ "--skill-color": spec.color, "--skill-duration": `${durationMs}ms`, "--skill-target-index": Math.max(0, targetIndex) } as CSSProperties}>
-    <i className="card-battle-skill-ring" />
-    <i className="card-battle-skill-wave" />
-    <span className="card-battle-skill-symbol"><BattleGlyph name={spec.glyph} /></span>
-    {Array.from({ length: Math.max(3, spec.count + 2) }, (_, index) => <span key={index} className="card-battle-skill-particle" style={{ "--particle-angle": `${index * 360 / Math.max(3, spec.count + 2)}deg`, "--particle-index": index } as CSSProperties}><BattleGlyph name={spec.glyph} /></span>)}
+function BattleFx({ event, instanceId, family, color, spec, effectType, sourceOnly = false, feedback, compact = false }: { event: OnlineCardBattleEvent; instanceId: string; family: FxFamily; color: string; spec?: BattleMotion; effectType: string; sourceOnly?: boolean; feedback?: string | null; compact?: boolean }) {
+  const { quality, reduced } = useCardBattleFx();
+  const dense = event.effects.length > 9 || event.effects.length > 6 && event.effects.some(e=>e.stunned);
+  const detailed = quality === 'standard' && !dense;
+  if (compact && (quality === 'economy' || dense)) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="${motifs[family]}" fill="none" stroke="${color}" stroke-width="3"/></svg>`;
+    return <i aria-hidden="true" data-skill-effect={effectType} data-fx-family={family} className={`card-battle-skill-fx card-battle-fx-compact-mark family-${family}`} style={{ backgroundImage:`url("data:image/svg+xml,${encodeURIComponent(svg)}")` }} />;
+  }
+  const texture = !compact && !sourceOnly && !feedback && !reduced && detailed && family in FX_MATERIALS ? FX_MATERIALS[family as keyof typeof FX_MATERIALS] : null;
+  const particles = compact || sourceOnly || feedback || reduced || dense && quality === 'economy' ? [] : fxParticles(event,instanceId,quality);
+  const critical = !compact && !feedback && event.effects.some(e=>e.targetId===instanceId && e.critical);
+  const broken: Partial<Record<BattleGlyphName,FxFamily>> = { 'broken-shield':'armor', 'broken-heart':'life', 'broken-sword':'attack', 'frozen-wings':'speed', 'heal-block':'heal', 'blood-block':'blood', 'dizzy-block':'stun', 'repeat-block':'time' };
+  const motif = family === 'debuff' && spec ? broken[spec.glyph] ?? family : family;
+  return <div aria-hidden="true" data-skill-effect={effectType} data-fx-family={family} data-feedback={feedback ?? undefined} data-critical={critical || undefined} data-motion={spec?.motion ?? 'impact'} data-pattern={event.bond ? 'actual' : spec?.pattern ?? 'single'} data-quality={quality} className={'card-battle-skill-fx family-'+family+(sourceOnly?' is-source':' is-target')+(compact?' is-compact':'')+(reduced?' is-reduced':'')} style={{'--skill-color':color,'--skill-duration':event.durationMs+'ms'} as CSSProperties}>
+    {!compact && detailed && <i className="card-battle-fx-aura" />}
+    <FxMotif family={motif} />
+    {texture && <i className="card-battle-fx-texture" style={{backgroundImage:'url("'+texture+'")'}} />}
+    {detailed && (feedback === 'shield-break' || family === 'debuff') && <svg className="card-battle-fx-fracture" viewBox="0 0 100 100"><path d="m55 8-17 28 22 12-29 18 20 28" fill="none" stroke="currentColor" strokeWidth="3" /></svg>}
+    {critical && detailed && <i className="card-battle-fx-critical" />}
+    {particles.map((p,i)=><i key={i} className="card-battle-fx-particle" style={{'--fx-x':p.x+'px','--fx-y':p.y+'px','--fx-angle':p.angle+'deg',width:p.size,height:p.size} as CSSProperties} />)}
   </div>;
 }

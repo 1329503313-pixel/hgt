@@ -163,6 +163,7 @@ export type CardBattlePublicCardState = CardBattleProcStats & import("@hgt/share
 };
 
 export type CardBattleVisualEffect = {
+  protection?: "invincible" | "death_protection" | "resisted";
   dodged?: boolean;
   shieldDamage?: number;
   hpDamage?: number;
@@ -177,7 +178,7 @@ export type CardBattleVisualEffect = {
 };
 
 export type CardBattleEvent = {
-  bond?: { ownerId: string; triggerId: string };
+  bond?: { ownerId: string; triggerId: string; actionType?: import("@hgt/shared").CardBattleBondActionType };
   sequence: number;
   round: number;
   kind: "round" | "attack" | "skill" | "end" | "extra_action" | "stun";
@@ -747,7 +748,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
           continue;
         }
         if (!immunity && debuffImmune(target, round)) {
-          visuals.push({ targetId: target.instanceId, label: "抵抗负面状态", stunResisted: stun });
+          visuals.push({ targetId: target.instanceId, label: "抵抗负面状态", protection: "resisted", stunResisted: stun });
           continue;
         }
         grantBuff(actor, target, { stat: immunity ? "immunity" : stun ? "stunned" : "revivalBlock", value: 1,
@@ -790,7 +791,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
           damaged?.add(target);
         }
         visuals.push({ targetId: target.instanceId, amount: -damage, hpDamage: hit.hpDamage, shieldDamage: hit.shieldDamage, blocked: damage === 0, critical,
-          ...(hit.unprotectedDamage > damage ? { label: collectibleProtection(target, "invincible", round) ? "无敌" : "免死" } : {}) });
+          ...(hit.unprotectedDamage > damage ? { protection: collectibleProtection(target, "invincible", round) ? "invincible" as const : "death_protection" as const, label: collectibleProtection(target, "invincible", round) ? "无敌" : "免死" } : {}) });
         if (target.hp <= 0 && target.alive) {
           target.hp = 0;
           target.alive = false;
@@ -839,7 +840,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       const expiresAfterRound = round + Math.max(1, effect.duration ?? 1) - 1;
       for (const target of targets) {
         if (debuffImmune(target, round)) {
-          visuals.push({ targetId: target.instanceId, label: "抵抗负面状态" });
+          visuals.push({ targetId: target.instanceId, label: "抵抗负面状态", protection: "resisted" });
           continue;
         }
         const stat = cardBattleProcStat(effect.type) ?? (debuff.status === "speed_down" ? "speed" : debuff.status === "defense_down" ? "defense" : debuff.status === "max_hp_down" ? "maxHp" : debuff.status === "healing_received_down" ? "healingReceived" : "attack");
@@ -1059,7 +1060,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
             round, kind: "attack", visual: "damage", actorId: actor.instanceId, skillName: null,
             ...(counterTarget ? { counterattack: true } : {}),
             effects: [{ targetId: target.instanceId, amount: -damage, hpDamage: hit.hpDamage, shieldDamage: hit.shieldDamage, blocked: damage === 0, critical, stunned: proc.stunned, stunResisted: proc.stunResisted,
-              ...(hit.unprotectedDamage > damage ? { label: collectibleProtection(target, "invincible", round) ? "无敌" : "免死" } : {}) }], durationMs: 1100,
+              ...(hit.unprotectedDamage > damage ? { protection: collectibleProtection(target, "invincible", round) ? "invincible" as const : "death_protection" as const, label: collectibleProtection(target, "invincible", round) ? "无敌" : "免死" } : {}) }], durationMs: 1100,
             text: `${actor.name} ${counterTarget ? "反击" : "攻击"} ${target.name}`,
           }, false, root);
           bonds.emit("attack", actor, root);
@@ -1148,6 +1149,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     activeBond = {ownerId:owner.instanceId, triggerId:trigger.instanceId};
     try {
       for (const action of bond.actions) {
+        activeBond = { ownerId: owner.instanceId, triggerId: trigger.instanceId, actionType: action.type };
         if (safetyStopped || !owner.alive || isStunned(owner)) break;
         const count = (triggerEffectsByRoot.get(root) ?? 0) + 1;
         triggerEffectsByRoot.set(root, count);

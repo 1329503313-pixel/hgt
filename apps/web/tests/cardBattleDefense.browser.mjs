@@ -58,12 +58,13 @@ try {
   await expect(page.locator('#arena [aria-label="护盾值 250"]')).toHaveCount(2);
   await expect(page.locator('#arena').getByText('闪避', { exact: true })).toHaveCount(2);
   await expect(page.locator('#arena .card-battle-hit')).toHaveCount(0);
-  await expect(page.locator('#arena [data-skill-effect]')).toHaveCount(0);
+  await expect(page.locator('#arena [data-feedback="dodge"]')).toHaveCount(2);
+  await expect(page.locator('#arena .card-battle-fx-texture')).toHaveCount(0);
   const pauseDodge = () => page.locator('#arena').evaluate(el => { for (const animation of el.getAnimations({ subtree: true })) { animation.pause(); animation.currentTime = 620; } });
   await page.locator('#arena').scrollIntoViewIfNeeded();
   await pauseDodge();
-  const translate = await page.locator('#arena .card-battle-dodge').evaluateAll(elements => elements.map(el => new DOMMatrix(getComputedStyle(el).transform).m42));
-  assert.ok(translate[0] > 0 && translate[1] < 0, '双方均朝各自后方闪避');
+  const translate = await page.locator('#arena .card-battle-dodge').evaluateAll(elements => elements.map(el => new DOMMatrix(getComputedStyle(el).transform).m41));
+  assert.ok(translate[0] > 0 && translate[1] < 0, '双方均朝各自侧方闪避');
   mkdirSync('artifacts/card-battle-defense', { recursive: true });
   for (const viewport of [{ width: 375, height: 812 }, { width: 812, height: 375 }, { width: 1440, height: 1000 }]) {
     await page.setViewportSize(viewport); await pauseDodge();
@@ -73,7 +74,7 @@ try {
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const reduced = await page.locator('#arena .card-battle-dodge').first().evaluate(el => getComputedStyle(el).animationName);
-  assert.equal(reduced, 'card-battle-hit-reduced');
+  assert.equal(reduced, 'none');
   await expect(page.locator('#arena').getByText('闪避', { exact: true })).toHaveCount(2);
   await page.evaluate(() => window.setDodge(false));
   await expect(page.locator('#arena').getByText('闪避', { exact: true })).toHaveCount(0);

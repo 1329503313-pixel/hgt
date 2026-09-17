@@ -36,7 +36,7 @@ const bundle=await build({stdin:{resolveDir:resolve('apps/web'),loader:'tsx',con
   builder.onLoad({filter:/[\\/]api\.ts$/},()=>({loader:'js',contents:'export class ApiError extends Error{};export const api=(...args)=>window.fixtureApi(...args);export const prefetchApi=async()=>{};export function invalidateApiCache(){}'}));
 }}]});
 const content=Object.keys(bundle.metafile.inputs).filter(path=>path.startsWith('apps/web/src/')&&/\.[tj]sx?$/.test(path)).map(path=>readFileSync(path,'utf8')).join('\n');
-const css=(await postcss([tailwindcss({...loadConfig(resolve('apps/web/tailwind.config.ts')),content:[{raw:content,extension:'tsx'}]})]).process(readFileSync('apps/web/src/styles.css','utf8'),{from:undefined})).css;
+const css=(await postcss([tailwindcss({...loadConfig(resolve('apps/web/tailwind.config.ts')),content:[{raw:content,extension:'tsx'}]})]).process(readFileSync('apps/web/src/styles.css','utf8').replace('@import "./cardBattleEffects.css";',readFileSync('apps/web/src/cardBattleEffects.css','utf8')),{from:undefined})).css;
 const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM==='1'?undefined:'msedge',headless:true});
 const output=mkdtempSync(resolve(tmpdir(),'hgt-game-records-'));
 try {
@@ -80,9 +80,10 @@ try {
     await expect(page.getByText('2026/09/01 19:28',{exact:true}).first()).toBeVisible();
     await page.getByRole('button',{name:'下一页',exact:true}).click();await expect(page.locator('main article')).toHaveCount(3);
     await page.evaluate(()=>window.scrollTo(0,80));
+    await page.getByRole('button',{name:/测试汤 10/}).scrollIntoViewIfNeeded();const savedScroll=await page.evaluate(()=>window.scrollY);
     await page.getByRole('button',{name:/测试汤 10/}).click();await expect(page.getByText('主持人回答：是',{exact:true})).toBeVisible();
     await page.getByRole('button',{name:'加载后续会话'}).click();await expect(page.getByText('游戏结束 · 2026/09/01 19:28',{exact:true})).toBeVisible();
-    await page.getByRole('button',{name:'关闭游戏记录'}).click();await expect(page.getByRole('button',{name:'关闭游戏记录'})).toHaveCount(0);assert.match(await page.evaluate(()=>window.currentRoute),/page=2/);await expect(page.locator('main article')).toHaveCount(3);assert.equal(await page.evaluate(()=>window.scrollY),80);
+    await page.getByRole('button',{name:'关闭游戏记录'}).click();await expect(page.getByRole('button',{name:'关闭游戏记录'})).toHaveCount(0);assert.match(await page.evaluate(()=>window.currentRoute),/page=2/);await expect(page.locator('main article')).toHaveCount(3);assert.equal(await page.evaluate(()=>window.scrollY),savedScroll);
     await page.getByRole('tab',{name:'谁是伪人',exact:true}).click();await page.getByRole('button',{name:/谁是伪人测试房/}).click();await page.getByRole('tab',{name:'游戏进程',exact:true}).click();
     await expect(page.getByText('侦探',{exact:true})).toBeVisible();await expect(page.getByText('伪人',{exact:true})).toBeVisible();await expect(page.getByText('3号 平民玩家：任务投票（第2轮） 2号 伪人玩家',{exact:false})).toBeVisible();
     await page.getByRole('button',{name:'关闭游戏记录'}).click();await page.getByRole('tab',{name:'卡牌对战',exact:true}).click();await expect(page.locator('main article')).toHaveCount(3);

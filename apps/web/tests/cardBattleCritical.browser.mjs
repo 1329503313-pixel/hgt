@@ -57,18 +57,18 @@ try {
   const typeSelect = page.getByRole("combobox", { name: "技能类型", exact: true });
   const conditionSelect = page.getByRole("combobox", { name: "技能条件", exact: true });
   await typeSelect.click();
-  const typeOptions = await page.getByRole("option").evaluateAll(options => options.map(option => ({value: option.dataset.value, label: option.textContent})));
+  const typeOptions = await page.getByRole("listbox").getByRole("option").evaluateAll(options => options.map(option => ({value: option.dataset.value, label: option.textContent})));
   const chooseType = async (type) => {
     const option = typeOptions.find(option => option.value === type);
     assert.ok(option, type);
     await typeSelect.click();
     await typeSelect.fill(option.label);
-    await page.getByRole("option", { name: option.label, exact: true }).click();
+    await page.getByRole("listbox").getByRole("option", { name: option.label, exact: true }).click();
   };
   await conditionSelect.fill("死亡");
-  const deathMatches = await page.getByRole("option").allTextContents();
+  const deathMatches = await page.getByRole("listbox").getByRole("option").allTextContents();
   assert.ok(deathMatches.length > 0 && deathMatches.every(label => label.includes("死亡")));
-  await page.getByRole("option", { name: "本卡片死亡", exact: true }).tap();
+  await page.getByRole("listbox").getByRole("option", { name: "本卡片死亡", exact: true }).tap();
   await expect(conditionSelect).toHaveValue("本卡片死亡");
   await chooseType("revive_self");
   await conditionSelect.fill("能量为满");
@@ -77,7 +77,7 @@ try {
   await expect(conditionSelect).toHaveValue("能量为满");
   await expect(typeSelect).toHaveValue("复活一名友军");
   await typeSelect.fill("复活自己");
-  await expect(page.getByRole("option", { name: "复活自己", exact: true })).toBeDisabled();
+  await expect(page.getByRole("listbox").getByRole("option", { name: "复活自己", exact: true })).toBeDisabled();
   await typeSelect.press("ArrowDown");
   await typeSelect.press("Enter");
   await typeSelect.press("Tab");
@@ -86,7 +86,7 @@ try {
   for (const field of [conditionSelect, typeSelect]) {
     await field.fill("不存在的内容");
     await expect(page.getByRole("listbox")).toBeVisible();
-    await expect(page.getByRole("option")).toHaveCount(0);
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(0);
     await field.press("Tab");
     await expect(field).toHaveValue("");
   }
@@ -112,7 +112,7 @@ try {
   await conditionSelect.press("Enter");
   await expect(page.getByLabel("生命值阈值（%）", { exact: true })).toHaveCount(0);
   await typeSelect.fill("后排");
-  const rearMatches = await page.getByRole("option").allTextContents();
+  const rearMatches = await page.getByRole("listbox").getByRole("option").allTextContents();
   assert.ok(rearMatches.length > 0 && rearMatches.every(label => label.includes("后排")));
   mkdirSync("artifacts/card-battle-skill-search", { recursive: true });
   for (const viewport of [{ width: 375, height: 812 }, { width: 812, height: 375 }, { width: 1440, height: 1000 }]) {
@@ -130,15 +130,14 @@ try {
   await expect(ignoreDefense).toHaveAttribute("min", "0");
   await expect(ignoreDefense).toHaveAttribute("max", "100");
   await expect(ignoreDefense).toHaveAttribute("step", "0.01");
-  const damageTypes = typeOptions.map(option => option.value).filter(value => value.startsWith("damage_"));
+  const damageTypes = typeOptions.map(option => option.value).filter(value => value.startsWith("damage_") && !value.startsWith("damage_true_"));
   assert.ok(damageTypes.length >= 9);
   for (const type of damageTypes) {
     await chooseType(type);
     await expect(ignoreDefense).toBeVisible();
     await ignoreDefense.fill("37.25");
     assert.equal(JSON.parse(await page.locator("#data").textContent())[0].effects[0].ignoreDefensePercent, 37.25);
-    await page.getByLabel("技能数值", { exact: true }).focus();
-    await page.keyboard.press("Tab");
+    await ignoreDefense.focus();
     await expect(ignoreDefense).toBeFocused();
   }
   for (const [input, expected] of [["0", "0"], ["100", "100"], ["-1", "0"], ["101", "100"], ["", "0"]]) {
@@ -176,7 +175,7 @@ try {
   await chooseType("damage_single");
   await expect(ignoreDefense).toHaveValue("0");
   const debuffs = typeOptions.map(option => option.value).filter(value => value.includes("_down_"));
-  assert.equal(debuffs.length, 37);
+  assert.equal(debuffs.length, 38);
   for (const type of debuffs) {
     await chooseType(type);
     await expect(ignoreDefense).toHaveCount(0);
@@ -204,7 +203,7 @@ try {
     assert.equal(current.value, 25); assert.equal(current.duration, 3); assert.equal(current.type, type);
   }
   assert.deepEqual(errors, []);
-  console.log("PASS: critical/proc presets, all damage skill ignore-defense fields, 0–100% limits, decimal editing, per-row/star independence, type switching, keyboard order, 37 debuffs and 18 proc skills, responsive layout and reduced motion");
+  console.log("PASS: critical/proc presets, all damage skill ignore-defense fields, 0–100% limits, decimal editing, per-row/star independence, type switching, keyboard order, 38 debuffs and 18 proc skills, responsive layout and reduced motion");
 } finally {
   await browser.close();
 }

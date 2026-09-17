@@ -36,13 +36,13 @@ try {
   const choose = async (label, index = 0) => {
     const input = page.getByRole("combobox", { name: "技能类型", exact: true }).nth(index);
     await input.click(); await input.fill(label);
-    await page.getByRole("option", { name: label, exact: true }).click();
+    await page.getByRole("listbox").getByRole("option", { name: label, exact: true }).click();
   };
   await page.getByRole("button", { name: "新增条件", exact: true }).click();
   const main = page.getByRole("combobox", { name: "技能类型", exact: true }).first();
   for (const label of ["立刻再次行动", "禁止敌方受到本技能伤害的单位复活"]) {
     await main.click(); await main.fill(label);
-    await expect(page.getByRole("option")).toHaveCount(0);
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(0);
     await main.press("Tab"); await expect(main).toHaveValue("");
   }
   for (const label of ["令敌方一名单位眩晕", "令敌方前排单位眩晕", "令敌方后排单位眩晕", "令敌方所有单位眩晕", "令敌方随机一名单位眩晕"]) {
@@ -73,7 +73,7 @@ try {
   await page.getByRole("button", { name: "添加附加类型", exact: true }).click();
   const child = page.getByRole("combobox", { name: "技能类型", exact: true }).nth(1);
   await child.click(); await child.fill("禁止敌方受到本技能伤害的单位复活");
-  await expect(page.getByRole("option", { name: "禁止敌方受到本技能伤害的单位复活", exact: true })).toBeDisabled();
+  await expect(page.getByRole("listbox").getByRole("option", { name: "禁止敌方受到本技能伤害的单位复活", exact: true })).toBeDisabled();
   await child.press("Tab"); await expect(child).toHaveValue("");
   await choose("造成单体伤害");
   await choose("禁止敌方受到本技能伤害的单位复活", 1);
@@ -100,7 +100,7 @@ try {
   assert.equal((await data())[0].effects[0].additionalEffects[3].probability, 50);
   await expect(page.locator("#validation")).toHaveText("");
   const last = page.getByRole("combobox", { name: "技能类型", exact: true }).nth(4);
-  await last.fill("不匹配的内容"); await expect(page.getByRole("option")).toHaveCount(0);
+  await last.fill("不匹配的内容"); await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(0);
   await last.press("Tab"); await expect(last).toHaveValue("");
   await expect(page.locator("#validation")).toContainText("附加类型4");
   await choose("令敌方所有单位眩晕", 4);

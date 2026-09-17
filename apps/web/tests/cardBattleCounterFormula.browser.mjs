@@ -16,7 +16,7 @@ function Harness(){const[tiers,setTiers]=useState(defaultCardBattleTiersForRarit
 return <main className="mx-auto max-w-5xl p-3"><CardBattleConfigEditor tiers={tiers} activeStar={star} onActiveStar={setStar} onChange={setTiers}/><output hidden id="data">{JSON.stringify(tiers)}</output><output hidden id="error">{cardBattleSelectionError(tiers)}</output></main>}
 createRoot(document.getElementById('root')).render(<Harness/>);` }, bundle: true, write: false, format: 'iife', define: { 'import.meta.env': '{}' } });
 const oldCwd = process.cwd(); process.chdir(resolve('apps/web'));
-const css = await postcss([tailwind(), autoprefixer()]).process(readFileSync('src/styles.css', 'utf8'), { from: resolve('src/styles.css') });
+const css = await postcss([tailwind(), autoprefixer()]).process(readFileSync('src/styles.css', 'utf8').replace('@import "./cardBattleEffects.css";',readFileSync('src/cardBattleEffects.css','utf8')), { from: resolve('src/styles.css') });
 process.chdir(oldCwd);
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {

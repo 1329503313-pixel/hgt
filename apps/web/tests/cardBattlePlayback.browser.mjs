@@ -62,7 +62,7 @@ try {
     await page.clock.pauseAt(Date.now() + 1000);
     await page.goto("http://127.0.0.1:49879/fixture");
     await page.evaluate((playback) => { window.initialGame = { id: "game", playback }; }, snapshot());
-    await page.addStyleTag({ content: readFileSync(resolve("apps/web/src/styles.css"), "utf8") });
+    await page.addStyleTag({ content: readFileSync(resolve("apps/web/src/styles.css"), "utf8").replace('@import "./cardBattleEffects.css";', "") + readFileSync(resolve("apps/web/src/cardBattleEffects.css"), "utf8") + ":root{--skill-duration:1050ms}" });
     await page.addScriptTag({ content: bundled.outputFiles[0].text });
     await expect(page.locator("#state")).not.toHaveText("");
     return page;

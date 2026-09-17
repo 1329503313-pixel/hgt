@@ -664,14 +664,14 @@ export type OnlineCardBattleCardState = import("@hgt/shared").CardBattleProcStat
   statuses?: import("./cardBattleEffects").CardBattleStatus[];
 };
 export type OnlineCardBattleEvent = {
-  bond?: { ownerId: string; triggerId: string };
+  bond?: { ownerId: string; triggerId: string; actionType?: import("@hgt/shared").CardBattleBondActionType };
   sequence: number; round: number; kind: "round" | "attack" | "skill" | "end" | "extra_action" | "stun";
   visual: "round" | "damage" | "heal" | "energy" | "buff" | "debuff" | "revive" | "end" | "extra_action" | "stun";
   lifesteal?: number;
   extraAction?: boolean;
   counterattack?: boolean;
   actorId: string | null; skillName: string | null;
-  effects: Array<{ dodged?: boolean; shieldDamage?: number; hpDamage?: number; shieldGained?: number; targetId: string; amount?: number; blocked?: boolean; critical?: boolean; label?: string; stunned?: boolean; stunResisted?: boolean }>;
+  effects: Array<{ protection?: "invincible" | "death_protection" | "resisted"; dodged?: boolean; shieldDamage?: number; hpDamage?: number; shieldGained?: number; targetId: string; amount?: number; blocked?: boolean; critical?: boolean; label?: string; stunned?: boolean; stunResisted?: boolean }>;
   effectType?: import("./digitalAssets").CardBattleEffectType;
   states: OnlineCardBattleCardState[]; durationMs: number; text: string;
 };

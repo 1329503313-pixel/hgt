@@ -30,7 +30,7 @@ const bundle = await build({
 const css = (await postcss([tailwindcss({
   ...loadConfig(resolve('apps/web/tailwind.config.ts')),
   content: [{raw:readFileSync(resolve('apps/web/src/components/GiftDrawer.tsx'),'utf8'),extension:'tsx'}],
-})]).process(readFileSync(resolve('apps/web/src/styles.css'),'utf8'), {from:undefined})).css;
+})]).process(readFileSync(resolve('apps/web/src/styles.css'),'utf8').replace('@import "./cardBattleEffects.css";',readFileSync('apps/web/src/cardBattleEffects.css','utf8')), {from:undefined})).css;
 const browser = await chromium.launch({channel:process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM==='1'?undefined:'msedge',headless:true});
 try {
   for (const [width,height] of [[320,568],[375,812],[390,844],[430,932],[768,900],[1365,900],[812,375]]) {

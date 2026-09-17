@@ -1,3 +1,4 @@
+@import "./cardBattleEffects.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -30,9 +31,8 @@
   backdrop-filter: blur(16px);
 }
 
-/* 卡牌对战：服务端事件逐条驱动。没有跳过入口；减少动态效果时保留等时长语义反馈。 */
+/* Card battle: event-driven composited effects. */
 .card-battle-room { color-scheme: dark; }
-.card-battle-card { transform-origin: 50% 70%; will-change: transform, filter, opacity; }
 .card-battle-back {
   overflow: hidden;
   border: 1px solid rgb(103 232 249 / .35);
@@ -43,15 +43,6 @@
   box-shadow: inset 0 0 0 4px rgb(7 20 38 / .75);
 }
 .card-battle-back span { position: absolute; bottom: 14%; font-size: 9px; font-weight: 900; letter-spacing: .2em; }
-.card-battle-attacker { z-index: 75; }
-.card-battle-attacker-1, .card-battle-attacker-2 { animation: card-battle-attack-target 1.05s cubic-bezier(.2,.8,.2,1) both; }
-.card-battle-hit { animation: card-battle-hit 700ms ease-out 280ms both; }
-.card-battle-fx-green { animation: card-battle-green 1s ease both; }
-.card-battle-fx-yellow { animation: card-battle-yellow 1s ease both; }
-.card-battle-fx-blue { animation: card-battle-blue 1s ease both; }
-.card-battle-hit, .card-battle-fx-green, .card-battle-fx-yellow, .card-battle-fx-blue { z-index: 74; }
-.card-battle-number { pointer-events: none; animation: card-battle-number 850ms ease-out both; text-shadow: 0 2px 8px rgb(0 0 0 / .85); }
-.card-battle-skill-name { animation: card-battle-skill-name 180ms ease-out both; }
 .battle-glyph { width: 100%; height: 100%; overflow: visible; }
 .card-battle-status-rail { position: absolute; left: 2px; right: 2px; top: 16px; z-index: 55; display: flex; gap: 3px; overflow-x: auto; overflow-y: hidden; padding: 1px 1px 3px; scrollbar-width: none; touch-action: pan-x; }
 .card-battle-status-rail:focus-visible { outline: 2px solid #67e8f9; outline-offset: 1px; }
@@ -59,100 +50,12 @@
 .card-battle-status-icon.is-buff { color: #fde68a; border-color: #38bdf8; }
 .card-battle-status-icon.is-debuff { color: #fda4af; border-color: #fb7185; }
 .card-battle-status-icon small { position: absolute; right: -2px; bottom: -3px; min-width: 9px; padding: 0 1px; border-radius: 2px; background: #020617; color: #fff; font: 800 8px/10px ui-monospace,monospace; text-align: center; }
-.card-battle-skill-fx { position: absolute; inset: 0; z-index: 34; pointer-events: none; color: var(--skill-color); isolation: isolate; }
-.card-battle-skill-symbol { position: absolute; left: 14%; top: 28%; width: 72%; height: 52%; filter: drop-shadow(0 0 5px currentColor); animation: card-battle-skill-impact var(--skill-duration) ease-out both; }
-.card-battle-skill-ring,.card-battle-skill-wave { position: absolute; left: -15%; top: 30%; width: 130%; aspect-ratio: 1; border: 2px solid currentColor; border-radius: 50%; box-shadow: 0 0 12px currentColor,inset 0 0 12px currentColor; animation: card-battle-skill-ring var(--skill-duration) ease-out both; }
-.card-battle-skill-wave { border-style: dashed; animation-name: card-battle-skill-wave; opacity: .65; }
-.card-battle-skill-particle { position: absolute; left: 38%; top: 42%; width: 24%; height: 24%; animation: card-battle-skill-particle var(--skill-duration) ease-out both; }
-.card-battle-skill-fx.pattern-single .card-battle-skill-wave { border-radius: 20%; transform: rotate(45deg); }
-.card-battle-skill-fx.pattern-random .card-battle-skill-symbol { animation-name: card-battle-skill-random; }
-.card-battle-skill-fx.pattern-random .card-battle-skill-wave { animation-name: card-battle-skill-random; border-style: dashed; }
-.card-battle-skill-fx .battle-glyph-shard-left { animation: card-battle-shard-left var(--skill-duration) ease-out both; }
-.card-battle-skill-fx .battle-glyph-shard-right { animation: card-battle-shard-right var(--skill-duration) ease-out both; }
-@keyframes card-battle-shard-left { 0%,40% { transform: translate(0,0); } 100% { transform: translate(-8px,8px) rotate(-15deg); } }
-@keyframes card-battle-shard-right { 0%,40% { transform: translate(0,0); } 100% { transform: translate(8px,10px) rotate(15deg); } }
-.card-battle-skill-fx.pattern-front .card-battle-skill-wave { border-radius: 15%; animation-name: card-battle-skill-front; }
-.card-battle-skill-fx.pattern-rear .card-battle-skill-wave { border-radius: 10% 90%; animation-name: card-battle-skill-rear; }
-.card-battle-skill-fx.pattern-all .card-battle-skill-ring { border-width: 3px; animation-name: card-battle-skill-all; }
-.card-battle-skill-fx.pattern-ally .card-battle-skill-wave { border-style: dotted; animation-name: card-battle-skill-ally; }
-.card-battle-skill-fx.pattern-self .card-battle-skill-wave { width: 105%; left: -2.5%; border-width: 1px; }
-.card-battle-skill-fx.motion-rise .card-battle-skill-symbol { animation-name: card-battle-skill-rise; }
-.card-battle-skill-fx.motion-guard .card-battle-skill-symbol { animation-name: card-battle-skill-guard; }
-.card-battle-skill-fx.motion-flap .card-battle-skill-symbol { animation-name: card-battle-skill-rise; }
-.card-battle-skill-fx.motion-orbit .card-battle-skill-particle { animation-name: card-battle-skill-orbit; }
-.card-battle-skill-fx.motion-shatter .card-battle-skill-symbol { animation-name: card-battle-skill-shatter; }
-.card-battle-skill-fx.motion-drain .card-battle-skill-particle { animation-name: card-battle-skill-drain; }
-.card-battle-skill-fx.motion-drain .card-battle-skill-symbol { animation-name: card-battle-skill-guard; }
-.card-battle-skill-fx.motion-daze .card-battle-skill-particle { animation-name: card-battle-skill-orbit; }
-.card-battle-skill-fx.motion-daze .card-battle-skill-symbol { animation-name: card-battle-skill-daze; }
-.card-battle-skill-fx.motion-reprise .card-battle-skill-symbol { animation-name: card-battle-skill-reprise; }
-.card-battle-skill-fx.motion-reprise .card-battle-skill-particle { animation-name: card-battle-skill-orbit; }
-@keyframes card-battle-skill-drain { 0%,20% { opacity: 0; transform: rotate(var(--particle-angle)) translateY(-48px) scale(.5); } 45% { opacity: 1; } 70% { opacity: .9; transform: rotate(var(--particle-angle)) translateY(0) scale(.25); } 100% { opacity: 0; transform: scale(.1); } }
-@keyframes card-battle-skill-daze { 0%,25% { opacity: 0; transform: rotate(-25deg) scale(.4); } 50% { opacity: 1; transform: rotate(15deg) scale(1); } 75% { opacity: 1; transform: rotate(-15deg) scale(1); } 100% { opacity: 0; transform: rotate(15deg) scale(.9); } }
-@keyframes card-battle-skill-reprise { 0%,10% { opacity: 0; transform: rotate(-100deg) scale(.3); } 50% { opacity: 1; transform: rotate(0) scale(1.15); } 75% { opacity: 1; transform: rotate(100deg) scale(1); } 100% { opacity: 0; transform: rotate(180deg) scale(1.3); } }
-.card-battle-skill-fx.motion-summon .card-battle-skill-symbol { animation-name: card-battle-skill-summon; }
-.card-battle-skill-fx.motion-summon .card-battle-skill-wave { left: 10%; width: 80%; height: 160%; top: -30%; border-radius: 50%; background: linear-gradient(transparent,color-mix(in srgb,currentColor 35%,transparent),transparent); animation-name: card-battle-skill-pillar; }
-.card-battle-skill-fx .battle-glyph-left { transform-origin: 12px 15px; animation: card-battle-wing-left var(--skill-duration) ease-in-out both; }
-.card-battle-skill-fx .battle-glyph-right { transform-origin: 12px 15px; animation: card-battle-wing-right var(--skill-duration) ease-in-out both; }
-.card-battle-skill-fx .battle-glyph-fracture { stroke-dasharray: 35; animation: card-battle-fracture var(--skill-duration) linear both; }
-.card-battle-skill-fx.is-source { opacity: .6; }
-.card-battle-skill-fx.is-source .card-battle-skill-symbol { width: 36%; height: 36%; left: 32%; animation-name: card-battle-skill-guard; }
-.card-battle-skill-fx.is-source .card-battle-skill-particle { display: none; }
-.card-battle-fx-debuff { animation: card-battle-debuff 1s ease-out both; }
-@keyframes card-battle-skill-impact { 0%,15% { opacity: 0; transform: scale(.2) rotate(-25deg); } 50% { opacity: 1; transform: scale(1.3) rotate(8deg); } 68% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(1.6); } }
-@keyframes card-battle-skill-ring { 0%,20% { opacity: 0; transform: scale(.1); } 52% { opacity: .85; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.7); } }
-@keyframes card-battle-skill-wave { 0%,30% { opacity: 0; transform: scale(.2) rotate(-45deg); } 60% { opacity: .65; } 100% { opacity: 0; transform: scale(1.5) rotate(80deg); } }
-@keyframes card-battle-skill-particle { 0%,30% { opacity: 0; transform: rotate(var(--particle-angle)) translateY(0) scale(.2); } 55% { opacity: 1; } 100% { opacity: 0; transform: rotate(var(--particle-angle)) translateY(-55px) scale(.25); } }
-@keyframes card-battle-skill-random { 0% { opacity: 0; transform: translate(-70px,-40px) scale(.4); } 35% { opacity: 1; transform: translate(25px,-20px) scale(.7); } 55% { transform: translate(0,0) scale(1.2); } 100% { opacity: 0; transform: scale(1.4); } }
-@keyframes card-battle-skill-front { 0%,20% { opacity: 0; transform: translateX(-80%) scaleX(.2); } 50% { opacity: .8; } 100% { opacity: 0; transform: translateX(80%) scaleX(1.8); } }
-@keyframes card-battle-skill-rear { 0%,15% { opacity: 0; transform: translateY(-80%) rotate(-45deg) scale(.2); } 50% { opacity: .85; } 100% { opacity: 0; transform: translateY(60%) rotate(30deg) scale(1.4); } }
-@keyframes card-battle-skill-all { 0%,10% { opacity: 0; transform: scale(.1); } 45% { opacity: .9; transform: scale(1.15); } 65% { opacity: .6; transform: scale(.9); } 100% { opacity: 0; transform: scale(2); } }
-@keyframes card-battle-skill-ally { 0%,10% { opacity: 0; transform: translateY(70%) scale(.2); } 55% { opacity: .8; transform: scale(1); } 100% { opacity: 0; transform: translateY(-30%) scale(1.2); } }
-@keyframes card-battle-skill-rise { 0%,15% { opacity: 0; transform: translateY(35px) scale(.4); } 55% { opacity: 1; transform: translateY(0) scale(1.15); } 100% { opacity: 0; transform: translateY(-25px) scale(.9); } }
-@keyframes card-battle-skill-guard { 0%,15% { opacity: 0; transform: scale(.2); } 45% { opacity: 1; transform: scale(1.15); } 75% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.05); } }
-@keyframes card-battle-skill-orbit { 0%,15% { opacity: 0; transform: rotate(var(--particle-angle)) translateY(-12px) scale(.2); } 50% { opacity: 1; } 100% { opacity: 0; transform: rotate(calc(var(--particle-angle) + 160deg)) translateY(-42px) scale(.5); } }
-@keyframes card-battle-skill-shatter { 0%,10% { opacity: 0; transform: scale(.6); } 40% { opacity: 1; transform: scale(1); } 50% { transform: translateX(-4px) rotate(-6deg); } 60% { transform: translateX(4px) rotate(6deg); } 100% { opacity: 0; transform: translateY(20px) scale(1.3) rotate(-12deg); } }
-@keyframes card-battle-skill-summon { 0%,10% { opacity: 0; transform: translateY(30px) scale(.2); } 50% { opacity: 1; transform: translateY(0) scale(1.15); } 80% { opacity: .85; } 100% { opacity: 0; transform: translateY(-35px) scale(1.3); } }
-@keyframes card-battle-skill-pillar { 0%,15% { opacity: 0; transform: scaleX(.05) scaleY(.3); } 50% { opacity: .65; transform: scale(1); } 100% { opacity: 0; transform: scaleX(.1) scaleY(1.4); } }
-@keyframes card-battle-wing-left { 0%,100% { transform: rotate(0); } 35%,65% { transform: rotate(-20deg); } 50%,80% { transform: rotate(16deg); } }
-@keyframes card-battle-wing-right { 0%,100% { transform: rotate(0); } 35%,65% { transform: rotate(20deg); } 50%,80% { transform: rotate(-16deg); } }
-@keyframes card-battle-fracture { 0%,35% { stroke-dashoffset: 35; } 60%,100% { stroke-dashoffset: 0; } }
-@keyframes card-battle-debuff { 0%,100% { filter: brightness(1); } 50% { filter: brightness(.6) saturate(.3); } }
-@media (prefers-reduced-motion: reduce) {
-  .card-battle-skill-fx * { animation-name: card-battle-skill-reduced !important; }
-}
-@keyframes card-battle-skill-reduced { 0%,100% { opacity: 0; } 30%,75% { opacity: .75; } }
-.card-battle-defeated { filter: saturate(.15) brightness(.65); opacity: .72; }
 .card-battle-chat-bubble { pointer-events: none; animation: card-battle-chat-life 8s linear both; }
 .card-battle-menu-item { display: flex; min-height: 44px; width: 100%; align-items: center; gap: .65rem; border-radius: .625rem; padding: .6rem .75rem; text-align: left; font-size: .8rem; font-weight: 800; transition: background-color 160ms ease; }
 .card-battle-menu-item:hover { background: rgb(255 255 255 / .08); }
 .card-battle-menu-item:disabled { cursor: not-allowed; opacity: .38; }
-@keyframes card-battle-attack-target {
-  0% { transform: translate(0, 0) rotate(0) scale(1); filter: brightness(1); box-shadow: 0 8px 18px rgb(0 0 0 / .3); }
-  36% { transform: translate(var(--card-battle-attack-x, 0), var(--card-battle-attack-y, -82px)) rotate(0) scale(1.06); filter: brightness(1.12); box-shadow: 0 22px 34px rgb(0 0 0 / .48); }
-  52% { transform: translate(var(--card-battle-attack-x, 0), var(--card-battle-attack-y, -82px)) rotate(-13deg) scale(1.08); }
-  67% { transform: translate(var(--card-battle-attack-x, 0), var(--card-battle-attack-y, -82px)) rotate(15deg) scale(1.08); }
-  80% { transform: translate(var(--card-battle-attack-x, 0), var(--card-battle-attack-y, -82px)) rotate(-4deg) scale(1.04); }
-  100% { transform: translate(0, 0) rotate(0) scale(1); filter: brightness(1); box-shadow: 0 8px 18px rgb(0 0 0 / .3); }
-}
-@keyframes card-battle-hit { 0%,100% { transform: translateX(0); filter: brightness(1); } 30% { transform: translateX(-5px); filter: brightness(1.6); } 45% { transform: translateX(5px); } 60% { transform: translateX(-3px); } }
-@keyframes card-battle-green { 0%,100% { filter: brightness(1); box-shadow: 0 0 0 rgb(52 211 153 / 0); } 45% { filter: brightness(1.2); box-shadow: 0 0 28px 8px rgb(52 211 153 / .72); } }
-@keyframes card-battle-yellow { 0%,100% { filter: brightness(1); box-shadow: 0 0 0 rgb(250 204 21 / 0); } 45% { filter: brightness(1.22); box-shadow: 0 0 28px 8px rgb(250 204 21 / .72); } }
-@keyframes card-battle-blue { 0%,100% { filter: brightness(1); box-shadow: 0 0 0 rgb(34 211 238 / 0); } 45% { filter: brightness(1.18); box-shadow: 0 0 28px 8px rgb(34 211 238 / .7); } }
-@keyframes card-battle-number { 0% { opacity: 0; transform: translate(-50%, 8px) scale(.8); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.12); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -22px) scale(1); } }
-@keyframes card-battle-skill-name { from { opacity: 0; transform: translateY(5px) scale(.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@keyframes card-battle-chat-life { 0% { opacity: 0; transform: translateY(6px); } 3%,78% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) {
-  .card-battle-attacker-1, .card-battle-attacker-2 { animation-name: card-battle-attack-reduced; }
-  .card-battle-hit { animation-name: card-battle-hit-reduced; }
-  .card-battle-chat-bubble { animation-name: card-battle-chat-life-reduced; }
-  .card-battle-skill-name { animation: none; }
-  .card-battle-number, .card-battle-fx-green, .card-battle-fx-yellow, .card-battle-fx-blue, .card-battle-chat-bubble { animation-timing-function: linear; }
-}
-@keyframes card-battle-attack-reduced { 0%,100% { opacity: 1; filter: brightness(1); } 45%,70% { opacity: .72; filter: brightness(1.35); } }
-@keyframes card-battle-hit-reduced { 0%,100% { opacity: 1; filter: brightness(1); } 35%,70% { opacity: .65; filter: brightness(1.55); } }
-@keyframes card-battle-chat-life-reduced { 0% { opacity: 0; } 3%,78% { opacity: 1; } 100% { opacity: 0; } }
 
+@keyframes card-battle-chat-life { 0% { opacity:0; transform:translateY(6px); } 3%,78% { opacity:1; transform:translateY(0); } 100% { opacity:0; } }
 @media (prefers-reduced-motion: no-preference) {
   .pwa-install-card {
     animation: pwa-install-enter 220ms ease-out both;
@@ -5984,11 +5887,7 @@ textarea {
 .card-battle-half.card-battle-team-member { min-height:244px; gap:20px; padding:56px 2px 8px; }
 .card-battle-team-member .card-battle-formation-row { gap:4px; }
 
-.card-battle-dodge { z-index: 74; animation: card-battle-dodge 700ms ease-out 280ms both; }
-.card-battle-dodge-1 { --dodge-y: 18px; }
-.card-battle-dodge-2 { --dodge-y: -18px; }
-@keyframes card-battle-dodge { 0%,100% { transform: translateY(0) scale(1); } 35%,60% { transform: translateY(var(--dodge-y)) scale(.94); } }
-@media (prefers-reduced-motion: reduce) { .card-battle-dodge { animation-name: card-battle-hit-reduced; } }
+
 /* Voice soup: fixed player positions, central host and touch-safe microphone controls. */
 .voice-stage { display: grid; grid-template-columns: minmax(0,1fr) minmax(80px,1fr) minmax(0,1fr); gap: 8px; padding: 12px; max-width: 640px; margin: auto; }
 .voice-seat-column { display: grid; grid-template-rows: repeat(5,minmax(66px,auto)); gap: 4px; }

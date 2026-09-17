@@ -1,0 +1,38 @@
+{
+  "generator": "built-in image_gen",
+  "assets": [
+    {
+      "file": "slash-v1.webp",
+      "width": 384,
+      "height": 256,
+      "bytes": 21826,
+      "alpha": true,
+      "source": "exec-854c42a7-ea1f-4294-932f-ca9e3d6b4377",
+      "prompt": "Use case: stylized-concept. Production game VFX sprite for a mobile fantasy card battler. A SINGLE luminous golden-white curved sword slash, elegant tapered crescent with a sharp bright core and delicate gold wisps, slight textured energy scattering along its outer rim. Isolated on a genuinely transparent alpha background, no scene, no card, no text, no watermark, no borders, no checkerboard. Centered diagonally from bottom-left to top-right with all glow contained and generous transparent margins. One cohesive sprite, not a sheet. Premium restrained painterly game VFX, readable when scaled to 120 pixels. Please save PNG with transparency.",
+      "decodedRgbaBytes": 393216
+    },
+    {
+      "file": "fire-v1.webp",
+      "width": 384,
+      "height": 384,
+      "bytes": 44430,
+      "alpha": true,
+      "source": "exec-e46de02e-6181-4376-8b5b-2e5a300e4f16",
+      "prompt": "A single compact orange-gold magical fire IMPACT explosion sprite, bright off-white core, painterly flame tongues curling out, a few embers, no circle icon. Premium mobile fantasy game VFX texture. Centered, contained with generous transparent padding, read clearly at 100 pixels. Genuinely transparent alpha background. No ground, no scene, no black or checkerboard backdrop, no text, no watermark. One cohesive sprite, not a sheet. PNG transparency.",
+      "decodedRgbaBytes": 589824
+    },
+    {
+      "file": "revive-v1.webp",
+      "width": 341,
+      "height": 512,
+      "bytes": 52440,
+      "alpha": true,
+      "source": "exec-6353ee31-9ba3-4ba9-9c78-237da580b07c",
+      "prompt": "A single narrow vertical soft gold-white resurrection light pillar sprite with two graceful luminous phoenix wing wisps unfolding left and right at mid height, subtle feather dust, elegant premium fantasy game VFX. Warm gold luminous texture, very soft alpha edges, readable at 150 pixels tall. Genuinely transparent alpha background. Entire shape contained with margin, no ground, no scene, no black or checkerboard backdrop, no text, no watermark. One cohesive sprite, not a sheet. PNG transparency.",
+      "decodedRgbaBytes": 698368
+    }
+  ],
+  "totalBytes": 118696,
+  "decodedRgbaBytes": 1681408,
+  "versioning": "Explicit -v1 filenames; keep immutable on content changes. Local same-origin resources packaged by Vite for Web and Capacitor."
+}

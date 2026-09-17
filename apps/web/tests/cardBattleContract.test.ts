@@ -69,7 +69,7 @@ test("卡牌保存核对所有星级的有效选择，未选草稿不得借切�
 });
 
 const view = readFileSync(new URL("../src/components/CardBattleRoomView.tsx", import.meta.url), "utf8");
-const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8") + readFileSync(new URL("../src/cardBattleEffects.css", import.meta.url), "utf8");
 const lobby = readFileSync(new URL("../src/pages/OnlineSoupLobbyPage.tsx", import.meta.url), "utf8");
 const roomPage = readFileSync(new URL("../src/pages/OnlineSoupRoomPage.tsx", import.meta.url), "utf8");
 const assetAdmin = readFileSync(new URL("../src/components/admin/DigitalAssetManagement.tsx", import.meta.url), "utf8");
@@ -79,13 +79,13 @@ const rankingPage = readFileSync(new URL("../src/pages/RankingsPage.tsx", import
 const rankingBoard = readFileSync(new URL("../src/components/CardBattleRankingBoard.tsx", import.meta.url), "utf8");
 const cardCabinet = readFileSync(new URL("../src/components/CardCabinetSection.tsx", import.meta.url), "utf8");
 
-test("所有星级预设25%暴击率和150%暴伤，编辑、选卡、详情与战斗反馈贯通", () => {
+test("所有星级预设25%暴击率和150%暴伤，编辑、详情与战斗反馈贯通，选卡仅显示基础属性", () => {
   for (const rarity of ["epic", "legend"] as const) {
     assert.ok(defaultCardBattleTiersForRarity(rarity).every((tier) => tier.critRate === 25 && tier.critDamage === 150));
   }
   for (const label of ["暴击率", "暴击伤害"]) {
     assert.ok(battleConfigEditor.includes(label));
-    assert.ok(view.includes(`<dt>${label}</dt>`));
+    assert.ok(!view.includes(`<dt>${label}</dt>`));
     assert.ok(cardCabinet.includes(label));
   }
   assert.match(battleConfigEditor, /属性增加、复活和回能不暴击/);
@@ -178,7 +178,7 @@ test("服务器时间轴驱动动画，恢复焦点直接同步且不依赖本�
   assert.match(hook, /bypassCache: true, dedupe: false/);
   assert.match(view, /seekCardBattleAnimations\(arenaRef.current, animationDelayMs\)/);
   assert.doesNotMatch(view, /(?:skipAnimation|onSkip|跳过动画|跳过战斗)/);
-  assert.match(styles, /card-battle-attack-target 1\.05s/);
+  assert.match(styles, /card-battle-attack-target var\(--skill-duration\)/);
   assert.match(view, /对局中对战者退出即认输/);
 });
 
@@ -220,9 +220,9 @@ test("治疗复活、属性提升和能量分别使用绿色、黄色和蓝色�
   assert.match(view, /card-battle-fx-green/);
   assert.match(view, /card-battle-fx-yellow/);
   assert.match(view, /card-battle-fx-blue/);
-  assert.match(styles, /@keyframes card-battle-green/);
-  assert.match(styles, /@keyframes card-battle-yellow/);
-  assert.match(styles, /@keyframes card-battle-blue/);
+  assert.match(styles, /@keyframes card-battle-fx-rise/);
+  assert.match(styles, /@keyframes card-battle-fx-guard/);
+  assert.match(styles, /var\(--fx-impact\)/);
 });
 
 test("备战卡牌支持鼠标和触控拖动换位并保留点击选卡", () => {
@@ -234,8 +234,9 @@ test("备战卡牌支持鼠标和触控拖动换位并保留点击选卡", () =>
     reorderCardBattleLineup(["a", null, "c"], 1, 2),
     [null, "a", "c", null, null],
   );
-  assert.match(view, /setPointerCapture/);
-  assert.match(view, /document\.elementFromPoint/);
+  const drag = readFileSync(new URL("../src/shared/useCardBattleDrag.ts", import.meta.url), "utf8");
+  assert.match(drag, /setPointerCapture/);
+  assert.match(drag, /document\.elementFromPoint/);
   assert.match(view, /reorderCardBattleLineup/);
   assert.match(view, /Alt\+ArrowLeft Alt\+ArrowRight/);
   assert.match(view, /拖动换位/);

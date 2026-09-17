@@ -91,6 +91,8 @@ try {
     } else if (url.origin === apiOrigin && (url.pathname.startsWith(coverPrefix) || url.pathname.startsWith("/api/media/"))) {
       if (url.pathname.startsWith(coverPrefix)) loadedCovers.add(url.pathname);
       await route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="140"><rect width="100" height="140" fill="#496583"/></svg>' });
+    } else if (url.origin === appOrigin && url.pathname.startsWith("/card-battle-fx/")) {
+      await route.fulfill({path:resolve("apps/web/public"+url.pathname),contentType:"image/webp"});
     } else {
       wrongOrigin.push(url.href);
       await route.abort();

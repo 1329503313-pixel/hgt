@@ -30,7 +30,7 @@ const bundle = await build({ stdin: { resolveDir: resolve('apps/web'), loader: '
   ` }));
 } }] });
 const raw = Object.keys(bundle.metafile.inputs).filter(p => p.startsWith('apps/web/src/') && /\.[tj]sx?$/.test(p)).map(p => readFileSync(p,'utf8')).join('\n');
-const css = (await postcss([tailwindcss({ ...loadConfig(resolve('apps/web/tailwind.config.ts')), content: [{ raw, extension: 'tsx' }] })]).process(readFileSync('apps/web/src/styles.css','utf8'), { from: undefined })).css;
+const css = (await postcss([tailwindcss({ ...loadConfig(resolve('apps/web/tailwind.config.ts')), content: [{ raw, extension: 'tsx' }] })]).process(readFileSync('apps/web/src/styles.css','utf8').replace('@import "./cardBattleEffects.css";',readFileSync('apps/web/src/cardBattleEffects.css','utf8')), { from: undefined })).css;
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM === '1' ? undefined : 'msedge', headless: true });
 const output = mkdtempSync(resolve(tmpdir(),'hgt-voice-'));
 try {

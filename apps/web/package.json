@@ -10,7 +10,7 @@
     "build:android:local": "vite build --mode android-local",
     "precheck": "npm run test:card-battle && npm run test:impostor",
     "check": "npm run check:images && npm run check:pwa && npm run test:media && npm run test:admin-routes && npm run test:soup-topics && npm run test:message-actions && npm run test:registration && npm run test:online-soup-avatar-navigation && npm run test:online-soup-question-remaining-snapshot && npm run test:online-soup-discussion-cover && npm run test:online-soup-question-mode-guide && npm run test:collectible-auction-time && npm run test:collectible-equipment && npm run test:soup-card-mobile-author && npm run test:profile-soup-pins && npm run test:mine-soup-return && npm run test:admin-shell-grants && npm run test:vip-benefits && tsc -p tsconfig.json --noEmit && npm run test:voice",
-    "test:card-battle": "tsx --test tests/cardBattleContract.test.ts",
+    "test:card-battle": "tsx --test tests/cardBattleContract.test.ts tests/cardBattleFx.test.ts",
     "test:card-battle-defense": "cd ../.. && node apps/web/tests/cardBattleDefense.browser.mjs",
     "test:card-battle-bonds": "cd ../.. && node apps/web/tests/cardBattleBonds.browser.mjs",
     "test:impostor": "tsx --test tests/impostorActions.test.ts",
@@ -41,7 +41,8 @@
     "optimize:images": "node scripts/optimize-images.mjs",
     "check:images": "node scripts/optimize-images.mjs --check",
     "preview": "vite preview",
-    "test:voice": "tsx --test tests/voiceMicrophone.test.ts"
+    "test:voice": "tsx --test tests/voiceMicrophone.test.ts",
+    "test:card-battle-fx": "cd ../.. && node apps/web/tests/cardBattleEffects.browser.mjs && node apps/web/tests/cardBattleFxBudget.browser.mjs"
   },
   "dependencies": {
     "@hgt/shared": "*",
