@@ -47,10 +47,10 @@ if ($packageMatch.Groups[2].Value -ne [string]$version.versionCode) { throw "Une
 if ($packageMatch.Groups[3].Value -ne [string]$version.versionName) { throw "Unexpected versionName: $($packageMatch.Groups[3].Value)" }
 
 $permissions = (& $aapt dump permissions $ApkPath) -join "`n"
-foreach ($requiredPermission in @('android.permission.INTERNET', 'android.permission.REQUEST_INSTALL_PACKAGES')) {
+foreach ($requiredPermission in @('android.permission.INTERNET', 'android.permission.REQUEST_INSTALL_PACKAGES', 'android.permission.RECORD_AUDIO', 'android.permission.MODIFY_AUDIO_SETTINGS')) {
     if ($permissions -notmatch [regex]::Escape($requiredPermission)) { throw "Required APK permission is missing: $requiredPermission" }
 }
-foreach ($forbiddenPermission in @('android.permission.CAMERA', 'android.permission.RECORD_AUDIO', 'android.permission.ACCESS_FINE_LOCATION', 'android.permission.MANAGE_EXTERNAL_STORAGE')) {
+foreach ($forbiddenPermission in @('android.permission.CAMERA', 'android.permission.ACCESS_FINE_LOCATION', 'android.permission.MANAGE_EXTERNAL_STORAGE')) {
     if ($permissions -match [regex]::Escape($forbiddenPermission)) { throw "Unexpected sensitive APK permission: $forbiddenPermission" }
 }
 
