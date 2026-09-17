@@ -49,11 +49,23 @@ try {
   }
   const [cols] = await pool.query<mysql.RowDataPacket[]>("SHOW COLUMNS FROM online_soup_members LIKE 'voice_seat'");
   if (!cols.length) await pool.query("ALTER TABLE online_soup_members ADD voice_seat TINYINT UNSIGNED NULL");
-  await pool.query(`CREATE TABLE online_soup_voice_sessions (id VARCHAR(64) PRIMARY KEY,user_id VARCHAR(64),room_id VARCHAR(64),rtc_user_id VARCHAR(32),can_publish BOOLEAN,revoked BOOLEAN DEFAULT 0,ticket_expires_at DATETIME(3),last_seen_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))`);
+  // Production has MySQL 8's default collation on legacy rooms/members, while
+  // the new voice table explicitly uses unicode_ci. Never rely on local defaults.
+  for (const table of ["online_soup_rooms", "online_soup_members"]) {
+    await pool.query(`ALTER TABLE ${table} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`);
+  }
+  await pool.query(`CREATE TABLE online_soup_voice_sessions (id VARCHAR(64) PRIMARY KEY,user_id VARCHAR(64),room_id VARCHAR(64),rtc_user_id VARCHAR(32),can_publish BOOLEAN,revoked BOOLEAN DEFAULT 0,ticket_expires_at DATETIME(3),last_seen_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
   const { Client } = await import("tencentcloud-sdk-nodejs-trtc/tencentcloud/services/trtc/v20190722/trtc_client.js");
   const removed: string[] = [];
   Client.prototype.RemoveUserByStrRoomId = async (req) => { removed.push(...req.UserIds); return { RequestId: "offline" }; };
+  // Run cleanup explicitly so background timers cannot hide failures or race assertions.
+  config.releaseCandidate = true;
   const { default: router } = await import("../src/onlineSoup.js");
+  const { reconcileVoiceSessions } = await import("../src/onlineSoupVoice.js");
+  async function reconcile() {
+    config.releaseCandidate = false;
+    try { await reconcileVoiceSessions(); } finally { config.releaseCandidate = true; }
+  }
 
   for (const id of ["host",...Array.from({length:12},(_,i)=>"p"+i)]) await pool.query("INSERT INTO users (id,username,password,nickname,role) VALUES (?,?,'unused',?,?)",[id,id,id,id==='host'?'super_admin':'user']);
   await pool.query(`INSERT INTO soups (id,title,author,type,surface,bottom,supplemental_surfaces,supplemental_bottoms,host_manual,creator_id,creator_name,is_bottom_public,review_status) VALUES ('soup','语音测试','host','本格清汤','汤面','汤底','[]','[]','手册','host','host',1,'approved')`);
@@ -76,12 +88,30 @@ try {
   await request(path+'/host-mode','host','PATCH',{hostMode:'ai'},409);
   await request(path+'/voice/session','p10','POST',{},403);
   const ticket=await request(path+'/voice/session','p0','POST',{});assert.equal(ticket.canPublish,true);assert.equal(ticket.strRoomId,'hgt_'+room.roomId);
+  const healthyHeartbeat=await request(path+'/voice/heartbeat','p0','POST',{sessionId:ticket.sessionId});
+  assert.ok(healthyHeartbeat.members.some((member:any)=>member.rtcUserId===ticket.userId && member.canPublish));
+  const hostTicket=await request(path+'/voice/session','host','POST',{});
+  // An entry ticket expiring must not end an already established healthy media lease.
+  await pool.query("UPDATE online_soup_voice_sessions SET ticket_expires_at=NOW(3)-INTERVAL 1 SECOND WHERE id=?",[hostTicket.sessionId]);
+  await reconcile();
+  for (let beat=0;beat<3;beat++) {
+    const state=await request(path+'/voice/heartbeat','host','POST',{sessionId:hostTicket.sessionId});
+    assert.deepEqual(new Set(state.members.map((member:any)=>member.rtcUserId)),new Set([ticket.userId,hostTicket.userId]));
+  }
+  assert.equal(removed.length,0,'Healthy sessions must survive reconciliation');
   await request(path+'/voice/session','p0','POST',{},409);
   await request(path+'/voice/heartbeat','p1','POST',{sessionId:ticket.sessionId},403);
   await request(path+'/members/p0/mute','host','POST',{durationMinutes:1});
   await request(path+'/voice/heartbeat','p0','POST',{sessionId:ticket.sessionId},403);
   const listen=await request(path+'/voice/session','p0','POST',{});assert.equal(listen.canPublish,false);
+  const mutedHeartbeat=await request(path+'/voice/heartbeat','p0','POST',{sessionId:listen.sessionId});
+  assert.equal(mutedHeartbeat.members.find((member:any)=>member.rtcUserId===listen.userId).canPublish,false);
   await request(path+'/voice/leave','p0','POST',{sessionId:listen.sessionId});
+  await pool.query("UPDATE online_soup_voice_sessions SET last_seen_at=NOW(3)-INTERVAL 45 SECOND WHERE id=?",[hostTicket.sessionId]);
+  await reconcile();
+  assert.ok(removed.includes(hostTicket.userId),'Expired heartbeat must trigger cloud removal');
+  assert.ok(removed.includes(listen.userId),'Explicit leave must trigger cloud removal');
+  await request(path+'/voice/heartbeat','host','POST',{sessionId:hostTicket.sessionId},403);
   await request(path+'/select-soup','host','POST',{soupId:'soup'});
   await request(path+'/start','host','POST',{});
   const candidates=await request(path+'/voice/mvp-candidates');assert.equal(candidates.candidates.length,10);
@@ -92,7 +122,7 @@ try {
   const [[rewards]]=await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM shell_transactions");assert.equal(Number(rewards.total),0);
   await request(path+'/members/p1/transfer-host','host','POST',{});const transferred=await request(path,'p1');assert.equal(transferred.members.find((m:any)=>m.id==='p1').role,'host');assert.equal(transferred.members.find((m:any)=>m.id==='p1').voiceSeat,null);assert.ok(transferred.members.find((m:any)=>m.id==='host').voiceSeat);
   await request('/rooms/'+text.roomId+'/join','p11','POST',{role:'spectator'});await request('/rooms/'+text.roomId+'/messages','host','POST',{type:'discussion',content:'文字房仍可发言'},201);
-  console.log('PASS voice MySQL/API: disabled gate, old clients, no spectators/text, 10 concurrent seats, credentials, one device, mute, MVP-only archive, no rewards, host transfer, text compatibility');
+  console.log('PASS voice MySQL/API: mixed production collations, repeated multi-user heartbeats, entry-ticket expiry, healthy/stale/left session cleanup, disabled gate, old clients, no spectators/text, 10 concurrent seats, credentials, one device, mute, MVP-only archive, no rewards, host transfer, text compatibility');
 } finally {
   if (server) await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve()));
   if (pool) await pool.end();

@@ -27,13 +27,16 @@ export async function syncVoiceSeats(db: mysql.PoolConnection, roomId: string) {
 
 // A durable outbox also covers disconnects, host succession, idle cleanup and server restarts.
 // Revoked identities are removed repeatedly until their last entry ticket expires.
+// Voice IDs use unicode_ci; legacy room/member IDs can use MySQL 8's 0900_ai_ci.
+// Match the legacy indexed columns on voice-side JOIN operands so MySQL can
+// use their primary keys, without changing business tables or requiring a migration.
 let reconciling = false;
 export async function reconcileVoiceSessions() {
   if (config.releaseCandidate || reconciling || !config.voice.sdkAppId || !config.voice.secretId || !config.voice.secretKey) return;
   reconciling = true;
   try {
-    await pool.query(`UPDATE online_soup_voice_sessions s LEFT JOIN online_soup_members m ON m.room_id=s.room_id AND m.user_id=s.user_id
-      LEFT JOIN online_soup_rooms r ON r.id=s.room_id SET s.revoked=1
+    await pool.query(`UPDATE online_soup_voice_sessions s LEFT JOIN online_soup_members m ON m.room_id=s.room_id COLLATE utf8mb4_0900_ai_ci AND m.user_id=s.user_id COLLATE utf8mb4_0900_ai_ci
+      LEFT JOIN online_soup_rooms r ON r.id=s.room_id COLLATE utf8mb4_0900_ai_ci SET s.revoked=1
       WHERE s.revoked=0 AND (m.user_id IS NULL OR m.is_active=0 OR m.member_role='spectator' OR r.status='closed'
       OR s.last_seen_at < NOW(3)-INTERVAL 30 SECOND OR s.can_publish<>(IF(m.muted_until>NOW(),0,1)) OR ?=0)`, [voiceEnabled() ? 1 : 0]);
     const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id,room_id,rtc_user_id,ticket_expires_at FROM online_soup_voice_sessions WHERE revoked=1 ORDER BY last_seen_at LIMIT 100");
@@ -107,8 +110,8 @@ export function registerVoiceRoutes(router: Router, userOf: (req: Request) => { 
     // Cloud control-plane retries must never block media leases or business requests.
     void reconcileVoiceSessions().catch(() => {});
     const [result] = await pool.query<mysql.ResultSetHeader>(`UPDATE online_soup_voice_sessions s
-      JOIN online_soup_members m ON m.room_id=s.room_id AND m.user_id=s.user_id
-      JOIN online_soup_rooms r ON r.id=s.room_id SET s.last_seen_at=NOW(3)
+      JOIN online_soup_members m ON m.room_id=s.room_id COLLATE utf8mb4_0900_ai_ci AND m.user_id=s.user_id COLLATE utf8mb4_0900_ai_ci
+      JOIN online_soup_rooms r ON r.id=s.room_id COLLATE utf8mb4_0900_ai_ci SET s.last_seen_at=NOW(3)
       WHERE s.id=? AND s.room_id=? AND s.user_id=? AND s.revoked=0 AND m.is_active=1
       AND m.member_role IN ('host','player') AND r.status<>'closed' AND r.communication_mode='voice'
       AND s.can_publish=IF(m.muted_until>NOW(),0,1)`, [String(req.body?.sessionId ?? ""), req.params.roomId, user?.id ?? ""]);
@@ -117,7 +120,7 @@ export function registerVoiceRoutes(router: Router, userOf: (req: Request) => { 
       res.status(403).json({ error: "语音权限已变更，请重新连接" }); return;
     }
     const [rows] = await pool.query<mysql.RowDataPacket[]>(`SELECT s.rtc_user_id,s.user_id,s.can_publish FROM online_soup_voice_sessions s
-      JOIN online_soup_members m ON m.room_id=s.room_id AND m.user_id=s.user_id
+      JOIN online_soup_members m ON m.room_id=s.room_id COLLATE utf8mb4_0900_ai_ci AND m.user_id=s.user_id COLLATE utf8mb4_0900_ai_ci
       WHERE s.room_id=? AND s.revoked=0 AND m.is_active=1 AND m.member_role IN ('host','player')
       AND s.can_publish=IF(m.muted_until>NOW(),0,1) AND s.last_seen_at>NOW(3)-INTERVAL 30 SECOND`, [req.params.roomId]);
     res.setHeader("Cache-Control", "no-store"); res.json({ members: rows.map(r => ({ rtcUserId: r.rtc_user_id, userId: r.user_id, canPublish: Boolean(r.can_publish) })) });
