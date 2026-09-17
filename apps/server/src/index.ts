@@ -1,4 +1,5 @@
 import "express-async-errors";
+import { securityHeaders } from "./securityHeaders.js";
 import { canViewOnlineSoupMessage } from "./onlineSoupHistory.js";
 import { evaluationAdminFilter, evaluationTypeSchema, presentEvaluation, presentEvaluationInteraction, syncEvaluationNotification } from "./evaluationPrivacy.js";
 import bcrypt from "bcryptjs";
@@ -467,13 +468,7 @@ app.use((req, res, next) => {
   });
   next();
 });
-app.use((_req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  next();
-});
+app.use(securityHeaders);
 
 app.get("/api/app/android-update", async (req, res) => {
   const rawVersionCode = String(req.query.versionCode ?? "0");

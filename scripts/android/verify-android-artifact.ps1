@@ -55,6 +55,7 @@ foreach ($forbiddenPermission in @('android.permission.CAMERA', 'android.permiss
 }
 
 $hash = Get-HgtFileSha256 -LiteralPath $ApkPath
+& (Join-Path $PSScriptRoot 'test-apk-startup.ps1') -ApkPath $ApkPath
 Write-Output "Package: com.caqis.hgt"
 Write-Output "Version: $($version.versionName) ($($version.versionCode))"
 Write-Output "Certificate SHA256: $expectedCertificate"

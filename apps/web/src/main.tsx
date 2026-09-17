@@ -1,9 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import { AppProvider } from "./context/AppContext";
-import { OnlineSoupDockProvider } from "./context/OnlineSoupDockContext";
-import { OnlineSoupVoiceProvider } from "./context/OnlineSoupVoiceContext";
+import { AppProviders } from "./context/AppProviders";
 import App from "./App";
 import "./styles.css";
 import { setupPerformanceMonitoring } from "./performance";
@@ -26,12 +24,10 @@ rootElement.replaceChildren();
 createRoot(rootElement).render(
   <React.StrictMode>
     <BrowserRouter>
-      <AppProvider>
-        <OnlineSoupVoiceProvider><OnlineSoupDockProvider>
-          <ImageFallbackBoundary />
-          <App />
-        </OnlineSoupDockProvider></OnlineSoupVoiceProvider>
-      </AppProvider>
+      <AppProviders>
+        <ImageFallbackBoundary />
+        <App />
+      </AppProviders>
     </BrowserRouter>
   </React.StrictMode>
 );

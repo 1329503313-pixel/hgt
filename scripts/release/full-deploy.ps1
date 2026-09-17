@@ -54,6 +54,7 @@ try {
     Invoke-ReleaseCommand 'web-server-build' { npm run build:all }
     Invoke-ReleaseCommand 'production-auth-source-contract' { npm run release:check:auth }
     Invoke-ReleaseCommand 'android-prepare-and-verify' { npm run release:android:prepare }
+    Invoke-ReleaseCommand 'production-entry-and-microphone-browser-checks' { npm run test:application-startup }
     Invoke-ReleaseCommand 'android-upload-and-public-hash-verification' { npm run app:android:upload -- --confirm-upload }
     Invoke-ReleaseCommand 'android-release-descriptor' { npm run release:android:descriptor -- --notes $notesPath }
     if (-not (Test-Path -LiteralPath $descriptorPath)) { throw 'Android release descriptor was not created.' }

@@ -82,6 +82,9 @@ try {
     npm run app:android:check:dist
     if ($LASTEXITCODE -ne 0) { throw 'Android dist contract gate failed.' }
 
+    npm run test:application-startup -- --android-only
+    if ($LASTEXITCODE -ne 0) { throw 'Android production entry startup / microphone gate failed.' }
+
     $adminChunks = @(Get-ChildItem -LiteralPath 'apps\web\dist-android\assets' -File | Where-Object { $_.Name -match 'Admin|Management' })
     if ($adminChunks.Count -gt 0) {
         throw "Android web output contains admin chunks: $($adminChunks.Name -join ', ')"

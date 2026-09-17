@@ -21,6 +21,7 @@ for (const requiredStep of [
   "npm test",
   "npm run build:all",
   "npm run release:android:prepare",
+  "npm run test:application-startup",
   "npm run app:android:upload -- --confirm-upload",
   "deploy-production.ps1",
   "publish-android-release.ps1"
