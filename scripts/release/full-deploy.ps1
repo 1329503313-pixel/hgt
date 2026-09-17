@@ -3,6 +3,7 @@ param(
     [string]$ReleaseNotes,
     [string]$ProductionHost = 'root@47.239.5.69',
     [string]$VoiceEnvironmentFile,
+    [switch]$BuildImageLocally,
     [switch]$ConfirmFullDeployment
 )
 
@@ -57,7 +58,7 @@ try {
     Invoke-ReleaseCommand 'android-release-descriptor' { npm run release:android:descriptor -- --notes $notesPath }
     if (-not (Test-Path -LiteralPath $descriptorPath)) { throw 'Android release descriptor was not created.' }
     Invoke-ReleaseCommand 'production-web-server-deployment' {
-        & (Join-Path $scriptRoot 'deploy-production.ps1') -Commit $commit -ProductionHost $ProductionHost -VoiceEnvironmentFile $VoiceEnvironmentFile -ConfirmFullDeployment
+        & (Join-Path $scriptRoot 'deploy-production.ps1') -Commit $commit -ProductionHost $ProductionHost -VoiceEnvironmentFile $VoiceEnvironmentFile -BuildImageLocally:$BuildImageLocally -ConfirmFullDeployment
     }
     Invoke-ReleaseCommand 'android-update-record-publication' {
         & (Join-Path $scriptRoot 'publish-android-release.ps1') -Descriptor $descriptorPath -ProductionHost $ProductionHost -ConfirmFullDeployment

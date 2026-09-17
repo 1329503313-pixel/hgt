@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 5 ] && [ "$#" -ne 6 ]; then
+if [ "$#" -ne 5 ] && [ "$#" -ne 6 ] && [ "$#" -ne 8 ]; then
   echo "usage: production-deploy.sh <bundle> <commit> <sha256> <expected-container-id> <confirmation>" >&2
   exit 2
 fi
@@ -12,6 +12,9 @@ expected_bundle_hash=$3
 expected_container_id=$4
 confirmation=$5
 voice_env=${6:-}
+if [ "$voice_env" = - ]; then voice_env=''; fi
+image_bundle=${7:-}
+image_bundle_hash=${8:-}
 current=hgt-app
 
 test "$confirmation" = deploy-hgt-production
@@ -70,7 +73,17 @@ tar -xzf "$bundle" -C "$release_dir"
 test ! -e "$release_dir/.env"
 test ! -e "$release_dir/.git"
 
-docker build --pull=false -t "$image" "$release_dir"
+if [ -n "$image_bundle" ]; then
+  test "$image_bundle" = "/opt/hgt-releases/incoming/hgt-image-$short.tar.gz"
+  test "$(sha256sum "$image_bundle" | cut -d ' ' -f1)" = "$image_bundle_hash"
+  docker load -i "$image_bundle"
+  test "$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$commit"
+else
+  # Serialize compiler stages on resource-constrained production hosts.
+  docker build --pull=false --target server-builder "$release_dir"
+  docker build --pull=false --target web-builder "$release_dir"
+  docker build --pull=false -t "$image" "$release_dir"
+fi
 docker image inspect "$image" >/dev/null
 docker run --rm --entrypoint sh "$image" -lc \
   'test ! -e /app/.env; test ! -e /app/apps/server/.env; test ! -e /app/apps/web/.env'

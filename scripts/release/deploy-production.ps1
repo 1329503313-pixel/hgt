@@ -2,6 +2,7 @@ param(
     [string]$Commit = 'HEAD',
     [string]$ProductionHost = 'root@47.239.5.69',
     [string]$VoiceEnvironmentFile,
+    [switch]$BuildImageLocally,
     [switch]$ConfirmFullDeployment
 )
 
@@ -17,6 +18,7 @@ $remoteScript = Join-Path $scriptRoot 'production-deploy.sh'
 $preflightScript = Join-Path $scriptRoot 'production-preflight.sh'
 $remoteCleanupReady = $false
 $remoteVoiceDirectory = $null
+$remoteImage = $null
 
 Push-Location $repoRoot
 try {
@@ -51,6 +53,13 @@ try {
     $manifestPath = Join-Path $repoRoot "artifacts\deploy\hgt-production-$shortCommit.json"
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $bundlePath = Join-Path $repoRoot "artifacts\deploy\$($manifest.fileName)"
+    $imageManifest = $null
+    if ($BuildImageLocally) {
+        & (Join-Path $scriptRoot 'build-production-image.ps1') -Commit $resolvedCommit
+        if ($LASTEXITCODE -ne 0) { throw 'Local production image preparation failed.' }
+        $imageManifest = Get-Content -LiteralPath (Join-Path $repoRoot "artifacts\deploy\hgt-image-$shortCommit.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($imageManifest.commit -ne $resolvedCommit -or $imageManifest.sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Invalid local image manifest.' }
+    }
     $remoteRoot = '/opt/hgt-releases'
     $remoteBundle = "$remoteRoot/incoming/$($manifest.fileName)"
     $remoteDeployScript = "$remoteRoot/production-deploy.sh"
@@ -63,7 +72,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Unable to upload the production preflight script.' }
     & ssh -o BatchMode=yes $ProductionHost "sh $remotePreflightScript"
     if ($LASTEXITCODE -ne 0) { throw 'Production authentication preflight failed; no application bundle was uploaded.' }
-    $remoteVoiceArgument = ''
+    $remoteVoiceArgument = '-'
     if ($voicePath) {
         $remoteVoiceDirectory = "$remoteRoot/incoming/voice-$shortCommit"
         & ssh -o BatchMode=yes $ProductionHost "umask 077; mkdir -m 700 $remoteVoiceDirectory"
@@ -78,12 +87,20 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Unable to upload the production bundle.' }
     & scp -o BatchMode=yes $remoteScript "${ProductionHost}:$remoteDeployScript"
     if ($LASTEXITCODE -ne 0) { throw 'Unable to upload the production deployment script.' }
+    $remoteImageArguments = ''
+    if ($imageManifest) {
+        $localImage = Join-Path $repoRoot "artifacts\deploy\$($imageManifest.fileName)"
+        $remoteImage = "$remoteRoot/incoming/$($imageManifest.fileName)"
+        & scp -o BatchMode=yes $localImage "${ProductionHost}:$remoteImage"
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to upload the locally built image.' }
+        $remoteImageArguments = "$remoteImage $($imageManifest.sha256)"
+    }
 
     $currentContainerId = (& ssh -o BatchMode=yes $ProductionHost "docker inspect -f '{{.Id}}' hgt-app").Trim()
     if ($LASTEXITCODE -ne 0 -or $currentContainerId -notmatch '^[0-9a-f]{64}$') {
         throw 'Unable to read the current production container ID.'
     }
-    & ssh -o BatchMode=yes $ProductionHost "sh $remoteDeployScript $remoteBundle $resolvedCommit $($manifest.sha256) $currentContainerId deploy-hgt-production $remoteVoiceArgument"
+    & ssh -o BatchMode=yes $ProductionHost "sh $remoteDeployScript $remoteBundle $resolvedCommit $($manifest.sha256) $currentContainerId deploy-hgt-production $remoteVoiceArgument $remoteImageArguments"
     if ($LASTEXITCODE -ne 0) { throw 'Production deployment failed or rolled back.' }
 
     foreach ($url in @('https://hgt.caqis.com/api/health', 'https://hgt.caqis.com/')) {
@@ -98,6 +115,9 @@ try {
     }
     if ($remoteVoiceDirectory) {
         & ssh -o BatchMode=yes $ProductionHost "rm -f $remoteVoiceDirectory/runtime.env; rmdir $remoteVoiceDirectory" 2>$null | Out-Null
+    }
+    if ($remoteImage) {
+        & ssh -o BatchMode=yes $ProductionHost "rm -f $remoteImage" 2>$null | Out-Null
     }
     Pop-Location
 }

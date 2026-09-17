@@ -240,6 +240,7 @@ npm run release:android:publish -- -Descriptor artifacts/android/<version>/andro
 
 ### RTC 配置发布（2026-09-17）
 
+- 小内存生产服务器应给总入口增加 `-BuildImageLocally`：在本机 Docker 中按同一白名单源码包构建 Linux amd64 镜像，导出压缩归档后校验 SHA-256，再传入生产服务器加载。镜像必须携带匹配发布提交的 revision 标签；其余候选检查、JWT/Cookie 校验、环境与挂载比对、失败回滚全部保留。远端构建备用路径按前后端阶段串行执行，禁止同时运行两个编译器。
 - 本次授权包含语音服务时，总入口可传入 `-VoiceEnvironmentFile <本地受忽略配置路径>`。文件必须为 UTF-8 无 BOM、LF 行尾，仅包含六项：`VOICE_ROOMS_ENABLED`、`TRTC_ADVANCED_PERMISSION`、`TRTC_SDK_APP_ID`、`TRTC_SDK_SECRET`、`TRTC_SECRET_ID`、`TRTC_SECRET_KEY`。不得传入完整 `.env`。
 - 部署包装器在认证预检通过后，将 RTC 配置传入权限为 700 的专用目录并设置文件权限 600，部署结束清理。远端脚本不执行配置文件，只按白名单合并；候选和正式环境必须与“原环境 + 六项 RTC 配置”完全一致。JWT、Cookie、数据库及其他业务配置继续原样继承。
 - RTC 凭据只存在于本地受忽略配置及服务端运行环境，不得进入源码包、镜像层、APK 或日志。后续部署默认继承当前容器中的 RTC 配置。
