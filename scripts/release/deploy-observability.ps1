@@ -11,7 +11,7 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $remote = '/opt/hgt-observability/incoming-' + $Commit.Substring(0, 7)
 & ssh -o BatchMode=yes $ProductionHost "mkdir -p $remote"
 if ($LASTEXITCODE -ne 0) { throw 'Unable to prepare the observability staging directory.' }
-$files = @('nginx-http.conf', 'nginx-server.conf', 'nginx-proxy.conf', 'install-production.sh')
+$files = @('nginx-http.conf', 'nginx-server.conf', 'nginx-proxy.conf', 'install-production.sh', 'probe-request-logs.py')
 foreach ($file in $files) {
     & scp -o BatchMode=yes (Join-Path $repoRoot "scripts\observability\$file") "${ProductionHost}:$remote/$file"
     if ($LASTEXITCODE -ne 0) { throw 'Unable to transfer the reviewed observability files.' }

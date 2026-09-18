@@ -166,7 +166,7 @@ npm run release:production:deploy -- -ConfirmFullDeployment
 3. 创建并上传白名单 `tar.gz` 到 `/opt/hgt-releases/incoming/`，服务端校验 SHA-256；
 4. 锁定当前容器 ID，防止审计后线上状态被其他操作改变；
 5. 旁路构建 `hgt:<shortCommit>` 并审计镜像无 `.env`；
-6. 从当前容器继承完整环境与全部命名卷/绑定挂载，JWT 原文仅保留在远端进程内，用 `-e JWT_SECRET` 注入；候选与正式容器的规范化挂载清单必须和旧容器完全一致；
+6. 从当前容器继承完整环境与全部命名卷/绑定挂载，JWT 原文仅保留在远端进程内，用 `-e JWT_SECRET` 注入；候选与正式容器的规范化挂载清单须与预期清单完全一致。首次请求日志接入仅允许新增已授权的 `/var/log/hgt/requests:/app/logs/requests` 与 `REQUEST_LOG_DIR`，全部既有挂载及其权限保持不变；
 7. 在 `127.0.0.1:4001` 以 `RELEASE_CANDIDATE=true` 启动只读候选，不运行迁移、清理、奖励结算、AI 恢复或定时任务，然后验证健康和环境整体哈希；
 8. 旧容器改名为 `hgt-app-rollback-<shortCommit>`，新容器接管 4000；
 9. 再次验证环境/JWT 哈希与 Cookie；任何一步失败自动恢复旧容器。
@@ -236,6 +236,7 @@ npm run release:android:publish -- -Descriptor artifacts/android/<version>/andro
 | APK 已上传、Web/Server 未部署 | 仅新增不可变 APK 对象，无客户端可见记录 | 修复后复用同提交产物，重跑总入口 |
 | Web/Server 候选或切换失败 | 自动回滚旧容器，不发布 Android 记录 | 查看脚本最后错误与容器日志，修复后重跑 |
 | Web/Server 成功、Android 记录发布失败 | 新 Web/Server 已在线，APK 已上传，但客户端无新提示 | 不回滚健康服务；修复发布问题后幂等重跑发布步骤或总入口 |
+| Nginx 日志接入验收失败 | 新 Web/Server 可保持健康；Nginx 配置恢复、采集容器移除，不发布 Android 记录 | 先完成本地修复与验证；按 AGENTS.md 的失败失效规则取得新的全量部署授权后重试 |
 | Android 记录已发布、最终验证失败 | 更新可能已对客户端可见 | 立即停止，不猜测修改记录；先只读核对公开接口，再根据明确授权处理 |
 
 ## 10. 进一步优化

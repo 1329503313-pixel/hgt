@@ -57,4 +57,6 @@ grep -hE 'response_overdue|proxy_timeout|request_aborted|client_closed|event_loo
 
 ## 本地验证
 
+生产验收使用 `probe-request-logs.py`，对不存在的 API 路由分块定时发送小 JSON，请求间隔明确且不触发业务处理。不要用 `curl --limit-rate` 的小请求替代：客户端限速不保证服务端处理耗时超过慢请求阈值。2026-09-18 首次安装因此未取得日志记录并自动回滚，分块探针修复已在本地 Nginx 回归通过，线上重新安装仍需新的全量部署授权。
+
 `npm run test:request-logging -w @hgt/server` 验证中间件、异常、脱敏、轮换和并发追加；已纳入服务端 `pretest`。先 `npm run build -w @hgt/server`，再在有 Nginx 的本地 Linux 环境运行 `node scripts/observability/smoke.mjs`，验证真实 Nginx 配置、慢请求 ID 关联、504/未响应、应用停止后 502、SSE 及合并文件。测试仅使用 loopback 合成请求和临时目录，不加载项目环境配置或连接数据库。

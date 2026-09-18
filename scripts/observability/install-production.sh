@@ -84,25 +84,13 @@ curl -fsS https://tangwuyu.com/api/health >/dev/null
 
 # A slow upload to a nonexistent API route exercises body receipt through both
 # layers without invoking a business handler or modifying application data.
-python3 - "$installed/probe.json" <<'PY'
-from pathlib import Path
-import json, sys
-Path(sys.argv[1]).write_text(json.dumps({'diagnostic': 'x' * 4096}))
-PY
 # With the existing Nginx request buffering, a slow upload is slow at Nginx
 # but fast at Express. Exercise the two sources independently without changing
 # buffering or introducing a production-only slow endpoint.
-for source in nginx server; do
-  if [ "$source" = nginx ]; then origin=https://hgt.caqis.com; else origin=http://127.0.0.1:4000; fi
-  status=$(curl -sS --max-time 20 --limit-rate 1k -X POST \
-    -H 'Content-Type: application/json' --data-binary "@$installed/probe.json" \
-    -D "$installed/probe.headers" -o /dev/null -w '%{http_code}' \
-    "$origin/api/__request_log_probe__")
-  test "$status" = 404
-  request_id=$(tr -d '\r' < "$installed/probe.headers" | awk 'tolower($1)=="x-request-id:" {print $2}')
-  printf '%s\n' "$request_id" | grep -Eq '^[0-9a-f]{32}$'
-  printf '%s %s\n' "$source" "$request_id" >> "$installed/probe.ids"
-done
+# Pace individual socket writes. curl --limit-rate can send a small body in a
+# single write, delaying the client without making the server request slow.
+python3 "$incoming/probe-request-logs.py" "$installed/probe.ids" \
+  https://hgt.caqis.com http://127.0.0.1:4000
 sleep 1
 python3 - "$installed/probe.ids" <<'PY'
 from pathlib import Path
@@ -119,7 +107,7 @@ for source, request_id in expected.items():
 assert all(record['path'] == '/api/__request_log_probe__' for record in records)
 print('MERGED_SERVER_NGINX_LOGS=verified')
 PY
-rm -f "$installed/probe.json" "$installed/probe.headers" "$installed/probe.ids"
+rm -f "$installed/probe.ids"
 test "$(docker inspect -f '{{.Id}} {{.State.StartedAt}} {{json .Config.Env}} {{json .Mounts}}' hgt-app | sha256sum | cut -d ' ' -f1)" = "$app_before"
 sh "$incoming/production-preflight.sh"
 success=true

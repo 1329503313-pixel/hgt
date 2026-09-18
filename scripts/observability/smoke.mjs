@@ -18,6 +18,7 @@ const logs = join(root, "logs");
 const writer = new RequestLogWriter(logs);
 const app = express();
 app.use(createRequestLogging(writer, { slowMs: 25, overdueMs: 200 }));
+app.use(express.json());
 app.get("/fast", (_req, res) => res.end("ok"));
 app.get("/slow", (_req, res) => setTimeout(() => res.end("ok"), 80));
 app.get("/hang", (_req, _res) => {});
@@ -71,6 +72,11 @@ http {
     try { await fetch(`${url}/fast`); ready = true; break; } catch { await delay(20); }
   }
   assert.ok(ready, nginxOutput);
+  const probeOutput = join(root, "probe.ids");
+  const probe = spawn("python3", [join(here, "probe-request-logs.py"), probeOutput, url, `http://127.0.0.1:${appPort}`], { stdio: "inherit" });
+  const [probeCode] = await once(probe, "exit");
+  assert.equal(probeCode, 0);
+  const probeIds = Object.fromEntries((await readFile(probeOutput, "utf8")).trim().split("\n").map((line) => line.split(" ")));
   const slow = await fetch(`${url}/slow?token=SMOKE_SECRET`, { headers: { "X-Request-Id": "f".repeat(32), Cookie: "secret=SMOKE_SECRET" } });
   const id = slow.headers.get("x-request-id");
   assert.match(id, /^[0-9a-f]{32}$/);
@@ -104,6 +110,9 @@ http {
   assert.ok(records.some((r) => r.requestId === timeoutId && r.kind === "proxy_timeout"));
   assert.ok(records.some((r) => r.requestId === unavailableId && r.kind === "proxy_error"));
   assert.equal(records.some((r) => r.requestId === streamId), false);
+  for (const [source, requestId] of Object.entries(probeIds)) {
+    assert.ok(records.some((r) => r.source === source && r.requestId === requestId && r.durationMs >= 500), `paced ${source} probe must be recorded`);
+  }
   console.log(`PASS: nginx -t; correlated slow request; 504 + overdue; independent 502; SSE; redaction; ${records.length} valid merged records`);
 } finally {
   if (nginx && nginx.exitCode === null) { nginx.kill("SIGTERM"); await once(nginx, "exit"); }
