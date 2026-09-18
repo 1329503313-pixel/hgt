@@ -9,7 +9,7 @@ import { battleCardWithCollectible, battleDeckCollectible } from "../shared/batt
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useServerCardBattlePlayback } from "../shared/useServerCardBattlePlayback";
 import { cardBattleRoomExit } from "../shared/cardBattleNavigation";
-import { seekCardBattleAnimations } from "../shared/cardBattlePlayback";
+import { isCardBattleAnimation, seekCardBattleAnimations } from "../shared/cardBattlePlayback";
 import { CardBattleSkillFx, CardBattleProcFx, CardBattleStatusIcons } from "./CardBattleEffects";
 import { CardBattleSettlementTable } from "./CardBattleSettlementTable";
 import { cardBattleFormationSize } from "../shared/cardBattleLayout";
@@ -89,7 +89,9 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
   };
 }) {
   const rootRef = useRef<HTMLElement | null>(null);
+  const flightRef = useRef<Animation | null>(null);
   const fx = useCardBattleFx();
+  const fxRef = useRef(fx); fxRef.current = fx;
   const duration = activeEvent?.durationMs ?? 1050;
   const timing = { "--skill-duration": duration+"ms", "--fx-impact": cardBattleImpactMs(duration)+"ms", "--fx-tail": Math.max(1,duration-cardBattleImpactMs(duration))+"ms" } as CSSProperties;
   const isActiveActor = Boolean(state && activeEvent?.actorId === state.instanceId);
@@ -105,7 +107,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
         : isActiveActor && activeEvent?.visual === "energy" ? "card-battle-fx-blue" : "";
   useLayoutEffect(() => {
     const actor = rootRef.current;
-    if (!actor || !isActor || !activeEvent) return;
+    if (!actor || !isActor || !activeEvent || fx.reduced) return;
     const arena = actor.closest('[data-battle-arena]') ?? actor.closest('.card-battle-half')?.parentElement;
     const anchors = [...(arena?.querySelectorAll<HTMLElement>('[data-battle-anchor]') ?? [])];
     const source = anchors.find(el => el.dataset.battleAnchor === state?.instanceId);
@@ -121,25 +123,59 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
       // which reads as a ranged cast, especially between adjacent front rows.
       const distance = Math.hypot(deltaX,deltaY), stopDistance = Math.min(actorRect.width,targetRect.width)*.35;
       const ratio = distance > 0 ? Math.max(0,(distance-stopDistance)/distance) : 0;
-      actor.style.setProperty('--card-battle-attack-x', Math.round(deltaX*ratio)+'px');
-      actor.style.setProperty('--card-battle-attack-y', Math.round(deltaY*ratio)+'px');
+      const x = Math.round(deltaX * ratio), y = Math.round(deltaY * ratio);
+      // Resolve pixels before starting the animation. No CSS-variable fallback
+      // that can turn a missing/stale trajectory into a small vertical hop.
+      const frames: Keyframe[] = [
+        { offset: 0, transform: 'translate(0,0) rotate(0)' },
+        { offset: .16, transform: 'translate(0,0) rotate(0)' },
+        { offset: .27, transform: 'translate(0,3px) rotate(-3deg)' },
+        { offset: .5, transform: `translate(${x}px,${y}px) rotate(-4deg) scale(1.035)` },
+        { offset: .55, transform: `translate(${x}px,${y}px) rotate(-4deg) scale(1.035)` },
+        { offset: .6, transform: `translate(${x}px,${y}px) rotate(3deg)` },
+        { offset: .78, transform: 'translate(0,0) rotate(0)' },
+        { offset: 1, transform: 'translate(0,0) rotate(0)' },
+      ].map(frame => ({ ...frame, easing: 'cubic-bezier(.2,.8,.2,1)' }));
+      if (flightRef.current) (flightRef.current.effect as KeyframeEffect).setKeyframes(frames);
+      else {
+        const animation = actor.animate(frames, { duration, fill: 'both', easing: 'linear' });
+        animation.id = 'card-battle-flight';
+        animation.currentTime = fxRef.current.getElapsedMs();
+        if (!fxRef.current.playing || !fxRef.current.visible) animation.pause();
+        flightRef.current = animation;
+      }
     };
     measure();
     const observer = new ResizeObserver(measure); observer.observe(source); observer.observe(target);
-    return () => { observer.disconnect(); actor.style.removeProperty('--card-battle-attack-x'); actor.style.removeProperty('--card-battle-attack-y'); };
-  }, [activeEvent?.sequence, fx.eventKey, isActor, state?.instanceId]);
+    return () => { observer.disconnect(); flightRef.current?.cancel(); flightRef.current = null; };
+  }, [activeEvent?.sequence, fx.eventKey, isActor, state?.instanceId, fx.reduced, duration]);
+  useLayoutEffect(() => {
+    const animation = flightRef.current;
+    if (!animation) return;
+    animation.currentTime = fx.getElapsedMs();
+    if (fx.playing && fx.visible && Number(animation.currentTime) < duration) animation.play();
+    else animation.pause();
+  }, [fx.eventKey, fx.elapsedMs, fx.playing, fx.visible, duration]);
   useLayoutEffect(() => {
     if (!rootRef.current || !activeEvent) return;
     // Full arenas seek once in CardBattleArenaFx, avoiding one style/layout
     // flush per card. Standalone previews still own their local timeline.
     if (rootRef.current.closest('[data-battle-arena]')) return;
-    seekCardBattleAnimations(rootRef.current,fx.getElapsedMs());
-    if (!fx.playing || !fx.visible) rootRef.current.getAnimations({subtree:true}).filter(a => (a as CSSAnimation).animationName?.startsWith('card-battle-')).forEach(a=>a.pause());
+    const anchor = rootRef.current.parentElement ?? rootRef.current;
+    seekCardBattleAnimations(anchor,fx.getElapsedMs());
+    if (!fx.playing || !fx.visible) anchor.getAnimations({subtree:true}).filter(isCardBattleAnimation).forEach(a=>a.pause());
   }, [activeEvent?.sequence, fx.eventKey, fx.elapsedMs, fx.playing, fx.visible, fx.quality, fx.reduced]);
 
+  const feedback = <span key={fx.eventKey+":"+activeEvent?.sequence} className="contents">
+    {activeEffect?.dodged && <span className="card-battle-number absolute -top-6 left-1/2 z-[85] -translate-x-1/2 whitespace-nowrap rounded bg-cyan-950 px-2 text-sm font-black text-cyan-100">闪避</span>}
+    {activeEffect && !activeEffect.dodged && (!activeEffect.shieldDamage || activeEffect.hpDamage || activeEffect.label) && activeEvent?.visual === "damage" && <span className={`card-battle-number ${activeEffect.critical ? "is-critical" : ""} absolute left-1/2 top-1/3 z-40 -translate-x-1/2 text-lg font-black ${activeEffect.blocked ? "text-slate-100" : "text-red-300"}`}>{activeEffect.critical ? "暴击 " : ""}{activeEffect.label ? `${activeEffect.label}${activeEffect.blocked ? "" : ` ${damageAmount}`}` : activeEffect.blocked ? "格挡" : damageAmount}</span>}
+    {Boolean(activeEffect?.shieldDamage) && <span className="card-battle-number absolute left-1/2 top-2/3 z-40 -translate-x-1/2 whitespace-nowrap rounded bg-sky-950/90 px-1 text-xs font-bold text-cyan-100">护盾 -{activeEffect?.shieldDamage}</span>}
+    {activeEffect && activeEvent?.visual === "heal" && <span className="card-battle-number absolute left-1/2 top-0 z-40 -translate-x-1/2 text-lg font-black text-emerald-300">{activeEffect.critical ? "暴击 " : ""}+{activeEffect.amount ?? 0}</span>}
+    {isActiveActor && Boolean(activeEvent?.lifesteal) && <span className="card-battle-number absolute left-1/2 top-0 z-40 -translate-x-1/2 whitespace-nowrap rounded bg-rose-950/90 px-1 text-xs font-black text-rose-200">吸血 +{activeEvent?.lifesteal}</span>}
+    {(activeEffect?.stunned || activeEffect?.stunResisted) && <span className="card-battle-number absolute left-1/2 top-2/3 z-40 -translate-x-1/2 whitespace-nowrap rounded bg-slate-950/90 px-1 text-xs font-black text-amber-200">{activeEffect.stunned ? "眩晕·本回合" : "抵抗击晕"}</span>}
+    {activeEffect?.label && !["damage", "heal"].includes(activeEvent?.visual ?? "") && <span className={`card-battle-number absolute left-1/2 top-1/4 z-40 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-black ${activeEvent?.visual === "energy" ? "bg-cyan-500 text-white" : activeEvent?.visual === "revive" ? "bg-emerald-500 text-white" : activeEvent?.visual === "debuff" ? "bg-rose-700 text-white" : "bg-amber-400 text-slate-950"}`}>{activeEffect.label}</span>}
+    </span>;
   const content = <>
-    {state && !cardBack && <CardBattleSkillFx event={activeEvent} instanceId={state.instanceId} />}
-    {state && !cardBack && <CardBattleProcFx event={activeEvent} instanceId={state.instanceId} />}
     {state && !cardBack && !showPower && <CardBattleStatusIcons statuses={state.statuses ?? []} />}
     {card && !cardBack && isActiveActor && (activeEvent?.counterattack || ((activeEvent?.kind === "skill" || activeEvent?.bond) && activeEvent.skillName)) && <span className="card-battle-skill-name pointer-events-none absolute inset-x-[-8px] -top-6 z-[85] truncate rounded-full border border-amber-200/70 bg-amber-400 px-2 py-1 text-center text-[9px] font-black text-slate-950 shadow-lg" title={activeEvent.counterattack ? "反击" : activeEvent.skillName ?? undefined}>{activeEvent.counterattack ? "反击" : activeEvent.skillName}</span>}
     <div className="absolute inset-x-1 top-1 z-50 h-1.5 overflow-hidden rounded-full bg-slate-950/40" aria-label={state ? `生命比例 ${Math.round(state.hp / Math.max(1, state.maxHp) * 100)}%` : undefined}>
@@ -153,15 +189,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
       : <img src={card.imageUrl} alt={card.name} className="h-full w-full rounded-[inherit] object-cover" draggable={false} />
       : <div className="grid h-full place-items-center rounded-[inherit] border border-dashed border-white/25 bg-white/5 text-center text-[10px] font-bold text-white/45">选择<br />卡牌</div>}
     {card && !cardBack && <>{showPower && <span className="absolute right-1 top-4 z-50 whitespace-nowrap rounded bg-amber-400/95 px-1 py-0.5 text-[8px] font-black text-slate-950 shadow">战力 {combatPowerFormatter.format(card.combatPower)}</span>}<span className="absolute inset-x-1 bottom-1 z-10 rounded bg-slate-950/70 px-1 py-0.5 text-[9px] font-black text-white">{card.collectible && <span className="block truncate text-center text-[10px] text-amber-200" title={card.collectible.name}>{card.collectible.name}</span>}<span className="block truncate text-center" title={card.name}>{card.name}</span></span></>}
-    <span key={fx.eventKey+":"+activeEvent?.sequence} className="contents">
-    {activeEffect?.dodged && <span className="card-battle-number absolute -top-6 left-1/2 z-[85] -translate-x-1/2 whitespace-nowrap rounded bg-cyan-950 px-2 text-sm font-black text-cyan-100">闪避</span>}
-    {activeEffect && !activeEffect.dodged && (!activeEffect.shieldDamage || activeEffect.hpDamage || activeEffect.label) && activeEvent?.visual === "damage" && <span className={`card-battle-number ${activeEffect.critical ? "is-critical" : ""} absolute left-1/2 top-1/3 z-40 -translate-x-1/2 text-lg font-black ${activeEffect.blocked ? "text-slate-100" : "text-red-300"}`}>{activeEffect.critical ? "暴击 " : ""}{activeEffect.label ? `${activeEffect.label}${activeEffect.blocked ? "" : ` ${damageAmount}`}` : activeEffect.blocked ? "格挡" : damageAmount}</span>}
-    {Boolean(activeEffect?.shieldDamage) && <span className="card-battle-number absolute left-1/2 top-2/3 z-40 -translate-x-1/2 whitespace-nowrap rounded bg-sky-950/90 px-1 text-xs font-bold text-cyan-100">护盾 -{activeEffect?.shieldDamage}</span>}
-    {activeEffect && activeEvent?.visual === "heal" && <span className="card-battle-number absolute left-1/2 top-0 z-40 -translate-x-1/2 text-lg font-black text-emerald-300">{activeEffect.critical ? "暴击 " : ""}+{activeEffect.amount ?? 0}</span>}
-    {isActiveActor && Boolean(activeEvent?.lifesteal) && <span className="card-battle-number absolute left-1/2 top-0 z-40 -translate-x-1/2 whitespace-nowrap rounded bg-rose-950/90 px-1 text-xs font-black text-rose-200">吸血 +{activeEvent?.lifesteal}</span>}
-    {(activeEffect?.stunned || activeEffect?.stunResisted) && <span className="card-battle-number absolute left-1/2 top-2/3 z-40 -translate-x-1/2 whitespace-nowrap rounded bg-slate-950/90 px-1 text-xs font-black text-amber-200">{activeEffect.stunned ? "眩晕·本回合" : "抵抗击晕"}</span>}
-    {activeEffect?.label && !["damage", "heal"].includes(activeEvent?.visual ?? "") && <span className={`card-battle-number absolute left-1/2 top-1/4 z-40 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-black ${activeEvent?.visual === "energy" ? "bg-cyan-500 text-white" : activeEvent?.visual === "revive" ? "bg-emerald-500 text-white" : activeEvent?.visual === "debuff" ? "bg-rose-700 text-white" : "bg-amber-400 text-slate-950"}`}>{activeEffect.label}</span>}
-    </span>
+
     {state && !state.alive && <div className="absolute inset-0 z-30 grid place-items-center rounded-[inherit] bg-slate-950/75 text-[10px] font-black text-slate-300">已下场</div>}
   </>;
   const classes = `card-battle-card relative aspect-[5/7] shrink-0 overflow-visible rounded-lg border border-white/20 bg-slate-900 shadow-lg ${isActor ? `card-battle-attacker card-battle-attacker-${seat}` : ""} ${effectClass} ${state && !state.alive ? "card-battle-defeated" : ""} ${selectable ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" : ""} ${drag?.draggable ? "touch-none select-none [-webkit-touch-callout:none]" : ""} ${drag?.dropTarget ? "z-40 ring-2 ring-amber-300" : ""}`;
@@ -189,7 +217,12 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
         {drag?.draggable && <span className="pointer-events-none absolute right-0.5 bottom-6 z-20 grid h-5 w-5 place-items-center rounded bg-slate-950/65 text-white/80" aria-hidden="true"><GripVertical size={13} /></span>}
       </button>
     : <div ref={setRoot} style={timing} data-battle-instance={state?.instanceId} className={classes}>{content}</div>;
-  return <div className="card-battle-anchor" data-battle-anchor={state?.instanceId} data-battle-seat={seat} data-fx-hidden={!fx.visible}>{face}</div>;
+  return <div className="card-battle-anchor" style={timing} data-battle-anchor={state?.instanceId} data-battle-seat={seat} data-fx-hidden={!fx.visible}>
+    {face}
+    {state && !cardBack && <CardBattleSkillFx event={activeEvent} instanceId={state.instanceId} />}
+    {state && !cardBack && <CardBattleProcFx event={activeEvent} instanceId={state.instanceId} />}
+    {feedback}
+  </div>;
 }
 
 export function HalfArena({ seat, battleSeat, states, activeEvent, showPower, isOwn, position, canSelect, onPick, onReorder, teamMember = false }: {
@@ -629,7 +662,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
         <CardBattleArenaFx event={activeEvent} />
         {isBoss && <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-slate-900 px-3 py-2 text-xs"><p className="flex-1 leading-5 text-slate-200">{battle.boss?.available ? `首次通关 +${battle.boss.rewardShells} 贝壳${battle.boss.rewardClaimed ? " · 你已领取" : ""} · 在席玩家全部准备即开战` : "房间已下架或不在开放时间内，进行中的对局正常结算"}</p><button type="button" className="min-h-11 shrink-0 rounded-xl bg-white/10 px-3 font-bold text-cyan-100" onClick={() => setDetailsOpen(true)}>查看阵容</button></div>}
         <HalfArena seat={isBoss ? 2 : topSeatNumber} battleSeat={topSeat} states={isBoss && canConfigure ? [] : cardStates} activeEvent={activeEvent} showPower={canConfigure} isOwn={false} position="top" canSelect={false} onPick={() => undefined} onReorder={async () => false} />
-        <div className="relative z-30 flex h-8 shrink-0 items-center justify-center border-y border-cyan-300/30 bg-slate-950/90 text-[10px] font-black uppercase tracking-[.2em] text-cyan-200"><span>{syncing ? "正在同步服务器战斗进度…" : activeEvent?.text ?? (battle.phase === "playing" ? "自动战斗中 · 与服务器同步" : isBoss ? "每人前排 1 张 · 后排 2 张 · 全队共享前排保护" : "前排 2 张 · 后排 3 张")}</span></div>
+        <div className="card-battle-event-notice" role="status">{activeEvent?.skillName && <strong>{activeEvent.skillName}</strong>}<span>{syncing ? "正在同步服务器战斗进度…" : activeEvent?.text ?? (battle.phase === "playing" ? "自动战斗中 · 与服务器同步" : isBoss ? "每人前排 1 张 · 后排 2 张 · 全队共享前排保护" : "前排 2 张 · 后排 3 张")}</span></div>
         {isBoss ? <div className="card-battle-team-arena flex min-h-[244px] flex-1 divide-x divide-cyan-200/15" aria-label="玩家共同阵营，前排三张、后排六张">{([1, 2, 3] as const).map((personalSeat) => <HalfArena key={personalSeat} teamMember seat={1} battleSeat={displaySeat(personalSeat)} states={canConfigure ? [] : cardStates} activeEvent={activeEvent} showPower={canConfigure} isOwn={battle.me.seat === personalSeat} position="bottom" canSelect={canConfigure && battle.me.seat === personalSeat && !currentSeat?.ready && !saving} onPick={setPickSlot} onReorder={reorderCards} />)}</div> : <HalfArena seat={bottomSeatNumber} battleSeat={bottomSeat} states={cardStates} activeEvent={activeEvent} showPower={canConfigure} isOwn={Boolean(battle.me.seat)} position="bottom" canSelect={canConfigure && Boolean(battle.me.seat) && !currentSeat?.ready && !saving} onPick={setPickSlot} onReorder={reorderCards} />}
       </div>
 

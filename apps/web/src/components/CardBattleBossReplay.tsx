@@ -5,14 +5,14 @@ import { Pause, Play, RotateCcw, X } from "lucide-react";
 import { Modal } from "./Modal";
 import { HalfArena } from "./CardBattleRoomView";
 import { CardBattleSettlementTable } from "./CardBattleSettlementTable";
-import { seekCardBattleAnimations } from "../shared/cardBattlePlayback";
+import { readableCardBattleEvent, seekCardBattleAnimations } from "../shared/cardBattlePlayback";
 import type { BossReplay } from "../shared/cardBattleBoss";
 
 export function CardBattleBossReplay({ replay, onClose, userReplay = false, settlementOnly = false, viewerId }: { replay: BossReplay; onClose: () => void; userReplay?: boolean; settlementOnly?: boolean; viewerId?: string }) {
   const [playing, setPlaying] = useState(userReplay && !settlementOnly);
   const [elapsed, setElapsed] = useState(0);
   const arenaRef = useRef<HTMLDivElement>(null);
-  const timeline = useMemo(() => { let time = 0; return replay.result.events.map((event) => { const start = time; time += event.durationMs; return { event, start, end: time }; }); }, [replay]);
+  const timeline = useMemo(() => { let time = 0; return replay.result.events.map(readableCardBattleEvent).map((event) => { const start = time; time += event.durationMs; return { event, start, end: time }; }); }, [replay]);
   const duration = timeline.at(-1)?.end ?? 0;
   const finished = settlementOnly || elapsed >= duration;
   const activeIndex = timeline.findIndex((entry) => elapsed < entry.end);
@@ -39,7 +39,7 @@ export function CardBattleBossReplay({ replay, onClose, userReplay = false, sett
     {!userReplay && <div className="my-3 flex flex-wrap items-center gap-2"><button className="btn btn-primary" onClick={() => { if (elapsed >= duration) setElapsed(0); setPlaying(!playing); }}>{playing ? <Pause size={16} /> : <Play size={16} />}{playing ? "暂停" : "播放"}</button><button className="btn btn-secondary" onClick={() => { setElapsed(0); setPlaying(false); }}><RotateCcw size={16} />重播</button><label className="min-w-32 flex-1 text-xs text-muted">回放进度 {Math.floor(elapsed / 1000)} / {Math.ceil(duration / 1000)} 秒<input aria-label="回放进度" className="mt-1 min-h-8 w-full" type="range" min={0} max={duration} step={50} value={elapsed} onChange={(e) => setElapsed(Number(e.target.value))} /></label></div>}
     {(!userReplay || !finished) && <div ref={arenaRef} data-battle-arena className="relative overflow-hidden rounded-xl bg-[#071426] text-white">
       <HalfArena seat={opponent.seat} battleSeat={seat(opponent)} states={states} activeEvent={active?.event ?? null} showPower={false} isOwn={false} position="top" canSelect={false} onPick={() => {}} onReorder={async () => false} />
-      <p className="relative z-30 min-h-10 border-y border-white/10 bg-slate-950 px-3 py-2 text-center text-xs text-cyan-100">{active?.event.text ?? "回放结束"}</p>
+      <div className="card-battle-event-notice" role="status">{active?.event.skillName && <strong>{active.event.skillName}</strong>}<span>{active?.event.text ?? "回放结束"}</span></div>
       <div className="grid min-h-[244px] divide-x divide-white/10" style={{gridTemplateColumns:`repeat(${ownTeam.length},minmax(0,1fr))`}}>{ownTeam.map((lineup) => <HalfArena key={lineup.userId} teamMember={ownTeam.length>1 || lineup.cards.length===3} seat={lineup.seat} battleSeat={seat(lineup)} states={states} activeEvent={active?.event ?? null} showPower={false} isOwn={false} position="bottom" canSelect={false} onPick={() => {}} onReorder={async () => false} />)}</div>
       <CardBattleArenaFx event={active?.event ?? null} />
     </div>}

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useCardBattleFx } from "./CardBattleFxContext";
 import { cardBattleImpactMs, eventFx } from "../shared/cardBattleFx";
-import { seekCardBattleAnimations } from "../shared/cardBattlePlayback";
+import { isCardBattleAnimation, seekCardBattleAnimations } from "../shared/cardBattlePlayback";
 import type { OnlineCardBattleEvent } from "../shared/types";
 
 type Point = { x: number; y: number; width: number; height: number; seat: string };
@@ -35,7 +35,7 @@ export function CardBattleArenaFx({ event }: { event: OnlineCardBattleEvent | nu
     if (!ref.current) return;
     const arena = ref.current.closest<HTMLElement>('[data-battle-arena]') ?? ref.current;
     seekCardBattleAnimations(arena, getElapsedMs());
-    if (!playing || !visible) arena.getAnimations({ subtree: true }).filter(a=>(a as CSSAnimation).animationName?.startsWith('card-battle-')).forEach(a => a.pause());
+    if (!playing || !visible) arena.getAnimations({ subtree: true }).filter(isCardBattleAnimation).forEach(a => a.pause());
   }, [event?.sequence, geometry, elapsedMs, playing, visible, quality, reduced]);
   if (!event || !visible || !geometry || reduced || !['attack', 'skill', 'extra_action'].includes(event.kind)) return <div ref={ref} />;
   const { source, targets, bond } = geometry;

@@ -5,6 +5,7 @@ import { cardBattleEffectCodes } from "../../server/src/cardBattle.js";
 import { CARD_BATTLE_MOTIONS } from "../src/shared/cardBattleMotion";
 import { BOND_FX_FAMILIES, cardBattleImpactMs, effectFamily, eventFx, fxParticles, targetFeedback } from "../src/shared/cardBattleFx";
 import type { OnlineCardBattleEvent } from "../src/shared/types";
+import { readableCardBattleEvent, seekCardBattleAnimations } from "../src/shared/cardBattlePlayback";
 const event = (overrides: Partial<OnlineCardBattleEvent> = {}): OnlineCardBattleEvent => ({ sequence:1, round:1, kind:"skill", visual:"buff", actorId:"source", skillName:null, effects:Array.from({length:9},(_,i)=>({targetId:"target"+i})), states:[], durationMs:1000, text:"", ...overrides });
 test("独立权威清单中的全部技能和羁绊均有明确配方", () => {
   assert.deepEqual(Object.keys(CARD_BATTLE_MOTIONS).sort(),[...cardBattleEffectCodes].sort());
@@ -36,4 +37,27 @@ test("闪避、保护、盾吸收和真实破盾不误判，抵抗击晕仍允�
 });
 test("长短事件均保留既定55%生效点与120ms下限", () => {
   for(const duration of [100,300,650,1000,1100,1800]) assert.equal(cardBattleImpactMs(duration),Math.max(120,Math.round(duration*.55)));
+});
+
+test("历史回放补足阅读时间，新时长不重复放慢且不修改原记录", () => {
+  const old = event({ visual: "damage", durationMs: 1300 });
+  assert.equal(readableCardBattleEvent(old).durationMs, 1625);
+  assert.equal(old.durationMs, 1300);
+  assert.equal(readableCardBattleEvent(event({ kind: "attack", durationMs: 1100 })).durationMs, 1375);
+  assert.equal(readableCardBattleEvent(event()).durationMs, 1250);
+  const current = event({ durationMs: 1625 });
+  assert.equal(readableCardBattleEvent(current), current);
+});
+
+test("原生飞行动画与CSS特效共用定位，重复定位不创建新卡面", () => {
+  let plays = 0;
+  const flight = { id: "card-battle-flight", currentTime: 0, playState: "paused", effect: { getComputedTiming: () => ({ endTime: 1625 }) }, play: () => { plays++; } };
+  const unrelated = { ...flight, id: "other-flight", currentTime: 25 };
+  const root = { getAnimations: () => [flight, unrelated] } as unknown as HTMLElement;
+  seekCardBattleAnimations(root, 894);
+  assert.equal(flight.currentTime, 894);
+  assert.equal(unrelated.currentTime, 25);
+  assert.equal(plays, 1);
+  seekCardBattleAnimations(root, 1625);
+  assert.equal(plays, 1);
 });

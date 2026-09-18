@@ -246,6 +246,19 @@ function players(one: CardBattleDeckCard[], two: CardBattleDeckCard[]) {
   ];
 }
 
+test("阅读节奏使用统一1.25倍时间，事件总长与服务器播放时间一致", () => {
+  const damage: CardBattleSkillEffect = { id: "pace", order: 0, condition: "energy_full", conditionValue: null, type: "damage_single", value: 20, duration: null };
+  const side = (prefix: string) => [1, 2, 3, 4, 5].map(slot => card(prefix + slot, slot as 1 | 2 | 3 | 4 | 5, { maxHp: 10000, attack: 100, energyRequired: 10 }, [damage]));
+  const result = simulateCardBattle(players(side("a"), side("b")), "readable-pace");
+  assert.ok(result.events.some(e => e.kind === "attack"));
+  assert.ok(result.events.some(e => e.kind === "skill" && e.visual === "damage"));
+  for (const event of result.events) {
+    if (event.kind === "attack") assert.equal(event.durationMs, 1375);
+    if (event.kind === "skill" && event.visual === "damage") assert.equal(event.durationMs, 1625);
+  }
+  assert.equal(result.playbackDurationMs, result.events.reduce((sum, event) => sum + event.durationMs, 0));
+});
+
 test("治疗量归属施法卡，累计有效自疗与群疗，过量、复活及加上限不计入", () => {
   const effects: CardBattleSkillEffect[] = [
     { id: "heal", order: 0, type: "heal_all_allies", condition: "self_hp_below_percent", conditionValue: 100, value: 1000000, duration: null },

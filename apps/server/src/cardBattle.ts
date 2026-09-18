@@ -17,7 +17,9 @@ export const CARD_BATTLE_MAX_ROUNDS = 30;
 export const CARD_BATTLE_LINEUP_SIZE = 5;
 export const CARD_BATTLE_MAX_TRIGGER_EFFECTS = 100;
 export const CARD_BATTLE_MAX_EVENTS = 400;
-export const CARD_BATTLE_MAX_PLAYBACK_MS = 7 * 60_000;
+// Keep the same simulation safety budget; presentation time is expanded uniformly.
+export const CARD_BATTLE_PLAYBACK_SCALE = 1.25;
+export const CARD_BATTLE_MAX_PLAYBACK_MS = 7 * 60_000 * CARD_BATTLE_PLAYBACK_SCALE;
 
 export { calculateCardBattlePower } from "@hgt/shared";
 
@@ -521,17 +523,17 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
   const enemies = (card: RuntimeCard) => cards.filter((candidate) => candidate.seat !== card.seat && candidate.alive);
   const states = () => cards.map((card) => publicState(card, currentRound));
   const canAddEvent = (durationMs: number, finalEvent = false) => {
-    const reservedEndDuration = finalEvent ? 0 : 1200;
+    const reservedEndDuration = finalEvent ? 0 : 1200 * CARD_BATTLE_PLAYBACK_SCALE;
     const maxEvents = mode === "tower" ? 1600 : mode === "boss" ? 800 : CARD_BATTLE_MAX_EVENTS;
     const eventLimitReached = finalEvent ? events.length >= maxEvents : events.length >= maxEvents - 1;
-    return !eventLimitReached && playbackDurationMs + durationMs + reservedEndDuration <= (mode === "tower" ? 28 * 60_000 : mode === "boss" ? 14 * 60_000 : CARD_BATTLE_MAX_PLAYBACK_MS);
+    return !eventLimitReached && playbackDurationMs + durationMs * CARD_BATTLE_PLAYBACK_SCALE + reservedEndDuration <= (mode === "tower" ? 28 * 60_000 * CARD_BATTLE_PLAYBACK_SCALE : mode === "boss" ? 14 * 60_000 * CARD_BATTLE_PLAYBACK_SCALE : CARD_BATTLE_MAX_PLAYBACK_MS);
   };
   const addEvent = (event: Omit<CardBattleEvent, "sequence" | "states">, finalEvent = false, root = 0) => {
     if (!canAddEvent(event.durationMs, finalEvent)) {
       safetyStopped = true;
       return false;
     }
-    events.push({ ...event, ...(activeBond ? { bond: activeBond, skillName: "羁绊技能", text: `【羁绊】${event.text}` } : {}), sequence: events.length + 1, states: states() });
+    events.push({ ...event, durationMs: event.durationMs * CARD_BATTLE_PLAYBACK_SCALE, ...(activeBond ? { bond: activeBond, skillName: "羁绊技能", text: `【羁绊】${event.text}` } : {}), sequence: events.length + 1, states: states() });
     if (root) {
       for (const card of cards) {
         const before = bondObserved.get(card.instanceId)!;
@@ -553,7 +555,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       if (event.lifesteal && event.actorId) bonds.emit("healed", byId(event.actorId), root);
     }
     for (const card of cards) bondObserved.set(card.instanceId, { energy: card.energy, hpRatio: card.hp / card.maxHp, alive: card.alive });
-    playbackDurationMs += event.durationMs;
+    playbackDurationMs += event.durationMs * CARD_BATTLE_PLAYBACK_SCALE;
     return true;
   };
   const gainEnergy = (card: RuntimeCard, value: number) => {

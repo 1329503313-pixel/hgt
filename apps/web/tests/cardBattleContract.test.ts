@@ -178,7 +178,7 @@ test("服务器时间轴驱动动画，恢复焦点直接同步且不依赖本�
   assert.match(hook, /bypassCache: true, dedupe: false/);
   assert.match(view, /seekCardBattleAnimations\(arenaRef.current, animationDelayMs\)/);
   assert.doesNotMatch(view, /(?:skipAnimation|onSkip|跳过动画|跳过战斗)/);
-  assert.match(styles, /card-battle-attack-target var\(--skill-duration\)/);
+  assert.match(view, /actor\.animate\(frames/);
   assert.match(view, /对局中对战者退出即认输/);
 });
 

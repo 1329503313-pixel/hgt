@@ -38,7 +38,7 @@ try {
     const center=el=>{const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,width:r.width};};
     const a=center(card),s=center(source),t=center(dest);
     return {travel:Math.hypot(a.x-s.x,a.y-s.y),gap:Math.hypot(a.x-t.x,a.y-t.y),distance:Math.hypot(s.x-t.x,s.y-t.y),width:s.width,
-      animation:card.getAnimations().find(a=>a.animationName==='card-battle-attack-target')?.currentTime,
+      animation:card.getAnimations().find(a=>a.id==='card-battle-flight')?.currentTime,
       paused:card.getAnimations().every(a=>a.playState==='paused'||a.playState==='finished')};
   }, {actor,target});
   const show = async config => { await page.evaluate(c=>window.showFlight(c),config); };
