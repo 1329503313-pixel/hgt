@@ -1,4 +1,6 @@
 import "express-async-errors";
+import { RequestLogWriter } from "./requestLogWriter.js";
+import { createRequestLogging, logThreshold, startRuntimeLogging } from "./requestLogging.js";
 import { securityHeaders } from "./securityHeaders.js";
 import { canViewOnlineSoupMessage } from "./onlineSoupHistory.js";
 import { evaluationAdminFilter, evaluationTypeSchema, presentEvaluation, presentEvaluationInteraction, syncEvaluationNotification } from "./evaluationPrivacy.js";
@@ -446,6 +448,12 @@ const corsOrigins = [
   config.appOrigin,
   ...(config.nodeEnv === "production" ? [] : ["http://app.localhost"])
 ];
+const requestLogWriter = new RequestLogWriter(process.env.REQUEST_LOG_DIR || "logs/requests");
+app.use(createRequestLogging(requestLogWriter, {
+  slowMs: logThreshold(process.env.REQUEST_LOG_SLOW_MS, 500),
+  overdueMs: logThreshold(process.env.REQUEST_LOG_OVERDUE_MS, 30_000),
+}));
+startRuntimeLogging(requestLogWriter);
 app.use(createLegacyHostRedirect(config.nodeEnv, config.publicSiteUrl));
 app.use(cors({ origin: [...new Set(corsOrigins)], credentials: true }));
 app.use(compression({
@@ -456,18 +464,6 @@ app.use(compression({
 app.use("/api/online-soup/admin/card-battle-bosses/covers", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
-app.use((req, res, next) => {
-  const startedAt = Date.now();
-  const requestId = nanoid(10);
-  res.setHeader("X-Request-Id", requestId);
-  res.on("finish", () => {
-    const durationMs = Date.now() - startedAt;
-    if (durationMs >= 500) {
-      console.warn(JSON.stringify({ kind: "slow_request", requestId, method: req.method, path: req.path, status: res.statusCode, durationMs }));
-    }
-  });
-  next();
-});
 app.use(securityHeaders);
 
 app.get("/api/app/android-update", async (req, res) => {
@@ -8415,6 +8411,18 @@ startCollectibleAuctionScheduler({ emitUserEvent, emitUnreadChanged, broadcastEv
 const server = app.listen(config.port, () => {
   console.log(`HGT API listening on http://localhost:${config.port}`);
 });
+
+// Preserve queued diagnostic records on normal container shutdown without
+// waiting indefinitely for long-lived connections or an unavailable disk.
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    server.close();
+    requestLogWriter.write({ source: "runtime", kind: "server_shutdown", signal, pid: process.pid });
+    const deadline = setTimeout(() => process.exit(0), 2000);
+    deadline.unref();
+    void requestLogWriter.close().finally(() => process.exit(0));
+  });
+}
 
 // 百度收录：每日一次全量推送（启动 60s 后首次执行，之后每 24h 一次）
 const BAIDU_PUSH_INTERVAL = 24 * 60 * 60 * 1000;

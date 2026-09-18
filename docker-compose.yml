@@ -32,6 +32,9 @@ services:
       - SMTP_REPLY_TO=${SMTP_REPLY_TO:-}
       - RUN_DB_MIGRATIONS=${RUN_DB_MIGRATIONS:-true}
       - ASSET_MEDIA_DIR=/app/data/asset-media
+      - REQUEST_LOG_DIR=/app/logs/requests
+      - REQUEST_LOG_SLOW_MS=${REQUEST_LOG_SLOW_MS:-500}
+      - REQUEST_LOG_OVERDUE_MS=${REQUEST_LOG_OVERDUE_MS:-30000}
       - ALIYUN_OSS_ENDPOINT=${ALIYUN_OSS_ENDPOINT:?ALIYUN_OSS_ENDPOINT must be set}
       - ALIYUN_OSS_REGION=${ALIYUN_OSS_REGION:?ALIYUN_OSS_REGION must be set}
       - ALIYUN_OSS_BUCKET=${ALIYUN_OSS_BUCKET:?ALIYUN_OSS_BUCKET must be set}
@@ -40,6 +43,7 @@ services:
       - ALIYUN_OSS_ACCESS_KEY_SECRET=${ALIYUN_OSS_ACCESS_KEY_SECRET:?ALIYUN_OSS_ACCESS_KEY_SECRET must be set}
     volumes:
       - hgt_asset_media:/app/data/asset-media
+      - ${REQUEST_LOG_HOST_DIR:-/var/log/hgt/requests}:/app/logs/requests
     networks:
       - mysql-docker_default
 

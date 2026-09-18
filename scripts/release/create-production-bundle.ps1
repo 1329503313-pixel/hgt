@@ -34,6 +34,7 @@ try {
         'apps/server/tsconfig.json',
         'apps/server/src',
         'scripts/release/check-production-auth-contract.mjs',
+        'scripts/observability',
         'apps/web/package.json',
         'apps/web/vite.config.ts',
         'apps/web/postcss.config.js',

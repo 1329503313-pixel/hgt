@@ -1,0 +1,20 @@
+# Run independently of the application, using the same locally built image.
+services:
+  request-log-collector:
+    image: ${HGT_LOG_IMAGE:?Set HGT_LOG_IMAGE to the verified production image}
+    container_name: hgt-request-log-collector
+    command: ["node", "server/dist/nginxLogCollector.js"]
+    restart: unless-stopped
+    environment:
+      REQUEST_LOG_DIR: /app/logs/requests
+      REQUEST_LOG_SLOW_MS: ${REQUEST_LOG_SLOW_MS:-500}
+    ports:
+      - "127.0.0.1:15140:15140/udp"
+    volumes:
+      - /var/log/hgt/requests:/app/logs/requests
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

@@ -91,6 +91,9 @@ try {
     }
 
     npm run sync -w @hgt/app-android
+    if ($LASTEXITCODE -ne 0) { throw 'Capacitor sync failed.' }
+    node scripts/android/normalize-capacitor-paths.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Capacitor dependency path normalization failed.' }
 
     [string[]]$gradleArguments = if ($Configuration -eq 'release') {
         @('--no-daemon', '--max-workers=1', '--console=plain', 'testDebugUnitTest', 'assembleRelease', "-PhgtSigningProperties=$SigningProperties")

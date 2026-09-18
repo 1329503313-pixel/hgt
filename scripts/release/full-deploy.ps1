@@ -4,6 +4,7 @@ param(
     [string]$ProductionHost = 'root@47.239.5.69',
     [string]$VoiceEnvironmentFile,
     [switch]$BuildImageLocally,
+    [switch]$DeployRequestLogging,
     [switch]$ConfirmFullDeployment
 )
 
@@ -60,6 +61,11 @@ try {
     if (-not (Test-Path -LiteralPath $descriptorPath)) { throw 'Android release descriptor was not created.' }
     Invoke-ReleaseCommand 'production-web-server-deployment' {
         & (Join-Path $scriptRoot 'deploy-production.ps1') -Commit $commit -ProductionHost $ProductionHost -VoiceEnvironmentFile $VoiceEnvironmentFile -BuildImageLocally:$BuildImageLocally -ConfirmFullDeployment
+    }
+    if ($DeployRequestLogging) {
+        Invoke-ReleaseCommand 'production-nginx-request-logging' {
+            & (Join-Path $scriptRoot 'deploy-observability.ps1') -Commit $commit -ProductionHost $ProductionHost -ConfirmFullDeployment
+        }
     }
     Invoke-ReleaseCommand 'android-update-record-publication' {
         & (Join-Path $scriptRoot 'publish-android-release.ps1') -Descriptor $descriptorPath -ProductionHost $ProductionHost -ConfirmFullDeployment

@@ -43,6 +43,7 @@ candidate_env=$(mktemp)
 candidate_comparable_env=$(mktemp)
 final_env=$(mktemp)
 old_mounts=$(mktemp)
+expected_mounts=$(mktemp)
 candidate_mounts=$(mktemp)
 final_mounts=$(mktemp)
 jwt=''
@@ -52,7 +53,7 @@ deployment_succeeded=false
 
 cleanup() {
   rm -f "$old_env" "$expected_env" "$runtime_env" "$candidate_env" "$candidate_comparable_env" "$final_env" \
-    "$old_mounts" "$candidate_mounts" "$final_mounts"
+    "$old_mounts" "$expected_mounts" "$candidate_mounts" "$final_mounts"
   docker rm -f "$candidate" >/dev/null 2>&1 || true
   if [ "$old_renamed" = true ] && [ "$deployment_succeeded" != true ]; then
     docker rm -f "$current" >/dev/null 2>&1 || true
@@ -99,6 +100,21 @@ test "$(docker inspect -f '{{json .HostConfig.PortBindings}}' "$current")" = '{"
 docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .RW "|" .Propagation}}{{end}}' "$current" | sort > "$old_mounts"
 test -s "$old_mounts"
 
+# Preserve all existing mounts; add only the host request log directory.
+# Refuse a conflicting existing mount instead of hiding user data.
+cp "$old_mounts" "$expected_mounts"
+set --
+log_mount=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/logs/requests"}}{{.Type}}|{{.Source}}|{{.RW}}{{end}}{{end}}' "$current")
+if [ -n "$log_mount" ]; then
+  test "$log_mount" = 'bind|/var/log/hgt/requests|true'
+else
+  mkdir -p /var/log/hgt/requests
+  chmod 750 /var/log/hgt/requests
+  set -- --mount type=bind,src=/var/log/hgt/requests,dst=/app/logs/requests
+  printf '%s\n' 'bind |  | /var/log/hgt/requests | /app/logs/requests | true | rprivate' >> "$expected_mounts"
+  sort -o "$expected_mounts" "$expected_mounts"
+fi
+
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$current" | sort > "$old_env"
 jwt=$(sed -n 's/^JWT_SECRET=//p' "$old_env")
 test "$(grep -c '^JWT_SECRET=' "$old_env")" -eq 1
@@ -125,9 +141,17 @@ if [ -n "$voice_env" ]; then
   cat "$voice_env" >> "$expected_env"
   sort -o "$expected_env" "$expected_env"
 fi
+# Logging is the only additional environment change. Never replace an existing
+# custom directory silently; it needs a matching audited host mount first.
+if grep -q '^REQUEST_LOG_DIR=' "$expected_env"; then
+  grep -qx 'REQUEST_LOG_DIR=/app/logs/requests' "$expected_env"
+else
+  printf '%s\n' 'REQUEST_LOG_DIR=/app/logs/requests' >> "$expected_env"
+  sort -o "$expected_env" "$expected_env"
+fi
 grep -v '^JWT_SECRET=' "$expected_env" > "$runtime_env"
 chmod 600 "$old_env" "$expected_env" "$runtime_env" "$candidate_env" "$candidate_comparable_env" "$final_env" \
-  "$old_mounts" "$candidate_mounts" "$final_mounts"
+  "$old_mounts" "$expected_mounts" "$candidate_mounts" "$final_mounts"
 ! grep -q '^RELEASE_CANDIDATE=' "$old_env"
 
 docker run -d --name "$candidate" \
@@ -138,6 +162,7 @@ docker run -d --name "$candidate" \
   -e JWT_SECRET="$jwt" \
   -e RELEASE_CANDIDATE=true \
   --volumes-from "$current" \
+  "$@" \
   "$image" >/dev/null
 
 i=0
@@ -156,7 +181,7 @@ grep -v '^RELEASE_CANDIDATE=' "$candidate_env" > "$candidate_comparable_env"
 test "$(sha256sum "$candidate_comparable_env" | cut -d ' ' -f1)" = "$(sha256sum "$expected_env" | cut -d ' ' -f1)"
 test "$(printf %s "$(sed -n 's/^JWT_SECRET=//p' "$candidate_env")" | sha256sum | cut -d ' ' -f1)" = "$jwt_hash"
 docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .RW "|" .Propagation}}{{end}}' "$candidate" | sort > "$candidate_mounts"
-cmp -s "$candidate_mounts" "$old_mounts"
+cmp -s "$candidate_mounts" "$expected_mounts"
 docker rm -f "$candidate" >/dev/null
 
 docker stop -t 20 "$current" >/dev/null
@@ -171,6 +196,7 @@ docker run -d --name "$current" \
   --env-file "$runtime_env" \
   -e JWT_SECRET="$jwt" \
   --volumes-from "$rollback" \
+  "$@" \
   "$image" >/dev/null
 
 i=0
@@ -188,7 +214,7 @@ test "$(printf %s "$(sed -n 's/^JWT_SECRET=//p' "$final_env")" | sha256sum | cut
 test "$(sed -n 's/^COOKIE_DOMAIN=//p' "$final_env")" = .caqis.com
 test "$(sed -n 's/^COOKIE_SECURE=//p' "$final_env")" = false
 docker inspect -f '{{range .Mounts}}{{println .Type "|" .Name "|" .Source "|" .Destination "|" .RW "|" .Propagation}}{{end}}' "$current" | sort > "$final_mounts"
-cmp -s "$final_mounts" "$old_mounts"
+cmp -s "$final_mounts" "$expected_mounts"
 
 # Keep the rollback armed until public routing and Android credentialed CORS
 # have also passed. A failure here still enters the EXIT rollback branch.
@@ -207,6 +233,7 @@ echo "IMAGE=$image"
 echo "CONTAINER_ID=$(docker inspect -f '{{.Id}}' "$current")"
 echo "JWT_HASH_UNCHANGED=true"
 echo "COOKIE_CONFIG_UNCHANGED=true"
-echo "MOUNTS_UNCHANGED=true"
+echo "EXISTING_MOUNTS_PRESERVED=true"
+echo "REQUEST_LOG_HOST_DIR=/var/log/hgt/requests"
 echo "EXPECTED_ENVIRONMENT_MATCHED=true"
 echo "PUBLIC_HEALTH_AND_CORS=ok"
