@@ -38,6 +38,12 @@ requireMatch(uploader, /localHash !== manifest\.sha256/, "APK upload must verify
 const deployWrapper = read("scripts/release/deploy-production.ps1");
 const dockerfile = read("Dockerfile");
 const productionBundle = read("scripts/release/create-production-bundle.ps1");
+const imageBuilder = read("scripts/release/build-production-image.ps1");
+requireMatch(productionBundle, /git -c core\.autocrlf=false @archiveArgs/, "Production archives must preserve committed asset bytes across platforms.");
+requireMatch(imageBuilder, /tar --options hdrcharset=UTF-8 -xzf/, "Windows image builds must extract Git filenames as UTF-8.");
+requireMatch(imageBuilder, /Guid\]::NewGuid/, "Image builds must use a fresh context on every attempt.");
+requireMatch(imageBuilder, /node \$assetChecker verify/, "Extracted public assets must match the release commit.");
+requireMatch(imageBuilder, /--entrypoint node \$imageTag \/tmp\/check-assets.mjs verify/, "Final images must verify public asset paths and contents before export.");
 for (const path of ["packages/shared/package.json", "packages/shared/tsconfig.json", "packages/shared/src"]) {
   if (!productionBundle.includes(`'${path}'`)) throw new Error(`Production bundle must include shared workspace input: ${path}`);
   if (dockerfile.split(`COPY ${path} `).length !== 3) throw new Error(`Both Docker builders must copy shared workspace input: ${path}`);

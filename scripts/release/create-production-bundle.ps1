@@ -44,12 +44,13 @@ try {
         'apps/web/public'
     )
     $archiveArgs = @('archive', '--format=tar.gz', "--output=$bundlePath", $resolvedCommit, '--') + $paths
-    & git @archiveArgs
+    # Preserve committed bytes regardless of Windows core.autocrlf settings.
+    & git -c core.autocrlf=false @archiveArgs
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $bundlePath)) {
         throw 'Unable to create the production bundle.'
     }
 
-    $entries = @(& tar -tzf $bundlePath)
+    $entries = @(& tar --options hdrcharset=UTF-8 -tzf $bundlePath)
     if ($LASTEXITCODE -ne 0 -or $entries.Count -eq 0) {
         throw 'Unable to inspect the production bundle.'
     }

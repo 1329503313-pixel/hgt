@@ -207,6 +207,14 @@ npm run release:android:publish -- -Descriptor artifacts/android/<version>/andro
 
 ## 9. 踩坑复盘与已固化预防
 
+### 中文静态资源发布校验（2026-09-18）
+
+Windows 本地构建必须用 `tar --options hdrcharset=UTF-8` 解压 Git 源码包，并为每次构建创建全新目录。默认代码页会把“你好呀”等中文文件名解压成乱码，导致 `/stickers/` 请求回落到 SPA HTML、返回 200 但仍然裂图。归档时显式禁用 `core.autocrlf`，保持提交中的原始字节。
+
+`check-production-assets.mjs` 从指定发布提交生成全部 `apps/web/public` 文件的路径及 Git blob 哈希清单；解压后与最终 Docker 镜像内各检查一次，缺文件或内容不符必须在导出、上传前中止。不能以首页 200、本地源码目录图片可读或模拟图片请求代替最终产物验证。回归运行 `node --test scripts/release/production-assets.test.mjs`；镜像 HTTP 与桌面/手机键盘验证运行 `node scripts/release/sticker-image.browser.mjs --image <本地镜像> --commit <完整提交号>`。
+
+此前构建的 `hgt:3d89d12`、旧 `hgt:66d7b88` 及旧归档均受此问题影响；后续部署必须通过修复后的构建流程重建并使用新 SHA256，不可直接复用旧归档。本次修复仅在线下验证，不构成生产部署授权。
+
 | 踩坑 | 根因 | 固化措施 |
 |---|---|---|
 | APK 构建两次 | 第一次构建后才提交，文件名仍是旧提交号 | 先定稿提交；prepare 按提交复用产物 |

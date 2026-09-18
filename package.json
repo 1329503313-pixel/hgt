@@ -39,7 +39,7 @@
     "release:android:descriptor": "node scripts/release/create-android-release-descriptor.mjs",
     "release:android:publish": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/publish-android-release.ps1",
     "release:check:auth": "node scripts/release/check-production-auth-contract.mjs",
-    "release:check:tooling": "node scripts/release/check-release-tooling.mjs",
+    "release:check:tooling": "node scripts/release/check-release-tooling.mjs && node --test scripts/release/production-assets.test.mjs",
     "release:production:bundle": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/create-production-bundle.ps1",
     "release:production:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/deploy-production.ps1",
     "release:full": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/full-deploy.ps1",
