@@ -105,18 +105,21 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
         : isActiveActor && activeEvent?.visual === "energy" ? "card-battle-fx-blue" : "";
   useLayoutEffect(() => {
     const actor = rootRef.current;
-    const targetId = activeEvent?.effects[0]?.targetId;
-    if (!actor || !isActor || !targetId) return;
+    if (!actor || !isActor || !activeEvent) return;
     const arena = actor.closest('[data-battle-arena]') ?? actor.closest('.card-battle-half')?.parentElement;
     const anchors = [...(arena?.querySelectorAll<HTMLElement>('[data-battle-anchor]') ?? [])];
     const source = anchors.find(el => el.dataset.battleAnchor === state?.instanceId);
-    const target = anchors.find(el => el.dataset.battleAnchor === targetId);
+    // Ignore source feedback and missing historical targets. A dodged/blocked
+    // attack still travels to the target; its result only changes impact FX.
+    const target = activeEvent.effects.flatMap(effect => anchors.filter(el => el.dataset.battleAnchor === effect.targetId && el !== source))[0];
     if (!source || !target || source === target) return;
     const measure = () => {
       const actorRect = source.getBoundingClientRect(), targetRect = target.getBoundingClientRect();
       const deltaX = targetRect.left + targetRect.width / 2 - actorRect.left - actorRect.width / 2;
       const deltaY = targetRect.top + targetRect.height / 2 - actorRect.top - actorRect.height / 2;
-      const distance = Math.hypot(deltaX,deltaY), stopDistance = Math.max(actorRect.height,targetRect.height)*.78;
+      // Land across the target's edge instead of stopping a card-height away,
+      // which reads as a ranged cast, especially between adjacent front rows.
+      const distance = Math.hypot(deltaX,deltaY), stopDistance = Math.min(actorRect.width,targetRect.width)*.35;
       const ratio = distance > 0 ? Math.max(0,(distance-stopDistance)/distance) : 0;
       actor.style.setProperty('--card-battle-attack-x', Math.round(deltaX*ratio)+'px');
       actor.style.setProperty('--card-battle-attack-y', Math.round(deltaY*ratio)+'px');
@@ -124,7 +127,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
     measure();
     const observer = new ResizeObserver(measure); observer.observe(source); observer.observe(target);
     return () => { observer.disconnect(); actor.style.removeProperty('--card-battle-attack-x'); actor.style.removeProperty('--card-battle-attack-y'); };
-  }, [activeEvent?.sequence, isActor, state?.instanceId]);
+  }, [activeEvent?.sequence, fx.eventKey, isActor, state?.instanceId]);
   useLayoutEffect(() => {
     if (!rootRef.current || !activeEvent) return;
     // Full arenas seek once in CardBattleArenaFx, avoiding one style/layout

@@ -37,7 +37,7 @@ const bundled = await build({
       window.setGame = setGame;
       const state = useServerCardBattlePlayback("room", game, async () => { window.reloadCount = (window.reloadCount || 0) + 1; });
       useLayoutEffect(() => { if (arena.current && state.activeEvent) seekCardBattleAnimations(arena.current, state.animationDelayMs); }, [state.activeEvent, state.animationDelayMs]);
-      return <><output id="state">{JSON.stringify(state)}</output><div ref={arena}><div id="card" className={state.activeEvent ? "card-battle-attacker-1" : ""}><video id="media" /></div></div></>;
+      return <><output id="state">{JSON.stringify(state)}</output><div ref={arena}><div id="card" className={state.activeEvent ? "card-battle-card card-battle-attacker-1" : "card-battle-card"}><video id="media" /></div></div></>;
     }
     createRoot(document.getElementById("root")).render(<Harness />);
   ` },

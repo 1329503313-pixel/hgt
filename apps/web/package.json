@@ -42,7 +42,7 @@
     "check:images": "node scripts/optimize-images.mjs --check",
     "preview": "vite preview",
     "test:voice": "tsx --test tests/voiceMicrophone.test.ts",
-    "test:card-battle-fx": "cd ../.. && node apps/web/tests/cardBattleEffects.browser.mjs && node apps/web/tests/cardBattleFxBudget.browser.mjs"
+    "test:card-battle-fx": "cd ../.. && node apps/web/tests/cardBattleEffects.browser.mjs && node apps/web/tests/cardBattleFxBudget.browser.mjs && node apps/web/tests/cardBattleFlight.browser.mjs"
   },
   "dependencies": {
     "@hgt/shared": "*",

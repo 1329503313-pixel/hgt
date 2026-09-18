@@ -50,7 +50,7 @@ export function CardBattleArenaFx({ event }: { event: OnlineCardBattleEvent | nu
   return <div ref={ref} className="card-battle-arena-fx" aria-hidden="true" style={{ height: geometry.height, '--skill-color': recipe.color, '--skill-duration': event.durationMs+'ms', '--fx-impact': impact+'ms', '--fx-tail': Math.max(1,event.durationMs-impact)+'ms' } as CSSProperties}>
     <svg key={event.sequence} width={geometry.width} height={geometry.height} data-quality={quality}>
       {bond && <path className="card-battle-fx-link is-bond" d={connection(...bond)} pathLength="1" />}
-      {source && quality === 'standard' && <path className="card-battle-fx-link" d={targets.filter(p=>p.x!==source.x || p.y!==source.y).map(p=>connection(source,p)).join(' ')} pathLength="1" />}
+      {source && event.visual !== 'damage' && quality === 'standard' && <path className="card-battle-fx-link" d={targets.filter(p=>p.x!==source.x || p.y!==source.y).map(p=>connection(source,p)).join(' ')} pathLength="1" />}
       {source && targets.length > 0 && Boolean(event.lifesteal) && quality === 'standard' && <path className="card-battle-fx-link is-blood-return" d={connection({ ...targets[0], x:targets.reduce((n,p)=>n+p.x,0)/targets.length, y:targets.reduce((n,p)=>n+p.y,0)/targets.length },source)} pathLength="1" />}
     </svg>
     {groups.map((g,i)=>{ const x=Math.min(...g.map(p=>p.x-p.width/2)), y=Math.min(...g.map(p=>p.y-p.height/2)); const w=Math.max(...g.map(p=>p.x+p.width/2))-x, h=Math.max(...g.map(p=>p.y+p.height/2))-y; return <i key={event.sequence+':wave'+i} data-fx-wave="shared" className="card-battle-fx-group-wave" style={{left:x-8,top:y-8,width:w+16,height:h+16}} />; })}
