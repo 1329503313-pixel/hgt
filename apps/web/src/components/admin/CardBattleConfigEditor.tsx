@@ -77,7 +77,11 @@ export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChan
       energyRequired: zeroStarTier.energyRequired,
       skillName: zeroStarTier.skillName,
       skillDescription: zeroStarTier.skillDescription,
-      effects: zeroStarTier.effects,
+      effects: zeroStarTier.effects.map((effect) => ({
+        ...effect,
+        id: newSkillId(),
+        ...(effect.additionalEffects ? { additionalEffects: effect.additionalEffects.map((action) => ({ ...action, id: newSkillId() })) } : {}),
+      })),
       bonds: zeroStarTier.bonds ?? [],
     }));
     // Remount uncontrolled bond card-number inputs, including on repeated copies.

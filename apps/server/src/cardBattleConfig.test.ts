@@ -29,6 +29,39 @@ import { isCardBattleDamageEffect, isCardBattleAttachedOnly } from "@hgt/shared"
 import { cardBattleEffectCodes } from "./cardBattle.js";
 import { bossCardSchema } from "./cardBattleBossRules.js";
 
+test("复制零星技能的重复ID可保存，重复提交不丢失星级、顺序及附加效果", async () => {
+  const rows = new Map<string, unknown[]>();
+  const db = { query: async (sql: string, args: unknown[]) => {
+    if (sql.startsWith("DELETE FROM asset_card_battle_effects")) rows.clear();
+    if (sql.includes("INSERT INTO asset_card_battle_effects")) {
+      const id = String(args[0]);
+      assert.ok(!rows.has(id), `Duplicate entry '${id}' for key 'asset_card_battle_effects.PRIMARY'`);
+      rows.set(id, args);
+    }
+    return [[]];
+  } } as unknown as PoolConnection;
+  const tiers = defaultCardBattleTiers().map((tier) => ({ ...tier, effects: [
+    { id: "copied-effect", order: 1, condition: "energy_full" as const, conditionValue: null,
+      type: "damage_single" as const, value: 100 + tier.starLevel, duration: null,
+      additionalEffects: [{ id: "addition", type: "heal_self" as const, value: 30, duration: null }] },
+    { id: `unique-${tier.starLevel}`, order: 0, condition: "self_death" as const, conditionValue: null,
+      type: "damage_all" as const, value: 50, duration: null },
+  ] }));
+  const original = structuredClone(tiers);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await saveCardBattleTiers("card", tiers, db);
+    assert.equal(rows.size, 8);
+    for (const tier of tiers) {
+      const saved = [...rows.values()].filter(row => row[2] === tier.starLevel);
+      assert.deepEqual(saved.map(row => [row[3], row[6], row[7]]), [[0, "damage_all", 50], [1, "damage_single", 100 + tier.starLevel]]);
+      assert.deepEqual(JSON.parse(String(saved[1]![11])), tier.effects[0]!.additionalEffects);
+      assert.ok(rows.has(`unique-${tier.starLevel}`));
+    }
+    assert.ok(rows.has("copied-effect"));
+    assert.deepEqual(tiers, original, "保存不能修改调用方的编辑数据");
+  }
+});
+
 test("所有直接伤害技能默认忽防0%，允许0至100%的两位小数，非伤害技能不能配置忽防", () => {
   const damageTypes = cardBattleEffectCodes.filter(type => isCardBattleDamageEffect(type) && !isCardBattleTrueDamage(type));
   assert.ok(damageTypes.length >= 9);

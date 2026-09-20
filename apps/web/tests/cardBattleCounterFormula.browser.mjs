@@ -69,6 +69,19 @@ try {
   assert.equal(draft[2].energyRequired, draft[0].energyRequired);
   assert.equal(draft[2].effects[0].damageFormula, '(攻击力*1.1)+速度*5');
   assert.equal(draft[2].effects[0].additionalEffects[0].damageFormula, '当前能量');
+  assert.notEqual(draft[2].effects[0].id, draft[0].effects[0].id, '跨星级复制生成新的技能主键');
+  assert.notEqual(draft[2].effects[0].additionalEffects[0].id, draft[0].effects[0].additionalEffects[0].id, '附加效果也使用独立ID');
+  await page.getByRole('button', { name: '复制零星技能', exact: true }).click();
+  const recopied = JSON.parse(await page.locator('#data').textContent());
+  assert.notEqual(recopied[2].effects[0].id, draft[2].effects[0].id, '重复复制生成新的技能ID');
+  for (const star of [1, 3]) {
+    await page.getByRole('tab', { name: `${star} 星`, exact: true }).click();
+    await page.getByRole('button', { name: '复制零星技能', exact: true }).click();
+  }
+  const allCopied = JSON.parse(await page.locator('#data').textContent());
+  const effectIds = allCopied.flatMap(tier => tier.effects.map(effect => effect.id));
+  assert.equal(new Set(effectIds).size, effectIds.length, '四个星级的技能ID全部唯一');
+  await page.getByRole('tab', { name: '2 星', exact: true }).click();
   await page.getByLabel('2星条件1伤害类型', { exact: true }).selectOption('fixed');
   await page.getByLabel('2星条件1技能数值', { exact: true }).fill('999');
   await page.getByRole('tab', { name: '0 星', exact: true }).click();

@@ -219,6 +219,9 @@ export async function loadCardBattleTiers(cardId: string, db: mysql.Pool | mysql
 
 export async function saveCardBattleTiers(cardId: string, tiers: CardBattleTierInput[], db: mysql.PoolConnection) {
   const sharedSkillName = tiers[0]?.skillName.trim() || null;
+  // Older editors copied effect IDs across stars, but this table uses a global primary key.
+  const usedEffectIds = new Set<string>();
+  const reservedEffectIds = new Set(tiers.flatMap((tier) => tier.effects.flatMap((effect) => effect.id ? [effect.id] : [])));
   await db.query("DELETE FROM asset_card_battle_effects WHERE card_id = ?", [cardId]);
   await db.query("DELETE FROM asset_card_battle_tiers WHERE card_id = ?", [cardId]);
   for (const tier of [...tiers].sort((left, right) => left.starLevel - right.starLevel)) {
@@ -231,11 +234,16 @@ export async function saveCardBattleTiers(cardId: string, tiers: CardBattleTierI
         tier.lifestealRate ?? 0, tier.stunRate ?? 0, tier.extraActionRate ?? 0, tier.bonds?.length ? JSON.stringify(tier.bonds) : null, tier.dodgeRate ?? 0, tier.hitRate ?? 0, tier.counterRate ?? 0],
     );
     for (const [index, effect] of [...tier.effects].sort((left, right) => left.order - right.order).entries()) {
+      let effectId = effect.id;
+      if (!effectId || usedEffectIds.has(effectId)) {
+        do { effectId = nanoid(); } while (usedEffectIds.has(effectId) || reservedEffectIds.has(effectId));
+      }
+      usedEffectIds.add(effectId);
       await db.query(
         `INSERT INTO asset_card_battle_effects
           (id, card_id, star_level, effect_order, condition_code, condition_value, effect_code, effect_value, duration_rounds, ignore_defense_percent, probability, additional_effects, damage_type, damage_formula)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [effect.id || nanoid(), cardId, tier.starLevel, index, effect.condition, effect.conditionValue,
+        [effectId, cardId, tier.starLevel, index, effect.condition, effect.conditionValue,
           effect.type, effect.value, effect.duration, isCardBattleDamageEffect(effect.type) ? effect.ignoreDefensePercent ?? 0 : 0,
           isCardBattleStun(effect.type) ? effect.probability ?? 100 : null,
           effect.additionalEffects?.length ? JSON.stringify(effect.additionalEffects.map((action) => ({ ...action, id: action.id || nanoid() }))) : null,
