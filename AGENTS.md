@@ -1,5 +1,16 @@
 # AGENTS.md
 
+### 2026-09-21 p0.48 更新凭据后重新全量部署授权
+
+- 状态：已于 2026-09-21 完成 Web/Server、APP 更新发布、Nginx 日志接入及最终验证，本次线上授权已使用并失效。用户明确要求“重新授权全量部署并更新 APP，完成后推送 GitHub”。这是独立于此前 OSS 上传失败的新授权；GitHub 源码同步继续按独立推送要求执行。
+- 发布范围沿用已经审计并完整验证的 `ed14b78ac0b97587dd9580f2d66fe4c251b008db`：Web/Server、Android `1.0.0-p0.48`（100048）非强制更新、Nginx 请求日志接入；成功验收后将所有代码及发布记录推送 GitHub。
+- 已确认本机 OSS 凭据文件已更新。使用干净候选 `.local/release-p048` 复用同提交签名 APK 和本地镜像，从上传门禁继续；保留 JWT/Cookie、既有环境与挂载及回滚容器，线上认证和发布验收仍必须执行。
+- 完成、失败或中止后本次线上授权失效，须记录最终结果。
+- 实际发布提交 `ed14b78ac0b97587dd9580f2d66fe4c251b008db`、镜像 `hgt:ed14b78`、容器 `94fb0408083e0081f5c3bf278de042ae1d683336b145450cdca52fc579a915c0`。JWT 哈希、Cookie、既有环境与挂载保持一致，旧应用容器保留为 `hgt-app-rollback-ed14b78`；最终镜像归档 SHA256 `707391fa0fa9863c864019f14db9cbd8059efde9561f48e5062684d0da1e31ce`。
+- Android p0.48（100048）已上传、回下载校验并发布非强制更新，更新记录 `4kDS46QYmXAXBLKyiqHLS`，APK SHA256 `5e156f98ad424fb8abcbe85902bc775e2e20947349bbc4f7b9e75ccf7aa32ea1`；原有 45 条更新记录未改变，p0.44 仍停用。p0.43–p0.47 均提示非强制升级，p0.48 不重复提示。
+- Nginx 配置语法、双来源慢请求日志实际写入及应用认证复核均通过；配置备份在 `/opt/hgt-observability/backup-ed14b78`，日志目录 `/var/log/hgt/requests`。两个正式域名各 135 个 JS/CSS 资源与镜像 SHA256 完全一致，服务端战斗、配置和新增条件文件哈希一致；健康和 APP 凭据 CORS 通过。镜像内 269 项公共资源已校验。
+- 验证记录：`.local/p048-resume.log`、`.local/p048-public-verification.log`、`.local/p048-proof/public-proof.json`。本次复用已通过本地检查、测试、原生测试、签名及包内页面浏览器验收的同提交 APK；未连接 Android 真机。源码与本条发布记录均纳入 GitHub main 的同步范围。
+
 ### 2026-09-21 p0.48 全量部署与 GitHub 同步一次性授权
 
 - 状态：2026-09-21 APK 上传返回 `403 InvalidAccessKeyId`，发布流水线停止，本次线上授权因失败已失效。尚未切换生产 Web/Server、安装 Nginx 采集或发布 APP 更新记录。用户明确要求“全量部署web server并更新APP，检查之前没做的提交，全部都提交上去，部署完成后推到github”。
