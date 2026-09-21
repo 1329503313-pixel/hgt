@@ -13,11 +13,13 @@ const bundle = await build({
   stdin: { resolveDir: resolve('apps/web'), loader: 'tsx', contents: `
     import React, {useState} from 'react';
     import {createRoot} from 'react-dom/client';
+    import {MemoryRouter} from 'react-router-dom';
     import {GiftDrawer} from './src/components/GiftDrawer';
+    import {SiteFooter} from './src/components/SiteFooter';
     window.sent = [];
     const icon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192"><circle cx="96" cy="96" r="60" fill="pink"/></svg>');
     window.gifts = Array.from({length:12}, (_,i)=>({id:'g'+i,name:'礼物'+i,description:'测试礼物',iconUrl:icon,costAmount:10,inventoryQuantity:20}));
-    function Harness(){const [open,setOpen]=useState(true);window.setGiftOpen=setOpen;return <GiftDrawer open={open} recipient={{id:'u2',nickname:'测试用户'}} isFollowing source={{type:'private',id:'p1'}} onClose={()=>setOpen(false)}/>}
+    function Harness(){const [open,setOpen]=useState(true);window.setGiftOpen=setOpen;return <MemoryRouter initialEntries={['/users/u2']}><div className="app-shell" style={{minHeight:'calc(100dvh - 160px)'}}><main><GiftDrawer open={open} recipient={{id:'u2',nickname:'测试用户'}} isFollowing source={{type:'private',id:'p1'}} onClose={()=>setOpen(false)}/></main></div><SiteFooter/></MemoryRouter>}
     createRoot(document.getElementById('root')).render(<Harness/>);
   ` },
   bundle: true, write: false, format: 'iife', define: { 'import.meta.env': '{}' },
@@ -33,7 +35,7 @@ const css = (await postcss([tailwindcss({
 })]).process(readFileSync(resolve('apps/web/src/styles.css'),'utf8').replace('@import "./cardBattleEffects.css";',readFileSync('apps/web/src/cardBattleEffects.css','utf8')), {from:undefined})).css;
 const browser = await chromium.launch({channel:process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM==='1'?undefined:'msedge',headless:true});
 try {
-  for (const [width,height] of [[320,568],[375,812],[390,844],[430,932],[768,900],[1365,900],[812,375]]) {
+  for (const [width,height] of [[1365,556],[320,568],[375,812],[390,844],[430,932],[768,900],[855,556],[1365,900],[812,375]]) {
     const page = await browser.newPage({viewport:{width,height},hasTouch:true,isMobile:width<768,reducedMotion:'reduce'});
     const errors = [];
     page.on('pageerror', error=>errors.push(error.message));
@@ -43,6 +45,18 @@ try {
     await page.setContent('<meta name="viewport" content="width=device-width, initial-scale=1"><div id="root"></div>');
     await page.addStyleTag({content:css});
     await page.addScriptTag({content:bundle.outputFiles[0].text});
+    const send = page.getByRole('button',{name:'送出',exact:true});
+    await expect(send).toBeVisible();
+    assert.equal(await send.evaluate(element=>{
+      const rect=element.getBoundingClientRect();
+      return element.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2));
+    }),true,'The send button must receive input above the page and footer.');
+    if(width>=1024) {
+      const footerBox=await page.locator('.site-footer').boundingBox();
+      assert.ok(footerBox.y<height && footerBox.y+footerBox.height>0,'The real footer must overlap the viewport.');
+      assert.equal(await page.evaluate(({x,y})=>Boolean(document.elementFromPoint(x,y)?.closest('.site-footer')),
+        {x:4,y:Math.min(height-4,footerBox.y+footerBox.height/2)}),false,'The backdrop must cover footer links outside the drawer.');
+    }
     await page.getByRole('button',{name:'送出9份',exact:true}).click();
     await expect(page.getByRole('button',{name:'关闭送礼弹框',exact:true})).toBeInViewport();
     await expect(page.getByRole('button',{name:'送出',exact:true})).toBeInViewport();
@@ -139,12 +153,18 @@ try {
       await expect(quantity).toHaveText('2');
       await cdp.detach();
     }
-    await page.getByRole('button',{name:'送出',exact:true}).click();
+    if(width===375 || width===1365){mkdirSync(resolve('artifacts/gift-drawer'),{recursive:true});await page.screenshot({path:resolve(`artifacts/gift-drawer/overlay-${width}x${height}.png`)});}
+    await send.click();
     assert.equal(await page.evaluate(()=>window.sent[0].quantity),2);
     assert.deepEqual(errors,[]);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-    if(width===375){mkdirSync(resolve('artifacts/gift-drawer'),{recursive:true});await page.screenshot({path:resolve('artifacts/gift-drawer/mobile.png')});}
-    console.log(`PASS ${width}×${height}: mouse/touch hit regions, bounds, keyboard, hold release/cancel, reopen and submitted quantity`);
+    if(width>=1024) {
+      await page.evaluate(()=>window.setGiftOpen(true));
+      await expect(send).toBeVisible();
+      await page.mouse.click(4,height-4);
+      await expect(send).toHaveCount(0);
+    }
+    console.log(`PASS ${width}×${height}: footer stacking, backdrop dismissal, mouse/touch hit regions, bounds, keyboard, hold release/cancel, reopen and submitted quantity`);
     await page.close();
   }
 } finally { await browser.close(); }

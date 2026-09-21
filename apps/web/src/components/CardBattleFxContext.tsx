@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { OnlineCardBattleEvent } from "../shared/types";
 import { FX_MATERIALS, type FxQuality } from "../shared/cardBattleFx";
 
@@ -58,7 +58,8 @@ export function CardBattleFxProvider({ gameId, event, elapsedMs = 0, playing = t
   const eventKey = `${gameId ?? "preview"}:${event?.sequence ?? "idle"}`;
   const clock = useRef({ key:eventKey, elapsedMs, playing, at:performance.now() });
   if (clock.current.key !== eventKey || clock.current.elapsedMs !== elapsedMs || clock.current.playing !== playing) clock.current = { key:eventKey, elapsedMs, playing, at:performance.now() };
-  const getElapsedMs = () => Math.min(event?.durationMs ?? 0, clock.current.elapsedMs + (clock.current.playing ? performance.now()-clock.current.at : 0));
+  const durationRef = useRef(0); durationRef.current = event?.durationMs ?? 0;
+  const getElapsedMs = useCallback(() => Math.min(durationRef.current, clock.current.elapsedMs + (clock.current.playing ? performance.now()-clock.current.at : 0)), []);
   const automatic = useRef<{ gameId?: string; key: string; quality: FxQuality }>({ gameId, key: "", quality: "standard" });
   if (automatic.current.key !== eventKey) automatic.current = { gameId, key: eventKey, quality: automatic.current.gameId !== gameId ? "standard" : economy ? "economy" : "standard" };
   const quality = preference === "auto" ? automatic.current.quality : preference;

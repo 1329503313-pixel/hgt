@@ -1,3 +1,4 @@
+import { battleMotionRendition, battleMotionWidth } from "./battleMotionRenditions.js";
 import express from "express";
 import type mysql from "mysql2/promise";
 import { stat } from "node:fs/promises";
@@ -1125,6 +1126,17 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     return sendStoredImage(req, res, card.image, req.params.variant === "thumbnail" ? 360 : 1200, "private, max-age=31536000, immutable");
   });
 
+  app.get("/api/media/assets/cards/:id/motion/renditions", async (req, res) => {
+    if (!(await requireAuth(req, res))) return;
+    res.setHeader("Cache-Control", "private, no-store");
+    const width = battleMotionWidth(req.query.width);
+    if (!width) return sendError(res, 400, "动态卡面尺寸无效");
+    const [[card]] = await pool.query<mysql.RowDataPacket[]>("SELECT rarity, motion_mp4_path FROM asset_cards WHERE id = ? LIMIT 1", [req.params.id]);
+    if (!card || !cardRaritySupportsMotion(card.rarity) || !card.motion_mp4_path) return sendError(res, 404, "动态卡面不存在");
+    const rendition = await battleMotionRendition(String(card.motion_mp4_path), width);
+    return res.json({ sources: rendition ? [{ ...rendition.metadata, type: 'video/mp4; codecs="avc1.640029"', url: `/api/media/assets/cards/${encodeURIComponent(req.params.id)}/motion/mp4?width=${width}&v=${rendition.metadata.key}` }] : [] });
+  });
+
   app.get("/api/media/assets/cards/:id/motion/:format", async (req, res) => {
     if (!(await requireAuth(req, res))) return;
     const columns = {
@@ -1151,6 +1163,15 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
             "Content-Type": "image/webp"
           }
         });
+      }
+      if (format === "mp4" && req.query.width !== undefined) {
+        const width = battleMotionWidth(req.query.width);
+        if (!width) return sendError(res, 400, "动态卡面尺寸无效");
+        const rendition = await battleMotionRendition(String(card.media_path), width, false);
+        if (rendition && req.query.v === rendition.metadata.key) return await sendAssetVideo(req, res, rendition.mediaPath);
+        // Evicted, stale or cold variants must not poison the immutable URL cache.
+        res.setHeader("Cache-Control", "private, no-store");
+        return await sendAssetVideo(req, res, String(card.media_path), "private, no-store");
       }
       return await sendAssetVideo(req, res, String(card.media_path));
     } catch {

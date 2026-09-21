@@ -6,7 +6,7 @@ import { CardBattleDeckActions } from "./CardBattleDeckActions";
 import { CardBattleDeckEditor } from "./CardBattleDeckEditor";
 import { BattleCollectiblePicker } from "./BattleCollectiblePicker";
 import { battleCardWithCollectible, battleDeckCollectible } from "../shared/battleCollectibles";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useServerCardBattlePlayback } from "../shared/useServerCardBattlePlayback";
 import { cardBattleRoomExit } from "../shared/cardBattleNavigation";
 import { isCardBattleAnimation, seekCardBattleAnimations } from "../shared/cardBattlePlayback";
@@ -21,7 +21,7 @@ import { useCardBattleDrag } from "../shared/useCardBattleDrag";
 import { filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
 import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
 import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleDeck, OnlineCardBattleEvent, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
-import { AssetMotionMedia } from "./AssetCardVisual";
+import { BattleMotionMedia } from "./BattleMotionMedia";
 import { Modal } from "./Modal";
 import { BossLineupDetails } from "./BossLineupDetails";
 import { StickerKeyboard } from "./StickerKeyboard";
@@ -68,7 +68,7 @@ function battleRoleTone(role: OnlineCardBattleCard["battleRole"]) {
   return "border-rose-200/70 bg-rose-700/90 text-rose-50";
 }
 
-export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower, onClick, selectable, drag }: {
+export const BattleCard = memo(function BattleCard({ card, state, cardBack, seat, activeEvent, showPower, onClick, selectable, drag }: {
   card: OnlineCardBattleCard | null;
   state: OnlineCardBattleCardState | null;
   cardBack: boolean;
@@ -115,6 +115,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
     // attack still travels to the target; its result only changes impact FX.
     const target = activeEvent.effects.flatMap(effect => anchors.filter(el => el.dataset.battleAnchor === effect.targetId && el !== source))[0];
     if (!source || !target || source === target) return;
+    let lastTrajectory = "";
     const measure = () => {
       const actorRect = source.getBoundingClientRect(), targetRect = target.getBoundingClientRect();
       const deltaX = targetRect.left + targetRect.width / 2 - actorRect.left - actorRect.width / 2;
@@ -126,6 +127,9 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
       const x = Math.round(deltaX * ratio), y = Math.round(deltaY * ratio);
       // Resolve pixels before starting the animation. No CSS-variable fallback
       // that can turn a missing/stale trajectory into a small vertical hop.
+      const trajectory = `${x}:${y}`;
+      if (trajectory === lastTrajectory) return;
+      lastTrajectory = trajectory;
       const frames: Keyframe[] = [
         { offset: 0, transform: 'translate(0,0) rotate(0)' },
         { offset: .16, transform: 'translate(0,0) rotate(0)' },
@@ -151,7 +155,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
   }, [activeEvent?.sequence, fx.eventKey, isActor, state?.instanceId, fx.reduced, duration]);
   useLayoutEffect(() => {
     const animation = flightRef.current;
-    if (!animation) return;
+    if (!animation || rootRef.current?.closest("[data-battle-arena]")) return;
     animation.currentTime = fx.getElapsedMs();
     if (fx.playing && fx.visible && Number(animation.currentTime) < duration) animation.play();
     else animation.pause();
@@ -179,13 +183,13 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
     {state && !cardBack && !showPower && <CardBattleStatusIcons statuses={state.statuses ?? []} />}
     {card && !cardBack && isActiveActor && (activeEvent?.counterattack || ((activeEvent?.kind === "skill" || activeEvent?.bond) && activeEvent.skillName)) && <span className="card-battle-skill-name pointer-events-none absolute inset-x-[-8px] -top-6 z-[85] truncate rounded-full border border-amber-200/70 bg-amber-400 px-2 py-1 text-center text-[9px] font-black text-slate-950 shadow-lg" title={activeEvent.counterattack ? "反击" : activeEvent.skillName ?? undefined}>{activeEvent.counterattack ? "反击" : activeEvent.skillName}</span>}
     <div className="absolute inset-x-1 top-1 z-50 h-1.5 overflow-hidden rounded-full bg-slate-950/40" aria-label={state ? `生命比例 ${Math.round(state.hp / Math.max(1, state.maxHp) * 100)}%` : undefined}>
-      <span className={`block h-full transition-[width,background-color] duration-300 ${state ? hpTone(state.hp, state.maxHp) : "bg-emerald-500"}`} style={{ width: `${state ? Math.max(0, state.hp / Math.max(1, state.maxHp) * 100) : 100}%` }} />
-      {state && !cardBack && (state.shield ?? 0) > 0 && <span className="absolute inset-y-0 left-0 bg-white transition-[width] duration-300" style={{ width: `${Math.min(100, (state.shield ?? 0) / Math.max(1, state.maxHp) * 100)}%` }} aria-label={`护盾覆盖比例 ${Math.min(100, Math.round((state.shield ?? 0) / Math.max(1, state.maxHp) * 100))}%`} />}
+      <span className={`block h-full origin-left w-full transition-[transform,background-color] duration-300 ${state ? hpTone(state.hp, state.maxHp) : "bg-emerald-500"}`} style={{ transform: `scaleX(${state ? Math.max(0, state.hp / Math.max(1, state.maxHp)) : 1})` }} />
+      {state && !cardBack && (state.shield ?? 0) > 0 && <span className="absolute inset-y-0 left-0 bg-white origin-left w-full transition-transform duration-300" style={{ transform: `scaleX(${Math.min(1, (state.shield ?? 0) / Math.max(1, state.maxHp))})` }} aria-label={`护盾覆盖比例 ${Math.min(100, Math.round((state.shield ?? 0) / Math.max(1, state.maxHp) * 100))}%`} />}
     </div>
-    {state && <div className="absolute inset-x-1 top-3 z-50 h-1 overflow-hidden rounded-full bg-slate-950/40" aria-label={`能量比例 ${Math.round(state.energy / Math.max(1, state.energyRequired) * 100)}%`}><span className="block h-full bg-cyan-400 transition-[width] duration-300" style={{ width: `${Math.max(0, state.energy / Math.max(1, state.energyRequired) * 100)}%` }} /></div>}
+    {state && <div className="absolute inset-x-1 top-3 z-50 h-1 overflow-hidden rounded-full bg-slate-950/40" aria-label={`能量比例 ${Math.round(state.energy / Math.max(1, state.energyRequired) * 100)}%`}><span className="block h-full bg-cyan-400 origin-left w-full transition-transform duration-300" style={{ transform: `scaleX(${Math.max(0, state.energy / Math.max(1, state.energyRequired))})` }} /></div>}
     {state && (state.shield ?? 0) > 0 && !cardBack && <span className="absolute left-1 top-[38px] z-50 max-w-[calc(100%-8px)] truncate rounded bg-sky-950/90 px-1 text-[10px] font-black text-cyan-100" aria-label={`护盾值 ${state.shield}`}>盾 {state.shield}</span>}
     {cardBack ? <div className="card-battle-back absolute inset-0 grid place-items-center rounded-[inherit]"><Swords size={28} /><span>HGT</span></div> : card ? card.motionMp4Url
-      ? <AssetMotionMedia card={{ ...card, thumbnailUrl: card.imageUrl }} className="h-full w-full rounded-[inherit] object-cover" />
+      ? <BattleMotionMedia name={card.name} imageUrl={card.imageUrl} motionMp4Url={card.motionMp4Url} motionWebmUrl={card.motionWebmUrl} motionPosterUrl={card.motionPosterUrl} />
       : <img src={card.imageUrl} alt={card.name} className="h-full w-full rounded-[inherit] object-cover" draggable={false} />
       : <div className="grid h-full place-items-center rounded-[inherit] border border-dashed border-white/25 bg-white/5 text-center text-[10px] font-bold text-white/45">选择<br />卡牌</div>}
     {card && !cardBack && <>{showPower && <span className="absolute right-1 top-4 z-50 whitespace-nowrap rounded bg-amber-400/95 px-1 py-0.5 text-[8px] font-black text-slate-950 shadow">战力 {combatPowerFormatter.format(card.combatPower)}</span>}<span className="absolute inset-x-1 bottom-1 z-10 rounded bg-slate-950/70 px-1 py-0.5 text-[9px] font-black text-white">{card.collectible && <span className="block truncate text-center text-[10px] text-amber-200" title={card.collectible.name}>{card.collectible.name}</span>}<span className="block truncate text-center" title={card.name}>{card.name}</span></span></>}
@@ -223,7 +227,7 @@ export function BattleCard({ card, state, cardBack, seat, activeEvent, showPower
     {state && !cardBack && <CardBattleProcFx event={activeEvent} instanceId={state.instanceId} />}
     {feedback}
   </div>;
-}
+});
 
 export function HalfArena({ seat, battleSeat, states, activeEvent, showPower, isOwn, position, canSelect, onPick, onReorder, teamMember = false }: {
   teamMember?: boolean;
@@ -251,10 +255,14 @@ export function HalfArena({ seat, battleSeat, states, activeEvent, showPower, is
   useLayoutEffect(() => {
     const half = halfRef.current;
     if (!half) return;
+    let previousSize = "";
     const resize = () => {
       const { cardWidth, columnGap } = teamMember
         ? { cardWidth: Math.max(42, Math.min(130, Math.floor((half.clientWidth - 8) / 2), Math.floor((half.clientHeight - 76) / 2.8))), columnGap: 4 }
         : cardBattleFormationSize(half.clientWidth, half.clientHeight);
+      const size = `${cardWidth}:${columnGap}`;
+      if (size === previousSize) return;
+      previousSize = size;
       half.style.setProperty("--battle-card-width", `${cardWidth}px`);
       half.style.setProperty("--battle-column-gap", `${columnGap}px`);
     };
@@ -291,10 +299,10 @@ export function HalfArena({ seat, battleSeat, states, activeEvent, showPower, is
       activeEvent={activeEvent}
       showPower={showPower}
       selectable={isOwn && canSelect}
-      onClick={() => {
+      onClick={isOwn && canSelect ? () => {
         if (cardDrag.blocksClick()) return;
         onPick(slotNumber);
-      }}
+      } : undefined}
       drag={isOwn && canSelect ? {
         slot: slotNumber,
         draggable,
@@ -383,9 +391,6 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   const [optimisticOwnIds, setOptimisticOwnIds] = useState<Array<string | null> | null>(null);
   const { playback, cardStates, activeEvent, animationDelayMs, syncing } = useServerCardBattlePlayback(roomId, rankingInvalidated ? null : battle.game, onReload);
   const arenaRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (arenaRef.current && activeEvent) seekCardBattleAnimations(arenaRef.current, animationDelayMs);
-  }, [activeEvent, animationDelayMs, playback?.serverNow]);
   const [settlementDismissedGameId, setSettlementDismissedGameId] = useState<string | null>(null);
   const [watchedGameId, setWatchedGameId] = useState<string | null>(null);
   const [confirmingRankingWin, setConfirmingRankingWin] = useState(false);

@@ -128,7 +128,7 @@ export async function finishCardMotionWebm(
     await run(config.ffmpegPath, [
       "-y", "-i", stored.sourcePath, "-an",
       "-vf", "scale='min(1080,iw)':-2:flags=lanczos,fps=30",
-      "-c:v", "libvpx-vp9", "-crf", "24", "-b:v", "0",
+      "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-crf", "24", "-b:v", "0",
       "-deadline", "good", "-cpu-used", "3", "-row-mt", "1", "-g", "60",
       stored.pendingWebmPath
     ]);

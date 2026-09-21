@@ -84,7 +84,7 @@ try {
   await page.getByRole('button', { name: '暂停', exact: true }).click();
   await page.getByLabel('回放进度', { exact: true }).fill('1250');
   const animations = await page.locator('[data-battle-arena]').evaluate(el=>el.getAnimations({subtree:true}).filter(a=>a.id?.startsWith('card-battle-')||a.animationName?.startsWith('card-battle-')).map(a=>({time:a.currentTime,state:a.playState})));
-  assert.ok(animations.length>0 && animations.every(a=>a.state==='paused'&&Math.abs(a.time-1250)<2),'all replay layers seek and pause together');
+  assert.ok(animations.length>0 && animations.every(a=>a.state==='paused'&&Math.abs(a.time-1250)<2),'all replay layers seek and pause together: '+JSON.stringify(animations));
   await page.getByRole('button',{name:'重播',exact:true}).click();
   await expect(page.getByLabel('回放进度',{exact:true})).toHaveValue('0');
   await page.getByLabel('回放进度', { exact: true }).fill('2000'); await expect(page.getByText('回放结束', { exact: true })).toBeVisible();

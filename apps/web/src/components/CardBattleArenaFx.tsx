@@ -5,7 +5,7 @@ import { isCardBattleAnimation, seekCardBattleAnimations } from "../shared/cardB
 import type { OnlineCardBattleEvent } from "../shared/types";
 
 type Point = { x: number; y: number; width: number; height: number; seat: string };
-type Geometry = { width: number; height: number; source?: Point; targets: Point[]; bond?: [Point, Point] };
+type Geometry = { eventKey: string; width: number; height: number; source?: Point; targets: Point[]; bond?: [Point, Point] };
 export function CardBattleArenaFx({ event }: { event: OnlineCardBattleEvent | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const { quality, reduced, visible, elapsedMs, getElapsedMs, playing, eventKey } = useCardBattleFx();
@@ -23,7 +23,8 @@ export function CardBattleArenaFx({ event }: { event: OnlineCardBattleEvent | nu
       const source = points.get(event.actorId ?? "");
       const targets = [...new Set(event.effects.filter(e => !e.dodged).map(e => e.targetId))].flatMap(id => points.has(id) ? [points.get(id)!] : []);
       const owner = points.get(event.bond?.ownerId ?? ""), trigger = points.get(event.bond?.triggerId ?? "");
-      setGeometry({ width: arena.clientWidth, height: arena.scrollHeight, source, targets, bond: owner && trigger && owner !== trigger ? [owner, trigger] : undefined });
+      const next: Geometry = { eventKey, width: arena.clientWidth, height: arena.scrollHeight, source, targets, bond: owner && trigger && owner !== trigger ? [owner, trigger] : undefined };
+      setGeometry(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -33,6 +34,8 @@ export function CardBattleArenaFx({ event }: { event: OnlineCardBattleEvent | nu
   }, [event?.sequence, event?.actorId, eventKey]);
   useLayoutEffect(() => {
     if (!ref.current) return;
+    // A new event first measures its stable anchors, then synchronizes once.
+    if (event && geometry?.eventKey !== eventKey) return;
     const arena = ref.current.closest<HTMLElement>('[data-battle-arena]') ?? ref.current;
     seekCardBattleAnimations(arena, getElapsedMs());
     if (!playing || !visible) arena.getAnimations({ subtree: true }).filter(isCardBattleAnimation).forEach(a => a.pause());

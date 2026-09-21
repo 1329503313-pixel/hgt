@@ -2301,9 +2301,12 @@ function queueSystemBadgeSync(userIds: string[]) {
   }, 0);
 }
 
-async function backfillOnlineSoupAiCompletionBadges() {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL);
-  const userIds = rows.map((row) => String(row.user_id));
+async function backfillAiAchievementBadges() {
+  const [[rows], [keyHitRows]] = await Promise.all([
+    pool.query<mysql.RowDataPacket[]>(AI_COMPLETION_BADGE_BACKFILL_USERS_SQL),
+    pool.query<mysql.RowDataPacket[]>("SELECT user_id FROM game_key_hits GROUP BY user_id HAVING COUNT(*) >= 10"),
+  ]);
+  const userIds = [...new Set([...rows, ...keyHitRows].map((row) => String(row.user_id)))];
   for (let index = 0; index < userIds.length; index += 5) {
     await Promise.all(userIds.slice(index, index + 5).map((userId) => syncBadgeUnlocksForUser(userId)));
   }
@@ -8372,9 +8375,9 @@ const shiningCrownBadgeBackfillCount = await backfillShiningCrownBadges();
 if (shiningCrownBadgeBackfillCount > 0) {
   console.log(`Backfilled shining crown badges for ${shiningCrownBadgeBackfillCount} user(s)`);
 }
-const aiCompletionBadgeBackfillCount = await backfillOnlineSoupAiCompletionBadges();
-if (aiCompletionBadgeBackfillCount > 0) {
-  console.log(`Backfilled AI completion badges for ${aiCompletionBadgeBackfillCount} user(s)`);
+const aiAchievementBadgeBackfillCount = await backfillAiAchievementBadges();
+if (aiAchievementBadgeBackfillCount > 0) {
+  console.log(`Synced AI completion and key hit badges for ${aiAchievementBadgeBackfillCount} user(s)`);
 }
 await refreshBadgeOwnershipRates();
 const badgeOwnershipRefreshTimer = setInterval(() => {

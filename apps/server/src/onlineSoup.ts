@@ -9,6 +9,8 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { config } from "./config.js";
 import { pool } from "./db.js";
+import { recordKeyHits } from "./gameKeyHits.js";
+import { runPostCommitTask } from "./postCommit.js";
 import { lockRankingForCardBattleRoom } from "./cardBattleRankingState.js";
 import { isBossRoom, BOSS_SPECTATOR_SEATS } from "./cardBattleBossRules.js";
 import { bossAvailable, CardBattleBossRuleError } from "./cardBattleBoss.js";
@@ -1384,6 +1386,7 @@ async function processRoomAiQuestions(roomId: string) {
         const connection = await pool.getConnection();
         let ended = false;
         let voteOpened = false;
+        let recordedKeyHits = 0;
         try {
           await connection.beginTransaction();
           await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [roomId]);
@@ -1412,6 +1415,9 @@ async function processRoomAiQuestions(roomId: string) {
               JSON.stringify(turn.revealedSupplements.surfaces), pending.round_id]
           );
           await persistFactTransitions(connection, String(pending.round_id), turn.factTransitions, String(pending.sender_id), String(pending.id));
+          if (!turn.scoringDegraded) {
+            recordedKeyHits = await recordKeyHits(String(pending.sender_id), String(pending.soup_id), turn.newlyRevealedKeys, connection);
+          }
           const baseFeedback = turn.scoringDegraded
             ? { kind: "off_track" as const, text: "最终判断已完成，本题进度核对暂未计分" }
             : roomAiProgressFeedback(
@@ -1483,6 +1489,11 @@ async function processRoomAiQuestions(roomId: string) {
           await connection.rollback();
           throw error;
         } finally { connection.release(); }
+        if (recordedKeyHits > 0) {
+          runPostCommitTask("Online soup key hit badge sync", async () => {
+            badgeProgressListener([String(pending.sender_id)]);
+          });
+        }
         let activitySequence: string | null = null;
         try {
           activitySequence = await recordRoomActivity(roomId, "progress", null, String(pending.id));
@@ -3771,11 +3782,7 @@ router.post("/rooms/:roomId/leave", async (req, res) => {
       await releaseCardBattleSeat(context.room.id, context.user.id, leaveConnection);
     }
     await systemMessage(context.room.id, context.room.current_round_id, `${context.user.nickname} 离开了房间`, leaveConnection);
-    const started = isBossRoom(context.room) && await bossAvailable(context.room.id, leaveConnection)
-      ? await startBossIfReady(context.room.id, leaveConnection) : null;
-    if (started) await systemMessage(context.room.id, null, `BOSS 挑战第 ${started.gameNumber} 局开始，全体参战玩家已准备`, leaveConnection);
     await leaveConnection.commit();
-    if (started) scheduleCardBattleEnd(context.room.id, started.playbackEndsAt);
   } catch (error) { await leaveConnection.rollback().catch(() => {}); throw error; }
   finally { leaveConnection.release(); }
   res.json({ ok: true });

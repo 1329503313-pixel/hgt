@@ -177,7 +177,16 @@ export async function claimCardBattleSeat(roomId: string, userId: string, db: my
   return seat as 1 | 2 | 3;
 }
 
+/** Caller holds the room lock; reset consent before removing an unready teammate. */
 export async function releaseCardBattleSeat(roomId: string, userId: string, db: mysql.PoolConnection) {
+  await db.query(
+    `UPDATE online_card_battle_seats seats
+     JOIN online_card_battle_seats departing ON departing.room_id = seats.room_id AND departing.user_id = ? AND departing.is_ready = 0
+     JOIN online_soup_rooms rooms ON rooms.id = seats.room_id
+     SET seats.is_ready = 0
+     WHERE seats.room_id = ? AND rooms.status IN ('preparing', 'ended') AND seats.is_ready = 1`,
+    [userId, roomId],
+  );
   await db.query("DELETE FROM online_card_battle_seats WHERE room_id = ? AND user_id = ?", [roomId, userId]);
 }
 

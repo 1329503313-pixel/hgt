@@ -3,6 +3,7 @@ import { initCardBattleBossSchema } from "./cardBattleBossSchema.js";
 import { initCardTowerSchema } from "./cardTowerSchema.js";
 import { initOnlineSoupHistory } from "./onlineSoupHistory.js";
 import { initGameRecords } from "./gameRecords.js";
+import { backfillOnlineSoupKeyHits } from "./gameKeyHits.js";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
@@ -2521,6 +2522,7 @@ export async function initDatabase() {
     WHERE hit.key_id IS NOT NULL
   `);
   await ensureColumn("game_sessions", "revealed_supplements", "revealed_supplements JSON NULL AFTER revealed_keys");
+  await backfillOnlineSoupKeyHits(pool);
   await ensureColumn("game_sessions", "revealed_atoms", "revealed_atoms JSON NULL AFTER revealed_keys");
   await ensureColumn("game_sessions", "content_hash", "content_hash VARCHAR(64) NULL AFTER revealed_supplements");
   await ensureColumn("game_sessions", "version", "version INT UNSIGNED NOT NULL DEFAULT 0 AFTER progress");

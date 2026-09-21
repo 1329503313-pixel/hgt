@@ -37,7 +37,7 @@ const bundled = await build({
       window.setGame = setGame;
       const state = useServerCardBattlePlayback("room", game, async () => { window.reloadCount = (window.reloadCount || 0) + 1; });
       useLayoutEffect(() => { if (arena.current && state.activeEvent) seekCardBattleAnimations(arena.current, state.animationDelayMs); }, [state.activeEvent, state.animationDelayMs]);
-      return <><output id="state">{JSON.stringify(state)}</output><div ref={arena}><div id="card" className={state.activeEvent ? "card-battle-card card-battle-attacker-1" : "card-battle-card"}><video id="media" /></div></div></>;
+      return <><output id="state">{JSON.stringify(state)}</output><div ref={arena}><div id="card" className={state.activeEvent ? "card-battle-card playback-test-animation" : "card-battle-card"}><video id="media" /></div></div></>;
     }
     createRoot(document.getElementById("root")).render(<Harness />);
   ` },
@@ -62,7 +62,7 @@ try {
     await page.clock.pauseAt(Date.now() + 1000);
     await page.goto("http://127.0.0.1:49879/fixture");
     await page.evaluate((playback) => { window.initialGame = { id: "game", playback }; }, snapshot());
-    await page.addStyleTag({ content: readFileSync(resolve("apps/web/src/styles.css"), "utf8").replace('@import "./cardBattleEffects.css";', "") + readFileSync(resolve("apps/web/src/cardBattleEffects.css"), "utf8") + ":root{--skill-duration:1050ms}" });
+    await page.addStyleTag({ content: readFileSync(resolve("apps/web/src/styles.css"), "utf8").replace('@import "./cardBattleEffects.css";', "") + readFileSync(resolve("apps/web/src/cardBattleEffects.css"), "utf8") + ":root{--skill-duration:1050ms}.playback-test-animation{animation:card-battle-playback-test 1050ms linear both}@keyframes card-battle-playback-test{from{transform:translateX(0)}to{transform:translateX(20px)}}" });
     await page.addScriptTag({ content: bundled.outputFiles[0].text });
     await expect(page.locator("#state")).not.toHaveText("");
     return page;

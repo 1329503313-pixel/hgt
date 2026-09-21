@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { Minus, Shell, X } from "lucide-react";
 import { api } from "../api";
 import { useApp } from "../context/AppContext";
@@ -164,8 +165,9 @@ export function GiftDrawer({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/45" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+  // Escape the page stacking context so the footer cannot cover the drawer.
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="flex max-h-[100dvh] w-full max-w-2xl flex-col rounded-t-[28px] bg-white px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 shadow-2xl">
         <div className="mx-auto mb-3 h-1.5 w-12 shrink-0 rounded-full bg-slate-200" />
         <div className="flex shrink-0 items-center justify-between">
@@ -256,6 +258,7 @@ export function GiftDrawer({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

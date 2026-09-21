@@ -20,7 +20,7 @@ const fixtureTables = new Set<string>();
 try {
   const [tables] = await admin.query<mysql.RowDataPacket[]>("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [sourceDatabase]);
   const recordTables = ['game_records','game_record_users','game_record_impostor_steps','game_record_starts'];
-  const sourceTables = tables.filter((table) => !/^(bt_|rh_|gr_)/.test(String(table.TABLE_NAME)) && !String(table.TABLE_NAME).startsWith("card_battle_boss") && !recordTables.includes(String(table.TABLE_NAME)));
+  const sourceTables = tables.filter((table) => !/^(bt_|rh_|gr_|vr_)/.test(String(table.TABLE_NAME)) && !String(table.TABLE_NAME).startsWith("card_battle_boss") && !recordTables.includes(String(table.TABLE_NAME)));
   const names = [...sourceTables.map((table) => String(table.TABLE_NAME)), ...recordTables, "card_battle_boss_covers", "card_battle_bosses", "card_battle_boss_participants", "card_battle_boss_rewards"];
   for (const name of names) { assert.match(name, /^[a-zA-Z0-9_]+$/); assert.ok((fixturePrefix + name).length <= 64); fixtureTables.add(fixturePrefix + name); }
   for (const table of sourceTables) await admin.query(`CREATE TABLE \`${fixturePrefix}${table.TABLE_NAME}\` LIKE \`${table.TABLE_NAME}\``);
@@ -100,6 +100,36 @@ try {
   assert.equal(snapshot.room.cardBattle.mode, "boss"); assert.equal(snapshot.me.isHost, false);
   assert.equal(prepared.seats.length, 3); assert.ok(prepared.seats.every((seat) => seat.lineup.every((item) => item.card && !item.cardBack)));
   assert.deepEqual(prepared.seats.map((seat) => seat.lineup[0]!.card!.starLevel), [0, 1, 2]);
+  // A smaller team needs fresh consent: departure cannot turn partial readiness into a battle.
+  const assertWaiting = async (readyUsers: string[]) => {
+    const state = await cardBattleClientState(boss.roomId, "u0");
+    assert.deepEqual(state.seats.filter((seat) => seat.ready).map((seat) => seat.user!.id).sort(), readyUsers);
+    const [[count]] = await pool!.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM online_card_battles WHERE room_id=?", [boss.roomId]);
+    assert.equal(count.total, 0, "Leaving must not create a battle");
+    assert.equal((await request(path, "u0")).room.status, "preparing");
+  };
+  await request(`${path}/card-battle/ready`, "u0", "POST", { ready: true });
+  await request(`${path}/card-battle/ready`, "u1", "POST", { ready: true });
+  await request(`${path}/leave`, "u13", "POST", {});
+  await assertWaiting(["u0", "u1"]); // Spectators do not change the fighting team.
+  await request(`${path}/leave`, "u2", "POST", {});
+  await assertWaiting([]); // Both remaining players must immediately be unready.
+  await recoverCardBattleGames();
+  await assertWaiting([]); // Recovery cannot start the reduced team either.
+  await request(`${path}/card-battle/ready`, "u0", "POST", { ready: true });
+  await request(`${path}/leave`, "u1", "POST", {});
+  await recoverCardBattleGames();
+  await assertWaiting([]); // Two seats shrinking to one must not start a solo battle.
+  for (const user of ["u1", "u2"]) {
+    await request(`${path}/join-auto`, user, "POST", {});
+    await request(`${path}/card-battle/lineup`, user, "PUT", { cardIds: cardIds.slice(0, 3) });
+  }
+  await request(`${path}/card-battle/ready`, "u0", "POST", { ready: true });
+  await request(`${path}/card-battle/ready`, "u1", "POST", { ready: true });
+  await request(`${path}/card-battle/member-role`, "u2", "POST", { role: "spectator" });
+  await assertWaiting([]); // Switching out of the fighting seats shares the same guard.
+  await request(`${path}/card-battle/member-role`, "u2", "POST", { role: "player" });
+  await request(`${path}/card-battle/lineup`, "u2", "PUT", { cardIds: cardIds.slice(0, 3) });
   await Promise.all(["u0", "u1", "u2"].map((user) => request(`${path}/card-battle/ready`, user, "POST", { ready: true })));
   const [[first]] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM online_card_battles WHERE room_id=?", [boss.roomId]);
   assert.equal(first.game_number, 1); assert.equal(JSON.parse(JSON.stringify(first.result_json)).winnerSeat, 1);
@@ -158,7 +188,24 @@ try {
   const [[permanent]] = await pool.query<mysql.RowDataPacket[]>("SELECT room_code,host_id,status FROM online_soup_rooms WHERE id=?", [boss.roomId]);
   assert.equal(permanent.room_code, boss.code); assert.equal(permanent.host_id, null); assert.notEqual(permanent.status, "closed");
   await request(`${base}/${boss.roomId}`, "staff", "PUT", boss, 403);
-  console.log("PASS: schema migration twice, superadmin API, immutable uploads, publication validation, 3+10 seats, teammate previews, simultaneous readiness, frozen replay, explicit exit vs disconnect, atomic once-per-room rewards, solo autostart, permanent room lifecycle.");
+  for (const departure of ["member", "host", "kick"] as const) {
+    const normal = await request("/rooms", "u2", "POST", { name: "退出准备回归", type: "public", contentType: "card_battle" }, 201);
+    const normalPath = `/rooms/${normal.roomId}`;
+    await request(`${normalPath}/join-auto`, "u3", "POST", {});
+    const remaining = departure === "host" ? "u3" : "u2";
+    await request(`${normalPath}/card-battle/lineup`, remaining, "PUT", { cardIds });
+    await request(`${normalPath}/card-battle/ready`, remaining, "POST", { ready: true });
+    if (departure === "kick") await request(`${normalPath}/members/u3/kick`, "u2", "POST", {});
+    else await request(`${normalPath}/leave`, departure === "host" ? "u2" : "u3", "POST", {});
+    const state = await cardBattleClientState(normal.roomId, remaining);
+    assert.equal(state.seats.filter((seat) => seat.user).length, 1);
+    assert.equal(state.seats.some((seat) => seat.ready), false, `${departure}: remaining player must be unready`);
+    assert.equal(state.game, null);
+    const snapshot = await request(normalPath, remaining);
+    assert.equal(snapshot.room.status, "preparing");
+    if (departure === "host") assert.equal(snapshot.me.isHost, true);
+  }
+  console.log("PASS: unready departure resets 3-to-2 and 2-to-1 teams, recovery cannot autostart, spectator exit preserves readiness, role changes, ordinary member/host exit and kick; schema migration twice, simultaneous readiness, frozen replay, explicit exit vs disconnect, atomic rewards, solo autostart, permanent room lifecycle.");
 } finally {
   if (server) { server.closeAllConnections(); await new Promise<void>((resolve) => server!.close(() => resolve())); }
   if (pool) await pool.end();

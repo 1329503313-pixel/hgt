@@ -149,11 +149,11 @@ test("管理后台和选卡弹窗展示对战定位并支持数值与技能视�
 });
 
 test("战场隐藏星级并使用共享动态媒体播放器", () => {
-  const battleCard = view.slice(view.indexOf("export function BattleCard("), view.indexOf("export function CardBattleRoomView("));
+  const battleCard = view.slice(view.indexOf("export const BattleCard"), view.indexOf("export function CardBattleRoomView("));
   assert.doesNotMatch(battleCard, /card\.starLevel|★/);
   assert.match(view, /card\.motionMp4Url/);
-  assert.match(view, /<AssetMotionMedia/);
-  assert.match(view, /thumbnailUrl: card\.imageUrl/);
+  assert.match(view, /<BattleMotionMedia/);
+  assert.match(view, /imageUrl={card\.imageUrl}/);
 });
 
 test("技能名称在四个星级联动，其他技能配置仍按当前星级编辑", () => {
@@ -176,7 +176,10 @@ test("服务器时间轴驱动动画，恢复焦点直接同步且不依赖本�
   assert.match(hook, /visibilityState === "visible"/);
   for (const event of ["focus", "pageshow", "online", "visibilitychange"]) assert.ok(hook.includes(`addEventListener("${event}"`));
   assert.match(hook, /bypassCache: true, dedupe: false/);
-  assert.match(view, /seekCardBattleAnimations\(arenaRef.current, animationDelayMs\)/);
+  assert.match(view, /<CardBattleArenaFx event={activeEvent}/);
+  const arenaFx = readFileSync(new URL("../src/components/CardBattleArenaFx.tsx", import.meta.url), "utf8");
+  assert.match(arenaFx, /seekCardBattleAnimations\(arena, getElapsedMs\(\)\)/);
+  assert.doesNotMatch(view, /seekCardBattleAnimations\(arenaRef.current/);
   assert.doesNotMatch(view, /(?:skipAnimation|onSkip|跳过动画|跳过战斗)/);
   assert.match(view, /actor\.animate\(frames/);
   assert.match(view, /对局中对战者退出即认输/);

@@ -4,6 +4,7 @@ import mysql from "mysql2/promise";
 import { nanoid } from "nanoid";
 import { createHash } from "crypto";
 import { pool } from "./db.js";
+import { recordKeyHits } from "./gameKeyHits.js";
 import { awardShellTask } from "./shellCurrency.js";
 import { canEnableAiGameRole, canViewAllSoupContentRole, type UserRole } from "./roles.js";
 import { recordUserBehavior } from "./behaviorAnalytics.js";
@@ -198,20 +199,6 @@ async function aiRateLimiter(req: any, res: any, next: any) {
     console.error("AI quota check failed:", error);
     return res.status(503).json({ error: "AI 配额服务暂时不可用，请稍后再试" });
   }
-}
-
-async function recordKeyHits(userId: string, soupId: string, keyIds: unknown[], db: mysql.Pool | mysql.PoolConnection = pool) {
-  const uniqueIds = Array.from(new Set(
-    keyIds.map((id) => Number(id)).filter((id) => Number.isInteger(id))
-  ));
-  if (uniqueIds.length === 0) return;
-
-  const placeholders = uniqueIds.map(() => "(?, ?, ?)").join(", ");
-  const values = uniqueIds.flatMap((keyId) => [userId, soupId, keyId]);
-  await db.query(
-    `INSERT IGNORE INTO game_key_hits (user_id, soup_id, key_id) VALUES ${placeholders}`,
-    values
-  );
 }
 
 // ---------- 构建 System Prompt ----------
@@ -896,6 +883,7 @@ export async function runRoomAiTurn(
     factMatches: turn.factMatches,
     progress: turn.progress,
     revealedKeys: turn.revealedKeys,
+    newlyRevealedKeys: turn.newlyRevealedKeys,
     revealedAtomicFactIds: turn.revealedAtomicFactIds,
     newlyRevealedAtomicFactIds: turn.newlyRevealedAtomicFactIds,
     revealedSupplements: turn.revealedSupplements,

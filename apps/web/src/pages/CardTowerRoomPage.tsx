@@ -1,6 +1,6 @@
 import { CardBattleFxProvider, CardBattleFxQualityControl } from "../components/CardBattleFxContext";
 import { CardBattleArenaFx } from "../components/CardBattleArenaFx";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Layers, Play, Shell, X } from "lucide-react";
 import { cardTowerFormationError, type BattleCollectible, type CardTowerFormation } from "@hgt/shared";
@@ -8,7 +8,6 @@ import { api } from "../api";
 import { useApp } from "../context/AppContext";
 import type { OnlineCardBattleCard, OnlineCardBattleDeck, OnlineCardBattlePlayback, OnlineSoupSnapshot } from "../shared/types";
 import { useServerCardBattlePlayback } from "../shared/useServerCardBattlePlayback";
-import { seekCardBattleAnimations } from "../shared/cardBattlePlayback";
 import { battleCardWithCollectible } from "../shared/battleCollectibles";
 import { HalfArena } from "../components/CardBattleRoomView";
 import { CardBattleDeckEditor } from "../components/CardBattleDeckEditor";
@@ -60,7 +59,6 @@ function TowerRoom({ roomId }: { roomId: string }) {
     return () => { window.clearInterval(timer); window.removeEventListener("focus", resume); };
   }, [user?.id, load, loadResources]);
   const { cardStates, activeEvent, animationDelayMs, playback, syncing } = useServerCardBattlePlayback(roomId, data?.game ?? null, load, `/api/online-soup/card-tower/rooms/${roomId}/playback`);
-  useLayoutEffect(() => { if (arenaRef.current && activeEvent) seekCardBattleAnimations(arenaRef.current, animationDelayMs); }, [activeEvent, animationDelayMs, playback?.serverNow]);
   useEffect(() => {
     if (data?.game?.status === "playing") { seenPlaying.current = data.game.id; setEditor(false); setDeckPicker(false); }
     if (data?.game?.settlement && seenPlaying.current === data.game.id && settled.current !== data.game.id) {
