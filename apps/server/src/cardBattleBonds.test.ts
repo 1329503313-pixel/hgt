@@ -69,7 +69,7 @@ test('所有羁绊类型按数值/回合要求校验，旧技能字段不能混�
     assert.equal(cardBattleBondsSchema.safeParse([{...valid,actions:[{...valid.actions[0],value:bondNeedsValue(type)?null:1}]}]).success,false,type);
     assert.equal(cardBattleBondsSchema.safeParse([{...valid,actions:[{...valid.actions[0],duration:bondNeedsDuration(type)?null:1}]}]).success,false,type);
   }
-  assert.equal(Object.keys(CARD_BATTLE_BOND_EVENTS).length,13);
+  assert.equal(Object.keys(CARD_BATTLE_BOND_EVENTS).length,15);
   assert.equal(cardBattleBondsSchema.safeParse([bond('attack',[action('stun_up','self',100.01)])]).success,false);
   assert.equal(cardBattleBondsSchema.safeParse([bond('attack',[action('attack_up','self',1.5)])]).success,false);
   assert.equal(cardBattleBondsSchema.safeParse([{...bond('attack'),cardNos:[]}]).success,false);

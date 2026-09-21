@@ -1,4 +1,6 @@
 const SERVER_MEDIA_PREFIXES = [
+  // Built-in stickers are returned by the server catalog just like uploaded media.
+  "/stickers/",
   "/api/media/",
   "/api/banners/",
   "/api/online-soup/card-battle-boss/covers/"

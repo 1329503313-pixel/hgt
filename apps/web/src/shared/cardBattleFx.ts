@@ -48,6 +48,9 @@ const fallback: Record<OnlineCardBattleEvent["visual"], FxFamily> = {
   extra_action: "time", stun: "stun", round: "neutral", end: "neutral",
 };
 export function eventFx(event: OnlineCardBattleEvent) {
+  // An attack keeps its identity even when triggered by a bond or replayed
+  // with legacy skill metadata. Outcome feedback is a separate layer.
+  if (event.kind === "attack") return { family: "slash" as FxFamily, spec: undefined, color: "#ffe1a4", pattern: "single" };
   const spec = event.effectType ? CARD_BATTLE_MOTIONS[event.effectType] : undefined;
   const action = event.bond?.actionType;
   const family = spec ? effectFamily(event.effectType!, spec)
@@ -65,6 +68,15 @@ export function fxParticles(event: OnlineCardBattleEvent, instanceId: string, qu
   const { perTarget } = FX_BUDGET[quality];
   const particles = Math.max(0, FX_BUDGET[quality].particles - (event.lifesteal ? 4 : 0) - (event.bond ? 2 : 0));
   const count = Math.min(perTarget, Math.floor(particles / Math.max(1, ids.length)) + (index < particles % ids.length ? 1 : 0));
+  if (event.kind === "attack") {
+    // Fixed impact sparks across rounds/cards; economy keeps the same first
+    // two sparks instead of redistributing every angle when quality changes.
+    return [
+      { x: -28, y: 22, angle: -38, size: 3 }, { x: 30, y: -26, angle: -38, size: 3 },
+      { x: -38, y: 8, angle: -18, size: 2 }, { x: 39, y: -9, angle: -18, size: 2 },
+      { x: -12, y: 34, angle: -65, size: 2 }, { x: 14, y: -36, angle: -65, size: 2 },
+    ].slice(0, count);
+  }
   let seed = 2166136261;
   for (const char of `${event.sequence}:${instanceId}`) seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
   return Array.from({ length: count }, (_, i) => {

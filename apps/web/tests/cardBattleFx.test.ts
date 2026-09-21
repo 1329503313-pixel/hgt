@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { CardBattleSkillFx } from "../src/components/CardBattleEffects";
 import { CARD_BATTLE_BOND_ACTIONS } from "@hgt/shared";
 import { cardBattleEffectCodes } from "../../server/src/cardBattle.js";
 import { CARD_BATTLE_MOTIONS } from "../src/shared/cardBattleMotion";
@@ -27,6 +30,41 @@ test("旧增益事件中性兼容，羁绊使用动作元数据，已有技能�
   assert.equal(eventFx(event()).family,"neutral");
   assert.equal(eventFx(event({bond:{ownerId:"source",triggerId:"target0",actionType:"crit_damage_up"}})).family,"critical");
   assert.equal(eventFx(event({effectType:"heal_all_allies",bond:{ownerId:"source",triggerId:"target0",actionType:"skill"}})).family,"heal");
+});
+test("普攻跨回合保持斩击与固定火花，节能保留同位置的火花子集", () => {
+  const attack = event({kind:"attack",visual:"damage",effects:[{targetId:"target0",amount:-100}]});
+  const later = {...attack,sequence:42,round:8};
+  assert.equal(eventFx(attack).family,"slash");
+  assert.deepEqual(eventFx(later),eventFx(attack));
+  assert.deepEqual(eventFx({...attack,effectType:"damage_random",bond:{ownerId:"source",triggerId:"target0",actionType:"skill"}}),eventFx(attack));
+  assert.deepEqual(fxParticles(later,"target0","standard"),fxParticles(attack,"target0","standard"));
+  assert.deepEqual(fxParticles(attack,"target0","economy"),fxParticles(attack,"target0","standard").slice(0,2));
+  assert.notDeepEqual(fxParticles({...attack,kind:"skill"},"target0","standard"),fxParticles({...later,kind:"skill"},"target0","standard"));
+});
+test("格挡、盾伤、闪避与保护单独反馈，不替换普攻主体也不生成命中火花", () => {
+  const outcomes = [
+    {effect:{blocked:true},family:"armor",feedback:"blocked"},
+    {effect:{shieldDamage:30},family:"shield",feedback:"shield-hit"},
+    {effect:{dodged:true},family:"dodge",feedback:"dodge"},
+    {effect:{protection:"invincible" as const},family:"immunity",feedback:"invincible"},
+    {effect:{protection:"death_protection" as const},family:"life",feedback:"death_protection"},
+  ];
+  for (const {effect,family,feedback} of outcomes) {
+    const attack=event({kind:"attack",visual:"damage",effects:[{targetId:"target0",amount:0,...effect}]});
+    const html=renderToStaticMarkup(createElement(CardBattleSkillFx,{event:attack,instanceId:"target0"}));
+    assert.match(html,/data-fx-family="slash"/);
+    assert.ok(html.includes(`data-fx-family="${family}"`));
+    assert.ok(html.includes(`data-feedback="${feedback}"`));
+    assert.match(html,/is-outcome/);
+    assert.doesNotMatch(html,/card-battle-fx-particle|card-battle-fx-texture/);
+  }
+});
+test("普攻暴击与反击保留斩击，反击标记独立，普通命中不依赖贴图", () => {
+  const attack=event({kind:"attack",visual:"damage",counterattack:true,effects:[{targetId:"target0",amount:-100,critical:true}]});
+  const target=renderToStaticMarkup(createElement(CardBattleSkillFx,{event:attack,instanceId:"target0"}));
+  assert.match(target,/data-fx-family="slash"/);assert.match(target,/card-battle-fx-critical/);assert.doesNotMatch(target,/card-battle-fx-texture/);
+  const caster=renderToStaticMarkup(createElement(CardBattleSkillFx,{event:attack,instanceId:"source"}));
+  assert.match(caster,/data-fx-family="slash"/);assert.match(caster,/data-fx-family="counter"/);assert.match(caster,/is-outcome/);
 });
 test("闪避、保护、盾吸收和真实破盾不误判，抵抗击晕仍允许伤害反馈", () => {
   const e=event({visual:"damage",effects:[{targetId:"t",dodged:true,amount:0}]});assert.equal(targetFeedback(e,"t"),"dodge");

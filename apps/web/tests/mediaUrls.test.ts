@@ -20,6 +20,37 @@ test("resolves API media and banner paths against the configured API origin", ()
   );
 });
 
+test("resolves built-in and uploaded stickers to the same server in APP payloads", () => {
+  const builtIn = {
+    id: "tangtang-detective-hello",
+    staticUrl: "/stickers/tangtang-detective/hello/TTZT_01_你好呀_V1_static.webp",
+    animatedUrl: "/stickers/tangtang-detective/hello/TTZT_01_你好呀_V1_320.webp",
+    owned: true
+  };
+  const uploaded = {
+    id: "uploaded-1",
+    staticUrl: "/api/media/stickers/uploaded-1/static?v=123",
+    animatedUrl: "/api/media/stickers/uploaded-1/animated?v=123",
+    owned: true
+  };
+  const source = { series: [{ id: "tangtang", stickers: [builtIn] }, { id: "custom", stickers: [uploaded] }] };
+  const normalized = normalizeServerMediaUrls(source, `${apiOrigin}/`);
+  for (const [index, sticker] of [builtIn, uploaded].entries()) {
+    assert.deepEqual(normalized.series[index].stickers[0], {
+      ...sticker,
+      staticUrl: `${apiOrigin}${sticker.staticUrl}`,
+      animatedUrl: `${apiOrigin}${sticker.animatedUrl}`
+    });
+  }
+  const encoded = encodeURI(builtIn.animatedUrl) + "?v=2";
+  assert.equal(resolveServerMediaUrl(encoded, apiOrigin), `${apiOrigin}${encoded}`);
+  assert.equal(resolveServerMediaUrl(`${apiOrigin}${encoded}`, apiOrigin), `${apiOrigin}${encoded}`);
+  assert.equal(resolveServerMediaUrl(builtIn.staticUrl, ""), builtIn.staticUrl);
+  assert.equal(normalizeServerMediaUrls(source, ""), source);
+  assert.equal(source.series[0].stickers[0], builtIn);
+  assert.equal(isServerMediaPath("/stickers-other/file.webp"), false);
+});
+
 test("does not rewrite navigation, bundled, data, blob, or absolute URLs", () => {
   const preserved = [
     "/mine/store",

@@ -1,4 +1,12 @@
 export declare const CARD_BATTLE_BOND_EVENTS: {
+    readonly lifesteal: "触发吸血";
+    readonly stunned: "被击晕";
+    readonly healed: "被治疗";
+    readonly shielded: "被增加护盾";
+    readonly critical: "攻击或技能造成暴击";
+    readonly extra_action: "触发再动";
+    readonly dodge: "触发闪避";
+    readonly stun: "触发击晕";
     readonly attack: "普通攻击";
     readonly skill: "使用技能";
     readonly death: "死亡";
@@ -6,12 +14,6 @@ export declare const CARD_BATTLE_BOND_EVENTS: {
     readonly hp_half: "生命值降低至50%及以下";
     readonly energy_full: "能量为满";
     readonly energy_empty: "能量为空";
-    readonly extra_action: "触发再动";
-    readonly lifesteal: "触发吸血";
-    readonly stun: "触发击晕";
-    readonly stunned: "被击晕";
-    readonly healed: "被治疗";
-    readonly shielded: "被增加护盾";
 };
 export declare const CARD_BATTLE_BOND_TARGETS: {
     readonly self: "自己";

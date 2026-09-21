@@ -93,8 +93,8 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
     if (["impostor", "card_battle"].includes(session?.snapshot.room.contentType ?? "")) setMessageMode("discussion");
   }, [session?.snapshot.room.contentType]);
   useEffect(() => {
-    if (session?.snapshot.room.remainingQuestionCount === 0) setMessageMode("discussion");
-  }, [session?.snapshot.room.remainingQuestionCount]);
+    if (session?.snapshot.room.status !== "playing" || session?.snapshot.room.remainingQuestionCount === 0) setMessageMode("discussion");
+  }, [session?.snapshot.room.status, session?.snapshot.room.remainingQuestionCount]);
 
   const clearDock = useCallback(() => {
     voice.disconnect();
@@ -317,10 +317,9 @@ export function OnlineSoupDockProvider({ children }: { children: ReactNode }) {
         </button>}
         {session.snapshot.room.communicationMode === "voice" && <OnlineSoupVoiceControls roomId={session.snapshot.room.id} />}
         {session.snapshot.room.communicationMode !== "voice" && (session.snapshot.me.role !== "spectator" || session.snapshot.room.contentType === "card_battle") && !currentMemberMuted && <div className="online-soup-mini-composer">
-          {session.snapshot.me.role === "player" && !["impostor", "card_battle"].includes(session.snapshot.room.contentType) && <button
+          {session.snapshot.room.status === "playing" && session.snapshot.me.role === "player" && !["impostor", "card_battle"].includes(session.snapshot.room.contentType) && <button
             type="button"
             className={messageMode === "question" ? "is-question" : ""}
-            disabled={session.snapshot.room.status !== "playing"}
             onClick={() => setMessageMode((current) => {
               if (current === "discussion" && session.snapshot.room.remainingQuestionCount === 0) {
                 showToast("本轮提问次数已用尽，请等待主持人完成回答");

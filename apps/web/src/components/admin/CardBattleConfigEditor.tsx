@@ -2,6 +2,7 @@ import { CARD_BATTLE_DEFENSE_EFFECT_LABELS, CARD_BATTLE_ACCURACY_STATS, cardBatt
 import { CARD_BATTLE_CONTROL_LABELS, cardBattleControlNeedsDuration, isCardBattleControlEffect, isCardBattleStun, isCardBattleImmunity, isCardBattleCleanse, isCardBattleAttachedOnly } from "@hgt/shared";
 import { useState } from "react";
 import { Copy, Plus, Trash2 } from "lucide-react";
+import { CARD_BATTLE_EVENT_CONDITION_LABELS } from "@hgt/shared";
 import { CARD_BATTLE_PROC_BUFF_LABELS, CARD_BATTLE_PROC_BUFF_CODES, CARD_BATTLE_PROC_STATS, cardBattleProcStat, isCardBattleDamageEffect } from "@hgt/shared";
 import { CARD_BATTLE_DEBUFF_LABELS, isCardBattleDebuff } from "../../shared/cardBattleEffects";
 import type { CardBattleCondition, CardBattleEffectType } from "../../shared/digitalAssets";
@@ -12,6 +13,7 @@ import { CardDamageValueEditor } from "./CardDamageValueEditor";
 import type { CardBattleActionDraft, CardBattleTierDraft } from "./cardBattleEditorDraft";
 
 const conditionLabels: Record<CardBattleCondition, string> = {
+  ...CARD_BATTLE_EVENT_CONDITION_LABELS,
   energy_full: "能量为满",
   self_death: "本卡片死亡",
   self_hp_below_percent: "本卡片生命值降低至百分比",

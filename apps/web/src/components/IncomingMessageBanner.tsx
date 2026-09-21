@@ -236,7 +236,7 @@ export function IncomingMessageBanner() {
         : `translate3d(${drag.x}px, ${drag.y}px, 0) rotate(${Math.min(3, drag.x / 45)}deg)`;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-0 z-[90] flex justify-center px-3 pt-[max(12px,env(safe-area-inset-top))] sm:px-5">
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[200] flex justify-center px-3 pt-[max(12px,env(safe-area-inset-top))] sm:px-5">
       <div
         className={`incoming-message-banner pointer-events-auto w-full max-w-md select-none overflow-hidden rounded-[22px] border border-white/80 bg-white/95 shadow-[0_16px_45px_rgba(15,23,42,0.22)] ${phase === "dragging" ? "cursor-grabbing" : "cursor-pointer"}`}
         style={{ transform, opacity: phase.startsWith("leaving") ? 0 : 1, touchAction: "none" }}

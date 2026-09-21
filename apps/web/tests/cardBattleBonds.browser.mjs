@@ -68,6 +68,14 @@ try {
   await choose('卡牌行动','能量为空');
   await page.getByRole('button',{name:'新增条件',exact:true}).click();
   assert.equal((await data())[0].effects.length,1);assert.equal((await data())[0].bonds.length,1);
+  for (const [label,code] of [['攻击或技能造成暴击','critical'],['触发再动','extra_action'],['触发闪避','dodge'],['触发击晕','stun']]) {
+    await choose('技能条件',label);
+    await choose('卡牌行动',label);
+    assert.equal((await data())[0].effects[0].condition,code);
+    assert.equal((await data())[0].effects[0].conditionValue,null);
+    assert.equal((await data())[0].bonds[0].event,code);
+    await expect(page.locator('#validation')).toHaveText('');
+  }
   await page.getByRole('button',{name:'新增羁绊条件',exact:true}).click();await page.getByRole('button',{name:'删除羁绊条件2',exact:true}).click();
   await expect(page.locator('#validation')).toHaveText('');
   await expect(page.locator('[data-status-type="speed_down"]')).toHaveAttribute('title',/30点/);

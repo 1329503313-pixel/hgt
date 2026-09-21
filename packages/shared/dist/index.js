@@ -1,4 +1,5 @@
 export { calculateCardBattleScore } from "./cardBattleScore.js";
+export { CARD_BATTLE_EVENT_CONDITION_CODES, CARD_BATTLE_EVENT_CONDITION_LABELS } from "./cardBattleTriggers.js";
 export { CARD_BATTLE_SUPPORT_LABELS } from "./cardBattleSupport.js";
 export * from "./cardBattleProcs.js";
 export * from "./cardBattleDamage.js";

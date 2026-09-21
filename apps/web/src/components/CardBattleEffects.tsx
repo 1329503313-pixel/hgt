@@ -72,7 +72,7 @@ const motifs: Record<FxFamily, string> = {
   debuff: 'M18 15H82V85H18ZM57 13 42 37 62 48 37 64 50 88M7 37 19 43M81 57 94 64',
   immunity: 'M50 6 88 25 81 69 50 95 19 69 12 25ZM32 51 45 64 70 36M4 9 14 18M86 81 96 90',
   cleanse: 'M50 7 57 40 90 47 57 54 50 87 43 54 10 47 43 40ZM14 84 31 72M74 21 90 9',
-  seal: 'M50 8A42 42 0 1 1 49.9 8M21 21 79 79M79 21 21 79M35 35H65V65H35Z',
+  seal: 'M50 8A42 42 0 1 1 49.9 8M32 44V32A18 18 0 0 1 68 32V44M25 44H75V80H25ZM50 55A5 5 0 1 1 49.9 55M50 65V71',
   revive: 'M50 3V95M15 67Q28 32 44 51L50 74 56 51Q72 32 85 67M20 90Q50 72 80 90M37 21 50 9 63 21',
   neutral: 'M50 15 85 50 50 85 15 50ZM50 29 71 50 50 71 29 50Z',
 };
@@ -88,6 +88,10 @@ export function CardBattleSkillFx({ event, instanceId }: { event: OnlineCardBatt
   const recipe = eventFx(event);
   const feedback = targetFeedback(event, instanceId);
   const family: FxFamily = feedback === 'dodge' ? 'dodge' : feedback === 'resisted' || feedback === 'invincible' ? 'immunity' : feedback === 'death_protection' ? 'life' : feedback === 'blocked' ? 'armor' : feedback?.startsWith('shield') ? 'shield' : event.counterattack && caster ? 'counter' : recipe.family;
+  if (event.kind === 'attack') return <>
+    <BattleFx key={context.eventKey+':'+event.sequence+':'+instanceId} event={event} instanceId={instanceId} family="slash" color={recipe.color} effectType="attack" sourceOnly={!target} attackOutcome={feedback} />
+    {(feedback || event.counterattack && caster) && <BattleFx key={context.eventKey+':'+event.sequence+':'+instanceId+':feedback'} event={event} instanceId={instanceId} family={family} color={recipe.color} effectType={feedback ?? 'counterattack'} feedback={feedback} compact outcomeLayer />}
+  </>;
   return <BattleFx key={context.eventKey+':'+event.sequence+':'+instanceId} event={event} instanceId={instanceId} family={family} color={recipe.color} spec={recipe.spec} effectType={event.effectType ?? (event.bond?.actionType ? 'bond:'+event.bond.actionType : event.kind)} sourceOnly={!target} feedback={feedback} />;
 }
 export function CardBattleProcFx({ event, instanceId }: { event: OnlineCardBattleEvent | null; instanceId: string }) {
@@ -101,25 +105,26 @@ export function CardBattleProcFx({ event, instanceId }: { event: OnlineCardBattl
     {actor && event.kind === 'extra_action' && <BattleFx key={context.eventKey+':'+event.sequence+':time'} event={event} instanceId={instanceId} family="time" color="#9cdced" spec={CARD_BATTLE_PROC_MOTIONS.extra_action} effectType="extra_action" compact />}
   </>;
 }
-function BattleFx({ event, instanceId, family, color, spec, effectType, sourceOnly = false, feedback, compact = false }: { event: OnlineCardBattleEvent; instanceId: string; family: FxFamily; color: string; spec?: BattleMotion; effectType: string; sourceOnly?: boolean; feedback?: string | null; compact?: boolean }) {
+function BattleFx({ event, instanceId, family, color, spec, effectType, sourceOnly = false, feedback, compact = false, outcomeLayer = false, attackOutcome }: { event: OnlineCardBattleEvent; instanceId: string; family: FxFamily; color: string; spec?: BattleMotion; effectType: string; sourceOnly?: boolean; feedback?: string | null; compact?: boolean; outcomeLayer?: boolean; attackOutcome?: string | null }) {
   const { quality, reduced } = useCardBattleFx();
   const dense = event.effects.length > 9 || event.effects.length > 6 && event.effects.some(e=>e.stunned);
   const detailed = quality === 'standard' && !dense;
-  if (compact && (quality === 'economy' || dense)) {
+  if (compact && !outcomeLayer && (quality === 'economy' || dense)) {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="${motifs[family]}" fill="none" stroke="${color}" stroke-width="3"/></svg>`;
     return <i aria-hidden="true" data-skill-effect={effectType} data-fx-family={family} className={`card-battle-skill-fx card-battle-fx-compact-mark family-${family}`} style={{ backgroundImage:`url("data:image/svg+xml,${encodeURIComponent(svg)}")` }} />;
   }
-  const texture = !compact && !sourceOnly && !feedback && !reduced && detailed && family in FX_MATERIALS ? FX_MATERIALS[family as keyof typeof FX_MATERIALS] : null;
-  const particles = compact || sourceOnly || feedback || reduced || dense && quality === 'economy' ? [] : fxParticles(event,instanceId,quality);
-  const critical = !compact && !feedback && event.effects.some(e=>e.targetId===instanceId && e.critical);
+  const basicAttack = event.kind === 'attack' && !compact;
+  const texture = !basicAttack && !compact && !sourceOnly && !feedback && !reduced && detailed && family in FX_MATERIALS ? FX_MATERIALS[family as keyof typeof FX_MATERIALS] : null;
+  const particles = compact || sourceOnly || feedback || attackOutcome || reduced || dense && quality === 'economy' ? [] : fxParticles(event,instanceId,quality);
+  const critical = !compact && !feedback && !attackOutcome && event.effects.some(e=>e.targetId===instanceId && e.critical);
   const broken: Partial<Record<BattleGlyphName,FxFamily>> = { 'broken-shield':'armor', 'broken-heart':'life', 'broken-sword':'attack', 'frozen-wings':'speed', 'heal-block':'heal', 'blood-block':'blood', 'dizzy-block':'stun', 'repeat-block':'time' };
   const motif = family === 'debuff' && spec ? broken[spec.glyph] ?? family : family;
-  return <div aria-hidden="true" data-skill-effect={effectType} data-fx-family={family} data-feedback={feedback ?? undefined} data-critical={critical || undefined} data-motion={spec?.motion ?? 'impact'} data-pattern={event.bond ? 'actual' : spec?.pattern ?? 'single'} data-quality={quality} className={'card-battle-skill-fx family-'+family+(sourceOnly?' is-source':' is-target')+(compact?' is-compact':'')+(reduced?' is-reduced':'')} style={{'--skill-color':color,'--skill-duration':event.durationMs+'ms'} as CSSProperties}>
-    {!compact && detailed && <i className="card-battle-fx-aura" />}
+  return <div aria-hidden="true" data-skill-effect={effectType} data-fx-family={family} data-feedback={feedback ?? undefined} data-attack-outcome={attackOutcome ?? undefined} data-critical={critical || undefined} data-motion={spec?.motion ?? 'impact'} data-pattern={event.bond ? 'actual' : spec?.pattern ?? 'single'} data-quality={quality} className={'card-battle-skill-fx family-'+family+(sourceOnly?' is-source':' is-target')+(compact?' is-compact':'')+(outcomeLayer?' is-outcome':'')+(basicAttack?' is-basic-attack':'')+(reduced?' is-reduced':'')} style={{'--skill-color':color,'--skill-duration':event.durationMs+'ms'} as CSSProperties}>
+    {!basicAttack && !compact && detailed && <i className="card-battle-fx-aura" />}
     <FxMotif family={motif} />
     {texture && <i className="card-battle-fx-texture" style={{backgroundImage:'url("'+texture+'")'}} />}
     {detailed && (feedback === 'shield-break' || family === 'debuff') && <svg className="card-battle-fx-fracture" viewBox="0 0 100 100"><path d="m55 8-17 28 22 12-29 18 20 28" fill="none" stroke="currentColor" strokeWidth="3" /></svg>}
-    {critical && detailed && <i className="card-battle-fx-critical" />}
+    {critical && (basicAttack || detailed) && <i className="card-battle-fx-critical" />}
     {particles.map((p,i)=><i key={i} className="card-battle-fx-particle" style={{'--fx-x':p.x+'px','--fx-y':p.y+'px','--fx-angle':p.angle+'deg',width:p.size,height:p.size} as CSSProperties} />)}
   </div>;
 }

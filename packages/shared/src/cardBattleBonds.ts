@@ -1,7 +1,9 @@
+import { CARD_BATTLE_EVENT_CONDITION_LABELS } from "./cardBattleTriggers.js";
+
 export const CARD_BATTLE_BOND_EVENTS = {
   attack: "普通攻击", skill: "使用技能", death: "死亡", damaged: "受到伤害",
   hp_half: "生命值降低至50%及以下", energy_full: "能量为满", energy_empty: "能量为空",
-  extra_action: "触发再动", lifesteal: "触发吸血", stun: "触发击晕", stunned: "被击晕",
+  ...CARD_BATTLE_EVENT_CONDITION_LABELS, lifesteal: "触发吸血", stunned: "被击晕",
   healed: "被治疗", shielded: "被增加护盾",
 } as const;
 export const CARD_BATTLE_BOND_TARGETS = {

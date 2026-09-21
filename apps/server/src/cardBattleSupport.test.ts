@@ -66,7 +66,7 @@ test("同类增益按施加顺序分摊净增量，半效、首层到期、减�
 
 test("速度、回能与生命上限只按本次实际生效值计分，全体逐个累计", () => {
   for (const [type, kind, multiplier] of [
-    ["speed_all_allies", "speed", 100], ["energy_all_allies", "energy", 100], ["max_hp_all_allies", "maxHp", 1],
+    ["speed_all_allies", "speed", 10], ["energy_all_allies", "energy", 100], ["max_hp_all_allies", "maxHp", 1],
   ] as const) {
     const one = side("a", { speed: 30 });
     one[0]!.tier.effects = [effect(type, 20)];
@@ -121,6 +121,18 @@ test("减攻、减防、减速、禁疗、降低吸血与削减生命上限均�
     one[0]!.tier.effects = [effect(type, 50)];
     const result = simulateCardBattle(inputs(one, side("b", { defense: 100, lifestealRate: 50 })), type);
     assert.ok(total(result, kind) > 0, type);
+    if (type === "speed_down_all") {
+      for (const [index, event] of result.events.entries()) {
+        if (event.effectType !== type) continue;
+        const before = result.events[index - 1]?.states ?? result.initialStates;
+        const reduced = event.effects.reduce((sum, visual) => sum
+          + before.find(state => state.instanceId === visual.targetId)!.speed
+          - event.states.find(state => state.instanceId === visual.targetId)!.speed, 0);
+        const previousSupport = before.find(state => state.instanceId === event.actorId)!.supportBreakdown?.speed ?? 0;
+        const currentSupport = event.states.find(state => state.instanceId === event.actorId)!.supportBreakdown?.speed ?? 0;
+        assert.equal(currentSupport - previousSupport, reduced * 10, "减速按实际减少的速度乘10计分");
+      }
+    }
   }
   const one = side("a", { speed: 30, effects: [effect("defense_down_all")] });
   const result = simulateCardBattle(inputs(one, side("b", { defense: 0 })), "zero-defense");
