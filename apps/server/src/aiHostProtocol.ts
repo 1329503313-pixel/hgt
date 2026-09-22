@@ -151,6 +151,19 @@ export function aiAnswerFromLegacy(value: unknown): AiHostAnswer | null {
   return entry ? entry[0] as AiHostAnswer : null;
 }
 
+export function preserveFastAnswer(
+  adjudication: AiAdjudication,
+  fastAnswer: AiHostAnswer | null,
+  fastConfidence?: number | null,
+): AiAdjudication {
+  if (!fastAnswer) return adjudication;
+  return {
+    ...adjudication,
+    answer: fastAnswer,
+    confidence: fastConfidence ?? adjudication.confidence,
+  };
+}
+
 export function resolveRepeatedVerifierRejection(
   adjudication: AiAdjudication,
   preliminaryAnswer: AiHostAnswer | null,

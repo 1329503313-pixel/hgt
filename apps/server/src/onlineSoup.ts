@@ -1324,13 +1324,13 @@ async function processRoomAiQuestions(roomId: string) {
           { ok: true; turn: Awaited<ReturnType<typeof runRoomAiTurn>> }
           | { ok: false; error: unknown }
         > | null = null;
-        if (!publishedAnswer && !complexQuestion && !cachedAdjudication) {
+        if (!publishedAnswer && !complexQuestion) {
           await pool.query("UPDATE online_soup_messages SET ai_status = 'answering', ai_error = NULL WHERE id = ?", [pending.id]);
           void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "answering" });
-          // 快速五态回答与完整进度复核互不依赖，并行启动可避免两次模型耗时串行叠加。
-          // 完整复核仍独立判断最终回答和事实匹配，快速结果不会锁死准确性。
-          let resolvePreliminaryAnswer: (answer: string | null) => void = () => undefined;
-          const preliminaryAnswerPromise = new Promise<string | null>((resolve) => {
+          // 快速五态回答是唯一对外答案；完整复核只计算事实状态和进度。
+          // 两者并行执行，完整复核的原始答案仍保留在 AI 调用审计日志中。
+          let resolvePreliminaryAnswer: (answer: { answer: string; confidence: number } | null) => void = () => undefined;
+          const preliminaryAnswerPromise = new Promise<{ answer: string; confidence: number } | null>((resolve) => {
             resolvePreliminaryAnswer = resolve;
           });
           concurrentReview = runRoomAiTurn(
@@ -1342,8 +1342,10 @@ async function processRoomAiQuestions(roomId: string) {
             (turn) => ({ ok: true as const, turn }),
             (error: unknown) => ({ ok: false as const, error }),
           );
+          let fastConfidence: number | null = null;
           try {
             const fast = await runRoomAiFastAnswer(String(pending.soup_id), String(pending.content), aiState, { decisionId });
+            fastConfidence = fast.confidence;
             const fastAnswer = aiAnswerMap[fast.answer];
             if (fastAnswer) {
               const [updated] = await pool.query<mysql.ResultSetHeader>(
@@ -1361,7 +1363,9 @@ async function processRoomAiQuestions(roomId: string) {
           } catch (error) {
             console.warn("Fast AI answer unavailable; falling back to full review:", error instanceof Error ? error.message : error);
           } finally {
-            resolvePreliminaryAnswer(publishedAnswer);
+            resolvePreliminaryAnswer(publishedAnswer && fastConfidence != null
+              ? { answer: publishedAnswer, confidence: fastConfidence }
+              : null);
           }
         }
         if (!publishedAnswer) {
