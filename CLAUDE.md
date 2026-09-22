@@ -193,3 +193,11 @@ AI 主持的结构化判定协议、事实追踪、状态机、失败语义、�
 | `DB_HOST/PORT/USER/PASSWORD/NAME` | 本地 MySQL | 数据库连接 |
 | `ADMIN_DEFAULT_PASSWORD` | — | 首次启动时创建 admin 用户 |
 | `DEEPSEEK_API_KEY` | — | DeepSeek API 密钥，用于 AI 玩汤功能 |
+| `ALIYUN_SMS_ENDPOINT` | dysmsapi.aliyuncs.com | 阿里云短信服务接入点 |
+| `ALIYUN_SMS_ACCESS_KEY_ID/SECRET` | — | 短信专用 RAM 用户凭据，不与 OSS 凭据共用 |
+| `ALIYUN_SMS_SIGN_NAME` | — | 已审核通过的短信签名名称 |
+| `ALIYUN_SMS_VERIFICATION_TEMPLATE_CODE` | — | 已审核通过、变量名为 `code` 的验证码模板 Code |
+
+短信验证码的配置、调用、错误处理和业务接入要求见：
+
+- `docs/阿里云短信验证码调用手册.md`

@@ -36,6 +36,7 @@ docs/*
 !docs/APP_Web用户端100%复刻对照矩阵与重建计划.md
 !docs/生产部署与Android发布Runbook.md
 !docs/AI主持架构.md
+!docs/阿里云短信验证码调用手册.md
 artifacts/
 .local/
 # Agent working memory; not part of the product source.

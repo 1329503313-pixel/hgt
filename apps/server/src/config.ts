@@ -57,6 +57,13 @@ export const config = {
     accessKeyId: readSecret("ALIYUN_OSS_ACCESS_KEY_ID", "ALIYUN_OSS_ACCESS_KEY_ID_FILE"),
     accessKeySecret: readSecret("ALIYUN_OSS_ACCESS_KEY_SECRET", "ALIYUN_OSS_ACCESS_KEY_SECRET_FILE")
   },
+  aliyunSms: {
+    endpoint: process.env.ALIYUN_SMS_ENDPOINT ?? "dysmsapi.aliyuncs.com",
+    accessKeyId: process.env.ALIYUN_SMS_ACCESS_KEY_ID ?? "",
+    accessKeySecret: process.env.ALIYUN_SMS_ACCESS_KEY_SECRET ?? "",
+    signName: process.env.ALIYUN_SMS_SIGN_NAME ?? "",
+    verificationTemplateCode: process.env.ALIYUN_SMS_VERIFICATION_TEMPLATE_CODE ?? ""
+  },
   deepseekApiKey: readSecret("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_FILE"),
   deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
   mysteryCompileModel: process.env.MYSTERY_COMPILE_MODEL ?? "deepseek-v4-pro",
