@@ -21,4 +21,5 @@ export const isCardBattleShield = (type: string) => type.startsWith("shield_");
 export const cardBattleAccuracyStat = (type: string): CardBattleAccuracyStat | null =>
   type.startsWith("dodge_") ? "dodgeRate" : type.startsWith("hit_") ? "hitRate" : null;
 export const cardBattleDefenseNeedsDuration = (type: string) => isCardBattleShield(type) || cardBattleAccuracyStat(type) !== null;
-export const cardBattleDodgeChance = (dodge: number, hit: number) => Math.min(100, Math.max(0, dodge - hit));
+/** Critical damage gains 50 hit percentage points for this hit only, before clamping. */
+export const cardBattleDodgeChance = (dodge: number, hit: number, critical = false) => Math.min(100, Math.max(0, dodge - hit - (critical ? 50 : 0)));

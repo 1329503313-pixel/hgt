@@ -183,8 +183,29 @@ test("卡包只有一张史诗卡时始终抽中该UP", () => {
   assert.equal(result.guaranteedNext, false);
 });
 
-test("满星重复返还按品质固定", () => {
+test("卡包满星返还默认沿用原值，并可按卡包配置非负整数", () => {
   assert.deepEqual(digitalAssetRules.fullStarRefunds, { normal: 0, rare: 1, epic: 2, legend: 5 });
+  assert.deepEqual(digitalAssetRules.packFullStarRefunds({} as never), digitalAssetRules.fullStarRefunds);
+  assert.deepEqual(digitalAssetRules.packFullStarRefunds({ full_star_refund_normal: 3, full_star_refund_rare: 4,
+    full_star_refund_epic: 8, full_star_refund_legend: 20 } as never), { normal: 3, rare: 4, epic: 8, legend: 20 });
+  const base = { name: "测试卡包", packType: "permanent", singlePrice: 10, tenPrice: 90 };
+  assert.deepEqual(digitalAssetRules.packSchema.parse(base).fullStarRefunds, digitalAssetRules.fullStarRefunds);
+  assert.deepEqual(digitalAssetRules.packSchema.parse({ ...base, fullStarRefunds: { normal: 0, rare: 0, epic: 8, legend: 20 } }).fullStarRefunds,
+    { normal: 0, rare: 0, epic: 8, legend: 20 });
+  for (const value of [-1, 1.5, 1_000_001]) {
+    assert.equal(digitalAssetRules.packSchema.safeParse({ ...base, fullStarRefunds: { normal: 0, rare: 1, epic: 2, legend: value } }).success, false);
+  }
+});
+
+test("仅超级管理员可修改满星返还，后台管理员新建卡包沿用默认值", () => {
+  const defaults = digitalAssetRules.fullStarRefunds;
+  const custom = { normal: 0, rare: 3, epic: 8, legend: 20 };
+  assert.equal(digitalAssetRules.canSavePackRefunds("backoffice_admin", defaults, true), true);
+  assert.equal(digitalAssetRules.canSavePackRefunds("backoffice_admin", custom, true), false);
+  assert.equal(digitalAssetRules.canSavePackRefunds("backoffice_admin", undefined, false), true);
+  assert.equal(digitalAssetRules.canSavePackRefunds("backoffice_admin", defaults, false), false);
+  assert.equal(digitalAssetRules.canSavePackRefunds("super_admin", custom, true), true);
+  assert.equal(digitalAssetRules.canSavePackRefunds("super_admin", custom, false), true);
 });
 
 test("卡包抽取统计将数据库聚合值转换为前端数字", () => {

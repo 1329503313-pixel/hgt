@@ -60,6 +60,7 @@ import {
   detectPromptInjection,
   shouldVerifyAdjudication,
   resolveRepeatedVerifierRejection,
+  preserveFastAnswer,
   validateAdjudicationFactIds,
   type AiAdjudication,
   type AiRoundFact,
@@ -779,7 +780,8 @@ export async function runRoomAiTurn(
   state: RoomAiGameState,
   options: {
     preliminaryAnswer?: string | null;
-    preliminaryAnswerPromise?: Promise<string | null>;
+    preliminaryConfidence?: number | null;
+    preliminaryAnswerPromise?: Promise<{ answer: string; confidence: number } | null>;
     decisionId?: string | null;
     cachedAdjudication?: AiAdjudication | null;
   } = {},
@@ -826,9 +828,8 @@ export async function runRoomAiTurn(
         const secondVerification = await requestVerification(context, adjudication, options.decisionId ?? null);
         if (secondVerification.verdict !== "ACCEPT") {
           verifierIssues = [...new Set([...verification.issueCodes, ...secondVerification.issueCodes])];
-          const preliminaryValue = options.preliminaryAnswer
-            ?? await options.preliminaryAnswerPromise
-            ?? null;
+          const preliminary = await options.preliminaryAnswerPromise;
+          const preliminaryValue = options.preliminaryAnswer ?? preliminary?.answer ?? null;
           const preliminaryInternal = aiAnswerFromChinese(preliminaryValue) ?? aiAnswerFromLegacy(preliminaryValue);
           adjudication = resolveRepeatedVerifierRejection(adjudication, preliminaryInternal);
           applied = applyFactAdjudication(runtimeFacts, adjudication);
@@ -843,6 +844,14 @@ export async function runRoomAiTurn(
   } catch (error) {
     throw toAiServiceError(error);
   }
+  const preliminary = await options.preliminaryAnswerPromise;
+  const preliminaryValue = options.preliminaryAnswer ?? preliminary?.answer ?? null;
+  const preliminaryInternal = aiAnswerFromChinese(preliminaryValue) ?? aiAnswerFromLegacy(preliminaryValue);
+  const publicAdjudication = preserveFastAnswer(
+    adjudication,
+    preliminaryInternal,
+    options.preliminaryConfidence ?? preliminary?.confidence ?? null,
+  );
   const applied = applyFactAdjudication(runtimeFacts, adjudication);
   const revealedAtomicFactIds = applied.facts
     .filter((fact) => fact.state === "DISCOVERED")
@@ -863,7 +872,7 @@ export async function runRoomAiTurn(
     bottoms: [],
   });
   const turn = {
-    answer: aiAnswerToChinese[adjudication.answer],
+    answer: aiAnswerToChinese[publicAdjudication.answer],
     scoringDegraded: false,
     evidenceFactIds: factMatches.map((match) => match.factId),
     factMatches,
@@ -892,10 +901,10 @@ export async function runRoomAiTurn(
     messages: [...history, { role: "assistant" as const, content: serializeAssistantTurn(turn) }],
     runtimeFacts: applied.facts,
     factTransitions: applied.transitions,
-    confidence: adjudication.confidence,
+    confidence: publicAdjudication.confidence,
     containsUnsupportedAssumption: adjudication.containsUnsupportedAssumption,
     injectionDetected: adjudication.injectionDetected,
-    internalAnswer: adjudication.answer,
+    internalAnswer: publicAdjudication.answer,
     matchedFactDecisions: adjudication.matchedFacts,
     verifierStatus,
     verifierIssues,

@@ -11,11 +11,12 @@ import { PackStoryEditor, richTextCharacterCount } from "./PackStoryEditor";
 import { CardBattleConfigEditor } from "./CardBattleConfigEditor";
 import { defaultCardBattleTiersForRarity } from "../../shared/digitalAssets";
 import { cardBattleSelectionError, type CardBattleTierDraft } from "./cardBattleEditorDraft";
+import { AdminTenDrawRecords } from "./AdminTenDrawRecords";
 
 type AdminCard = AssetCard & { createdAt: string | null; packIds: string[]; ownerCount: number; totalDrawn: number; starCounts: number[]; battleConfigured: boolean };
 type AdminPack = {
   id: string; name: string; coverUrl: string; coverCard: AssetCard | null; description: string; packStory: string; packType: AssetPackType; packTypeLabel: string;
-  singlePrice: number; tenPrice: number; dailyFreeDraws: number; saleStartAt: string | null; saleEndAt: string | null;
+  singlePrice: number; tenPrice: number; dailyFreeDraws: number; fullStarRefunds: Record<AssetRarity, number>; saleStartAt: string | null; saleEndAt: string | null;
   enabled: boolean; status: string; sortOrder: number; probabilityNotice: string; probabilityTotal: number; configurationReady: boolean;
   rarityProbabilities: Record<AssetRarity, number>; cards: AssetCard[]; totalDrawCount: number; recent7dDrawCount: number;
 };
@@ -27,15 +28,17 @@ type CardForm = {
   cardNo: string; name: string; rarity: AssetRarity; imageUrl: string; story: string; status: string; packIds: string[];
   battleRole: CardBattleRole | null;
   motionMp4Url: string | null; motionWebmUrl: string | null; motionPosterUrl: string | null; battleTiers: CardBattleTierDraft[] | null;
+  traitIds: string[];
 };
 const isBattleRarity = (rarity: AssetRarity): rarity is "epic" | "legend" => rarity === "epic" || rarity === "legend";
 const freshBattleTiers = (rarity: "epic" | "legend") => defaultCardBattleTiersForRarity(rarity).map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) }));
 const blankCard: CardForm = {
   cardNo: "", name: "", rarity: "normal" as AssetRarity, imageUrl: "", story: "", status: "active", packIds: [] as string[],
   battleRole: null,
-  motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null, battleTiers: null,
+  motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null, battleTiers: null, traitIds: [],
 };
-const blankPack = { name: "", description: "", packStory: "", packType: "permanent" as AssetPackType, singlePrice: 10, tenPrice: 90, dailyFreeDraws: 0, saleStartAt: "", saleEndAt: "", sortOrder: 0 };
+const blankPack = { name: "", description: "", packStory: "", packType: "permanent" as AssetPackType, singlePrice: 10, tenPrice: 90, dailyFreeDraws: 0,
+  fullStarRefunds: { normal: 0, rare: 1, epic: 2, legend: 5 } as Record<AssetRarity, number>, saleStartAt: "", saleEndAt: "", sortOrder: 0 };
 const rarityKeys: AssetRarity[] = ["normal", "rare", "epic", "legend"];
 const rarityRank: Record<AssetRarity, number> = { normal: 0, rare: 1, epic: 2, legend: 3 };
 const blankProbabilities: Record<AssetRarity, string> = { normal: "", rare: "", epic: "", legend: "" };
@@ -120,7 +123,7 @@ function PackDrawStats({ pack }: { pack: AdminPack }) {
   );
 }
 
-export function DigitalAssetManagement() {
+export function DigitalAssetManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [tab, setTab] = useState<"cards" | "packs" | "records">("cards");
   const [cards, setCards] = useState<AdminCard[]>([]);
   const [packs, setPacks] = useState<AdminPack[]>([]);
@@ -146,6 +149,7 @@ export function DigitalAssetManagement() {
   const [recordTotal, setRecordTotal] = useState(0);
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [recordKeyword, setRecordKeyword] = useState("");
+  const [recordView, setRecordView] = useState<"all" | "ten">("all");
   const [cardListKeyword, setCardListKeyword] = useState("");
   const [packListKeyword, setPackListKeyword] = useState("");
   const [packKeyword, setPackKeyword] = useState("");
@@ -154,6 +158,8 @@ export function DigitalAssetManagement() {
   const [configCardIds, setConfigCardIds] = useState<string[]>([]);
   const [configCardKeyword, setConfigCardKeyword] = useState("");
   const [collectibles, setCollectibles] = useState<Collectible[]>([]);
+  const [battleTraits, setBattleTraits] = useState<import("@hgt/shared").CardBattleTrait[]>([]);
+  const [traitQuery, setTraitQuery] = useState("");
   const [configCollectibleBindings, setConfigCollectibleBindings] = useState<Record<string, string>>({});
   const [configCollectibleKeyword, setConfigCollectibleKeyword] = useState("");
   const normalizedCardListKeyword = cardListKeyword.trim().toLocaleLowerCase();
@@ -173,13 +179,14 @@ export function DigitalAssetManagement() {
   const { page: recordPage, pageSize: recordPageSize } = recordPagination;
 
   async function load() {
-    const [cardData, packData, statsData, collectibleData] = await Promise.all([
+    const [cardData, packData, statsData, collectibleData, traitsData] = await Promise.all([
       api<{ cards: AdminCard[] }>("/api/admin/asset-cards", { bypassCache: true }),
       api<{ packs: AdminPack[] }>("/api/admin/asset-packs", { bypassCache: true }),
       api<AssetStats>("/api/admin/asset-stats", { bypassCache: true }),
-      api<{ collectibles: Collectible[] }>("/api/admin/collectibles", { bypassCache: true })
+      api<{ collectibles: Collectible[] }>("/api/admin/collectibles", { bypassCache: true }),
+      api<{ traits: import("@hgt/shared").CardBattleTrait[] }>("/api/admin/card-battle/traits", { bypassCache: true }),
     ]);
-    setCards(cardData.cards); setPacks(packData.packs); setStats(statsData); setCollectibles(collectibleData.collectibles);
+    setCards(cardData.cards); setPacks(packData.packs); setStats(statsData); setCollectibles(collectibleData.collectibles); setBattleTraits(traitsData.traits);
   }
   useEffect(() => { void load().catch((error) => setMessage((error as Error).message)); }, []);
 
@@ -221,7 +228,7 @@ export function DigitalAssetManagement() {
         rarity: latestCard.rarity,
         battleRole: isBattleRarity(latestCard.rarity) ? (latestCard.battleRole ?? "damage") : null,
         packIds: [...latestCard.packIds],
-        battleTiers: isBattleRarity(latestCard.rarity) ? freshBattleTiers(latestCard.rarity) : null,
+        battleTiers: isBattleRarity(latestCard.rarity) ? freshBattleTiers(latestCard.rarity) : null, traitIds: [],
       } : blankCard);
       setActiveBattleStar(0);
       setPackKeyword("");
@@ -242,6 +249,7 @@ export function DigitalAssetManagement() {
         battleRole: isBattleRarity(data.card.rarity) ? (data.card.battleRole ?? "damage") : null,
         motionMp4Url: data.card.motionMp4Url ?? null, motionWebmUrl: data.card.motionWebmUrl ?? null, motionPosterUrl: data.card.motionPosterUrl ?? null,
         battleTiers: data.card.battleTiers ? data.card.battleTiers.map((tier) => ({ ...tier, effects: tier.effects.map((effect) => ({ ...effect })) })) : null,
+        traitIds: (data.card.traits ?? []).map((trait) => trait.id),
       });
       setActiveBattleStar(0);
     } catch (error) {
@@ -270,6 +278,7 @@ export function DigitalAssetManagement() {
     if (cardForm.packIds.length === 0) { setMessage("卡牌必须至少绑定一个卡包"); return; }
     const selectionError = cardBattleSelectionError(cardForm.battleTiers);
     if (selectionError) { setMessage(selectionError); return; }
+    if (isBattleRarity(cardForm.rarity) && traitQuery.trim()) { setMessage("请从下拉选项中选择特质，或清空检索文字"); return; }
     setSaving(true); setSavingPhase("正在保存卡牌资料…"); setMessage("");
     try {
       const unchangedStoredImage = Boolean(editingCardId && cardForm.imageUrl.startsWith(`/api/media/assets/cards/${encodeURIComponent(editingCardId!)}/`));
@@ -334,7 +343,8 @@ export function DigitalAssetManagement() {
       const data = await api<{ pack: AdminPack }>(`/api/admin/asset-packs/${pack.id}`, { bypassCache: true });
       const detail = data.pack;
       setEditingPackId(pack.id);
-      setPackForm({ name: detail.name, description: detail.description, packStory: detail.packStory, packType: detail.packType, singlePrice: detail.singlePrice, tenPrice: detail.tenPrice, dailyFreeDraws: detail.dailyFreeDraws, saleStartAt: localDate(detail.saleStartAt), saleEndAt: localDate(detail.saleEndAt), sortOrder: detail.sortOrder });
+      setPackForm({ name: detail.name, description: detail.description, packStory: detail.packStory, packType: detail.packType, singlePrice: detail.singlePrice, tenPrice: detail.tenPrice, dailyFreeDraws: detail.dailyFreeDraws,
+        fullStarRefunds: detail.fullStarRefunds, saleStartAt: localDate(detail.saleStartAt), saleEndAt: localDate(detail.saleEndAt), sortOrder: detail.sortOrder });
     } catch (error) {
       setMessage((error as Error).message);
       return;
@@ -347,9 +357,13 @@ export function DigitalAssetManagement() {
   async function savePack() {
     if (richTextCharacterCount(packForm.packStory) > 3000) { setMessage("卡包故事不能超过3000字"); return; }
     if (packForm.packType !== "permanent" && (!packForm.saleStartAt || !packForm.saleEndAt)) { setMessage("限定卡包和联名卡包必须设置起止时间"); return; }
+    if (isSuperAdmin && Object.values(packForm.fullStarRefunds).some((value) => !Number.isInteger(value) || value < 0 || value > 1_000_000)) {
+      setMessage("满星返还必须填写 0 至 1000000 的整数"); return;
+    }
     setSaving(true); setMessage("");
     try {
-      const body = { ...packForm, saleStartAt: packForm.packType === "permanent" ? null : new Date(packForm.saleStartAt).toISOString(), saleEndAt: packForm.packType === "permanent" ? null : new Date(packForm.saleEndAt).toISOString(), enabled: false };
+      const { fullStarRefunds, ...otherFields } = packForm;
+      const body = { ...otherFields, ...(isSuperAdmin ? { fullStarRefunds } : {}), saleStartAt: packForm.packType === "permanent" ? null : new Date(packForm.saleStartAt).toISOString(), saleEndAt: packForm.packType === "permanent" ? null : new Date(packForm.saleEndAt).toISOString(), enabled: false };
       if (editingPackId) delete (body as Partial<typeof body>).enabled;
       await api(editingPackId ? `/api/admin/asset-packs/${editingPackId}` : "/api/admin/asset-packs", { method: editingPackId ? "PATCH" : "POST", body });
       setPackModal(false); await load();
@@ -568,7 +582,12 @@ export function DigitalAssetManagement() {
           )}
         </div>
       ) : (
-        <div className="card overflow-hidden">
+        <div className="space-y-3">
+          <div className="card flex flex-wrap gap-2 p-2" role="tablist" aria-label="商城记录类型">
+            <button type="button" role="tab" aria-selected={recordView === "all"} className={`btn min-h-11 ${recordView === "all" ? "btn-primary" : "btn-secondary"}`} onClick={() => setRecordView("all")}>全部记录</button>
+            <button type="button" role="tab" aria-selected={recordView === "ten"} className={`btn min-h-11 ${recordView === "ten" ? "btn-primary" : "btn-secondary"}`} onClick={() => setRecordView("ten")}>十连记录</button>
+          </div>
+          {recordView === "ten" ? <AdminTenDrawRecords /> : <div className="card overflow-hidden">
           <div className="flex items-center gap-2 border-b border-line p-4">
             <Search size={17} className="text-muted" />
             <input
@@ -600,6 +619,7 @@ export function DigitalAssetManagement() {
           {recordsLoading && <div className="p-8 text-center text-sm text-muted">加载中…</div>}
           {!recordsLoading && records.length === 0 && <div className="p-10 text-center text-sm text-muted">{recordKeyword.trim() ? "没有匹配的抽取记录" : "暂无抽取记录"}</div>}
           {!recordsLoading && recordTotal > 0 && <div className="px-4 pb-4"><AdminPagination {...recordPagination} /></div>}
+          </div>}
         </div>
       )}
 
@@ -624,6 +644,18 @@ export function DigitalAssetManagement() {
           <label><span className="text-sm font-bold">名称</span><input className="field mt-1" value={cardForm.name} onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })} /></label>
           <label><span className="text-sm font-bold">品质</span><select className="field mt-1" value={cardForm.rarity} disabled={Boolean(editingCardId && cards.find((card) => card.id === editingCardId)?.ownerCount)} onChange={(e) => { const rarity = e.target.value as AssetRarity; setCardForm({ ...cardForm, rarity, battleRole: isBattleRarity(rarity) ? (cardForm.battleRole ?? "damage") : null, battleTiers: isBattleRarity(rarity) ? (rarity === cardForm.rarity ? cardForm.battleTiers : freshBattleTiers(rarity)) : null }); }}>{Object.entries(ASSET_RARITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           {isBattleRarity(cardForm.rarity) && <label><span className="text-sm font-bold">对战定位</span><select className="field mt-1" value={cardForm.battleRole ?? "damage"} onChange={(event) => setCardForm({ ...cardForm, battleRole: event.target.value as CardBattleRole })}>{Object.entries(CARD_BATTLE_ROLE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="mt-1 block text-xs leading-5 text-muted">仅参与卡牌对战的史诗与传说卡可配置。</span></label>}
+          {isBattleRarity(cardForm.rarity) && <div className="sm:col-span-2">
+            <label htmlFor="card-trait-search" className="text-sm font-bold">特质（可选）</label>
+            <div className="mt-1 flex min-h-11 flex-wrap items-center gap-2 rounded-xl border border-line bg-white p-2 focus-within:border-primary">
+              {cardForm.traitIds.map((id) => { const trait = battleTraits.find((item) => item.id === id); return trait ? <span key={id} className="inline-flex min-h-8 items-center gap-2 rounded-full bg-blue-50 px-3 text-xs font-bold text-blue-800">{trait.name}<button type="button" className="grid h-6 w-6 place-items-center rounded-full hover:bg-blue-100" aria-label={`移除特质${trait.name}`} onClick={() => setCardForm((current) => ({ ...current, traitIds: current.traitIds.filter((value) => value !== id) }))}><X size={13} /></button></span> : null; })}
+              <input id="card-trait-search" className="min-w-36 flex-1 border-0 bg-transparent text-sm outline-none" value={traitQuery} placeholder="输入名称检索并选择" onChange={(event) => setTraitQuery(event.target.value)} aria-invalid={Boolean(traitQuery.trim())} />
+            </div>
+            {traitQuery.trim() && <div className="mt-1 max-h-44 overflow-y-auto rounded-xl border border-line bg-white p-1 shadow-lg" role="listbox" aria-label="特质选项">
+              {battleTraits.filter((trait) => trait.name.toLocaleLowerCase().includes(traitQuery.trim().toLocaleLowerCase())).map((trait) => { const selected = cardForm.traitIds.includes(trait.id); return <button key={trait.id} type="button" role="option" aria-selected={selected} className={`flex min-h-10 w-full items-center justify-between rounded-lg px-3 text-left text-sm ${selected ? "bg-blue-600 font-bold text-white" : "hover:bg-slate-50"}`} onClick={() => { setCardForm((current) => ({ ...current, traitIds: selected ? current.traitIds.filter((id) => id !== trait.id) : [...current.traitIds, trait.id] })); setTraitQuery(""); }}><span>{trait.name}</span>{selected && <Check size={15} />}</button>; })}
+              {!battleTraits.some((trait) => trait.name.toLocaleLowerCase().includes(traitQuery.trim().toLocaleLowerCase())) && <p className="px-3 py-2 text-xs text-red-600">没有匹配的特质，请选择下拉选项</p>}
+            </div>}
+            <p className={`mt-1 text-xs ${traitQuery.trim() ? "text-red-600" : "text-muted"}`}>{traitQuery.trim() ? "请从选项中选择特质，未选择的检索文字不能保存" : "按选择顺序展示；点击胶囊后的 × 可移除。"}</p>
+          </div>}
           <label><span className="text-sm font-bold">状态</span><select className="field mt-1" value={cardForm.status} onChange={(e) => setCardForm({ ...cardForm, status: e.target.value })}><option value="inactive">停用</option><option value="active">启用</option></select></label>
           <label className="sm:col-span-2"><span className="text-sm font-bold">卡片故事</span><textarea className="field mt-1 min-h-32" value={cardForm.story} onChange={(e) => setCardForm({ ...cardForm, story: e.target.value })} /></label>
           {isBattleRarity(cardForm.rarity) && cardForm.battleTiers && <CardBattleConfigEditor tiers={cardForm.battleTiers} activeStar={activeBattleStar} onActiveStar={setActiveBattleStar} onChange={(battleTiers) => setCardForm((current) => ({ ...current, battleTiers }))} />}
@@ -655,6 +687,11 @@ export function DigitalAssetManagement() {
             <label className="block"><span className="text-sm font-bold">卡包名称</span><input className="field mt-1" value={packForm.name} onChange={(e) => setPackForm({ ...packForm, name: e.target.value })} /></label>
             <label className="block"><span className="text-sm font-bold">类型</span><select className="field mt-1" value={packForm.packType} onChange={(e) => { const packType = e.target.value as AssetPackType; setPackForm({ ...packForm, packType, ...(packType === "permanent" ? { saleStartAt: "", saleEndAt: "" } : {}) }); }}>{Object.entries(ASSET_PACK_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <div className="grid grid-cols-3 gap-2"><label><span className="text-xs font-bold">单抽</span><input type="number" className="field mt-1" value={packForm.singlePrice} onChange={(e) => setPackForm({ ...packForm, singlePrice: Number(e.target.value) })} /></label><label><span className="text-xs font-bold">十连</span><input type="number" className="field mt-1" value={packForm.tenPrice} onChange={(e) => setPackForm({ ...packForm, tenPrice: Number(e.target.value) })} /></label><label><span className="text-xs font-bold">日免费</span><input type="number" className="field mt-1" value={packForm.dailyFreeDraws} onChange={(e) => setPackForm({ ...packForm, dailyFreeDraws: Number(e.target.value) })} /></label></div>
+            <fieldset className="rounded-xl border border-line p-3">
+              <legend className="px-1 text-sm font-bold">满星重复卡返还（贝壳）</legend>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{rarityKeys.map((rarity) => <label key={rarity}><span className="text-xs font-bold">{ASSET_RARITY_LABELS[rarity]}</span><input aria-label={`${ASSET_RARITY_LABELS[rarity]}满星返还`} type="number" min="0" max="1000000" step="1" className="field mt-1" disabled={!isSuperAdmin} value={packForm.fullStarRefunds[rarity]} onChange={(event) => setPackForm((current) => ({ ...current, fullStarRefunds: { ...current.fullStarRefunds, [rarity]: Number(event.target.value) } }))} /></label>)}</div>
+              <p className="mt-2 text-xs leading-5 text-muted">满星后再次抽到该品质卡牌时返还；修改仅影响之后的抽卡记录。{!isSuperAdmin && "仅超级管理员可修改。"}</p>
+            </fieldset>
             <label className="block"><span className="text-sm font-bold">权重</span><input type="number" min="-1000000" max="1000000" step="1" className="field mt-1" value={packForm.sortOrder} onChange={(e) => setPackForm({ ...packForm, sortOrder: Number(e.target.value) })} /><span className="mt-1 block text-xs text-muted">权重越大，在商城和管理列表中越靠上。</span></label>
           </div>
           {packForm.packType !== "permanent" && <>

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { FastForward, Shell, Sparkles, X } from "lucide-react";
-import { sortAssetDrawResultsForDisplay, type AssetDrawOrder } from "../shared/digitalAssets";
-import { AssetCardVisual } from "./AssetCardVisual";
+import { sortAssetDrawResultsForDisplay, warmAssetImage, type AssetDrawOrder } from "../shared/digitalAssets";
+import { AssetAnimationPausedContext, AssetCardVisual } from "./AssetCardVisual";
 import { CollectibleVisual } from "./CollectibleVisual";
 
 const AUTO_SKIP_DRAW_ANIMATION_KEY = "hgt:auto-skip-draw-animation";
@@ -27,10 +27,22 @@ function NewCardBurst({ delayed = false }: { delayed?: boolean }) {
   return <img src="/new-card-burst.png?v=20260721-4" alt="新卡" className={`asset-card-new-burst ${delayed ? "asset-card-new-burst-delayed" : ""}`} draggable={false} />;
 }
 
+export function AssetDrawPending({ packName }: { packName: string }) {
+  return createPortal(<div className="fixed inset-0 z-[140] grid place-items-center bg-slate-950 px-4 text-white" role="status" aria-live="polite">
+    <div className="text-center"><p className="mb-8 text-sm font-bold text-cyan-200">{packName}</p>
+      <div className="asset-pack-sealed mx-auto h-72 w-52 overflow-hidden rounded-3xl border-2 border-cyan-200/70 bg-slate-800 shadow-2xl"><img src="/card-back.webp?v=20260721" alt="通用卡背" className="h-full w-full object-cover" decoding="async" /></div>
+      <p className="mt-8 text-sm font-bold text-cyan-100">正在抽取，请稍候…</p>
+    </div>
+  </div>, document.body);
+}
+
 export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { order: AssetDrawOrder; balance: number; onClose: () => void; onDrawAgain: (mode: "single" | "ten") => void }) {
   const [autoSkipAnimation, setAutoSkipAnimation] = useState(getAutoSkipDrawAnimation);
   const [revealed, setRevealed] = useState(() => getAutoSkipDrawAnimation() ? order.results.length + 1 : 0);
   const [started, setStarted] = useState(getAutoSkipDrawAnimation);
+  const [prepared, setPrepared] = useState(-1);
+  const [flipped, setFlipped] = useState(-1);
+  const [resultMotionReady, setResultMotionReady] = useState(false);
   const complete = revealed > order.results.length;
   const current = order.results[Math.min(order.results.length - 1, Math.max(0, revealed - 1))];
   const displayResults = useMemo(
@@ -40,20 +52,57 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
   const waitingForLegend = started && !complete && current?.rarity === "legend";
 
   useEffect(() => {
+    for (const card of order.results) void warmAssetImage(card.thumbnailUrl || card.imageUrl);
+    void warmAssetImage("/card-back.webp?v=20260721");
+    void warmAssetImage("/new-card-burst.png?v=20260721-4");
+  }, [order]);
+
+  useEffect(() => {
     if (started) return;
-    const timer = window.setTimeout(() => { setStarted(true); setRevealed(1); }, 850);
+    const timer = window.setTimeout(() => { setStarted(true); setRevealed(1); }, 300);
     return () => window.clearTimeout(timer);
   }, [started]);
 
   useEffect(() => {
-    if (!started || complete || waitingForLegend) return;
-    const timer = window.setTimeout(() => setRevealed((value) => Math.min(order.results.length + 1, value + 1)), 680);
+    if (!started || complete || !current) return;
+    let cancelled = false;
+    let frame = 0;
+    // Decode the actual thumbnail before rotating the front into view. A failed
+    // or slow image must never trap the user in the animation.
+    const timer = window.setTimeout(ready, 1500);
+    function ready() {
+      if (cancelled) return;
+      window.clearTimeout(timer);
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => { if (!cancelled) setPrepared(revealed); });
+    }
+    void warmAssetImage(current.thumbnailUrl || current.imageUrl).then(ready);
+    return () => { cancelled = true; window.clearTimeout(timer); window.cancelAnimationFrame(frame); };
+  }, [started, complete, current, revealed]);
+
+  useEffect(() => {
+    if (prepared !== revealed || complete) return;
+    // Reduced motion disables animationend; the timeout also covers interrupted
+    // WebView animations. Normal playback advances from animationend below.
+    const timer = window.setTimeout(() => setFlipped(revealed), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1100);
     return () => window.clearTimeout(timer);
-  }, [started, revealed, complete, waitingForLegend, order.results.length]);
+  }, [prepared, revealed, complete]);
+
+  useEffect(() => {
+    if (!started || complete || waitingForLegend || flipped !== revealed) return;
+    const timer = window.setTimeout(() => setRevealed((value) => Math.min(order.results.length + 1, value + 1)), 260);
+    return () => window.clearTimeout(timer);
+  }, [started, revealed, flipped, complete, waitingForLegend, order.results.length]);
+
+  useEffect(() => {
+    if (!complete) return;
+    const timer = window.setTimeout(() => setResultMotionReady(true), 600);
+    return () => window.clearTimeout(timer);
+  }, [complete]);
 
   const totalRefund = order.results.reduce((sum, result) => sum + result.shellRefund, 0);
   function continueAfterLegend() {
-    if (!waitingForLegend) return;
+    if (!waitingForLegend || flipped !== revealed) return;
     setRevealed((value) => Math.min(order.results.length + 1, value + 1));
   }
 
@@ -69,7 +118,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
 
   return createPortal(
     <div className="fixed inset-0 z-[140] text-white" role="dialog" aria-modal="true" aria-label="抽卡结果">
-      <div className={`absolute inset-0 overflow-y-auto bg-slate-950/95 px-4 pb-28 pt-[max(20px,env(safe-area-inset-top))] backdrop-blur-md ${waitingForLegend ? "cursor-pointer" : ""}`} onClick={continueAfterLegend}>
+      <div className={`absolute inset-0 overflow-y-auto bg-slate-950 px-4 pb-28 pt-[max(20px,env(safe-area-inset-top))] ${waitingForLegend ? "cursor-pointer" : ""}`} onClick={continueAfterLegend}>
         <div className="mx-auto flex min-h-full max-w-5xl flex-col">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="w-full sm:w-auto"><p className="text-xs font-bold tracking-[0.22em] text-cyan-200">{order.packName}</p><h2 className="mt-1 text-xl font-black">{complete ? "本次抽卡结果" : "正在开启卡包"}</h2></div>
@@ -103,14 +152,16 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
           </div>
         ) : !complete && current ? (
           <div className="grid flex-1 place-items-center py-8">
-            <div className={`asset-draw-reveal asset-draw-aura asset-draw-aura-${current.rarity} w-60 sm:w-72`} key={`${current.id}-${revealed}`}>
+            <div className={`asset-draw-reveal asset-draw-aura asset-draw-aura-${current.rarity} ${prepared !== revealed ? "asset-draw-loading" : ""} w-60 sm:w-72`} key={`${current.id}-${revealed}`}>
               <div className="asset-draw-flip-card">
-                <div className="asset-draw-flip-inner">
+                <div className="asset-draw-flip-inner" onAnimationEnd={(event) => { if (event.target === event.currentTarget && event.animationName === "asset-draw-card-flip") setFlipped(revealed); }}>
                   <div className="asset-draw-flip-face asset-draw-flip-back" aria-hidden="true">
                     <img src="/card-back.webp?v=20260721" alt="" className="h-full w-full object-cover" decoding="async" draggable={false} />
                   </div>
                   <div className="asset-draw-flip-face asset-draw-flip-front">
-                    <AssetCardVisual card={current} animated motion packType={order.packType} />
+                    <AssetAnimationPausedContext.Provider value={flipped !== revealed}>
+                      <AssetCardVisual card={current} eager motion={waitingForLegend && flipped === revealed} packType={order.packType} />
+                    </AssetAnimationPausedContext.Provider>
                   </div>
                 </div>
                 {current.firstObtained && <NewCardBurst delayed />}
@@ -127,6 +178,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
             </div>
           </div>
         ) : (
+          <AssetAnimationPausedContext.Provider value={!resultMotionReady}>
           <div className="asset-result-pop py-8">
             {order.collectibleAwards?.length > 0 && (
               <div className="mx-auto mb-8 max-w-3xl rounded-3xl border border-amber-300/30 bg-amber-300/10 p-5">
@@ -158,6 +210,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
               <span className="inline-flex items-center gap-1 text-amber-200"><Sparkles size={16} />收藏值已自动更新</span>
             </div>
           </div>
+          </AssetAnimationPausedContext.Provider>
         )}
         </div>
       </div>

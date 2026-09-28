@@ -8,6 +8,11 @@ export async function initCardBattleBossSchema(db: mysql.Pool) {
     if (!found) await db.query(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   };
   await column("online_soup_rooms", "card_battle_mode", "ENUM('1v1','boss') NOT NULL DEFAULT '1v1'");
+  // Legacy system room IDs remain the stable identity of BOSS definitions/rewards.
+  // Player rooms reference that identity instead of duplicating BOSS configuration.
+  await column("online_soup_rooms", "boss_template_id", "VARCHAR(64) NULL");
+  await column("online_soup_rooms", "boss_clear_label", "ENUM('uncleared','cleared') NULL");
+  await column("online_card_battles", "boss_template_id", "VARCHAR(64) NULL");
   const [[host]] = await db.query<mysql.RowDataPacket[]>(
     "SELECT IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'online_soup_rooms' AND COLUMN_NAME = 'host_id'");
   if (host?.IS_NULLABLE === "NO") await db.query("ALTER TABLE online_soup_rooms MODIFY COLUMN host_id VARCHAR(64) NULL");
@@ -53,4 +58,10 @@ export async function initCardBattleBossSchema(db: mysql.Pool) {
     CONSTRAINT fk_boss_reward_room FOREIGN KEY (room_id) REFERENCES card_battle_bosses(room_id),
     CONSTRAINT fk_boss_reward_game FOREIGN KEY (game_id) REFERENCES online_card_battles(id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  // Retire legacy system rooms without deleting definitions, records or rewards.
+  // In-flight battles finish using their snapshots; finalization retires those rooms.
+  await db.query(`UPDATE online_soup_rooms rooms JOIN card_battle_bosses bosses ON bosses.room_id = rooms.id
+    SET rooms.status = 'closed', rooms.closed_at = COALESCE(rooms.closed_at, NOW())
+    WHERE rooms.host_id IS NULL AND rooms.boss_template_id IS NULL AND rooms.status NOT IN ('playing','closed')`);
+
 }

@@ -39,7 +39,8 @@ try {
     $newManifest = Invoke-RestMethod -Uri "https://hgt.caqis.com/api/app/android-update?versionCode=$($descriptorData.versionCode)" -TimeoutSec 20
     $expectedNotes = @($descriptorData.releaseNotes) | ConvertTo-Json -Compress
     $publishedNotes = @($oldManifest.releaseNotes) | ConvertTo-Json -Compress
-    if (-not $oldManifest.updateAvailable -or $oldManifest.forceUpdate -or
+    $expectedForceUpdate = [int]$descriptorData.minSupportedVersionCode -eq [int]$descriptorData.versionCode
+    if (-not $oldManifest.updateAvailable -or $oldManifest.forceUpdate -ne $expectedForceUpdate -or
         $oldManifest.latestVersionCode -ne $descriptorData.versionCode -or
         $oldManifest.latestVersionName -ne $descriptorData.versionName -or
         $oldManifest.minSupportedVersionCode -ne $descriptorData.minSupportedVersionCode -or
@@ -53,7 +54,7 @@ try {
     Write-Output 'ANDROID_UPDATE_VERIFIED=true'
     Write-Output "ANDROID_LATEST_VERSION=$($oldManifest.latestVersionName)"
     Write-Output "ANDROID_LATEST_VERSION_CODE=$($oldManifest.latestVersionCode)"
-    Write-Output 'ANDROID_FORCE_UPDATE=false'
+    Write-Output "ANDROID_FORCE_UPDATE=$($expectedForceUpdate.ToString().ToLowerInvariant())"
     Write-Output 'ANDROID_APK_URL_MATCHED=true'
     Write-Output 'ANDROID_RELEASE_NOTES_MATCHED=true'
 } finally {

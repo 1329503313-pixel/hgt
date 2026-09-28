@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { awardCollectiblesForDraw, collectibleAuctionEndAfterBid, collectibleProbabilityDetails, collectibleProbabilityWins, equipFirstOwnedCollectible, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
+import { awardCollectiblesForDraw, loadDrawCollectibleCandidates, collectibleAuctionEndAfterBid, collectibleProbabilityDetails, collectibleProbabilityWins, equipFirstOwnedCollectible, insertNotification, optimizeCollectibleImages } from "./collectibles.js";
 import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
 
 test("收藏品排行榜按用户当前拥有且未删除的藏品价值总和统计", () => {
@@ -54,7 +54,7 @@ test("抽中收藏品时记录当前卡包的真实累计抽数", async () => {
   const connection = {
     query: async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      if (sql.includes("SELECT c.*, b.probability AS draw_probability")) {
+      if (sql.includes("b.probability AS draw_probability")) {
         return [[{
           id: "collectible-1", collectible_no: "001", name: "测试收藏品", rarity: "epic",
           collectible_type: "physical", collectible_value: 10, description: "", image_url: "/test.webp",
@@ -74,6 +74,30 @@ test("抽中收藏品时记录当前卡包的真实累计抽数", async () => {
   assert.equal(awards[0].packDrawNumber, 110);
   assert.match(awardInsert?.sql ?? "", /pack_draw_number/);
   assert.deepEqual(awardInsert?.params.slice(1), ["collectible-1", "order-1", 3, 110, "user-1", 100]);
+});
+
+test("十连复用事务内收藏品候选，中奖后不再重复发放且不读取图片大字段", async () => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const connection = { query: async (sql: string, params: unknown[] = []) => {
+    calls.push({ sql, params });
+    if (sql.includes("b.probability AS draw_probability")) return [[{
+      id: "prize", collectible_no: "001", name: "唯一奖品", rarity: "epic",
+      collectible_value: 10, draw_probability: 100, owner_user_id: null
+    }]];
+    if (sql.includes("COUNT(*) AS owned_count")) return [[{ owned_count: 1 }]];
+    return [{ affectedRows: 1 }];
+  } };
+  const candidates = await loadDrawCollectibleCandidates(connection as never, "pack");
+  const awards = [];
+  for (let i = 1; i <= 10; i++) awards.push(...await awardCollectiblesForDraw(connection as never, "user", "pack", "order", i, 95 + i - 1, candidates));
+  assert.equal(awards.length, 1);
+  assert.equal(awards[0].drawIndex, 1);
+  assert.equal(awards[0].packDrawNumber, 96);
+  const reads = calls.filter(call => call.sql.includes("b.probability AS draw_probability"));
+  assert.equal(reads.length, 1);
+  assert.match(reads[0].sql, /FOR UPDATE/);
+  assert.doesNotMatch(reads[0].sql, /c\.\*|image_url|thumbnail_url/);
+  assert.equal(calls.filter(call => call.sql.includes("INSERT INTO collectible_draw_awards")).length, 1);
 });
 
 test("最后一分钟内出价后延长至出价时间后一整分钟", () => {

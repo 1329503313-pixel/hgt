@@ -58,6 +58,54 @@ test("闯关共用50回合，普通对战仍为30回合", () => {
   assert.equal(tower.rounds, 50); assert.equal(tower.endReason, "round_limit"); assert.equal(tower.winnerSeat, 2);
   assert.equal(simulateCardBattle(inputs, "thirty", "1v1").rounds, 30);
 });
+
+test("闯关BOSS普攻、普通及真实技能伤害与治疗技能按累计衰减结算", () => {
+  for (const type of ["damage_all", "damage_true_all"] as const) {
+    const team = squad("team", 1, { maxHp: 10_000_000, attack: 20000, defense: 0, speed: 2000, energyRequired: 10,
+      effects: [{ id: "team-damage", order: 0, condition: "energy_full", conditionValue: null, type: "damage_all", value: 20000, duration: null }] });
+    const boss = squad("boss", 2, { maxHp: 10_000_000, attack: 1000, defense: 0, speed: 1000, energyRequired: 10,
+      effects: [{ id: "damage", order: 0, condition: "energy_full", conditionValue: null, type, value: 10000, duration: null },
+        { id: "heal", order: 1, condition: "energy_full", conditionValue: null, type: "heal_all_allies", value: 1000, duration: null }] });
+    // Keep one caster and four basic attackers to cover both paths without hitting event limits.
+    for (const card of boss.cards.slice(1)) card.tier.effects = [];
+    const input = [team, boss];
+    const normal = simulateCardBattle(input, `decay-output-${type}`, "1v1");
+    const tower = simulateCardBattle(input, `decay-output-${type}`, "tower");
+    for (const round of [1, 2, 3, 11]) {
+      const multiplier = 1 - (round - 1) * 0.005;
+      const baseline = normal.events.filter(e => e.round === round && e.actorId?.startsWith("boss") && e.visual === "damage");
+      const weakened = tower.events.filter(e => e.round === round && e.actorId?.startsWith("boss") && e.visual === "damage");
+      assert.ok(baseline.length > 0, `${type}/${round}`);
+      assert.equal(weakened.length, baseline.length);
+      for (const [index, event] of weakened.entries()) {
+        assert.equal(event.actorId, baseline[index]!.actorId);
+        for (const [targetIndex, hit] of event.effects.entries()) {
+          const original = baseline[index]!.effects[targetIndex]!;
+          assert.equal(hit.targetId, original.targetId);
+          assert.ok(Math.abs(hit.amount! - Math.round(original.amount! * multiplier)) <= 1, `${type}/${round}: ${hit.amount} vs ${original.amount}`);
+        }
+      }
+      const heals = tower.events.filter(e => e.round === round && e.actorId?.startsWith("boss") && e.visual === "heal").flatMap(e => e.effects);
+      assert.ok(heals.length > 0);
+      if (round > 1) assert.equal(heals.length, 5);
+      assert.ok(heals.every(h => h.amount === Math.round(1000 * multiplier)), `${type}/${round}/healing`);
+    }
+  }
+});
+
+test("闯关换队延续已完成的回合衰减，同回合接替不多扣一次", () => {
+  const first = squad("first", 1, { maxHp: 2000, attack: 0, defense: 0, speed: 2000 });
+  const reserve = squad("reserve", 1, { maxHp: 1_000_000, attack: 0, defense: 0, speed: 3000 });
+  const boss = squad("boss", 2, { maxHp: 1_000_000, attack: 0, defense: 1000, speed: 1000, energyRequired: 10,
+    effects: [{ id: "damage", order: 0, condition: "energy_full", conditionValue: null, type: "damage_all", value: 1000, duration: null }] });
+  const result = simulateCardBattle([first, reserve, boss], "decay-relay", "tower");
+  const joined = result.events.find(e => e.text === "reserve 接替上场")!;
+  assert.ok(joined && joined.round > 1);
+  for (const event of result.events.filter(e => e.sequence >= joined.sequence)) {
+    const completed = event.kind === "end" && result.endReason === "round_limit" ? event.round : event.round - 1;
+    assert.ok(event.states.filter(s => s.seat === 2).every(s => s.speed === 1000 - completed * 5 && s.defense === 1000 - completed * 5));
+  }
+});
 test("阵容接力保持BOSS血量能量状态，后备满血零能量上场，退场不再参与目标或复活", () => {
   const first = squad("first", 1, { maxHp: 80, attack: 20, speed: 200 });
   const second = squad("second", 1, { maxHp: 10000, attack: 500, speed: 90, energyRequired: 10,

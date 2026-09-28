@@ -33,4 +33,5 @@ export declare const isCardBattleTrueDamage: (type: string) => boolean;
 export declare const isCardBattleShield: (type: string) => boolean;
 export declare const cardBattleAccuracyStat: (type: string) => CardBattleAccuracyStat | null;
 export declare const cardBattleDefenseNeedsDuration: (type: string) => boolean;
-export declare const cardBattleDodgeChance: (dodge: number, hit: number) => number;
+/** Critical damage gains 50 hit percentage points for this hit only, before clamping. */
+export declare const cardBattleDodgeChance: (dodge: number, hit: number, critical?: boolean) => number;

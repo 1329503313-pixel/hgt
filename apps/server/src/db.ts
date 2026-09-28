@@ -362,6 +362,71 @@ export async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS phone_verification_challenges (
+      id VARCHAR(64) PRIMARY KEY,
+      phone CHAR(11) NOT NULL,
+      purpose ENUM('register','upgrade','recover') NOT NULL,
+      user_id VARCHAR(64) NULL,
+      requester_ip_hash CHAR(64) NOT NULL,
+      code_hash CHAR(64) NOT NULL,
+      attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+      delivery_status ENUM('pending','accepted','failed','uncertain') NOT NULL DEFAULT 'pending',
+      expires_at DATETIME NOT NULL,
+      consumed_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_phone_challenge_phone_created (phone, created_at),
+      INDEX idx_phone_challenge_ip_created (requester_ip_hash, created_at),
+      INDEX idx_phone_challenge_user (user_id),
+      CONSTRAINT fk_phone_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS phone_verification_send_locks (
+      phone CHAR(11) PRIMARY KEY,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_upgrade_tokens (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      token_hash CHAR(64) NOT NULL UNIQUE,
+      auth_version INT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      consumed_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_account_upgrade_user (user_id, created_at),
+      CONSTRAINT fk_account_upgrade_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS email_recovery_challenges (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      requester_ip_hash CHAR(64) NOT NULL,
+      code_hash CHAR(64) NOT NULL,
+      attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+      expires_at DATETIME NOT NULL,
+      consumed_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_email_recovery_user_created (user_id, created_at),
+      INDEX idx_email_recovery_ip_created (requester_ip_hash, created_at),
+      CONSTRAINT fk_email_recovery_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_password_reset_audit (
+      id VARCHAR(64) PRIMARY KEY,
+      actor_id VARCHAR(64) NOT NULL,
+      target_user_id VARCHAR(64) NOT NULL,
+      reason VARCHAR(500) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_admin_password_reset_target (target_user_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS soup_topics (
       id VARCHAR(64) PRIMARY KEY,
       name VARCHAR(16) NOT NULL,
@@ -564,6 +629,9 @@ export async function initDatabase() {
   await ensureColumn("users", "profile_background_zoom", "profile_background_zoom DECIMAL(6,3) NOT NULL DEFAULT 1 AFTER profile_background_crop_y");
   await ensureColumn("users", "profile_background_updated_at", "profile_background_updated_at DATETIME NULL AFTER profile_background_zoom");
   await ensureColumn("users", "token_version", "token_version INT NOT NULL DEFAULT 0 AFTER role");
+  await ensureColumn("users", "legacy_login_enabled", "legacy_login_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER token_version");
+  await ensureColumn("users", "username_generated", "username_generated TINYINT(1) NOT NULL DEFAULT 0 AFTER legacy_login_enabled");
+  await ensureColumn("users", "phone_upgraded_at", "phone_upgraded_at DATETIME NULL AFTER username_generated");
   await ensureColumn("notifications", "actor_id", "actor_id VARCHAR(64) NULL AFTER related_id");
   await ensureIndex("notifications", "uq_notification_actor_event", "user_id, type, related_id, actor_id", true);
   await ensureColumn("soups", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_image");
@@ -2604,10 +2672,22 @@ export async function initDatabase() {
   await ensureColumn("asset_cards", "motion_processing_version", "motion_processing_version VARCHAR(64) NULL AFTER motion_version");
   await ensureColumn("asset_cards", "motion_status", "motion_status ENUM('idle','processing','ready','failed') NOT NULL DEFAULT 'idle' AFTER motion_processing_version");
   await ensureColumn("asset_cards", "motion_error", "motion_error VARCHAR(255) NULL AFTER motion_status");
+  await ensureColumn("asset_cards", "battle_traits_json", "battle_traits_json JSON NULL AFTER battle_role");
   await pool.query("UPDATE asset_cards SET motion_status = 'ready' WHERE motion_mp4_path IS NOT NULL AND motion_status = 'idle'");
   // 对战定位只属于可参战卡；历史史诗和传说卡默认归为输出。
   await pool.query("UPDATE asset_cards SET battle_role = 'damage' WHERE rarity IN ('epic','legend') AND battle_role IS NULL");
   await pool.query("UPDATE asset_cards SET battle_role = NULL WHERE rarity NOT IN ('epic','legend') AND battle_role IS NOT NULL");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS card_battle_traits (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(80) NOT NULL,
+      description TEXT NOT NULL,
+      effects_json JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_card_battle_traits_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sticker_series (
@@ -2713,10 +2793,14 @@ export async function initDatabase() {
       description VARCHAR(1000) NOT NULL DEFAULT '',
       pack_story TEXT NULL,
       pack_type ENUM('permanent','limited','collaboration') NOT NULL DEFAULT 'permanent',
-      single_price INT UNSIGNED NOT NULL DEFAULT 0,
-      ten_price INT UNSIGNED NOT NULL DEFAULT 0,
-      daily_free_draws INT UNSIGNED NOT NULL DEFAULT 0,
-      sale_start_at DATETIME NULL,
+       single_price INT UNSIGNED NOT NULL DEFAULT 0,
+       ten_price INT UNSIGNED NOT NULL DEFAULT 0,
+       daily_free_draws INT UNSIGNED NOT NULL DEFAULT 0,
+       full_star_refund_normal INT UNSIGNED NOT NULL DEFAULT 0,
+       full_star_refund_rare INT UNSIGNED NOT NULL DEFAULT 1,
+       full_star_refund_epic INT UNSIGNED NOT NULL DEFAULT 2,
+       full_star_refund_legend INT UNSIGNED NOT NULL DEFAULT 5,
+       sale_start_at DATETIME NULL,
       sale_end_at DATETIME NULL,
       enabled TINYINT(1) NOT NULL DEFAULT 0,
       sort_order INT NOT NULL DEFAULT 0,
@@ -2728,6 +2812,10 @@ export async function initDatabase() {
   `);
   await ensureColumn("asset_packs", "cover_thumbnail", "cover_thumbnail LONGTEXT NULL AFTER cover_url");
   await ensureColumn("asset_packs", "pack_story", "pack_story TEXT NULL AFTER description");
+  await ensureColumn("asset_packs", "full_star_refund_normal", "full_star_refund_normal INT UNSIGNED NOT NULL DEFAULT 0");
+  await ensureColumn("asset_packs", "full_star_refund_rare", "full_star_refund_rare INT UNSIGNED NOT NULL DEFAULT 1");
+  await ensureColumn("asset_packs", "full_star_refund_epic", "full_star_refund_epic INT UNSIGNED NOT NULL DEFAULT 2");
+  await ensureColumn("asset_packs", "full_star_refund_legend", "full_star_refund_legend INT UNSIGNED NOT NULL DEFAULT 5");
   await migrateAssetThumbnails();
   await pool.query("UPDATE asset_packs SET sale_start_at = NULL, sale_end_at = NULL WHERE pack_type = 'permanent' AND (sale_start_at IS NOT NULL OR sale_end_at IS NOT NULL)");
 
@@ -2837,7 +2925,7 @@ export async function initDatabase() {
       condition_code VARCHAR(64) NOT NULL,
       condition_value INT UNSIGNED NULL,
       effect_code VARCHAR(64) NOT NULL,
-      effect_value INT UNSIGNED NULL,
+      effect_value BIGINT NULL,
       ignore_defense_percent DECIMAL(5,2) NOT NULL DEFAULT 0,
       duration_rounds BIGINT UNSIGNED NULL,
       probability DECIMAL(5,2) NULL,
@@ -2853,6 +2941,13 @@ export async function initDatabase() {
   await ensureColumn("asset_card_battle_effects", "ignore_defense_percent", "ignore_defense_percent DECIMAL(5,2) NOT NULL DEFAULT 0");
   await ensureColumn("asset_card_battle_effects", "probability", "probability DECIMAL(5,2) NULL");
   await ensureColumn("asset_card_battle_effects", "additional_effects", "additional_effects JSON NULL");
+  const [battleValueColumns] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_card_battle_effects' AND COLUMN_NAME = 'effect_value'",
+  );
+  if (String(battleValueColumns[0]?.COLUMN_TYPE ?? "").toLowerCase().includes("unsigned")) {
+    // BIGINT 保留旧 UNSIGNED INT 的全部取值，避免缩窄字段时影响历史配置。
+    await pool.query("ALTER TABLE asset_card_battle_effects MODIFY COLUMN effect_value BIGINT NULL");
+  }
   const [battleDurationColumns] = await pool.query<mysql.RowDataPacket[]>(
     "SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_card_battle_effects' AND COLUMN_NAME = 'duration_rounds'",
   );
@@ -3138,6 +3233,7 @@ export async function initDatabase() {
   await ensureColumn("collectibles", "battle_effect_description", "battle_effect_description TEXT NULL");
   await ensureColumn("collectibles", "battle_effect_type", "battle_effect_type VARCHAR(40) NULL");
   await ensureColumn("collectibles", "battle_effect_value", "battle_effect_value DECIMAL(12,2) NULL");
+  await ensureColumn("collectibles", "battle_effects_json", "battle_effects_json JSON NULL");
   for (const table of ["online_card_battle_seats", "user_card_battle_decks", "card_battle_ranking_entries"]) {
     await ensureColumn(table, "collectible_bindings_json", "collectible_bindings_json JSON NULL");
   }

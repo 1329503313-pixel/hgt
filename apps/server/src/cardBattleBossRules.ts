@@ -1,5 +1,20 @@
 import { z } from "zod";
 import { cardBattleTierSchema } from "./cardBattleConfig.js";
+import { CARD_BATTLE_TRAIT_EFFECTS, CARD_BATTLE_TRAIT_TARGETS, cardBattleTraitEffectError } from "@hgt/shared";
+
+const traitEffectSchema = z.object({
+  requiredCount: z.number().int().min(1).max(5), type: z.enum(CARD_BATTLE_TRAIT_EFFECTS),
+  target: z.enum(CARD_BATTLE_TRAIT_TARGETS), valueType: z.enum(["flat", "percent"]),
+  value: z.number().positive().max(1_000_000), cadence: z.enum(["fixed", "round"]),
+  durationRounds: z.number().int().min(1).max(30).nullable(),
+}).superRefine((effect, context) => {
+  const error = cardBattleTraitEffectError(effect);
+  if (error) context.addIssue({ code: "custom", message: error });
+});
+const traitSnapshotSchema = z.object({
+  id: z.string().min(1), name: z.string().trim().min(1).max(80), description: z.string().max(2000),
+  effects: z.array(traitEffectSchema).min(1).max(5),
+});
 
 export const BOSS_PLAYER_CARDS = 3;
 export const BOSS_PLAYER_SEATS = 3;
@@ -9,6 +24,7 @@ export const bossCardSchema = z.object({
   name: z.string().trim().min(1, "请输入卡牌名称").max(100),
   imageUrl: z.string().regex(bossCoverPattern, "请上传卡牌封面"),
   tier: cardBattleTierSchema.refine((tier) => tier.starLevel === 3, { message: "BOSS卡牌固定三星", path: ["starLevel"] }),
+  traits: z.array(traitSnapshotSchema).max(20).default([]),
 });
 export const bossInputSchema = z.object({
   name: z.string().trim().min(1, "请输入房间名称").max(50),

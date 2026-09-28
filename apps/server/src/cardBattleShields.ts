@@ -1,4 +1,4 @@
-export type CardBattleShield = { remaining: number; expiresAfterRound: number; sourceId: string; order: number };
+export type CardBattleShield = { remaining: number; expiresAfterRound: number; sourceId: string; order: number; traitKey?: string };
 export const cardBattleShieldValue = (shields: readonly CardBattleShield[]) => shields.reduce((total, shield) => total + shield.remaining, 0);
 
 /** Consume earliest-expiring layers first; insertion order breaks ties. */

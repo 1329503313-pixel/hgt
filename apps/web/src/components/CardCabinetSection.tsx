@@ -5,6 +5,7 @@ import { api } from "../api";
 import type { CardCabinet, OwnedAssetCard } from "../shared/digitalAssets";
 import { assetRarityLabel, warmAssetImage } from "../shared/digitalAssets";
 import { AssetCardVisual } from "./AssetCardVisual";
+import { CARD_BATTLE_TRAIT_EFFECT_LABELS, CARD_BATTLE_TRAIT_TARGET_LABELS } from "@hgt/shared";
 import { ListSkeleton } from "./Skeletons";
 import { Modal } from "./Modal";
 
@@ -255,6 +256,7 @@ export function CardCabinetSection({
                 {detail.starLevel < 3 ? <p className="text-base text-muted"><span className="font-black text-ink">升星进度</span><span className="float-right font-bold text-primary">{detail.duplicateProgress}/{detail.nextStarRequirement}</span></p> : <p className="text-base font-bold text-amber-600">已满星，后续重复卡将自动转化为贝壳。</p>}
               </div>
               {detail.story && <div className="border-t border-line px-5 py-5"><h3 className="text-base font-black">卡片故事</h3><p className="mt-2 whitespace-pre-wrap text-base leading-8 text-muted">{detail.story}</p></div>}
+              {!!detail.traits?.length && <section className="border-t border-line px-5 py-5" aria-labelledby="card-traits-title"><h3 id="card-traits-title" className="text-base font-black">卡牌特质</h3><div className="mt-3 space-y-3">{detail.traits.map((trait) => <article key={trait.id} className="rounded-xl bg-blue-50 p-3"><h4 className="font-black text-blue-900">{trait.name}</h4>{trait.description && <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">{trait.description}</p>}<ul className="mt-2 space-y-1 text-xs leading-5 text-blue-950">{trait.effects.map((effect, index) => <li key={index}>{effect.requiredCount}张：{CARD_BATTLE_TRAIT_EFFECT_LABELS[effect.type]} +{effect.value}{effect.valueType === "percent" ? "%" : ""} · {CARD_BATTLE_TRAIT_TARGET_LABELS[effect.target]}{effect.cadence === "round" ? ` · 每回合，持续${effect.durationRounds}回合` : ""}</li>)}</ul></article>)}</div></section>}
               {detail.battleTier && <section className="border-t border-line px-5 py-5" aria-labelledby="card-battle-attributes-title">
                 <div className="flex items-start gap-3">
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary" aria-hidden="true"><Swords size={20} /></span>

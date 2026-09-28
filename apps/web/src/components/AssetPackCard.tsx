@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { AssetCardVisual } from "./AssetCardVisual";
+import { CARD_BATTLE_TRAIT_EFFECT_LABELS, CARD_BATTLE_TRAIT_TARGET_LABELS } from "@hgt/shared";
 import { assetRarityLabel, CARD_BATTLE_ROLE_LABELS, type AssetPack } from "../shared/digitalAssets";
 
 export function AssetPackCard({ card, packType, selected, selecting, onSelectUp }: {
@@ -38,6 +39,7 @@ export function AssetPackCard({ card, packType, selected, selecting, onSelectUp 
       overlay={expanded && <span id={descriptionId} className="asset-pack-card-details scrollbar-hidden">
         <span className="block font-black">{tier?.starLevel ?? (card.owned ? card.starLevel ?? 0 : 0)} 星属性{card.battleRole ? ` · ${CARD_BATTLE_ROLE_LABELS[card.battleRole]}` : ""}</span>
         {tier ? <>
+          {!!card.traits?.length && <span className="mt-2 block space-y-2">{card.traits.map((trait) => <span key={trait.id} className="block rounded-lg bg-white/10 p-2"><span className="block font-black text-cyan-100">{trait.name}</span>{trait.description && <span className="mt-1 block whitespace-pre-wrap">{trait.description}</span>}<span className="mt-1 block">{trait.effects.map((effect) => `${effect.requiredCount}张 ${CARD_BATTLE_TRAIT_EFFECT_LABELS[effect.type]} +${effect.value}${effect.valueType === "percent" ? "%" : ""} · ${CARD_BATTLE_TRAIT_TARGET_LABELS[effect.target]}${effect.cadence === "round" ? ` · 每回合持续${effect.durationRounds}回合` : ""}`).join("；")}</span></span>)}</span>}
           <span className="mt-2 block space-y-1">
             {[
               ["生命", tier.maxHp], ["攻击", tier.attack], ["防御", tier.defense],

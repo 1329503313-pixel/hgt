@@ -5,6 +5,7 @@ import { resetServerEventConnection, subscribeServerEvent } from "../shared/serv
 import { removeSessionCachePrefix } from "../shared/sessionCache";
 
 export type BadgeUnlockEvent = { key: string; stats: StatsResponse; specialBadge?: SpecialBadgeUnlock };
+export type PhoneStatus = { bound: boolean; phone: string | null; legacyLoginEnabled: boolean; superAdminExempt: boolean };
 
 // ---------- 常量 ----------
 export const soupTypes = ["本格清汤", "本格红汤", "本格黑汤", "变格清汤", "变格红汤", "变格黑汤", "纯机制汤", "王八汤", "其他"];
@@ -116,6 +117,12 @@ type AppContextValue = {
   openAuth: () => void;
   closeAuth: () => void;
   switchAuthMode: () => void;
+  phoneStatus: PhoneStatus | null;
+  phoneBindingOpen: boolean;
+  openPhoneBinding: () => void;
+  closePhoneBinding: () => void;
+  completePhoneBinding: (phone: string) => void;
+  refreshPhoneStatus: () => Promise<void>;
 
   // SoupEditor 模态框
   showSoupForm: boolean;
@@ -163,6 +170,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // 认证模态框
   const [authMode, setAuthModeRaw] = useState<"login" | "register" | null>(null);
   const [authError, setAuthError] = useState("");
+  const [phoneStatusState, setPhoneStatusState] = useState<{ userId: string; status: PhoneStatus } | null>(null);
+  const [phoneBindingRequested, setPhoneBindingRequested] = useState(false);
+  const [phoneBindingDismissedUserId, setPhoneBindingDismissedUserId] = useState<string | null>(null);
+  const phoneStatusRequestRef = useRef(0);
 
   // SoupEditor 模态框
   const [showSoupForm, setShowSoupForm] = useState(false);
@@ -197,9 +208,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       clearApiCache();
       removeSessionCachePrefix("hgt:");
       resetServerEventConnection();
+      ++phoneStatusRequestRef.current;
+      if (!nextUserId) setPhoneBindingDismissedUserId(null);
     }
     userIdRef.current = nextUserId;
     setUserState(nextUser);
+  }, []);
+  const refreshPhoneStatus = useCallback(async () => {
+    const userId = userIdRef.current;
+    if (!userId) { setPhoneStatusState(null); return; }
+    const requestId = ++phoneStatusRequestRef.current;
+    const status = await api<PhoneStatus>("/api/auth/phone/status", { bypassCache: true, dedupe: false });
+    if (userIdRef.current === userId && phoneStatusRequestRef.current === requestId) setPhoneStatusState({ userId, status });
+  }, []);
+  useEffect(() => {
+    setPhoneBindingRequested(false);
+    setPhoneStatusState(null);
+    if (user?.id) void refreshPhoneStatus().catch(() => undefined);
+  }, [user?.id, refreshPhoneStatus]);
+  useEffect(() => {
+    const onReturn = () => {
+      if (document.visibilityState !== "visible" || !userIdRef.current) return;
+      setPhoneBindingDismissedUserId(null);
+      void refreshPhoneStatus().catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", onReturn);
+    return () => document.removeEventListener("visibilitychange", onReturn);
+  }, [refreshPhoneStatus]);
+  const phoneStatus = phoneStatusState && phoneStatusState.userId === user?.id ? phoneStatusState.status : null;
+  const phoneBindingOpen = Boolean(user && phoneStatus && !phoneStatus.bound && !phoneStatus.superAdminExempt &&
+    (phoneBindingRequested || phoneBindingDismissedUserId !== user.id));
+  const openPhoneBinding = useCallback(() => setPhoneBindingRequested(true), []);
+  const closePhoneBinding = useCallback(() => {
+    setPhoneBindingDismissedUserId(userIdRef.current);
+    setPhoneBindingRequested(false);
+  }, []);
+  const completePhoneBinding = useCallback((phone: string) => {
+    const userId = userIdRef.current;
+    if (!userId) return;
+    ++phoneStatusRequestRef.current;
+    setPhoneStatusState({ userId, status: {
+      bound: true, phone: `${phone.slice(0, 3)}****${phone.slice(-4)}`,
+      legacyLoginEnabled: false, superAdminExempt: false,
+    } });
+    setPhoneBindingDismissedUserId(userId);
+    setPhoneBindingRequested(false);
   }, []);
   const checkBadgeUnlocks = useCallback(async (force = false) => {
     if (badgeCheckInFlightRef.current) return;
@@ -374,6 +427,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     openAuth,
     closeAuth,
     switchAuthMode,
+    phoneStatus,
+    phoneBindingOpen,
+    openPhoneBinding,
+    closePhoneBinding,
+    completePhoneBinding,
+    refreshPhoneStatus,
     showSoupForm,
     editingSoupId,
     soupForm,

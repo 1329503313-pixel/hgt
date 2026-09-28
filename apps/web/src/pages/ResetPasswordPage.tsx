@@ -10,7 +10,7 @@ import { ACCOUNT_PASSWORD_MAX_LENGTH, ACCOUNT_PASSWORD_MIN_LENGTH } from "../sha
 export default function ResetPasswordPage() {
   const { user, loadingUser, openAuth, showToast } = useApp();
   const navigate = useNavigate();
-  const [password, setPassword] = useState({ next: "", confirm: "" });
+  const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [saving, setSaving] = useState(false);
 
   async function submit(event: FormEvent) {
@@ -20,8 +20,8 @@ export default function ResetPasswordPage() {
     if (password.next !== password.confirm) return showToast("两次输入的新密码不一致");
     setSaving(true);
     try {
-      await api<PasswordResponse>("/api/auth/password", { method: "POST", body: { newPassword: password.next } });
-      showToast("密码已重置");
+      await api<PasswordResponse>("/api/auth/password", { method: "POST", body: { currentPassword: password.current, newPassword: password.next } });
+      showToast("密码已修改");
       navigate("/mine/settings", { replace: true });
     } catch (error) {
       showToast((error as Error).message);
@@ -35,10 +35,11 @@ export default function ResetPasswordPage() {
 
   return (
     <section className="space-y-4">
-      <PageTopBar title="重置密码" />
+      <PageTopBar title="修改密码" />
       <MineBackButton />
       <div>
         <form className="card space-y-4 p-4" onSubmit={submit}>
+          <div><label className="label mb-2 block" htmlFor="current-password">当前密码</label><input id="current-password" className="field" type="password" autoComplete="current-password" value={password.current} onChange={(event) => setPassword((current) => ({ ...current, current: event.target.value }))} placeholder="请输入当前密码" required /></div>
           <div><label className="label mb-2 block" htmlFor="new-password">新密码</label><input id="new-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" aria-describedby="new-password-help" value={password.next} onChange={(event) => setPassword((current) => ({ ...current, next: event.target.value }))} placeholder="请输入新密码" required /><p id="new-password-help" className="mt-2 text-xs text-muted">密码至少 {ACCOUNT_PASSWORD_MIN_LENGTH} 位</p></div>
           <div><label className="label mb-2 block" htmlFor="confirm-password">再次输入新密码</label><input id="confirm-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" value={password.confirm} onChange={(event) => setPassword((current) => ({ ...current, confirm: event.target.value }))} placeholder="请再次输入新密码" required /></div>
           <button className="btn btn-primary w-full" disabled={saving}>{saving ? "提交中……" : "确认重置"}</button>

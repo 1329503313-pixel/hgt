@@ -1,4 +1,4 @@
-import { isCardBattleTrueDamage } from "@hgt/shared";
+import { activeCardBattleTraitEffects, cardBattleTraitEffectError, isCardBattleTrueDamage, type CardBattleTrait } from "@hgt/shared";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cardBattleBuffBonus, cardBattleEffectiveStat, cardBattleStatuses, rollCardBattleDamage, rollCardBattleCritical, type CardBattleBuff } from "./cardBattleMath.js";
@@ -63,6 +63,65 @@ test("100%暴击率也不会放大五种属性增益或直接能量恢复", () =
   const skills = result.events.filter((event) => event.actorId === "a1" && event.kind === "skill").slice(0, 6);
   assert.deepEqual(skills.map((event) => event.effects[0]!.amount), [100, 50, 100, 100, 100, 10]);
   assert.ok(skills.every((event) => !event.effects[0]?.critical));
+});
+
+test("恢复自身能量填负数按实际能量扣除，最低为0且飘字显示实扣值", () => {
+  for (const [configured, expected] of [[-7, 13], [-100, 0]] as const) {
+    const skill: CardBattleSkillEffect = { id: "signed-energy", order: 0, condition: "energy_full", conditionValue: null,
+      type: "energy_all_allies", value: 20, duration: null,
+      additionalEffects: [{ type: "energy_self", value: configured, duration: null }] };
+    const one = [card("a1", 1, { energyRequired: 30, speed: 1000, attack: 0 }, [skill]),
+      ...[2, 3, 4, 5].map((slot) => card(`a${slot}`, slot as 2 | 3 | 4 | 5, { attack: 0 }))];
+    const two = [1, 2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 1 | 2 | 3 | 4 | 5, { maxHp: 100000, attack: 0 }));
+    const result = simulateCardBattle(players(one, two), `signed-energy-${configured}`);
+    const events = result.events.filter((event) => event.actorId === "a1" && event.kind === "skill" && event.visual === "energy");
+    const deduction = events.find((event) => event.effectType === "energy_self" && event.effects.length);
+    assert.ok(deduction, `应实际扣除能量：${configured}`);
+    assert.equal(deduction.effects[0]!.amount, expected - 20);
+    assert.equal(deduction.effects[0]!.label, `能量 ${expected - 20}`);
+    assert.equal(deduction.states.find((state) => state.instanceId === "a1")!.energy, expected);
+    assert.ok(result.events.every((event) => event.states.every((state) => state.energy >= 0)));
+  }
+});
+
+test("战斗开始前的技能先于第一回合，按开局速度结算且每张卡只触发一次", () => {
+  const opening = (id: string, type: CardBattleSkillEffect["type"], value: number): CardBattleSkillEffect => ({
+    id, order: 0, condition: "battle_start", conditionValue: null, type, value, duration: 1,
+  });
+  const one = [card("a1", 1, { maxHp: 100000, attack: 0, speed: 300 },
+    [opening("speed", "speed_all_allies", 1000), { ...opening("attack", "attack_self", 10), order: 1 }]),
+    card("a2", 2, { maxHp: 100000, attack: 0, speed: 100 }, [opening("a2-defense", "defense_self", 7)]),
+    ...[3, 4, 5].map((slot) => card(`a${slot}`, slot as 3 | 4 | 5, { maxHp: 100000, attack: 0, speed: 50 }))];
+  const two = [card("b1", 1, { maxHp: 100000, attack: 0, speed: 200 }, [opening("b1-defense", "defense_self", 5)]),
+    ...[2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 2 | 3 | 4 | 5, { maxHp: 100000, attack: 0, speed: 50 }))];
+  const inputs = players(one, two);
+  const result = simulateCardBattle(inputs, "opening-speed");
+  const firstRound = result.events.findIndex((event) => event.text === "第 1 回合");
+  assert.equal(result.events[0]?.text, "战斗开始前");
+  assert.ok(firstRound > 0);
+  assert.deepEqual(result.events.slice(0, firstRound).filter((event) => event.kind === "skill").map((event) => event.actorId),
+    ["a1", "a1", "b1", "a2"], "同卡技能行先按配置顺序执行，先手速度提升不能重排已经确定的开局行动顺序");
+  assert.equal(result.events.filter((event) => event.effectType === "speed_all_allies" && event.actorId === "a1").length, 1);
+  assert.equal(result.events[firstRound]!.states.find((state) => state.instanceId === "a2")!.speed, 1100);
+  const secondRound = result.events.find((event) => event.text === "第 2 回合");
+  assert.equal(secondRound?.states.find((state) => state.instanceId === "a2")?.speed, 100, "持续1回合的开局效果在第1回合结束后到期");
+  assert.deepEqual(simulateCardBattle(inputs, "opening-speed"), result);
+});
+
+test("战斗开始前击败对方时不再进入第一回合", () => {
+  const damage: CardBattleSkillEffect = { id: "opening-lethal", order: 0, condition: "battle_start", conditionValue: null,
+    type: "damage_all", value: 1_000_000, duration: null };
+  const reply: CardBattleSkillEffect = { id: "opening-reply", order: 0, condition: "battle_start", conditionValue: null,
+    type: "defense_self", value: 100, duration: 1 };
+  const one = [card("a1", 1, { speed: 1000, attack: 0 }, [damage]),
+    ...[2, 3, 4, 5].map((slot) => card(`a${slot}`, slot as 2 | 3 | 4 | 5, { attack: 0 }))];
+  const two = [card("b1", 1, { speed: 100, attack: 0 }, [reply]),
+    ...[2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 2 | 3 | 4 | 5, { attack: 0 }))];
+  const result = simulateCardBattle(players(one, two), "opening-lethal");
+  assert.equal(result.winnerSeat, 1);
+  assert.equal(result.rounds, 0);
+  assert.ok(!result.events.some((event) => event.text === "第 1 回合"));
+  assert.ok(!result.events.some((event) => event.actorId === "b1" && event.effectType === "defense_self"));
 });
 
 test("伤害先浮动98%-102%并四舍五入再减防御，完全抵挡和溢出伤害受正确限制", () => {
@@ -257,6 +316,38 @@ test("阅读节奏使用统一1.25倍时间，事件总长与服务器播放时�
     if (event.kind === "skill" && event.visual === "damage") assert.equal(event.durationMs, 1625);
   }
   assert.equal(result.playbackDurationMs, result.events.reduce((sum, event) => sum + event.durationMs, 0));
+});
+
+test("特质按最高已满足档生效；同档效果同时生效，低档被替换", () => {
+  const trait: CardBattleTrait = { id: "test-trait", name: "守护", description: "", effects: [
+    { requiredCount: 1, type: "attack", target: "trait_allies", valueType: "flat", value: 100, cadence: "fixed", durationRounds: null },
+    { requiredCount: 2, type: "defense", target: "trait_allies", valueType: "flat", value: 50, cadence: "fixed", durationRounds: null },
+    { requiredCount: 2, type: "speed", target: "all_allies", valueType: "percent", value: 20, cadence: "fixed", durationRounds: null },
+  ] };
+  assert.deepEqual(activeCardBattleTraitEffects(trait, 1).map((effect) => effect.type), ["attack"]);
+  assert.deepEqual(activeCardBattleTraitEffects(trait, 2).map((effect) => effect.type), ["defense", "speed"]);
+  assert.match(cardBattleTraitEffectError({ requiredCount: 1, type: "energy", target: "all_allies", valueType: "percent", value: 10, cadence: "fixed", durationRounds: null }) ?? "", /仅支持数值/);
+  const one = [1, 2, 3, 4, 5].map((slot) => card(`ta${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, maxHp: 100_000 }));
+  one[0]!.traits = [trait]; one[1]!.traits = [trait];
+  const two = [1, 2, 3, 4, 5].map((slot) => card(`tb${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, maxHp: 100_000 }));
+  const result = simulateCardBattle(players(one, two), "trait-highest-tier");
+  assert.equal(result.initialStates.find((state) => state.instanceId === "ta1")!.attack, 0);
+  assert.equal(result.initialStates.find((state) => state.instanceId === "ta1")!.defense, 150);
+  assert.equal(result.initialStates.find((state) => state.instanceId === "ta1")!.speed, 120);
+  assert.deepEqual(result.initialStates.find((state) => state.instanceId === "ta1")!.activeTraits?.map((item) => item.name), ["守护"]);
+});
+
+test("每回合特质到期清除效果并在战后隐藏", () => {
+  const trait: CardBattleTrait = { id: "round-trait", name: "回春", description: "", effects: [
+    { requiredCount: 1, type: "attack", target: "trait_allies", valueType: "flat", value: 10, cadence: "round", durationRounds: 1 },
+  ] };
+  const one = [1, 2, 3, 4, 5].map((slot) => card(`ra${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, maxHp: 100_000 }));
+  one[0]!.traits = [trait];
+  const two = [1, 2, 3, 4, 5].map((slot) => card(`rb${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, maxHp: 100_000 }));
+  const result = simulateCardBattle(players(one, two), "trait-round-expiry");
+  assert.deepEqual(result.initialStates.find((state) => state.instanceId === "ra1")!.activeTraits?.map((item) => item.name), ["回春"]);
+  assert.equal(result.rounds, 30);
+  assert.deepEqual(result.finalStates.find((state) => state.instanceId === "ra1")!.activeTraits, []);
 });
 
 test("治疗量归属施法卡，累计有效自疗与群疗，过量、复活及加上限不计入", () => {

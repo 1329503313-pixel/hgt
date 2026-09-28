@@ -2,6 +2,7 @@ param(
     [string]$Commit = 'HEAD',
     [string]$ProductionHost = 'root@47.239.5.69',
     [string]$VoiceEnvironmentFile,
+    [string]$SmsEnvironmentFile,
     [switch]$BuildImageLocally,
     [switch]$ConfirmFullDeployment
 )
@@ -18,6 +19,8 @@ $remoteScript = Join-Path $scriptRoot 'production-deploy.sh'
 $preflightScript = Join-Path $scriptRoot 'production-preflight.sh'
 $remoteCleanupReady = $false
 $remoteVoiceDirectory = $null
+$remoteSmsDirectory = $null
+$smsTransferPath = $null
 $remoteImage = $null
 
 Push-Location $repoRoot
@@ -33,6 +36,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $resolvedCommit -notmatch '^[0-9a-f]{40}$') { throw 'Invalid deployment commit.' }
     $shortCommit = $resolvedCommit.Substring(0, 7)
     $voicePath = $null
+    $smsPath = $null
     if ($VoiceEnvironmentFile) {
         $voicePath = (Resolve-Path -LiteralPath $VoiceEnvironmentFile).Path
         $voiceLines = @(Get-Content -LiteralPath $voicePath -Encoding UTF8)
@@ -46,6 +50,25 @@ try {
         if ($voiceLines -notcontains 'VOICE_ROOMS_ENABLED=true' -or $voiceLines -notcontains 'TRTC_ADVANCED_PERMISSION=true') {
             throw 'RTC activation requires both feature and advanced-permission flags.'
         }
+    }
+    if ($SmsEnvironmentFile) {
+        $smsPath = (Resolve-Path -LiteralPath $SmsEnvironmentFile).Path
+        $smsLines = @(Get-Content -LiteralPath $smsPath -Encoding UTF8)
+        $smsKeys = @('ALIYUN_SMS_ENDPOINT', 'ALIYUN_SMS_ACCESS_KEY_ID', 'ALIYUN_SMS_ACCESS_KEY_SECRET', 'ALIYUN_SMS_SIGN_NAME', 'ALIYUN_SMS_VERIFICATION_TEMPLATE_CODE')
+        if ($smsLines.Count -ne $smsKeys.Count) { throw 'SMS environment must contain exactly five allowlisted entries.' }
+        foreach ($key in $smsKeys) {
+            if (@($smsLines | Where-Object { $_ -match "^${key}=[^=\r\n]+$" }).Count -ne 1) {
+                throw "SMS environment has a missing or invalid entry: $key"
+            }
+        }
+        if (@($smsLines | Where-Object { $_ -match '^ALIYUN_SMS_VERIFICATION_TEMPLATE_CODE=SMS_[0-9]+$' }).Count -ne 1) {
+            throw 'SMS verification template code must match SMS_<digits>.'
+        }
+        if (@($smsLines | Where-Object { $_ -match '^ALIYUN_SMS_ENDPOINT=[A-Za-z0-9.-]+$' }).Count -ne 1) {
+            throw 'SMS endpoint must be a hostname.'
+        }
+        $smsTransferPath = Join-Path $repoRoot ('.local\sms-transfer-' + [guid]::NewGuid().ToString('N') + '.env')
+        [IO.File]::WriteAllText($smsTransferPath, ($smsLines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
     }
     & $bundleScript -Commit $resolvedCommit
     if ($LASTEXITCODE -ne 0) { throw 'Production bundle creation failed.' }
@@ -83,6 +106,17 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Unable to restrict RTC configuration permissions.' }
         $remoteVoiceArgument = "$remoteVoiceDirectory/runtime.env"
     }
+    $remoteSmsArgument = ''
+    if ($smsPath) {
+        $remoteSmsDirectory = "$remoteRoot/incoming/sms-$shortCommit"
+        & ssh -o BatchMode=yes $ProductionHost "umask 077; mkdir -m 700 $remoteSmsDirectory"
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the private SMS transfer directory.' }
+        & scp -o BatchMode=yes $smsTransferPath "${ProductionHost}:$remoteSmsDirectory/runtime.env"
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to transfer SMS configuration.' }
+        & ssh -o BatchMode=yes $ProductionHost "chmod 600 $remoteSmsDirectory/runtime.env"
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to restrict SMS configuration permissions.' }
+        $remoteSmsArgument = "$remoteSmsDirectory/runtime.env"
+    }
     & scp -o BatchMode=yes $bundlePath "${ProductionHost}:$remoteBundle"
     if ($LASTEXITCODE -ne 0) { throw 'Unable to upload the production bundle.' }
     & scp -o BatchMode=yes $remoteScript "${ProductionHost}:$remoteDeployScript"
@@ -100,7 +134,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $currentContainerId -notmatch '^[0-9a-f]{64}$') {
         throw 'Unable to read the current production container ID.'
     }
-    & ssh -o BatchMode=yes $ProductionHost "sh $remoteDeployScript $remoteBundle $resolvedCommit $($manifest.sha256) $currentContainerId deploy-hgt-production $remoteVoiceArgument $remoteImageArguments"
+    & ssh -o BatchMode=yes $ProductionHost "sh $remoteDeployScript $remoteBundle $resolvedCommit $($manifest.sha256) $currentContainerId deploy-hgt-production $remoteVoiceArgument $remoteImageArguments $remoteSmsArgument"
     if ($LASTEXITCODE -ne 0) { throw 'Production deployment failed or rolled back.' }
 
     foreach ($url in @('https://hgt.caqis.com/api/health', 'https://hgt.caqis.com/')) {
@@ -115,6 +149,12 @@ try {
     }
     if ($remoteVoiceDirectory) {
         & ssh -o BatchMode=yes $ProductionHost "rm -f $remoteVoiceDirectory/runtime.env; rmdir $remoteVoiceDirectory" 2>$null | Out-Null
+    }
+    if ($remoteSmsDirectory) {
+        & ssh -o BatchMode=yes $ProductionHost "rm -f $remoteSmsDirectory/runtime.env; rmdir $remoteSmsDirectory" 2>$null | Out-Null
+    }
+    if ($smsTransferPath -and (Test-Path -LiteralPath $smsTransferPath)) {
+        Remove-Item -LiteralPath $smsTransferPath -Force
     }
     if ($remoteImage) {
         & ssh -o BatchMode=yes $ProductionHost "rm -f $remoteImage" 2>$null | Out-Null

@@ -12,8 +12,8 @@ import { pool } from "./db.js";
 import { recordKeyHits } from "./gameKeyHits.js";
 import { runPostCommitTask } from "./postCommit.js";
 import { lockRankingForCardBattleRoom } from "./cardBattleRankingState.js";
-import { isBossRoom, BOSS_SPECTATOR_SEATS } from "./cardBattleBossRules.js";
-import { bossAvailable, CardBattleBossRuleError } from "./cardBattleBoss.js";
+import { isBossRoom, bossIsAvailable, BOSS_SPECTATOR_SEATS } from "./cardBattleBossRules.js";
+import { bossAvailable, loadBoss, CardBattleBossRuleError } from "./cardBattleBoss.js";
 import { registerCardBattleBossRoutes } from "./cardBattleBossRoutes.js";
 import { registerCardTowerRoutes, recoverCardTowerGames } from "./cardTower.js";
 import { getSticker, userOwnsSticker } from "./stickers.js";
@@ -306,6 +306,7 @@ function memberBadge(keyValue: unknown, iconValue: unknown, specialName: unknown
 async function roomByCode(code: string, db: mysql.Pool | mysql.PoolConnection = pool) {
   const [rows] = await db.query<mysql.RowDataPacket[]>(
     `SELECT r.*, u.nickname AS host_name, s.title AS soup_title,
+       (SELECT template.name FROM online_soup_rooms template WHERE template.id = r.boss_template_id) AS boss_name,
        COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title
      FROM online_soup_rooms r
      LEFT JOIN users u ON u.id = r.host_id
@@ -557,13 +558,14 @@ type ActiveHostSuccessor = OnlineSoupHostCandidate & {
   nickname: string;
 };
 
-async function activeHostSuccessor(roomId: string, currentHostId: string, db: mysql.PoolConnection) {
+async function activeHostSuccessor(roomId: string, currentHostId: string, db: mysql.PoolConnection, onlineOnly = false) {
   const [rows] = await db.query<mysql.RowDataPacket[]>(
     `SELECT m.user_id AS userId, m.member_role AS previousRole, m.joined_at AS joinedAt,
        u.experience, u.nickname
      FROM online_soup_members m
      JOIN users u ON u.id = m.user_id
      WHERE m.room_id = ? AND m.user_id <> ? AND m.is_active = 1
+       ${onlineOnly ? "AND m.last_seen_at >= NOW() - INTERVAL 2 MINUTE" : ""}
      FOR UPDATE`,
     [roomId, currentHostId]
   );
@@ -626,7 +628,7 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
   const [staleRooms] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT id
      FROM online_soup_rooms
-     WHERE status <> 'closed' AND card_battle_mode <> 'boss'
+     WHERE status <> 'closed' AND host_id IS NOT NULL
        AND COALESCE(host_grace_started_at, host_last_seen_at) < NOW() - INTERVAL ${HOST_OFFLINE_GRACE_MINUTES} MINUTE`
   );
   for (const staleRoom of staleRooms) {
@@ -635,12 +637,13 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
     let successor: ActiveHostSuccessor | null = null;
     let endedRoundId: string | null = null;
     let clearedSoup = false;
+    let closedBossRoom = false;
     try {
       await connection.beginTransaction();
       const [[room]] = await connection.query<mysql.RowDataPacket[]>(
         `SELECT r.*, u.nickname AS host_name
          FROM online_soup_rooms r LEFT JOIN users u ON u.id = r.host_id
-         WHERE r.id = ? AND r.status <> 'closed' AND r.card_battle_mode <> 'boss'
+         WHERE r.id = ? AND r.status <> 'closed' AND r.host_id IS NOT NULL
            AND COALESCE(r.host_grace_started_at, r.host_last_seen_at) < NOW() - INTERVAL ${HOST_OFFLINE_GRACE_MINUTES} MINUTE
          FOR UPDATE`,
         [staleRoom.id]
@@ -651,7 +654,7 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
       }
       previousHostId = String(room.host_id);
       await releaseStaleSeats(String(room.id), connection);
-      successor = await activeHostSuccessor(String(room.id), previousHostId, connection);
+      successor = await activeHostSuccessor(String(room.id), previousHostId, connection, isBossRoom(room));
 
       const impostorRoom = String(room.content_type ?? "soup") === "impostor";
       const cardBattleRoom = isCardBattleRoom(room);
@@ -690,12 +693,19 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
           String(room.host_mode ?? "human") === "ai" ? "ai" : "human",
           systemManagedRoom && String(room.status) === "playing",
         );
+        if (isBossRoom(room) && String(room.status) !== "playing") await releaseCardBattleSeat(String(room.id), previousHostId, connection);
         await systemMessage(
           String(room.id),
           null,
           `${String(successor.nickname)} 已按等级和加入时间接任房主`,
           connection
         );
+      } else if (isBossRoom(room) && String(room.status) !== "playing") {
+        await connection.query("UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ?", [room.id]);
+        await connection.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND is_active = 1", [room.id]);
+        await connection.query("UPDATE online_card_battles SET status = 'aborted', ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'", [room.id]);
+        await connection.query("DELETE FROM online_card_battle_seats WHERE room_id = ?", [room.id]);
+        closedBossRoom = true;
       } else if (clearedSoup) {
         await systemMessage(String(room.id), null, "暂无在线成员可接任房主，房间将继续保留", connection);
       }
@@ -706,6 +716,7 @@ export async function cleanupOnlineSoupInactiveHostRooms() {
     } finally {
       connection.release();
     }
+    if (closedBossRoom) notifyRoom(String(staleRoom.id), "room_closed", { cause: "host_offline_empty" });
     if (endedRoundId) {
       const activitySequence = await recordRoomActivity(String(staleRoom.id), "progress", null, endedRoundId);
       notifyRoom(String(staleRoom.id), "round_ended", {
@@ -732,7 +743,7 @@ export async function cleanupOnlineSoupIdleSingleUserRooms() {
   const [idleRooms] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT r.id
      FROM online_soup_rooms r
-     WHERE r.status = 'preparing' AND r.card_battle_mode <> 'boss'
+     WHERE r.status = 'preparing' AND r.host_id IS NOT NULL
        AND r.last_action_at <= NOW() - INTERVAL ${ONLINE_SOUP_SINGLE_USER_IDLE_MINUTES} MINUTE
        AND (SELECT COUNT(*) FROM online_soup_members active_member
             WHERE active_member.room_id = r.id AND active_member.is_active = 1) = 1`
@@ -1326,13 +1337,13 @@ async function processRoomAiQuestions(roomId: string) {
           { ok: true; turn: Awaited<ReturnType<typeof runRoomAiTurn>> }
           | { ok: false; error: unknown }
         > | null = null;
-        if (!publishedAnswer && !complexQuestion && !cachedAdjudication) {
+        if (!publishedAnswer && !complexQuestion) {
           await pool.query("UPDATE online_soup_messages SET ai_status = 'answering', ai_error = NULL WHERE id = ?", [pending.id]);
           void notifyRoom(roomId, "answer_changed", { messageId: String(pending.id), aiStatus: "answering" });
-          // 快速五态回答与完整进度复核互不依赖，并行启动可避免两次模型耗时串行叠加。
-          // 完整复核仍独立判断最终回答和事实匹配，快速结果不会锁死准确性。
-          let resolvePreliminaryAnswer: (answer: string | null) => void = () => undefined;
-          const preliminaryAnswerPromise = new Promise<string | null>((resolve) => {
+          // 快速五态回答是唯一对外答案；完整复核只计算事实状态和进度。
+          // 两者并行执行，完整复核的原始答案仍保留在 AI 调用审计日志中。
+          let resolvePreliminaryAnswer: (answer: { answer: string; confidence: number } | null) => void = () => undefined;
+          const preliminaryAnswerPromise = new Promise<{ answer: string; confidence: number } | null>((resolve) => {
             resolvePreliminaryAnswer = resolve;
           });
           concurrentReview = runRoomAiTurn(
@@ -1344,8 +1355,10 @@ async function processRoomAiQuestions(roomId: string) {
             (turn) => ({ ok: true as const, turn }),
             (error: unknown) => ({ ok: false as const, error }),
           );
+          let fastConfidence: number | null = null;
           try {
             const fast = await runRoomAiFastAnswer(String(pending.soup_id), String(pending.content), aiState, { decisionId });
+            fastConfidence = fast.confidence;
             const fastAnswer = aiAnswerMap[fast.answer];
             if (fastAnswer) {
               const [updated] = await pool.query<mysql.ResultSetHeader>(
@@ -1363,7 +1376,9 @@ async function processRoomAiQuestions(roomId: string) {
           } catch (error) {
             console.warn("Fast AI answer unavailable; falling back to full review:", error instanceof Error ? error.message : error);
           } finally {
-            resolvePreliminaryAnswer(publishedAnswer);
+            resolvePreliminaryAnswer(publishedAnswer && fastConfidence != null
+              ? { answer: publishedAnswer, confidence: fastConfidence }
+              : null);
           }
         }
         if (!publishedAnswer) {
@@ -1746,6 +1761,8 @@ function lobbyRoom(row: mysql.RowDataPacket) {
     hostMode: String(row.host_mode ?? "human"),
     contentType: String(row.content_type ?? "soup"),
     cardBattleMode: isBossRoom(row) ? "boss" : "1v1",
+    bossName: row.boss_name ? String(row.boss_name) : null,
+    bossClearLabel: row.boss_clear_label ?? null,
     host: row.host_id ? { id: String(row.host_id), nickname: String(row.host_name) } : null,
     soupTitle: row.soup_title ? String(row.soup_title) : null,
     mysteryTitle: row.mystery_title ? String(row.mystery_title) : null,
@@ -2352,6 +2369,7 @@ router.get("/rooms", async (req, res) => {
   const user = userOf(req);
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT r.*, u.nickname AS host_name, s.title AS soup_title,
+       (SELECT template.name FROM online_soup_rooms template WHERE template.id = r.boss_template_id) AS boss_name,
        COALESCE(mystery_run.story_title_snapshot, mystery.title) AS mystery_title,
        (SELECT viewer_member.member_role
         FROM online_soup_members viewer_member
@@ -2365,7 +2383,7 @@ router.get("/rooms", async (req, res) => {
      LEFT JOIN online_soup_members m ON m.room_id = r.id
      WHERE r.status IN ('preparing','playing','ended') AND r.room_scope = 'public'
        AND (r.card_battle_mode <> 'boss' OR EXISTS (SELECT 1 FROM card_battle_bosses bosses
-         WHERE bosses.room_id = r.id AND bosses.enabled = 1 AND bosses.starts_at <= NOW(3) AND bosses.ends_at > NOW(3)))
+         WHERE bosses.room_id = r.boss_template_id AND bosses.enabled = 1 AND bosses.starts_at <= NOW(3) AND bosses.ends_at > NOW(3)))
      GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 100`,
     [user?.id ?? ""]
   );
@@ -2701,6 +2719,9 @@ router.post("/rooms", async (req, res) => {
     contentType: z.enum(["soup", "mystery", "impostor", "card_battle"]).default("soup"),
     hostMode: z.enum(["human", "ai"]).default("human"),
     communicationMode: z.enum(["text", "voice"]).default("text"),
+    cardBattleMode: z.enum(["1v1", "boss"]).default("1v1"),
+    bossTemplateId: z.string().trim().min(1).max(64).optional(),
+    bossClearLabel: z.enum(["uncleared", "cleared"]).optional(),
     mysteryId: z.string().trim().min(1).max(64).optional(),
     mysteryChoice: z.enum(["continue", "restart"]).optional(),
   }).safeParse(req.body);
@@ -2708,6 +2729,9 @@ router.post("/rooms", async (req, res) => {
   if (parsed.data.type === "password" && parsed.data.password.length !== 4) return fail(res, 400, "房间密码必须为 4 位");
   if (parsed.data.mysteryId && !parsed.data.mysteryChoice) return fail(res, 400, "请选择继续谜局或重新开始");
   const contentType = parsed.data.mysteryId ? "mystery" : parsed.data.contentType;
+  const bossRoom = parsed.data.cardBattleMode === "boss";
+  if (bossRoom && (contentType !== "card_battle" || !parsed.data.bossTemplateId || !parsed.data.bossClearLabel)) return fail(res, 400, "请选择 BOSS 战名称和通关招募标签");
+  if (!bossRoom && (parsed.data.bossTemplateId || parsed.data.bossClearLabel)) return fail(res, 400, "仅 BOSS 战房间可以设置 BOSS 和招募标签");
   if (contentType === "mystery" && parsed.data.hostMode !== "human") return fail(res, 400, "谜局固定使用世界裁决器，不能选择 AI 主持模式");
   if (contentType === "impostor" && parsed.data.hostMode !== "human") return fail(res, 400, "谁是伪人由系统主持，不能选择主持模式");
   if (contentType === "card_battle" && parsed.data.hostMode !== "human") return fail(res, 400, "卡牌对战由系统自动结算，不能选择主持模式");
@@ -2728,10 +2752,18 @@ router.post("/rooms", async (req, res) => {
   let mysteryRun: Awaited<ReturnType<typeof startOrContinueMysteryRun>> | null = null;
   try {
     await connection.beginTransaction();
+    if (bossRoom) {
+      await connection.query("SELECT id FROM online_soup_rooms WHERE id = ? FOR UPDATE", [parsed.data.bossTemplateId]);
+      const boss = await loadBoss(parsed.data.bossTemplateId!, connection);
+      if (!boss || boss.boss_template_id || !bossIsAvailable(boss as any, new Date(boss.db_now).getTime())) {
+        await connection.rollback();
+        return fail(res, 409, "所选 BOSS 已下架或不在开放时间，请重新选择");
+      }
+    }
     await connection.query(
-      `INSERT INTO online_soup_rooms (id, room_code, name, host_id, host_mode, content_type, room_type, password_hash, communication_mode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [roomId, code, parsed.data.name, user.id, parsed.data.hostMode, contentType, parsed.data.type, passwordHash, parsed.data.communicationMode]
+      `INSERT INTO online_soup_rooms (id, room_code, name, host_id, host_mode, content_type, room_type, password_hash, communication_mode, card_battle_mode, boss_template_id, boss_clear_label)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [roomId, code, parsed.data.name, user.id, parsed.data.hostMode, contentType, parsed.data.type, passwordHash, parsed.data.communicationMode, parsed.data.cardBattleMode, bossRoom ? parsed.data.bossTemplateId : null, bossRoom ? parsed.data.bossClearLabel : null]
     );
     const creatorRole = contentType === "card_battle"
       ? (await claimCardBattleSeat(roomId, user.id, connection) ? "player" : "spectator")
@@ -2757,7 +2789,7 @@ router.post("/rooms", async (req, res) => {
     await systemMessage(roomId, null, contentType === "impostor"
       ? `房主 ${user.nickname} 创建了“谁是伪人”房间`
       : contentType === "card_battle"
-        ? `房主 ${user.nickname} 创建了“卡牌对战”房间${creatorRole === "spectator" ? "，因可参战卡牌不足五张已进入观战席" : ""}`
+        ? `房主 ${user.nickname} 创建了“${bossRoom ? "BOSS 战" : "卡牌对战"}”房间${creatorRole === "spectator" ? `，因可参战卡牌不足${bossRoom ? "三" : "五"}张已进入观战席` : ""}`
         : `主持人 ${user.nickname} 创建了房间`, connection);
     if (mysteryRun) {
       if (mysteryRun.continued) {
@@ -3174,6 +3206,7 @@ router.patch("/rooms/:roomId/card-battle/mode", async (req, res) => {
   if (!context) return;
   if (!isCardBattleRoom(context.room)) return fail(res, 409, "当前不是卡牌对战房间");
   if (String(context.room.room_scope ?? "public") === "ranking_challenge") return fail(res, 403, "打榜房间玩法固定为 1v1");
+  if (isBossRoom(context.room)) return fail(res, 409, "BOSS 战房间不能切换为普通对战，请重新创建房间");
   const parsed = z.object({ mode: z.literal("1v1") }).safeParse(req.body);
   if (!parsed.success) return fail(res, 400, "当前仅开放 1v1 玩法");
   res.json({ ok: true, mode: "1v1" });
@@ -3669,6 +3702,53 @@ router.patch("/rooms/:roomId/read", async (req, res) => {
 router.post("/rooms/:roomId/leave", async (req, res) => {
   const context = await requireMember(req, res);
   if (!context) return;
+  if (isBossRoom(context.room) && context.room.boss_template_id) {
+    // A completed playback must settle before the last member closes its room.
+    await finalizeCardBattleIfDue(context.room.id);
+    const connection = await pool.getConnection();
+    let successor: ActiveHostSuccessor | null = null;
+    let roomClosed = false;
+    try {
+      await connection.beginTransaction();
+      const [[room]] = await connection.query<mysql.RowDataPacket[]>(
+        "SELECT * FROM online_soup_rooms WHERE id = ? FOR UPDATE", [context.room.id]);
+      if (!room || room.status === "closed") {
+        await connection.rollback();
+        return res.json({ ok: true, roomClosed: true, hostTransferred: false, newHostId: null });
+      }
+      const member = await activeMember(context.room.id, context.user.id, connection);
+      if (!member) {
+        await connection.rollback();
+        return fail(res, 403, "你已不在房间", "NOT_MEMBER");
+      }
+      await releaseStaleSeats(context.room.id, connection);
+      await forfeitCardBattle(context.room.id, context.user.id, connection);
+      await connection.query("UPDATE online_soup_members SET is_active = 0, left_at = NOW() WHERE room_id = ? AND user_id = ?", [context.room.id, context.user.id]);
+      if (room.status !== "playing") await releaseCardBattleSeat(context.room.id, context.user.id, connection);
+      const remaining = await activeHostSuccessor(context.room.id, context.user.id, connection);
+      if (!remaining) {
+        roomClosed = true;
+        await connection.query("UPDATE online_soup_rooms SET status = 'closed', closed_at = NOW(), host_grace_started_at = NULL WHERE id = ?", [context.room.id]);
+        await connection.query("UPDATE online_card_battles SET status = 'aborted', ended_at = NOW(3) WHERE room_id = ? AND status = 'playing'", [context.room.id]);
+        await connection.query("DELETE FROM online_card_battle_seats WHERE room_id = ?", [context.room.id]);
+      } else if (String(room.host_id) === context.user.id) {
+        // Use the locked owner, since another simultaneous departure may just
+        // have transferred ownership to this user after requireMember returned.
+        successor = remaining;
+        await transferDepartedHost(context.room.id, context.user.id, successor, connection);
+      }
+      await systemMessage(context.room.id, null, roomClosed ? "所有成员已退出，房间已关闭" : successor
+        ? `${context.user.nickname} 已退出房间，${successor.nickname} 接任房主`
+        : `${context.user.nickname} 离开了房间`, connection);
+      await connection.commit();
+    } catch (error) { await connection.rollback().catch(() => {}); throw error; }
+    finally { connection.release(); }
+    res.json({ ok: true, roomClosed, hostTransferred: Boolean(successor), newHostId: successor?.userId ?? null });
+    notifyRoom(context.room.id, roomClosed ? "room_closed" : successor ? "host_transferred" : "member_left", {
+      previousHostId: successor ? context.user.id : undefined, newHostId: successor?.userId,
+    });
+    return;
+  }
   if (String(context.room.room_scope ?? "public") === "ranking_challenge") {
     const connection = await pool.getConnection();
     try {
@@ -5899,14 +5979,17 @@ export async function recoverCardBattleGames() {
   const next = new Set<string>(available.map((boss) => String(boss.room_id)));
   if (availableBossRooms) {
     const changed = [...new Set([...next, ...availableBossRooms])].filter((id) => next.has(id) !== availableBossRooms!.has(id));
-    for (const id of changed) notifyRoom(id, "boss_availability_changed");
+    for (const id of changed) {
+      const [rooms] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM online_soup_rooms WHERE boss_template_id = ? AND status <> 'closed'", [id]);
+      for (const room of rooms) notifyRoom(String(room.id), "boss_availability_changed");
+    }
     if (changed.length) notifyLobby("boss_availability_changed");
   }
   availableBossRooms = next;
   // A stale unready member may have been released by a lobby read or cleanup.
   // Start the remaining ready team under the same room lock used by readiness.
   const [readyRooms] = await pool.query<mysql.RowDataPacket[]>(`SELECT rooms.id FROM online_soup_rooms rooms
-    JOIN card_battle_bosses bosses ON bosses.room_id = rooms.id
+    JOIN card_battle_bosses bosses ON bosses.room_id = rooms.boss_template_id
     WHERE rooms.status IN ('preparing','ended') AND bosses.enabled = 1 AND bosses.starts_at <= NOW(3) AND bosses.ends_at > NOW(3)
       AND EXISTS (SELECT 1 FROM online_card_battle_seats seats WHERE seats.room_id = rooms.id AND seats.is_ready = 1)
       AND NOT EXISTS (SELECT 1 FROM online_card_battle_seats seats WHERE seats.room_id = rooms.id AND seats.is_ready = 0)`);

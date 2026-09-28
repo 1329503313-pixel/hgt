@@ -59,7 +59,7 @@ try {
   await expect(page.getByRole('button', { name: '准备', exact: true })).toHaveCount(0);
   await page.emulateMedia({ reducedMotion: 'reduce' }); await page.screenshot({ path: resolve(output, 'mobile-playing.png') });
   await page.evaluate(()=>window.setView('admin')); await page.getByRole('button', { name: '创建', exact: true }).click();
-  await page.getByLabel('房间名称', { exact: true }).fill('测试配置'); await page.getByRole('button', { name: '配置卡牌', exact: true }).click();
+  await page.getByLabel('BOSS 战名称', { exact: true }).fill('测试配置'); await page.getByRole('button', { name: '配置卡牌', exact: true }).click();
   await expect(page.getByRole('tab', { name: /^\d 星$/ })).toHaveCount(0);
   await page.getByLabel('3星吸血比例', { exact: true }).fill('12.25'); await page.getByLabel('卡牌名称', { exact: true }).fill('专属守卫');
   await page.getByRole('button', { name: '新增条件', exact: true }).click(); await page.getByRole('combobox', { name: '技能类型', exact: true }).fill('增加全体友军攻击力'); await page.getByRole('option', { name: '增加全体友军攻击力', exact: true }).click();

@@ -21,6 +21,7 @@ import { useCardBattleDrag } from "../shared/useCardBattleDrag";
 import { filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
 import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
 import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleDeck, OnlineCardBattleEvent, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
+import { activeCardBattleTraitEffects } from "@hgt/shared";
 import { BattleMotionMedia } from "./BattleMotionMedia";
 import { Modal } from "./Modal";
 import { BossLineupDetails } from "./BossLineupDetails";
@@ -66,6 +67,21 @@ function battleRoleTone(role: OnlineCardBattleCard["battleRole"]) {
   if (role === "tank") return "border-sky-200/70 bg-sky-700/90 text-sky-50";
   if (role === "support") return "border-emerald-200/70 bg-emerald-700/90 text-emerald-50";
   return "border-rose-200/70 bg-rose-700/90 text-rose-50";
+}
+
+function TraitAggregate({ title, cards, activeIds, activeOnly = false }: { title: string; cards: Array<OnlineCardBattleCard | null>; activeIds?: Set<string>; activeOnly?: boolean }) {
+  const grouped = new Map<string, { trait: NonNullable<OnlineCardBattleCard["traits"]>[number]; count: number }>();
+  for (const card of cards) for (const trait of card?.traits ?? []) {
+    const entry = grouped.get(trait.id);
+    if (entry) entry.count += 1; else grouped.set(trait.id, { trait, count: 1 });
+  }
+  const entries = [...grouped.values()].flatMap(({ trait, count }) => {
+    const effects = activeCardBattleTraitEffects(trait, count);
+    const active = activeOnly ? Boolean(activeIds?.has(trait.id)) : effects.length > 0;
+    return activeOnly && !active ? [] : [{ trait, count, active, threshold: effects[0]?.requiredCount ?? Math.min(...trait.effects.map((effect) => effect.requiredCount)) }];
+  });
+  if (!entries.length) return null;
+  return <section className="shrink-0 border-b border-white/10 bg-slate-950/70 px-3 py-2" aria-label={`${title}特质聚合`}><p className="mb-1 text-[10px] font-bold text-slate-400">{title}特质</p><div className="flex flex-wrap gap-1.5">{entries.map(({ trait, count, active, threshold }) => <span key={trait.id} title={trait.description} className={`rounded-full border px-2.5 py-1 text-[10px] font-black ${active ? "border-blue-300/40 bg-blue-500/20 text-blue-200" : "border-white/10 bg-white/5 text-slate-400"}`}>{trait.name} {count}/{threshold}</span>)}</div></section>;
 }
 
 export const BattleCard = memo(function BattleCard({ card, state, cardBack, seat, activeEvent, showPower, onClick, selectable, drag }: {
@@ -340,7 +356,7 @@ export function Settlement({ battle, onClose, onConfirmRankingWin, confirming }:
     <div className="relative max-h-[88dvh] w-full max-w-xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-4 text-white shadow-2xl">
       {!rankingWon && <button type="button" className="absolute right-2 top-2 grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 hover:bg-white/15" onClick={onClose} aria-label="关闭结算"><X size={18} /></button>}
       <div className="pr-10 text-center"><Sparkles className="mx-auto text-amber-300" /><h2 className="mt-1 text-2xl font-black">{battle.mode === "boss" ? (bossWon ? "挑战成功" : "挑战失败") : settlement.winnerSeat ? `${settlement.players.find((player) => player.seat === settlement.winnerSeat)?.nickname ?? "玩家"} 获胜` : "本局平局"}</h2><p className="mt-1 text-xs text-slate-300">共 {settlement.rounds} 回合 · {settlement.endReason === "surrender" ? "玩家退出认输" : settlement.endReason === "round_limit" ? "达到30回合上限" : settlement.endReason === "safety_limit" ? "连锁安全保护" : "卡牌全部下场"}</p></div>
-      {battle.mode === "boss" && <p className="mt-3 rounded-xl bg-white/10 p-3 text-center text-sm text-amber-200">{!bossWon ? "本局未通关，无贝壳奖励" : battle.boss?.currentReward?.forfeited ? "你已主动退出本局，未获得奖励" : battle.boss?.currentReward?.granted ? `通关奖励 +${battle.boss.currentReward.amount} 贝壳，已到账` : battle.boss?.rewardClaimed ? "该房间奖励已领取，感谢协助通关" : "观战不参与通关奖励"}</p>}
+      {battle.mode === "boss" && <p className="mt-3 rounded-xl bg-white/10 p-3 text-center text-sm text-amber-200">{!bossWon ? "本局未通关，无贝壳奖励" : battle.boss?.currentReward?.forfeited ? "你已主动退出本局，未获得奖励" : battle.boss?.currentReward?.granted ? `通关奖励 +${battle.boss.currentReward.amount} 贝壳，已到账` : battle.boss?.rewardClaimed ? "该 BOSS 首通奖励已领取，感谢协助通关" : "观战不参与通关奖励"}</p>}
       <div className="mt-4 space-y-4">{[...settlement.players].sort((left, right) => Number(right.seat === settlement.winnerSeat) - Number(left.seat === settlement.winnerSeat) || left.seat - right.seat).map((player) => <CardBattleSettlementTable key={player.userId} player={player} winnerSeat={settlement.winnerSeat} />)}</div>
       <p className="mt-3 text-[11px] leading-5 text-slate-400">评分 =（伤害 × 1.5 + 承伤 + 辅助 × 0.7）× 0.001，四舍五入保留 1 位小数。辅助按技能施放者累计有效治疗、增减益、复活及控制贡献，不计过量治疗与无效效果。</p>
       {battle.rankingChallenge && <div className="mt-4">
@@ -508,6 +524,10 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   const bossSeat = { seat: 2 as const, user: { id: `boss:${roomId}`, nickname: "BOSS", avatar: null }, ready: false, lineup: !animationComplete && frozenBoss ? frozenBoss.cards.map((card, i) => ({ slot: i + 1, card, cardBack: false })) : battle.boss?.lineup.map((card, i) => ({ slot: i + 1, card, cardBack: false })) ?? [] };
   const topSeat = isBoss ? bossSeat : displaySeat(topSeatNumber);
   const bottomSeat = displaySeat(bottomSeatNumber);
+  const topActiveTraitIds = new Set(cardStates.filter((state) => state.seat === (isBoss ? 2 : topSeatNumber)).flatMap((state) => state.activeTraits?.map((trait) => trait.id) ?? []));
+  const allyActiveTraitIds = new Set(cardStates.filter((state) => state.seat === (isBoss ? 1 : bottomSeatNumber)).flatMap((state) => state.activeTraits?.map((trait) => trait.id) ?? []));
+  const topTraitCards = topSeat.lineup.map((item) => item.card);
+  const allyTraitCards = isBoss ? ([1, 2, 3] as const).flatMap((seat) => displaySeat(seat).lineup.map((item) => item.card)) : bottomSeat.lineup.map((item) => item.card);
   // The server can finish a game while a reconnecting/hidden client is still
   // replaying it. Keep that client locked until every mandatory animation has
   // completed, otherwise changing the lineup would effectively skip playback.
@@ -654,10 +674,10 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
       <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-full bg-white/10 hover:bg-white/15" aria-label="更多操作" onClick={() => setMenuOpen((open) => !open)}><Menu size={19} /></button>
       {menuOpen && <div className="absolute right-3 top-[calc(100%+8px)] z-[110] w-48 overflow-hidden rounded-xl border border-white/10 bg-slate-900 p-1.5 shadow-2xl">
         <CardBattleFxQualityControl />
-        {snapshot.me.isHost && !battle.rankingChallenge && <button className="card-battle-menu-item" onClick={() => { setMenuOpen(false); setModeOpen(true); }}><ChevronDown size={16} />选择玩法</button>}
+        {snapshot.me.isHost && !battle.rankingChallenge && !isBoss && <button className="card-battle-menu-item" onClick={() => { setMenuOpen(false); setModeOpen(true); }}><ChevronDown size={16} />选择玩法</button>}
         {canConfigure && !battle.rankingChallenge && <button className="card-battle-menu-item" disabled={saving || (!battle.me.seat && battle.seats.every((seat) => seat.user !== null))} onClick={() => { setMenuOpen(false); void mutation("card-battle/member-role", { role: battle.me.seat ? "spectator" : "player" }); }}>{battle.me.seat ? <Eye size={16} /> : <Swords size={16} />}{battle.me.seat ? "切换观战" : "切换对战"}</button>}
         {snapshot.me.isHost && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); battle.rankingChallenge ? setLeaveOpen(true) : setCloseOpen(true); }}>{battle.rankingChallenge ? <LogOut size={16} /> : <X size={16} />}{battle.rankingChallenge ? "退出打榜" : "关闭房间"}</button>}
-        {!snapshot.me.isHost && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); setLeaveOpen(true); }}><LogOut size={16} />退出房间</button>}
+        {(!snapshot.me.isHost || isBoss) && <button className="card-battle-menu-item text-red-300" onClick={() => { setMenuOpen(false); setLeaveOpen(true); }}><LogOut size={16} />退出房间</button>}
       </div>}
     </header>
       {battle.rankingChallenge && <div role="status" className="shrink-0 border-b border-white/10 bg-slate-900 px-3 py-2 text-center text-xs font-bold text-amber-100">{battle.phase === "playing" ? (battle.rankingChallenge.consecutiveWins ?? 0) === 1 ? "第一局已获胜 · 自动进行第二局 · 连胜 1/2" : "第一局 · 连胜 0/2" : (battle.rankingChallenge.consecutiveWins ?? 0) >= 2 ? "已达成两连胜 · 等待确认占榜" : "需连续赢两局占据目标榜位；首胜后原阵容自动开始第二局"}</div>}
@@ -665,9 +685,11 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
     <main className="relative min-h-0 flex-1 overflow-hidden">
       <div ref={arenaRef} data-battle-arena className={`relative card-battle-arena-scroll flex h-full min-h-0 flex-col overflow-y-auto overflow-x-hidden ${showBattleControls ? "pb-[176px] sm:pb-[124px]" : "pb-[68px]"}`}>
         <CardBattleArenaFx event={activeEvent} />
-        {isBoss && <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-slate-900 px-3 py-2 text-xs"><p className="flex-1 leading-5 text-slate-200">{battle.boss?.available ? `首次通关 +${battle.boss.rewardShells} 贝壳${battle.boss.rewardClaimed ? " · 你已领取" : ""} · 在席玩家全部准备即开战` : "房间已下架或不在开放时间内，进行中的对局正常结算"}</p><button type="button" className="min-h-11 shrink-0 rounded-xl bg-white/10 px-3 font-bold text-cyan-100" onClick={() => setDetailsOpen(true)}>查看阵容</button></div>}
+        {isBoss && <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-slate-900 px-3 py-2 text-xs"><p className="min-w-0 flex-1 break-words leading-5 text-slate-200"><strong className="block">{battle.boss?.name} · {battle.boss?.clearLabel === "cleared" ? "已通关" : "未通关"}（招募标签）</strong>{battle.boss?.available ? `首次通关 +${battle.boss.rewardShells} 贝壳${battle.boss.rewardClaimed ? " · 你已领取" : ""} · 在席玩家全部准备即开战` : "BOSS 已下架或不在开放时间内，进行中的对局正常结算"}</p><button type="button" className="min-h-11 shrink-0 rounded-xl bg-white/10 px-3 font-bold text-cyan-100" onClick={() => setDetailsOpen(true)}>查看阵容</button></div>}
+        <TraitAggregate title={isBoss ? "BOSS" : topSeat.user?.nickname ?? "对手"} cards={topTraitCards} activeIds={topActiveTraitIds} activeOnly={battle.phase === "playing" || battle.phase === "ended"} />
         <HalfArena seat={isBoss ? 2 : topSeatNumber} battleSeat={topSeat} states={isBoss && canConfigure ? [] : cardStates} activeEvent={activeEvent} showPower={canConfigure} isOwn={false} position="top" canSelect={false} onPick={() => undefined} onReorder={async () => false} />
         <div className="card-battle-event-notice" role="status">{activeEvent?.skillName && <strong>{activeEvent.skillName}</strong>}<span>{syncing ? "正在同步服务器战斗进度…" : activeEvent?.text ?? (battle.phase === "playing" ? "自动战斗中 · 与服务器同步" : isBoss ? "每人前排 1 张 · 后排 2 张 · 全队共享前排保护" : "前排 2 张 · 后排 3 张")}</span></div>
+        <TraitAggregate title="友方" cards={allyTraitCards} activeIds={allyActiveTraitIds} activeOnly={battle.phase === "playing" || battle.phase === "ended"} />
         {isBoss ? <div className="card-battle-team-arena flex min-h-[244px] flex-1 divide-x divide-cyan-200/15" aria-label="玩家共同阵营，前排三张、后排六张">{([1, 2, 3] as const).map((personalSeat) => <HalfArena key={personalSeat} teamMember seat={1} battleSeat={displaySeat(personalSeat)} states={canConfigure ? [] : cardStates} activeEvent={activeEvent} showPower={canConfigure} isOwn={battle.me.seat === personalSeat} position="bottom" canSelect={canConfigure && battle.me.seat === personalSeat && !currentSeat?.ready && !saving} onPick={setPickSlot} onReorder={reorderCards} />)}</div> : <HalfArena seat={bottomSeatNumber} battleSeat={bottomSeat} states={cardStates} activeEvent={activeEvent} showPower={canConfigure} isOwn={Boolean(battle.me.seat)} position="bottom" canSelect={canConfigure && Boolean(battle.me.seat) && !currentSeat?.ready && !saving} onPick={setPickSlot} onReorder={reorderCards} />}
       </div>
 
@@ -759,7 +781,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
       {visibleEligibleCards.length === 0 && <p className="py-10 text-center text-sm text-muted">{eligibleCards.length ? "没有找到匹配的卡牌" : "当前没有可参战的史诗或传说卡"}</p>}
     </Modal>}
     {modeOpen && <Modal onClose={() => setModeOpen(false)}><div><h2 className="text-xl font-black text-ink">选择玩法</h2><button type="button" className="mt-4 flex min-h-14 w-full items-center justify-between rounded-xl border-2 border-primary bg-blue-50 px-4 text-left text-primary"><span><strong className="block">1v1</strong><span className="text-xs">双方各选择五张卡牌自动战斗</span></span><Check /></button><p className="mt-3 text-xs text-muted">暂时只开放 1v1，后续玩法不会影响本局规则。</p></div></Modal>}
-    {leaveOpen && <Modal onClose={() => setLeaveOpen(false)}><div><h2 className="text-xl font-black text-ink">{battle.rankingChallenge ? "退出打榜？" : "退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{isBoss ? "主动退出会放弃你本局的通关奖励；你的卡牌会继续为团队战斗。断线或关闭页面不视为主动退出。观战者退出不影响对局。" : battle.rankingChallenge ? "对局中退出视为认输；临时打榜房间会立即解散，本次挑战不会改变榜单。" : "对局中对战者退出即认输，对手获胜；重新进入不会继续播放本局动画。观战者退出不影响对局。"}</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setLeaveOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(false)}>确认退出</button></div></div></Modal>}
+    {leaveOpen && <Modal onClose={() => setLeaveOpen(false)}><div><h2 className="text-xl font-black text-ink">{battle.rankingChallenge ? "退出打榜？" : "退出房间？"}</h2><p className="mt-2 text-sm leading-6 text-muted">{isBoss ? "退出后自动转移房主，最后一人退出则关闭房间。对战结束前主动退出会放弃你本局的通关奖励；你的卡牌会继续为团队战斗。断线或关闭页面不视为主动退出。观战者退出不影响对局。" : battle.rankingChallenge ? "对局中退出视为认输；临时打榜房间会立即解散，本次挑战不会改变榜单。" : "对局中对战者退出即认输，对手获胜；重新进入不会继续播放本局动画。观战者退出不影响对局。"}</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setLeaveOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(false)}>确认退出</button></div></div></Modal>}
     {closeOpen && <Modal onClose={() => setCloseOpen(false)}><div><h2 className="text-xl font-black text-ink">关闭房间？</h2><p className="mt-2 text-sm leading-6 text-muted">房间关闭后所有成员退出；进行中的对局会标记为中止，不生成胜负结算。</p><div className="mt-5 grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={() => setCloseOpen(false)}>取消</button><button className="btn bg-red-600 text-white" disabled={saving} onClick={() => void leaveRoom(true)}>关闭房间</button></div></div></Modal>}
   </div></CardBattleFxProvider>;
 }

@@ -152,8 +152,9 @@ test("认输持久化仅使用调用方事务，释放退出者席位且重复�
   assert.ok(queries.some((item) => item.sql.startsWith("DELETE FROM online_card_battle_seats") && item.params[1] === "u1"));
   assert.equal(await forfeitCardBattle("r1", "u2", db), false);
   assert.equal(queries.filter((item) => item.sql.startsWith("UPDATE online_card_battles")).length, 1);
-  const leave = routesSource.slice(routesSource.indexOf('router.post("/rooms/:roomId/leave"'), routesSource.indexOf('router.post("/rooms/:roomId/leave"') + 12500);
-  assert.equal((leave.match(/await forfeitCardBattle/g) ?? []).length, 2, "房主与非房主退出均在房间锁中认输");
+  const leaveStart = routesSource.indexOf('router.post("/rooms/:roomId/leave"');
+  const leave = routesSource.slice(leaveStart, routesSource.indexOf('\nrouter.', leaveStart + 1));
+  assert.equal((leave.match(/await forfeitCardBattle/g) ?? []).length, 3, "普通房主、成员和 BOSS 独立退出分支均使用房间锁中的事务");
   const ranking = readFileSync(new URL("./cardBattleRanking.ts", import.meta.url), "utf8");
   assert.match(ranking, /await forfeitCardBattle\(roomId, userId, db\)/);
 });

@@ -1,10 +1,11 @@
 import type { CardBattleTier } from "./digitalAssets";
 import type { OnlineCardBattleCardState, OnlineCardBattleEvent, OnlineCardBattleState } from "./types";
 
-export type BossCard = { name: string; imageUrl: string; tier: CardBattleTier };
+export type BossCard = { name: string; imageUrl: string; tier: CardBattleTier; traits?: import("@hgt/shared").CardBattleTrait[] };
 export type CardBattleBoss = {
   roomId: string; code: string; name: string; enabled: boolean;
   startsAt: string; endsAt: string; rewardShells: number;
+  clearLabel?: "uncleared" | "cleared" | null;
   revision: number; available: boolean; cards: Array<BossCard | null>; battleCount?: number;
 };
 export type BossBattleRecord = {

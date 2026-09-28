@@ -578,6 +578,7 @@ export type OnlineSoupBackgroundMusic = {
 };
 
 export type OnlineCardBattleCard = {
+  traits?: import("@hgt/shared").CardBattleTrait[];
   instanceId?: string;
   collectible?: import("@hgt/shared").BattleCollectible | null;
   id: string;
@@ -657,6 +658,7 @@ export type OnlineCardBattlePlayback = {
   serverNow: string;
 };
 export type OnlineCardBattleCardState = import("@hgt/shared").CardBattleProcStats & import("@hgt/shared").CardBattleAccuracyStats & {
+  activeTraits?: Array<{ id: string; name: string }>;
   instanceId: string; userId: string; seat: 1 | 2; slot: 1 | 2 | 3 | 4 | 5; row: "front" | "rear";
   critRate?: number; critDamage?: number; shield?: number; hp: number; maxHp: number; energy: number; energyRequired: number; attack: number; defense: number; speed: number; alive: boolean;
   damageDealt?: number; damageTaken?: number; healingDone?: number;
@@ -707,6 +709,8 @@ export type OnlineSoupLobbyRoom = {
   communicationMode?: "text" | "voice";
   contentType: "soup" | "mystery" | "impostor" | "card_battle";
   cardBattleMode?: "1v1" | "boss";
+  bossName?: string | null;
+  bossClearLabel?: "uncleared" | "cleared" | null;
   host: { id: string; nickname: string } | null;
   soupTitle: string | null;
   mysteryTitle: string | null;

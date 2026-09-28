@@ -16,9 +16,8 @@ type InvitationSummary = {
   inviteCode: string;
   invitedCount: number;
 };
-
 export default function AccountSettingsPage() {
-  const { user, loadingUser, openAuth, setUser, showToast } = useApp();
+  const { user, loadingUser, openAuth, setUser, showToast, phoneStatus, openPhoneBinding } = useApp();
   const navigate = useNavigate();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [nickname, setNickname] = useState("");
@@ -156,11 +155,22 @@ export default function AccountSettingsPage() {
 
         <ProfileBackgroundEditor userId={user.id} />
 
+        <div className="card p-4">
+          <h2 className="text-sm font-black text-ink">绑定手机号</h2>
+          <p className="mt-2 text-sm text-ink">{phoneStatus ? (phoneStatus.phone ?? (phoneStatus.superAdminExempt ? "超级管理员无需绑定" : "未绑定")) : "加载中……"}</p>
+          <p className="mt-1 text-xs text-muted">{phoneStatus?.bound
+            ? "登录和找回密码使用此手机号；如需更换，请联系平台人工核实。"
+            : phoneStatus?.legacyLoginEnabled && !phoneStatus.superAdminExempt
+              ? "绑定后请使用手机号和新密码登录，原始账号将失效。"
+              : phoneStatus?.superAdminExempt ? "可在手机号登录栏使用原始账号和密码。" : "手机号状态加载中……"}</p>
+          {phoneStatus && !phoneStatus.bound && !phoneStatus.superAdminExempt && <button type="button" className="btn btn-primary mt-3 min-h-11" onClick={openPhoneBinding}>绑定</button>}
+        </div>
+
         <EmailBindingCard />
 
         <button className="card flex w-full items-center gap-3 p-4 text-left" onClick={() => navigate("/mine/settings/password")}>
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-primary"><KeyRound size={20} /></span>
-          <span className="min-w-0 flex-1"><span className="block text-sm font-black text-ink">重置密码</span><span className="mt-0.5 block text-xs text-muted">设置一个新的登录密码</span></span>
+          <span className="min-w-0 flex-1"><span className="block text-sm font-black text-ink">修改密码</span><span className="mt-0.5 block text-xs text-muted">验证当前密码后设置新密码</span></span>
           <ChevronRight className="text-muted" size={19} />
         </button>
 

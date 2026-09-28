@@ -362,6 +362,125 @@ export function registerEmailAuthRoutes(app: Express, options: RegisterEmailAuth
     res.json({ ok: true });
   });
 
+  app.post("/api/auth/email/recover/request", emailSendRateLimiter, async (req, res) => {
+    const parsed = z.object({ email: emailSchema }).safeParse(req.body);
+    if (!parsed.success) return sendError(res, 400, "邮箱格式不正确");
+    if (!isEmailDeliveryConfigured()) return sendError(res, 503, "邮件服务暂不可用");
+    const email = normalizeEmail(parsed.data.email);
+    const [[identity]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT user_id FROM user_identities
+       WHERE identity_type = 'email' AND identifier = ? AND verified_at IS NOT NULL LIMIT 1`,
+      [email],
+    );
+    const generic = { ok: true, message: "如果该邮箱已绑定账号，验证码将在稍后发送" };
+    if (!identity) return res.json(generic);
+    const userId = String(identity.user_id);
+    const ipHash = createHmac("sha256", config.emailVerificationSecret)
+      .update(`email-recovery-ip:${req.ip ?? "unknown"}`).digest("hex");
+    const [[limits]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT MAX(created_at) AS latest, COUNT(*) AS daily_count
+       FROM email_recovery_challenges WHERE user_id = ?
+         AND created_at >= UTC_TIMESTAMP() - INTERVAL 24 HOUR`,
+      [userId],
+    );
+    const [[ipLimit]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) AS daily_count FROM email_recovery_challenges
+       WHERE requester_ip_hash = ? AND created_at >= UTC_TIMESTAMP() - INTERVAL 24 HOUR`,
+      [ipHash],
+    );
+    if (limits?.latest && Date.now() - new Date(limits.latest).getTime() < RESEND_COOLDOWN_MS) return res.json(generic);
+    if (Number(limits?.daily_count ?? 0) >= DAILY_SEND_LIMIT || Number(ipLimit?.daily_count ?? 0) >= 30) return res.json(generic);
+    const challengeId = nanoid();
+    const code = generateVerificationCode();
+    await pool.query(
+      "UPDATE email_recovery_challenges SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [userId],
+    );
+    await pool.query(
+      `INSERT INTO email_recovery_challenges
+       (id, user_id, email, requester_ip_hash, code_hash, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [challengeId, userId, email, ipHash, emailCodeDigest(challengeId, code),
+        mysqlDate(new Date(Date.now() + EMAIL_CODE_TTL_MS))],
+    );
+    try {
+      await sendEmailVerificationCode(email, code, "recover");
+    } catch (error) {
+      await pool.query("DELETE FROM email_recovery_challenges WHERE id = ?", [challengeId]);
+      console.error("Email recovery delivery failed:", (error as Error).message);
+    }
+    res.json(generic);
+  });
+
+  app.post("/api/auth/email/recover/confirm", resetConfirmRateLimiter, async (req, res) => {
+    const parsed = z.object({
+      email: emailSchema,
+      code: z.string().regex(/^\d{6}$/, "请输入 6 位邮箱验证码"),
+      newPassword: passwordSchema,
+    }).safeParse(req.body);
+    if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "找回信息不正确");
+    const email = normalizeEmail(parsed.data.email);
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[challenge]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT c.id, c.user_id, c.code_hash, c.attempts, c.expires_at
+         FROM email_recovery_challenges c
+         WHERE c.email = ? AND c.consumed_at IS NULL
+         ORDER BY c.created_at DESC LIMIT 1 FOR UPDATE`,
+        [email],
+      );
+      if (!challenge || new Date(challenge.expires_at).getTime() <= Date.now() || Number(challenge.attempts) >= MAX_CODE_ATTEMPTS) {
+        await connection.rollback();
+        return sendError(res, 400, "验证码已失效，请重新获取");
+      }
+      const [[identity]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT user_id FROM user_identities
+         WHERE identity_type = 'email' AND identifier = ? AND verified_at IS NOT NULL LIMIT 1`,
+        [email],
+      );
+      if (!identity || String(identity.user_id) !== String(challenge.user_id)) {
+        await connection.rollback();
+        return sendError(res, 400, "验证码已失效，请重新获取");
+      }
+      if (!matchesDigest(emailCodeDigest(String(challenge.id), parsed.data.code), String(challenge.code_hash))) {
+        await connection.query(
+          `UPDATE email_recovery_challenges SET attempts = attempts + 1,
+             consumed_at = CASE WHEN attempts + 1 >= ? THEN UTC_TIMESTAMP() ELSE consumed_at END
+           WHERE id = ?`,
+          [MAX_CODE_ATTEMPTS, challenge.id],
+        );
+        await connection.commit();
+        return sendError(res, 400, "验证码错误");
+      }
+      const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+      await connection.query(
+        "UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?",
+        [passwordHash, challenge.user_id],
+      );
+      await connection.query(
+        "UPDATE email_recovery_challenges SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+        [challenge.user_id],
+      );
+      await connection.query(
+        "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+        [challenge.user_id],
+      );
+      await connection.query(
+        "UPDATE account_upgrade_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+        [challenge.user_id],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally { connection.release(); }
+    sendEmailSecurityNotice(email, "password_reset").catch((error) => {
+      console.error("Email recovery notice failed:", (error as Error).message);
+    });
+    res.json({ ok: true });
+  });
+
   app.post("/api/auth/password/reset/request", emailSendRateLimiter, async (req, res) => {
     const parsed = z.object({ email: emailSchema }).safeParse(req.body);
     if (!parsed.success) return sendError(res, 400, "邮箱格式不正确");
@@ -446,6 +565,14 @@ export function registerEmailAuthRoutes(app: Express, options: RegisterEmailAuth
       );
       await connection.query(
         "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+        [tokenRow.user_id]
+      );
+      await connection.query(
+        "UPDATE account_upgrade_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+        [tokenRow.user_id]
+      );
+      await connection.query(
+        "UPDATE email_recovery_challenges SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
         [tokenRow.user_id]
       );
       const [[identity]] = await connection.query<mysql.RowDataPacket[]>(

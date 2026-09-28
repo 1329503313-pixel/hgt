@@ -9,7 +9,9 @@ if (descriptorIndex < 0 || !descriptorPath) throw new Error("--descriptor is req
 
 const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8").replace(/^\uFEFF/, ""));
 if (!Number.isInteger(descriptor.versionCode) || descriptor.versionCode < 1) throw new Error("Invalid versionCode.");
-if (!descriptor.versionName || descriptor.minSupportedVersionCode !== 0) throw new Error("Only a non-forced release with minSupportedVersionCode=0 is accepted.");
+if (!descriptor.versionName || ![0, descriptor.versionCode].includes(descriptor.minSupportedVersionCode)) {
+  throw new Error("minSupportedVersionCode must be 0 or the published versionCode.");
+}
 if (!descriptor.apkUrl?.startsWith("https://zgkc-storage.kjcxchina.com/hgt/apps/")) throw new Error("Invalid APK URL.");
 if (!/^[0-9a-f]{64}$/.test(descriptor.apkSha256 ?? "")) throw new Error("Invalid APK SHA-256.");
 if (!Array.isArray(descriptor.releaseNotes) || descriptor.releaseNotes.length < 1) throw new Error("Release notes are required.");

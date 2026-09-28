@@ -1,6 +1,6 @@
 import { CARD_BATTLE_DEFENSE_EFFECT_LABELS, CARD_BATTLE_ACCURACY_STATS, cardBattleDefenseNeedsDuration, cardBattleAccuracyStat, isCardBattleTrueDamage, isCardBattleShield } from "@hgt/shared";
 import { CARD_BATTLE_CONTROL_LABELS, cardBattleControlNeedsDuration, isCardBattleControlEffect, isCardBattleStun, isCardBattleImmunity, isCardBattleCleanse, isCardBattleAttachedOnly } from "@hgt/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { CARD_BATTLE_EVENT_CONDITION_LABELS } from "@hgt/shared";
 import { CARD_BATTLE_PROC_BUFF_LABELS, CARD_BATTLE_PROC_BUFF_CODES, CARD_BATTLE_PROC_STATS, cardBattleProcStat, isCardBattleDamageEffect } from "@hgt/shared";
@@ -14,6 +14,7 @@ import type { CardBattleActionDraft, CardBattleTierDraft } from "./cardBattleEdi
 
 const conditionLabels: Record<CardBattleCondition, string> = {
   ...CARD_BATTLE_EVENT_CONDITION_LABELS,
+  battle_start: "战斗开始前",
   energy_full: "能量为满",
   self_death: "本卡片死亡",
   self_hp_below_percent: "本卡片生命值降低至百分比",
@@ -60,6 +61,20 @@ const newSkillId = () => crypto.randomUUID?.() ?? `skill-${Date.now()}-${Math.ra
 function numberValue(value: string, minimum = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(minimum, Math.round(parsed)) : minimum;
+}
+
+function SignedEnergyValueInput({ value, onChange }: { value: number | null; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value ?? 1));
+  useEffect(() => setDraft(String(value ?? 1)), [value]);
+  return <input type="text" inputMode="numeric" aria-label="自身能量变化值" className="field mt-1" value={draft}
+    onChange={(event) => {
+      const next = event.target.value;
+      if (!/^-?\d*$/.test(next)) return;
+      setDraft(next);
+      const parsed = Number(next);
+      if (next !== "" && next !== "-" && parsed !== 0 && Math.abs(parsed) <= 1_000_000_000) onChange(parsed);
+    }}
+    onBlur={() => setDraft(String(value ?? 1))} />;
 }
 
 export function CardBattleConfigEditor({ tiers, activeStar, onActiveStar, onChange, fixedStar = false }: {
@@ -166,7 +181,7 @@ function SkillActionFields({ action, tier, onChange, condition, fieldPrefix, att
           <SearchableSkillSelect label="技能类型" value={action.type}
             options={Object.entries(effectLabels).filter(([value]) => attached || !isCardBattleAttachedOnly(value)).map(([value, label]) => ({ value: value as CardBattleEffectType, label, disabled: value === "revive_self" && !selfDeathConditions.has(condition) || value === "revival_block_damaged" && !groupHasDamage }))}
             onChange={(type) => onChange(type === "" ? { type } : {
-              type, value: numericEffects.has(type) ? Math.min(effectMaximum(type), action.value ?? 1) : null,
+              type, value: numericEffects.has(type) ? Math.min(effectMaximum(type), type === "energy_self" ? action.value ?? 1 : Math.max(1, action.value ?? 1)) : null,
               damageType: undefined, damageFormula: undefined,
               ignoreDefensePercent: isCardBattleDamageEffect(type) && !isCardBattleTrueDamage(type) ? (action.ignoreDefensePercent ?? 0) : 0,
               probability: isCardBattleStun(type) ? (action.probability ?? 100) : undefined,
@@ -174,7 +189,7 @@ function SkillActionFields({ action, tier, onChange, condition, fieldPrefix, att
             })}
             hint={action.type === "revival_block_damaged" ? groupHasDamage ? "仅禁止本技能实际扣血或扣盾的单位复活，包含本次击杀的单位。" : "请先为本技能配置伤害类型，否则无法保存。" : action.type === "act_again" ? "本技能其他效果结算后再行动一次；与概率再动合并，额外行动不再触发再动。" : !selfDeathConditions.has(condition) ? "“复活自己”仅在本卡片死亡条件下可选，避免技能空放并清空能量。" : undefined} />
           {isCardBattleDamageEffect(action.type) && <CardDamageValueEditor action={action} tier={tier} onChange={onChange} fieldPrefix={fieldPrefix} />}
-          {numericEffects.has(action.type) && !isCardBattleDamageEffect(action.type) && <label><span className="text-xs font-bold">{isCardBattleCleanse(action.type) ? "清除 debuff 数量" : (cardBattleProcStat(action.type) || cardBattleAccuracyStat(action.type)) ? "属性变化（百分点）" : isCardBattleDebuff(action.type) ? "降低比例（%）" : "技能数值"}</span><input type="number" min="1" max={effectMaximum(action.type)} className="field mt-1" value={action.value ?? 1} onChange={(event) => onChange({ value: Math.min(effectMaximum(action.type), numberValue(event.target.value, 1)) })} />{!isCardBattleDebuff(action.type) && action.type.startsWith("attack_skill_damage_") && <span className="mt-1 block text-[11px] leading-4 text-muted">该数值同时增加普通攻击力与攻击性技能伤害。</span>}{cardBattleProcStat(action.type) ? <span className="mt-1 block text-[11px] leading-4 text-muted">直接增减百分点，例如 20% 降低 10 后为 10%；同属性同方向首层全效、后续半效，首层到期后下一层恢复全效，最终属性限制在 0%–100%。</span> : isCardBattleDebuff(action.type) && <span className="mt-1 block text-[11px] leading-4 text-muted">按包含增益的当前属性降低此百分比；同属性减益首层全效、后续半效，合计最多100%。</span>}</label>}
+          {numericEffects.has(action.type) && !isCardBattleDamageEffect(action.type) && <label><span className="text-xs font-bold">{isCardBattleCleanse(action.type) ? "清除 debuff 数量" : (cardBattleProcStat(action.type) || cardBattleAccuracyStat(action.type)) ? "属性变化（百分点）" : isCardBattleDebuff(action.type) ? "降低比例（%）" : "技能数值"}</span>{action.type === "energy_self" ? <SignedEnergyValueInput value={action.value} onChange={(value) => onChange({ value })} /> : <input type="number" min="1" max={effectMaximum(action.type)} className="field mt-1" value={action.value ?? 1} onChange={(event) => onChange({ value: Math.min(effectMaximum(action.type), numberValue(event.target.value, 1)) })} />}{action.type === "energy_self" && <span className="mt-1 block text-[11px] leading-4 text-muted">正数恢复自身能量；负数扣除自身能量，最低扣至 0。不能填写 0。</span>}{!isCardBattleDebuff(action.type) && action.type.startsWith("attack_skill_damage_") && <span className="mt-1 block text-[11px] leading-4 text-muted">该数值同时增加普通攻击力与攻击性技能伤害。</span>}{cardBattleProcStat(action.type) ? <span className="mt-1 block text-[11px] leading-4 text-muted">直接增减百分点，例如 20% 降低 10 后为 10%；同属性同方向首层全效、后续半效，首层到期后下一层恢复全效，最终属性限制在 0%–100%。</span> : isCardBattleDebuff(action.type) && <span className="mt-1 block text-[11px] leading-4 text-muted">按包含增益的当前属性降低此百分比；同属性减益首层全效、后续半效，合计最多100%。</span>}</label>}
           {isCardBattleTrueDamage(action.type) && <p className="text-xs leading-5 text-muted sm:col-span-2">真实伤害直接扣除生命值，跳过护盾；仍可被闪避，并正常计算防御、暴击与技能伤害加成。</p>}
           {isCardBattleShield(action.type) && <p className="text-xs leading-5 text-muted sm:col-span-2">护盾全额叠加、独立到期；优先消耗最早到期的一层，到期仅清除该层剩余护盾。</p>}
           {cardBattleAccuracyStat(action.type) && <p className="text-xs leading-5 text-muted sm:col-span-2">按百分点全额叠加，各层独立计算持续回合。</p>}

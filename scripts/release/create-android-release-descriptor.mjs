@@ -8,6 +8,7 @@ const valueAfter = (flag) => {
 };
 const notesPath = valueAfter("--notes");
 if (!notesPath) throw new Error("Usage: create-android-release-descriptor.mjs --notes <release-notes.txt>");
+const forceUpdate = process.argv.includes("--force-update");
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""));
 const version = readJson(resolve(repoRoot, "apps/app-android/release/version.json"));
@@ -35,7 +36,7 @@ publishedAt.setMilliseconds(0);
 const descriptor = {
   versionCode: version.versionCode,
   versionName: version.versionName,
-  minSupportedVersionCode: 0,
+  minSupportedVersionCode: forceUpdate ? version.versionCode : 0,
   apkUrl: manifest.apkUrl,
   apkSha256: manifest.sha256,
   releaseNotes,

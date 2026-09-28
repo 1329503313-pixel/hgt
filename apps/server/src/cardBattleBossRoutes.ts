@@ -27,6 +27,14 @@ export function registerCardBattleBossRoutes(router: Router, changed: (roomId: s
     if (!cover) { res.sendStatus(404); return; }
     res.set({ "Content-Type": "image/webp", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" }).send(cover.image);
   });
+  router.get("/card-battle-bosses", async (_req, res) => {
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT bosses.room_id AS id, rooms.name, bosses.reward_shells
+       FROM card_battle_bosses bosses JOIN online_soup_rooms rooms ON rooms.id = bosses.room_id
+       WHERE bosses.enabled = 1 AND bosses.starts_at <= NOW(3) AND bosses.ends_at > NOW(3)
+       ORDER BY rooms.name, bosses.room_id`);
+    res.set("Cache-Control", "no-store").json({ bosses: rows.map(row => ({ id: String(row.id), name: String(row.name), rewardShells: Number(row.reward_shells) })) });
+  });
   router.post(`${prefix}/covers`, async (req, res) => {
     const parsed = z.object({ image: z.string().max(8_000_000).regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/) }).safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: "请上传 5MB 以内的 PNG、JPG 或 WebP 图片" }); return; }
@@ -43,7 +51,7 @@ export function registerCardBattleBossRoutes(router: Router, changed: (roomId: s
     const offset = Math.max(0, Math.trunc(Number(req.query.offset) || 0));
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT bosses.*, rooms.name, rooms.room_code, NOW(3) AS db_now,
-       (SELECT COUNT(*) FROM online_card_battles games WHERE games.room_id = bosses.room_id AND mode = 'boss') AS battle_count
+       (SELECT COUNT(*) FROM online_card_battles games WHERE COALESCE(games.boss_template_id, games.room_id) = bosses.room_id AND mode = 'boss') AS battle_count
        FROM card_battle_bosses bosses JOIN online_soup_rooms rooms ON rooms.id = bosses.room_id
        ORDER BY bosses.created_at DESC, bosses.room_id DESC LIMIT 10 OFFSET ?`, [offset]);
     const [[total]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM card_battle_bosses");
@@ -59,7 +67,7 @@ export function registerCardBattleBossRoutes(router: Router, changed: (roomId: s
     try {
       await db.beginTransaction();
       if (editing) {
-        const [[room]] = await db.query<mysql.RowDataPacket[]>("SELECT id FROM online_soup_rooms WHERE id = ? AND card_battle_mode = 'boss' FOR UPDATE", [roomId]);
+        const [[room]] = await db.query<mysql.RowDataPacket[]>("SELECT id FROM online_soup_rooms WHERE id = ? AND card_battle_mode = 'boss' AND boss_template_id IS NULL FOR UPDATE", [roomId]);
         const current = room ? await loadBoss(roomId, db) : null;
         if (!current) throw new CardBattleBossRuleError("BOSS 房间不存在");
         if (input.revision !== Number(current.revision)) throw new CardBattleBossRuleError("配置已被其他操作更新，请刷新后重新编辑");
@@ -72,8 +80,8 @@ export function registerCardBattleBossRoutes(router: Router, changed: (roomId: s
         let created = false;
         for (let attempt = 0; attempt < 30 && !created; attempt++) {
           try {
-            await db.query(`INSERT INTO online_soup_rooms (id, room_code, name, host_id, content_type, card_battle_mode)
-              VALUES (?, ?, ?, NULL, 'card_battle', 'boss')`, [roomId, String(randomInt(100000, 1_000_000)), input.name]);
+            await db.query(`INSERT INTO online_soup_rooms (id, room_code, name, host_id, content_type, card_battle_mode, status, closed_at)
+              VALUES (?, ?, ?, NULL, 'card_battle', 'boss', 'closed', NOW())`, [roomId, String(randomInt(100000, 1_000_000)), input.name]);
             created = true;
           } catch (error) { if ((error as any).code !== "ER_DUP_ENTRY") throw error; }
         }
@@ -87,11 +95,13 @@ export function registerCardBattleBossRoutes(router: Router, changed: (roomId: s
           [input.enabled, new Date(input.startsAt), new Date(input.endsAt), input.rewardShells, JSON.stringify(input.cards), (req as any).user.id, roomId]);
         // Preparation is consent to this revision; changing it requires fresh readiness.
         await db.query(`UPDATE online_card_battle_seats seats JOIN online_soup_rooms rooms ON rooms.id = seats.room_id
-          SET seats.is_ready = 0 WHERE seats.room_id = ? AND rooms.status <> 'playing'`, [roomId]);
+          SET seats.is_ready = 0 WHERE rooms.boss_template_id = ? AND rooms.status <> 'playing'`, [roomId]);
       }
       await db.commit();
       res.status(editing ? 200 : 201).json({ boss: bossPublic((await loadBoss(roomId))!) });
       changed(roomId);
+      const [rooms] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM online_soup_rooms WHERE boss_template_id = ? AND status <> 'closed'", [roomId]);
+      for (const room of rooms) changed(String(room.id));
     } catch (error) {
       await db.rollback().catch(() => {});
       if (error instanceof CardBattleBossRuleError) { res.status(409).json({ error: error.message }); return; }
@@ -111,8 +121,8 @@ export function registerCardBattleBossRoutes(router: Router, changed: (roomId: s
   router.get(`${prefix}/:roomId/battles`, async (req, res) => {
     const offset = Math.max(0, Math.trunc(Number(req.query.offset) || 0));
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      "SELECT * FROM online_card_battles WHERE room_id = ? AND mode = 'boss' ORDER BY game_number DESC LIMIT 10 OFFSET ?", [req.params.roomId, offset]);
-    const [[count]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM online_card_battles WHERE room_id = ? AND mode = 'boss'", [req.params.roomId]);
+      "SELECT * FROM online_card_battles WHERE COALESCE(boss_template_id, room_id) = ? AND mode = 'boss' ORDER BY started_at DESC, id DESC LIMIT 10 OFFSET ?", [req.params.roomId, offset]);
+    const [[count]] = await pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS total FROM online_card_battles WHERE COALESCE(boss_template_id, room_id) = ? AND mode = 'boss'", [req.params.roomId]);
     const battles = await Promise.all(rows.map(async (row) => {
       const result: CardBattleResult = typeof row.result_json === "string" ? JSON.parse(row.result_json) : row.result_json;
       const [players] = await pool.query<mysql.RowDataPacket[]>(
@@ -126,7 +136,7 @@ export function registerCardBattleBossRoutes(router: Router, changed: (roomId: s
     res.set("Cache-Control", "no-store").json({ battles, total: Number(count.total) });
   });
   router.get(`${prefix}/:roomId/battles/:gameId/replay`, async (req, res) => {
-    const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM online_card_battles WHERE id = ? AND room_id = ? AND mode = 'boss'", [req.params.gameId, req.params.roomId]);
+    const [[row]] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM online_card_battles WHERE id = ? AND COALESCE(boss_template_id, room_id) = ? AND mode = 'boss'", [req.params.gameId, req.params.roomId]);
     if (!row) { res.status(404).json({ error: "对战记录不存在" }); return; }
     if (row.status !== "ended") { res.status(409).json({ error: "对局结束后才可查看回放" }); return; }
     const players: CardBattlePlayerInput[] = typeof row.lineup_snapshot_json === "string" ? JSON.parse(row.lineup_snapshot_json) : row.lineup_snapshot_json;

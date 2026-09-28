@@ -1,6 +1,14 @@
 import type mysql from "mysql2/promise";
 import { z } from "zod";
-import { applyBattleCollectibleStats, calculateCardBattlePower, battleCollectibleConfigError, type BattleCollectible, type BattleCollectibleBinding, type BattleCollectibleEffectType } from "@hgt/shared";
+import { applyBattleCollectibleStats, calculateCardBattlePower, battleCollectibleEffectsError, battleCollectibleEffects, type BattleCollectibleConfig, type BattleCollectible, type BattleCollectibleBinding, type BattleCollectibleEffectType } from "@hgt/shared";
+
+export function collectibleEffectsFromRow(row: Record<string, unknown>) {
+  const effects = row.battle_effects_json == null ? undefined : typeof row.battle_effects_json === "string" ? JSON.parse(row.battle_effects_json) : row.battle_effects_json;
+  const config = { battleEffects: effects, battleEffectType: row.battle_effect_type ?? null, battleEffectValue: row.battle_effect_value == null ? null : Number(row.battle_effect_value) } as BattleCollectibleConfig;
+  const error = battleCollectibleEffectsError(config);
+  if (error) throw new BattleCollectibleRuleError(error);
+  return battleCollectibleEffects(config);
+}
 
 export class BattleCollectibleRuleError extends Error {}
 export const battleCollectibleBindingsSchema = z.array(z.object({
@@ -26,13 +34,14 @@ export function validateBattleCollectibleBindings(cardIds: Array<string | null>,
 
 export async function loadBattleCollectibles(userId: string, db: mysql.Pool | mysql.PoolConnection, lock = false): Promise<BattleCollectible[]> {
   const [rows] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT id, collectible_no, name, battle_effect_description, battle_effect_type, battle_effect_value
+    `SELECT id, collectible_no, name, battle_effect_description, battle_effect_type, battle_effect_value, battle_effects_json
      FROM collectibles WHERE owner_user_id = ? AND status = 'owned' AND deleted_at IS NULL
      ORDER BY collectible_no, id${lock ? " FOR UPDATE" : ""}`, [userId],
   );
   return rows.map((row) => ({
     id: String(row.id), collectibleNo: String(row.collectible_no), name: String(row.name),
     imageUrl: `/api/media/collectibles/${encodeURIComponent(String(row.id))}/thumbnail`,
+    battleEffects: collectibleEffectsFromRow(row),
     battleEffectDescription: String(row.battle_effect_description ?? ""),
     battleEffectType: (row.battle_effect_type ?? null) as BattleCollectibleEffectType | null,
     battleEffectValue: row.battle_effect_value == null ? null : Number(row.battle_effect_value),
@@ -45,7 +54,7 @@ export async function resolveBattleCollectibles(userId: string, cardIds: Array<s
   const byCard = new Map<string, BattleCollectible>();
   for (const binding of bindings) {
     const item = items.find((item) => item.id === binding.collectibleId)!;
-    const error = battleCollectibleConfigError(item.battleEffectType, item.battleEffectValue);
+    const error = battleCollectibleEffectsError(item);
     if (error) throw new BattleCollectibleRuleError(`收藏品“${item.name}”配置无效：${error}`);
     byCard.set(binding.cardId, item);
   }

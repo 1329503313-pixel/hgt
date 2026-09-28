@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen, Gem, ShieldCheck, Shell } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { AssetMotionMedia } from "../components/AssetCardVisual";
+import { AssetAnimationPausedContext, AssetMotionMedia } from "../components/AssetCardVisual";
 import { AssetPackCard } from "../components/AssetPackCard";
-import { AssetDrawOverlay } from "../components/AssetDrawOverlay";
+import { AssetDrawOverlay, AssetDrawPending } from "../components/AssetDrawOverlay";
 import { CollectibleVisual } from "../components/CollectibleVisual";
 import { AssetPackStoryModal } from "../components/AssetPackStoryModal";
 import { PageTopBar } from "../components/PageTopBar";
@@ -42,7 +42,23 @@ export default function AssetPackPage() {
 
   useEffect(() => { void load(true); }, [load]);
 
-  useEffect(() => { warmAssetImage("/card-back.webp?v=20260721"); }, []);
+  useEffect(() => {
+    void warmAssetImage("/card-back.webp?v=20260721");
+    void warmAssetImage("/new-card-burst.png?v=20260721-4");
+  }, []);
+
+  const drawActive = drawing || order !== null;
+  useEffect(() => {
+    if (!drawActive) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previous; };
+  }, [drawActive]);
+
+  function closeDraw() {
+    setOrder(null);
+    void load(true, false);
+  }
 
   async function draw(mode: "single" | "ten") {
     if (drawingRef.current) return;
@@ -61,8 +77,11 @@ export default function AssetPackPage() {
       } : current);
       publishShellBalance(user?.id, result.balance);
       setOrder(result.order);
+    } catch (error) {
+      showToast((error as Error).message);
+      // Also reconcile a previous successful draw when "draw again" fails.
       void load(true, false);
-    } catch (error) { showToast((error as Error).message); }
+    }
     finally {
       drawingRef.current = false;
       setDrawing(false);
@@ -96,12 +115,13 @@ export default function AssetPackPage() {
   const tenUnavailable = data.balance < pack.tenPrice;
 
   return (
-    <section className="min-h-screen bg-page">
+    <AssetAnimationPausedContext.Provider value={drawActive}>
+    <section className={`min-h-screen bg-page ${drawActive ? "asset-pack-draw-active" : ""}`}>
       <PageTopBar title="卡包详情" backTo="/mine/store/cards" />
       <div className="asset-pack-detail-layout mx-auto max-w-6xl space-y-4 px-4 pb-32 lg:space-y-0">
         <div className="asset-pack-detail-cover overflow-hidden rounded-3xl bg-slate-950 text-white shadow-soft">
           <div className="asset-pack-detail-cover-media relative h-72 sm:h-96">{pack.coverCard ? <AssetMotionMedia card={pack.coverCard} className="h-full w-full object-cover opacity-75" eager /> : <div className="h-full w-full bg-slate-900" />}<div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/15 to-transparent" /><div className="absolute inset-x-0 bottom-0 p-5"><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-black backdrop-blur">{pack.packTypeLabel}</span><h1 className="mt-3 text-3xl font-black">{pack.name}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">{pack.description}</p></div></div>
-          <div className="grid grid-cols-4 gap-px bg-white/10 text-center text-xs"><div className="bg-slate-950/80 p-3"><p className="text-slate-400">稀有保底</p><p className="mt-1 font-black">{pack.pity.rare}/{pack.pity.rareLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">史诗保底</p><p className="mt-1 font-black">{pack.pity.epic}/{pack.pity.epicLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">传说保底</p><p className="mt-1 font-black">{pack.pity.legend}/{pack.pity.legendLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">总抽卡次数</p><p className="mt-1 font-black tabular-nums">{(pack.totalDrawCount ?? 0).toLocaleString()}</p></div></div>
+          <div className="grid grid-cols-4 gap-px bg-white/10 text-center text-xs"><div className="bg-slate-950/80 p-3"><p className="text-slate-400">稀有保底</p><p className="mt-1 font-black">{pack.pity.rare}/{pack.pity.rareLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">史诗保底</p><p className="mt-1 font-black">{pack.pity.epic}/{pack.pity.epicLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">传说保底</p><p className="mt-1 font-black">{pack.pity.legend}/{pack.pity.legendLimit}</p></div><div className="bg-slate-950/80 p-3"><p className="text-slate-400">抽卡次数</p><p className="mt-1 font-black tabular-nums">{(pack.totalDrawCount ?? 0).toLocaleString()}</p></div></div>
         </div>
 
         <div className="asset-pack-detail-content space-y-4">
@@ -109,16 +129,14 @@ export default function AssetPackPage() {
 
           <div className="card p-4">
             <h2 className="font-black text-ink">卡包内容</h2>
-            <p className="mt-1 text-xs leading-5 text-muted">点击史诗或传说卡查看属性与技能，再次点击收起；介绍可上下滑动。</p>
-            {pack.upCardId && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900"><p>点击未满星史诗卡可选择UP。多张可抽史诗时，UP与非UP各占50%；若抽到非UP史诗卡，下一张史诗必定为当前UP。仅剩一张未满星史诗时，史诗结果必定为该卡。</p>{pack.epicUpGuaranteed && <p className="mt-1 font-black text-orange-700">下一张史诗卡必定为当前UP，切换UP后状态仍保留。</p>}</div>}
-            <p className="mt-3 text-xs leading-5 text-muted">有未满星史诗时，已满星史诗不再抽出，也不能设为 UP；当前 UP 满星后自动切换下一张。全部史诗满星后取消 UP，允许重复抽取，史诗保底继续生效。抽到传说不会清空史诗保底进度。</p>
-            <p className="mt-2 text-xs leading-5 text-muted">当前卡包所有传说卡满星且仍有未满星史诗时，传说保底改为必出当前 UP 史诗，并重置传说、史诗保底。普通抽出的传说不转换；全部史诗满星后恢复传说保底。</p>
+            <p className="mt-1 text-xs leading-5 text-muted">点击卡牌可展示卡牌属性与技能；史诗UP卡有50%概率命中，首次未命中UP，下次必定命中</p>
             <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">
               {(pack.cards ?? []).map((card) => <AssetPackCard key={`${pack.id}:${user?.id}:${card.id}`} card={card} packType={pack.packType} selected={card.id === pack.upCardId} selecting={card.id === upSelectingCardId} onSelectUp={(cardId) => void selectUpCard(cardId)} />)}
             </div>
             <div className="mt-5 border-t border-line pt-5">
               <div className="flex items-center justify-between"><div><h3 className="font-black text-ink">卡包概率</h3><p className="mt-1 text-xs text-muted">按卡牌品质展示抽取概率</p></div><ShieldCheck className="text-primary" size={24} /></div>
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{(["normal", "rare", "epic", "legend"] as const).map((rarity) => <div key={rarity} className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-xs font-bold text-muted">{assetRarityLabel(rarity, pack.packType)}</p><p className="mt-1 text-lg font-black text-ink">{pack.rarityProbabilities[rarity]}%</p></div>)}</div>
+              <div className="mt-4 rounded-xl bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-800">满星重复卡返还贝壳</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-emerald-900">{(["normal", "rare", "epic", "legend"] as const).map((rarity) => <span key={rarity}>{assetRarityLabel(rarity, pack.packType)} {pack.fullStarRefunds[rarity]}</span>)}</div></div>
             </div>
           </div>
         </div>
@@ -128,8 +146,10 @@ export default function AssetPackPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-center gap-2 sm:gap-3"><div className="hidden sm:block"><p className="text-xs text-muted">贝壳余额</p><p className="flex items-center gap-1 font-black text-ink"><Shell size={16} />{data.balance.toLocaleString()}</p></div><button className="btn btn-secondary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || singleUnavailable} onClick={() => void draw("single")}><Shell size={17} />{drawing ? "抽取中…" : singleUnavailable ? "贝壳不足" : singleFree ? pack.freeDrawsUnlimited ? "免费单抽" : `免费单抽 (${pack.freeDrawsRemaining})` : `单抽 ${pack.singlePrice}`}</button><button className="btn btn-primary min-h-12 flex-1 px-2 text-xs sm:max-w-52 sm:text-sm" disabled={drawing || tenUnavailable} onClick={() => void draw("ten")}><Shell size={17} />{drawing ? "抽取中…" : tenUnavailable ? "贝壳不足" : `十连 ${pack.tenPrice}`}</button><button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-2 text-xs font-black text-amber-800 shadow-[0_4px_12px_rgba(180,83,9,.10)] transition hover:brightness-105 active:scale-[.97] sm:max-w-52 sm:text-sm" onClick={() => setStoryOpen(true)}><BookOpen size={17} />卡包故事</button></div>
       </div>
 
-      {order && <AssetDrawOverlay key={order.id} order={order} balance={data.balance} onClose={() => setOrder(null)} onDrawAgain={(mode) => void draw(mode)} />}
+      {drawing && <AssetDrawPending packName={pack.name} />}
+      {order && <AssetAnimationPausedContext.Provider value={false}><AssetDrawOverlay key={order.id} order={order} balance={data.balance} onClose={closeDraw} onDrawAgain={(mode) => void draw(mode)} /></AssetAnimationPausedContext.Provider>}
       {storyOpen && <AssetPackStoryModal pack={pack} onClose={() => setStoryOpen(false)} />}
     </section>
+    </AssetAnimationPausedContext.Provider>
   );
 }

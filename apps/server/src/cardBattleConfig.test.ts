@@ -29,6 +29,56 @@ import { isCardBattleDamageEffect, isCardBattleAttachedOnly } from "@hgt/shared"
 import { cardBattleEffectCodes } from "./cardBattle.js";
 import { bossCardSchema } from "./cardBattleBossRules.js";
 
+test("战斗开始前可作为无阈值技能条件", () => {
+  const effect = { order: 0, condition: "battle_start", conditionValue: null,
+    type: "defense_self", value: 10, duration: 1 };
+  assert.equal(cardBattleEffectSchema.safeParse(effect).success, true);
+  assert.equal(cardBattleConditionNeedsValue("battle_start"), false);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...effect, conditionValue: 50 }).success, false);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...effect, type: "revive_self", value: null, duration: null }).success, false);
+});
+
+test("只有恢复自身能量允许负数，主技能和附加效果均可配置", () => {
+  const energy = { order: 0, condition: "energy_full", conditionValue: null, type: "energy_self", value: -10, duration: null };
+  assert.equal(cardBattleEffectSchema.safeParse(energy).success, true);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, value: 10 }).success, true);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, value: 0 }).success, false);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, value: -1_000_000_001 }).success, false);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, type: "energy_all_allies" }).success, false);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, type: "damage_single" }).success, false);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, type: "heal_self" }).success, false);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, type: "energy_all_allies", value: 10,
+    additionalEffects: [{ type: "energy_self", value: -7, duration: null }] }).success, true);
+  assert.equal(cardBattleEffectSchema.safeParse({ ...energy, type: "energy_all_allies", value: 10,
+    additionalEffects: [{ type: "energy_lowest_ally", value: -7, duration: null }] }).success, false);
+});
+
+test("自身能量负值保存后读取保持原值", async () => {
+  const tierRows: Record<string, unknown>[] = [];
+  const effectRows: Record<string, unknown>[] = [];
+  const db = { query: async (sql: string, args: unknown[] = []) => {
+    const insert = sql.match(/INSERT INTO (asset_card_battle_tiers|asset_card_battle_effects)\s*\(([^)]+)\)/);
+    if (insert) {
+      const columns = insert[2]!.split(",").map((column) => column.trim());
+      (insert[1] === "asset_card_battle_tiers" ? tierRows : effectRows).push(Object.fromEntries(columns.map((column, index) => [column, args[index]])));
+    }
+    if (sql.startsWith("SELECT * FROM asset_card_battle_tiers")) return [tierRows];
+    if (sql.startsWith("SELECT * FROM asset_card_battle_effects")) return [effectRows];
+    return [[]];
+  } } as unknown as PoolConnection;
+  const tiers = defaultCardBattleTiers().map((tier, star) => ({ ...tier, effects: star !== 0 ? [] : [
+    { order: 0, condition: "energy_full" as const, conditionValue: null,
+      type: "energy_self" as const, value: -10, duration: null,
+      additionalEffects: [{ type: "energy_self" as const, value: -5, duration: null }] },
+  ] }));
+  await saveCardBattleTiers("signed-energy-card", tiers, db);
+  assert.equal(effectRows[0]!.effect_value, -10);
+  assert.equal(JSON.parse(String(effectRows[0]!.additional_effects))[0].value, -5);
+  const loaded = await loadCardBattleTiers("signed-energy-card", db);
+  assert.equal(loaded[0]!.effects[0]!.value, -10);
+  assert.equal(loaded[0]!.effects[0]!.additionalEffects?.[0]?.value, -5);
+});
+
 test("复制零星技能的重复ID可保存，重复提交不丢失星级、顺序及附加效果", async () => {
   const rows = new Map<string, unknown[]>();
   const db = { query: async (sql: string, args: unknown[]) => {

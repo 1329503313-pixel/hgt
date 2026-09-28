@@ -8,7 +8,7 @@ export const CARD_BATTLE_ROLE_LABELS: Record<CardBattleRole, string> = {
   support: "辅助",
 };
 
-export type CardBattleCondition = import("@hgt/shared").CardBattleEventCondition | "energy_full" | "self_death" | "self_hp_below_percent" | "normal_kill" | "skill_kill" | "ally_death" | "self_death_energy_full" | "self_hp_below_percent_energy_full" | "normal_kill_energy_full" | "skill_kill_energy_full" | "ally_death_energy_full";
+export type CardBattleCondition = import("@hgt/shared").CardBattleEventCondition | "battle_start" | "energy_full" | "self_death" | "self_hp_below_percent" | "normal_kill" | "skill_kill" | "ally_death" | "self_death_energy_full" | "self_hp_below_percent_energy_full" | "normal_kill_energy_full" | "skill_kill_energy_full" | "ally_death_energy_full";
 export type CardBattleEffectType = import("@hgt/shared").CardBattleDefenseEffect | import("@hgt/shared").CardBattleControlEffect | import("@hgt/shared").CardBattleProcEffect | import("./cardBattleEffects").CardBattleDebuffType | "damage_single" | "damage_rear" | "damage_random" | "damage_all_front" | "damage_all_rear" | "damage_random_2" | "damage_random_3" | "damage_random_4" | "damage_all" | "heal_self" | "heal_lowest_ally" | "energy_self" | "energy_lowest_ally" | "heal_all_allies" | "energy_all_allies" | "defense_self" | "defense_all_allies" | "speed_self" | "speed_all_allies" | "max_hp_self" | "max_hp_all_allies" | "attack_self" | "attack_all_allies" | "attack_skill_damage_self" | "attack_skill_damage_all_allies" | "revive_self" | "revive_ally_1" | "revive_ally_2" | "revive_ally_3" | "revive_ally_4" | "revive_all_allies";
 export type CardBattleSkillEffect = import("@hgt/shared").CardBattleDamageOptions & { id?: string; order: number; condition: CardBattleCondition; conditionValue: number | null; type: CardBattleEffectType; value: number | null; duration: number | null; probability?: number; additionalEffects?: CardBattleSkillAction[] };
 export type CardBattleSkillAction = Omit<CardBattleSkillEffect, "order" | "condition" | "conditionValue" | "additionalEffects">;
@@ -48,6 +48,7 @@ export type AssetCard = {
   story: string;
   releaseAt: string | null;
   status: string;
+  traits?: import("@hgt/shared").CardBattleTrait[];
   battleTiers?: CardBattleTier[] | null;
 };
 
@@ -87,6 +88,7 @@ export type AssetPack = {
   singlePrice: number;
   tenPrice: number;
   dailyFreeDraws: number;
+  fullStarRefunds: Record<AssetRarity, number>;
   freeDrawsRemaining: number;
   freeDrawsUnlimited?: boolean;
   totalDrawCount?: number;
@@ -197,13 +199,22 @@ export function sortAssetDrawResultsForDisplay<T extends Pick<AssetDrawResult, "
   ));
 }
 
-const warmedAssetImages = new Set<string>();
+const warmedAssetImages = new Map<string, Promise<void>>();
 
 export function warmAssetImage(src: string | null | undefined) {
-  if (!src || src.startsWith("data:") || warmedAssetImages.has(src) || typeof Image === "undefined") return;
-  warmedAssetImages.add(src);
+  if (!src || typeof Image === "undefined") return Promise.resolve();
+  const existing = warmedAssetImages.get(src);
+  if (existing) return existing;
   const image = new Image();
   image.decoding = "async";
+  const loaded = new Promise<void>((resolve) => {
+    image.onload = () => resolve();
+    image.onerror = () => { warmedAssetImages.delete(src); resolve(); };
+  });
   image.src = src;
-  void image.decode?.().catch(() => warmedAssetImages.delete(src));
+  const ready = typeof image.decode === "function"
+    ? image.decode().catch(() => { warmedAssetImages.delete(src); })
+    : loaded;
+  warmedAssetImages.set(src, ready);
+  return ready;
 }

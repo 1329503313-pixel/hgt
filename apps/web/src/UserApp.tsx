@@ -57,6 +57,7 @@ const ProfileBackgroundsPage = lazy(() => import("./pages/ProfileBackgroundsPage
 const SiteContentPage = lazy(() => import("./pages/SiteContentPage"));
 const AchievementUnlockOverlay = lazy(() => import("./components/AchievementUnlockOverlay").then((module) => ({ default: module.AchievementUnlockOverlay })));
 const AuthModal = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.AuthModal })));
+const PhoneBindingModal = lazy(() => import("./components/PhoneBindingModal").then((module) => ({ default: module.PhoneBindingModal })));
 const ExportPreview = lazy(() => import("./components/AuthModal").then((module) => ({ default: module.ExportPreview })));
 const SoupEditor = lazy(() => import("./components/SoupEditor").then((module) => ({ default: module.SoupEditor })));
 const EvalEditor = lazy(() => import("./components/EvalEditor").then((module) => ({ default: module.EvalEditor })));
@@ -66,7 +67,7 @@ function RouteFallback() {
 }
 
 export default function UserApp() {
-  const { authMode, showSoupForm, showEvalForm, exportReady, badgeUnlock } = useApp();
+  const { authMode, phoneBindingOpen, showSoupForm, showEvalForm, exportReady, badgeUnlock } = useApp();
 
   return (
     <div className="app-shell min-h-screen bg-page">
@@ -148,6 +149,7 @@ export default function UserApp() {
 
       <Suspense fallback={null}>
         {authMode && <AuthModal />}
+        {phoneBindingOpen && <PhoneBindingModal />}
         {showSoupForm && <SoupEditor />}
         {showEvalForm && <EvalEditor />}
         {exportReady && <ExportPreview />}

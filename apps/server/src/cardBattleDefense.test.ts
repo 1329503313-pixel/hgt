@@ -48,6 +48,54 @@ test("实际闪避先相减再限制0到100；概率增益全额叠加、到期�
   assert.ok(cardBattleStatuses(buffs, 1).every(s => s.multiplier === 1));
 });
 
+test("暴击仅为本次伤害增加50个百分点命中，叠加后再限制最终闪避概率", () => {
+  assert.equal(cardBattleDodgeChance(80, 20, true), 10);
+  assert.equal(cardBattleDodgeChance(80, 20, false), 60);
+  assert.equal(cardBattleDodgeChance(100, 0, true), 50);
+  assert.equal(cardBattleDodgeChance(50, 0, true), 0);
+  assert.equal(cardBattleDodgeChance(20, 30, true), 0);
+  assert.equal(cardBattleDodgeChance(150, 100, true), 0);
+  assert.equal(cardBattleDodgeChance(200, 0, true), 100);
+});
+
+test("普攻、群体及真实伤害暴击使用临时命中加成，逐目标判定且不改变面板", () => {
+  for (const type of [null, "damage_all", "damage_true_all"] as const) {
+    const one = side("a", { attack: 100, critRate: 50, critDamage: 200, hitRate: 20 });
+    const two = side("b", { dodgeRate: 70 });
+    if (type) opening(one[0]!, [{ ...effect(type, 100), additionalEffects: [{ type, value: 100, duration: null }] }]);
+    const input = inputs(one, two);
+    const result = simulateCardBattle(input, `critical-hit-${type}`);
+    const hits = result.events.filter(e => e.actorId?.startsWith("a") && e.visual === "damage" && (type ? e.effectType === type : e.kind === "attack")).flatMap(e => e.effects);
+    assert.ok(hits.some(h => h.critical && h.amount! < 0), String(type));
+    assert.ok(hits.some(h => h.dodged), String(type));
+    assert.ok(hits.filter(h => h.critical).every(h => !h.dodged && -h.amount! >= 196 && -h.amount! <= 204));
+    assert.ok(hits.filter(h => h.dodged).every(h => h.amount === 0 && !h.critical));
+    assert.ok(result.events.every(e => e.states.filter(s => s.seat === 1).every(s => s.hitRate === 20)));
+    assert.deepEqual(result, simulateCardBattle(input, `critical-hit-${type}`));
+    // Force all hits to be critical: 20 base + 50 critical fully offsets 70 dodge.
+    for (const card of one) card.tier.critRate = 100;
+    const guaranteed = simulateCardBattle(input, `critical-hit-${type}`);
+    const attacks = guaranteed.events.filter(e => e.actorId?.startsWith("a") && e.visual === "damage");
+    assert.ok(attacks.length > 0);
+    assert.ok(attacks.every(e => e.effects.every(h => !h.dodged && h.critical)));
+  }
+});
+
+test("BOSS协作和反击普攻同样享有暴击命中加成", () => {
+  const one = side("a", { attack: 100, critRate: 100, dodgeRate: 50, counterRate: 100 }).slice(0, 3);
+  const teammate = side("c", { attack: 100, critRate: 100 }).slice(0, 3);
+  const boss = side("b", { attack: 100, critRate: 100, dodgeRate: 50, counterRate: 100 });
+  const result = simulateCardBattle([
+    { userId: "u1", nickname: "a", seat: 1, cards: one },
+    { userId: "u3", nickname: "c", seat: 1, cards: teammate },
+    { userId: "boss", nickname: "b", seat: 2, cards: boss },
+  ], "boss-critical-hit", "boss");
+  const attacks = result.events.filter(e => e.kind === "attack");
+  assert.ok(attacks.some(e => e.counterattack));
+  assert.ok(attacks.some(e => e.actorId?.startsWith("c")));
+  assert.ok(attacks.every(e => e.effects.every(h => h.critical && !h.dodged)));
+});
+
 test("护盾优先消耗最早到期层、同期限按获得顺序，辅助贡献仅计实际吸收", () => {
   const shields = [{ remaining: 100, expiresAfterRound: 3, sourceId: "late", order: 1 }, { remaining: 40, expiresAfterRound: 1, sourceId: "early", order: 2 }, { remaining: 50, expiresAfterRound: 1, sourceId: "early2", order: 3 }];
   const credits: unknown[] = [];

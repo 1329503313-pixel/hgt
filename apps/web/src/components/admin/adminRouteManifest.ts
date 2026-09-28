@@ -30,7 +30,8 @@ export const defaultAdminTab: AdminTab = "data";
 
 export const cardBattleAdminRoutes = [
   { path: "/admin/card-battle/boss", label: "BOSS 房间" },
-  { path: "/admin/card-battle/tower", label: "卡牌闯关" }
+  { path: "/admin/card-battle/tower", label: "卡牌闯关" },
+  { path: "/admin/card-battle/traits", label: "卡牌特质" }
 ] as const;
 
 export function adminRoutePath(tab: AdminTab) {

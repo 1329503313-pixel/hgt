@@ -40,7 +40,7 @@ const actionFields = {
   damageFormula: z.string().max(1000).transform(normalizeCardBattleFormula).pipe(z.string().max(500)).optional(),
   id: z.string().trim().min(1).max(64).optional(),
   type: z.enum(cardBattleEffectCodes),
-  value: z.number().int().min(1).max(1_000_000_000).nullable(),
+  value: z.number().int().min(-1_000_000_000).max(1_000_000_000).nullable(),
   ignoreDefensePercent: z.number().min(0, "无视防御比例不得低于0%").max(100, "无视防御比例不得超过100%").multipleOf(.01, "无视防御比例最多保留两位小数").default(0),
   duration: z.number().int().positive().safe().nullable(),
   probability: z.number().min(0).max(100).multipleOf(.01).optional(),
@@ -48,6 +48,9 @@ const actionFields = {
 const actionSchema = z.object(actionFields);
 function validateAction(value: z.infer<typeof actionSchema>, context: z.RefinementCtx) {
   const formula = value.damageType === "formula";
+  if (value.value != null && (value.value === 0 || (value.value < 0 && value.type !== "energy_self"))) {
+    context.addIssue({ code: "custom", path: ["value"], message: "仅恢复自身能量可填写负数，技能数值不能为0" });
+  }
   if (formula && !isCardBattleDamageEffect(value.type)) context.addIssue({ code: "custom", path: ["damageType"], message: "仅伤害类技能可使用计算数值" });
   if (formula && !value.damageFormula) context.addIssue({ code: "custom", path: ["damageFormula"], message: "请配置计算公式" });
   if (formula && value.value != null) context.addIssue({ code: "custom", path: ["value"], message: "计算数值不能同时配置具体数值" });

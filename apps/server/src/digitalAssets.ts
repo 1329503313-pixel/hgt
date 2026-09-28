@@ -27,11 +27,13 @@ import {
   isEntitlementLimitError,
   tryConsumeDailyEntitlement
 } from "./entitlements.js";
-import { awardCollectiblesForDraw, collectibleAwardsForOrder, collectiblePackCounts, collectibleProbabilityDetails, collectiblesForPack } from "./collectibles.js";
+import { awardCollectiblesForDraw, loadDrawCollectibleCandidates, collectibleAwardsForOrder, collectiblePackCounts, collectibleProbabilityDetails, collectiblesForPack } from "./collectibles.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import { cardBattleRoleCodes } from "./cardBattle.js";
 import { cardBattleTiersSchema, loadCardBattleTiers, saveCardBattleTiers } from "./cardBattleConfig.js";
 import { applyCardBattleCollectionStats, loadCardBattleCollectionBonus } from "./cardBattleCollection.js";
+import { listTenDrawRecords } from "./assetTenDrawRecords.js";
+import { cardTraitsFromJson, registerCardBattleTraitRoutes, selectedCardBattleTraits } from "./cardBattleTraits.js";
 
 type RouteUser = { id: string; role: UserRole };
 type RouteDependencies = {
@@ -123,7 +125,7 @@ const COLLECTION_VALUES: Record<Rarity, readonly [number, number, number, number
   epic: [5, 12, 30, 100],
   legend: [15, 40, 120, 360]
 };
-const FULL_STAR_REFUNDS: Record<Rarity, number> = { normal: 0, rare: 1, epic: 2, legend: 5 };
+const DEFAULT_FULL_STAR_REFUNDS: Record<Rarity, number> = { normal: 0, rare: 1, epic: 2, legend: 5 };
 const PITY_LIMITS: Record<PityType, number> = { rare: 10, epic: 60, legend: 150 };
 const PACK_TYPE_LABELS: Record<PackType, string> = { permanent: "常驻卡包", limited: "限定卡包", collaboration: "联动卡包" };
 const PITY_SCOPE_BY_PACK_TYPE: Record<PackType, PityScope> = {
@@ -133,6 +135,7 @@ const PITY_SCOPE_BY_PACK_TYPE: Record<PackType, PityScope> = {
 };
 const PUBLIC_PACK_COLUMNS = `id, name, '' AS cover_url, description, pack_story, pack_type,
   single_price, ten_price, daily_free_draws, sale_start_at, sale_end_at, enabled,
+  full_star_refund_normal, full_star_refund_rare, full_star_refund_epic, full_star_refund_legend,
   sort_order, probability_notice, created_at, updated_at`;
 
 function richTextCharacterCount(value: string) {
@@ -156,6 +159,7 @@ const cardSchemaObject = z.object({
   status: z.enum(["active", "inactive"]).optional().default("inactive"),
   packIds: z.array(z.string().trim().min(1).max(64)).min(1, "卡牌必须至少绑定一个卡包").max(500).transform((ids) => [...new Set(ids)]).optional().default([]),
   battleTiers: cardBattleTiersSchema.nullable().optional(),
+  traitIds: z.array(z.string().trim().min(1).max(64)).max(20).optional().default([]),
 });
 const cardRaritySupportsBattle = (rarity: string) => rarity === "epic" || rarity === "legend";
 const cardSchema = cardSchemaObject.superRefine((value, context) => {
@@ -171,9 +175,22 @@ const cardSchema = cardSchemaObject.superRefine((value, context) => {
   if (!cardRaritySupportsBattle(value.rarity) && value.battleRole) {
     context.addIssue({ code: "custom", path: ["battleRole"], message: "仅参与卡牌对战的卡牌可选择对战定位" });
   }
+  if (!cardRaritySupportsBattle(value.rarity) && value.traitIds.length) {
+    context.addIssue({ code: "custom", path: ["traitIds"], message: "仅参与卡牌对战的卡牌可以配置特质" });
+  }
 });
 const cardPatchSchema = cardSchemaObject.partial();
 
+const fullStarRefundsSchema = z.object({
+  normal: z.number().int().min(0).max(1_000_000),
+  rare: z.number().int().min(0).max(1_000_000),
+  epic: z.number().int().min(0).max(1_000_000),
+  legend: z.number().int().min(0).max(1_000_000),
+});
+function canSavePackRefunds(role: UserRole, refunds: Record<Rarity, number> | undefined, creating: boolean) {
+  if (!refunds || role === "super_admin") return true;
+  return creating && (["normal", "rare", "epic", "legend"] as const).every((rarity) => refunds[rarity] === DEFAULT_FULL_STAR_REFUNDS[rarity]);
+}
 const packSchemaObject = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(1000).optional().default(""),
@@ -182,6 +199,7 @@ const packSchemaObject = z.object({
   singlePrice: z.coerce.number().int().min(0).max(1_000_000),
   tenPrice: z.coerce.number().int().min(0).max(10_000_000),
   dailyFreeDraws: z.coerce.number().int().min(0).max(100).optional().default(0),
+  fullStarRefunds: fullStarRefundsSchema.optional().default(DEFAULT_FULL_STAR_REFUNDS),
   saleStartAt: z.string().datetime().nullable().optional().default(null),
   saleEndAt: z.string().datetime().nullable().optional().default(null),
   enabled: z.boolean().optional().default(false),
@@ -336,6 +354,7 @@ function cardPayload(row: mysql.RowDataPacket, useMediaUrls = false) {
     name: String(row.name),
     rarity: rarity(row.rarity),
     battleRole: row.battle_role ? String(row.battle_role) : null,
+    traits: cardTraitsFromJson(row.battle_traits_json),
     imageUrl: useMediaUrls ? cardMediaUrl(row, "image") : publicOssUrl(row.image_url) ?? "",
     thumbnailUrl: useMediaUrls ? cardMediaUrl(row, "thumbnail") : publicOssUrl(row.thumbnail_url || row.image_url) ?? "",
     motionMp4Url: hasMotion ? cardMotionMediaUrl(row, "mp4") : null,
@@ -361,6 +380,15 @@ function packCoverCard(configuration: Awaited<ReturnType<typeof packConfiguratio
   return lowestLegendCard(configuration.enabled);
 }
 
+function packFullStarRefunds(row: mysql.RowDataPacket): Record<Rarity, number> {
+  return {
+    normal: Number(row.full_star_refund_normal ?? DEFAULT_FULL_STAR_REFUNDS.normal),
+    rare: Number(row.full_star_refund_rare ?? DEFAULT_FULL_STAR_REFUNDS.rare),
+    epic: Number(row.full_star_refund_epic ?? DEFAULT_FULL_STAR_REFUNDS.epic),
+    legend: Number(row.full_star_refund_legend ?? DEFAULT_FULL_STAR_REFUNDS.legend),
+  };
+}
+
 function packPayload(row: mysql.RowDataPacket, mediaVariant?: "cover" | "thumbnail") {
   const type = packType(row.pack_type);
   return {
@@ -374,6 +402,7 @@ function packPayload(row: mysql.RowDataPacket, mediaVariant?: "cover" | "thumbna
     singlePrice: Number(row.single_price ?? 0),
     tenPrice: Number(row.ten_price ?? 0),
     dailyFreeDraws: Number(row.daily_free_draws ?? 0),
+    fullStarRefunds: packFullStarRefunds(row),
     saleStartAt: type === "permanent" ? null : iso(row.sale_start_at),
     saleEndAt: type === "permanent" ? null : iso(row.sale_end_at),
     enabled: bool(row.enabled),
@@ -748,19 +777,22 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
 
     const [[pack]] = await connection.query<mysql.RowDataPacket[]>(
       `SELECT id, name, pack_type, single_price, ten_price, daily_free_draws,
+        full_star_refund_normal, full_star_refund_rare, full_star_refund_epic, full_star_refund_legend,
         sale_start_at, sale_end_at, enabled
        FROM asset_packs WHERE id = ? FOR UPDATE`,
       [packId]
     );
     if (!pack) throw new Error("ASSET_PACK_NOT_FOUND");
     if (packStatus(pack) !== "on_sale") throw new Error("ASSET_PACK_NOT_ON_SALE");
+    const fullStarRefunds = packFullStarRefunds(pack);
     const configuration = await packConfiguration(packId, connection);
     if (!configuration.ready) throw new Error("ASSET_PACK_CONFIGURATION_INVALID");
     const drawCount = mode === "ten" ? 10 : 1;
     const [[userRow]] = await connection.query<mysql.RowDataPacket[]>("SELECT shell_balance, role FROM users WHERE id = ? FOR UPDATE", [userId]);
     if (!userRow) throw new Error("ASSET_USER_NOT_FOUND");
     // Serialize ownership and UP decisions across different packs for this user.
-    const [ownedRows] = await connection.query<mysql.RowDataPacket[]>("SELECT card_id, star_level FROM user_asset_cards WHERE user_id = ? FOR UPDATE", [userId]);
+    const [ownedRows] = await connection.query<mysql.RowDataPacket[]>("SELECT card_id, star_level, total_obtained, collection_value FROM user_asset_cards WHERE user_id = ? FOR UPDATE", [userId]);
+    const ownedCards = new Map(ownedRows.map(row => [String(row.card_id), row]));
     const ownedStarLevels = new Map(ownedRows.map(row => [String(row.card_id), Number(row.star_level)]));
     let epicUpState = await userPackEpicUpState(userId, packId, configuration, connection, true, ownedStarLevels);
     let balance = Number(userRow.shell_balance ?? 0);
@@ -864,16 +896,14 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
       [userId, packId]
     );
     const completedDrawCountBeforeOrder = Number(packDrawProgress?.completed_draw_count ?? 0);
+    const collectibleCandidates = await loadDrawCollectibleCandidates(connection, packId);
 
     for (let index = 1; index <= drawCount; index += 1) {
       const { card, normalizedProbability, originalProbability, epicUpResult, triggeredPity, legendPityConvertedToEpic, nextPity }
         = chooseUserDraw(configuration, ownedStarLevels, pityState, epicUpState);
       if (epicUpState && epicUpResult) epicUpState.guaranteed = epicUpResult.guaranteedNext;
       const cardRarity = rarity(card.rarity);
-      const [[owned]] = await connection.query<mysql.RowDataPacket[]>(
-        "SELECT * FROM user_asset_cards WHERE user_id = ? AND card_id = ? FOR UPDATE",
-        [userId, card.id]
-      );
+      const owned = ownedCards.get(String(card.id));
       const starBefore = owned ? Number(owned.star_level) : null;
       const firstObtained = !owned;
       let starAfter = starBefore ?? 0;
@@ -897,7 +927,7 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
         const nextTotal = previousTotal + 1;
         if (Number(owned.star_level) >= 3) {
           fullStarDuplicate = true;
-          shellRefund = FULL_STAR_REFUNDS[cardRarity];
+          shellRefund = fullStarRefunds[cardRarity];
           totalRefund += shellRefund;
           await connection.query(
             "UPDATE user_asset_cards SET total_obtained = ?, last_obtained_at = CURRENT_TIMESTAMP WHERE user_id = ? AND card_id = ?",
@@ -940,7 +970,12 @@ async function performDraw(userId: string, packId: string, mode: "single" | "ten
           })
         ]
       );
-      await awardCollectiblesForDraw(connection, userId, packId, orderId, index, completedDrawCountBeforeOrder + index - 1);
+      await awardCollectiblesForDraw(connection, userId, packId, orderId, index, completedDrawCountBeforeOrder + index - 1, collectibleCandidates);
+      ownedCards.set(String(card.id), {
+        ...owned, card_id: card.id, star_level: starAfter,
+        total_obtained: Number(owned?.total_obtained ?? 0) + 1,
+        collection_value: fullStarDuplicate ? Number(owned!.collection_value) : COLLECTION_VALUES[cardRarity][starAfter]
+      } as mysql.RowDataPacket);
       ownedStarLevels.set(String(card.id), starAfter);
       epicUpState = resolveEpicUp(configuration.enabled, ownedStarLevels, epicUpState);
     }
@@ -1016,7 +1051,7 @@ async function cabinetPayload(userId: string, compact = false) {
     pool.query<mysql.RowDataPacket[]>(
       `SELECT uc.user_id, uc.card_id, uc.star_level, uc.duplicate_progress, uc.total_obtained,
               uc.collection_value, uc.first_obtained_at, uc.last_obtained_at, uc.display_order,
-              c.id, c.card_no, c.name, c.rarity, c.battle_role,
+              c.id, c.card_no, c.name, c.rarity, c.battle_role, c.battle_traits_json,
               '' AS image_url, '' AS thumbnail_url,
               c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version,
               c.story, c.release_at, c.status, c.updated_at,
@@ -1107,6 +1142,7 @@ function errorMessage(error: unknown) {
 
 export function registerDigitalAssetRoutes(app: express.Express, dependencies: RouteDependencies) {
   const { requireAuth, requireAdmin, sendError, sendStoredImage, onBadgeProgress } = dependencies;
+  registerCardBattleTraitRoutes(app, { requireAdmin, sendError });
 
   app.get("/api/media/assets/cards/:id/:variant", async (req, res) => {
     if (!(await requireAuth(req, res))) return;
@@ -1362,13 +1398,16 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const parsed = z.object({ mode: z.enum(["single", "ten"]), requestId: z.string().min(8).max(100) }).safeParse(req.body);
     if (!parsed.success) return sendError(res, 400, "抽卡请求无效");
     try {
+      const drawStartedAt = performance.now();
       const order = await performDraw(user.id, req.params.id, parsed.data.mode, parsed.data.requestId);
+      const drawFinishedAt = performance.now();
       await syncBeginnerTasks(user.id);
       onBadgeProgress?.(user.id);
       const [[balanceRow]] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT shell_balance FROM users WHERE id = ? LIMIT 1",
         [user.id]
       );
+      res.setHeader("Server-Timing", `draw;dur=${(drawFinishedAt - drawStartedAt).toFixed(1)}, rewards;dur=${(performance.now() - drawFinishedAt).toFixed(1)}`);
       res.json({ order, balance: Number(balanceRow?.shell_balance ?? 0) });
     } catch (error) {
       if (isEntitlementLimitError(error)) return sendError(res, 429, error.message);
@@ -1778,11 +1817,22 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     });
   });
 
+  app.get("/api/admin/asset-ten-draw-records", async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const requestedLimit = Number(req.query.limit ?? 50);
+    const requestedOffset = Number(req.query.offset ?? 0);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, Math.floor(requestedLimit))) : 50;
+    const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0;
+    const keyword = String(req.query.keyword ?? "").trim().slice(0, 100);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(await listTenDrawRecords(pool, { limit, offset, keyword, sort: req.query.sort }));
+  });
+
   app.get("/api/admin/asset-cards", async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     const [rows, packRows] = await Promise.all([
       pool.query<mysql.RowDataPacket[]>(
-        `SELECT c.id, c.card_no, c.name, c.rarity, c.battle_role,
+        `SELECT c.id, c.card_no, c.name, c.rarity, c.battle_role, c.battle_traits_json,
           '' AS image_url, '' AS thumbnail_url,
           NULL AS story, c.release_at, c.status, c.created_at, c.updated_at,
           COUNT(DISTINCT uc.user_id) AS owner_count, COALESCE(SUM(uc.total_obtained), 0) AS total_drawn,
@@ -1891,16 +1941,17 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const parsed = cardSchema.safeParse(req.body);
     if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "卡片资料无效");
     const id = nanoid();
-    const { packIds, battleTiers, thumbnailUrl: _thumbnailUrl, ...value } = parsed.data;
+    const { packIds, battleTiers, traitIds, thumbnailUrl: _thumbnailUrl, ...value } = parsed.data;
     const optimizedImages = await optimizedAssetImages(value.imageUrl, id, 1200, 360);
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
+      const traits = await selectedCardBattleTraits(traitIds, connection);
       await connection.query(
         `INSERT INTO asset_cards
-          (id, card_no, name, rarity, battle_role, image_url, thumbnail_url, story, release_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, value.cardNo, value.name, value.rarity, value.battleRole, optimizedImages.full, optimizedImages.thumbnail, value.story || null, value.releaseAt ? new Date(value.releaseAt) : null, value.status]
+          (id, card_no, name, rarity, battle_role, battle_traits_json, image_url, thumbnail_url, story, release_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, value.cardNo, value.name, value.rarity, value.battleRole, JSON.stringify(traits), optimizedImages.full, optimizedImages.thumbnail, value.story || null, value.releaseAt ? new Date(value.releaseAt) : null, value.status]
       );
       await syncCardPacks(id, packIds, connection);
       if (battleTiers) await saveCardBattleTiers(id, battleTiers, connection);
@@ -1934,7 +1985,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (Number(usage.count) > 0 && changesProtectedField) return sendError(res, 409, "已有用户获得的卡片不能修改编号或品质");
     const finalRarity = String(parsed.data.rarity ?? current.rarity);
     const finalBattleRole = parsed.data.battleRole === undefined ? current.battle_role : parsed.data.battleRole;
-    const { packIds, battleTiers, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
+    const { packIds, battleTiers, traitIds, thumbnailUrl: _thumbnailUrl, ...parsedChanges } = parsed.data;
     if (cardRaritySupportsBattle(finalRarity)) {
       if (battleTiers === null) return sendError(res, 400, "史诗或传说卡必须保留完整战斗配置");
       if (battleTiers === undefined && !cardRaritySupportsBattle(String(current.rarity))) {
@@ -1954,6 +2005,13 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
+      if (traitIds !== undefined) {
+        if (!cardRaritySupportsBattle(finalRarity) && traitIds.length) throw new Error("仅参与战斗的卡牌可以配置特质");
+        const traits = await selectedCardBattleTraits(traitIds, connection);
+        await connection.query("UPDATE asset_cards SET battle_traits_json=? WHERE id=?", [JSON.stringify(traits), req.params.id]);
+      } else if (!cardRaritySupportsBattle(finalRarity)) {
+        await connection.query("UPDATE asset_cards SET battle_traits_json=JSON_ARRAY() WHERE id=?", [req.params.id]);
+      }
       if (entries.length) {
         await connection.query(
           `UPDATE asset_cards SET ${entries.map(([key]) => `${columns[key]} = ?`).join(", ")} WHERE id = ?`,
@@ -1981,6 +2039,7 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
       `SELECT p.id, p.name, '' AS cover_url, p.description, p.pack_story, p.pack_type,
         p.single_price, p.ten_price, p.daily_free_draws, p.sale_start_at, p.sale_end_at, p.enabled, p.sort_order,
+        p.full_star_refund_normal, p.full_star_refund_rare, p.full_star_refund_epic, p.full_star_refund_legend,
         p.probability_notice, p.created_at, p.updated_at,
         COALESCE(draw_stats.total_draw_count, 0) AS total_draw_count,
         COALESCE(draw_stats.recent_7d_draw_count, 0) AS recent_7d_draw_count
@@ -2023,25 +2082,35 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
   });
 
   app.post("/api/admin/asset-packs", async (req, res) => {
-    if (!(await requireAdmin(req, res))) return;
+    const user = await requireAdmin(req, res);
+    if (!user) return;
     const parsed = packSchema.safeParse(req.body);
     if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "卡包资料无效");
     if (parsed.data.enabled) return sendError(res, 400, "新卡包需要先保存卡片和概率，再启用上架");
+    if (!canSavePackRefunds(user.role, parsed.data.fullStarRefunds, true)) {
+      return sendError(res, 403, "仅超级管理员可修改满星返还");
+    }
     const id = nanoid();
     const value = parsed.data;
     await pool.query(
       `INSERT INTO asset_packs
-        (id, name, cover_url, cover_thumbnail, description, pack_story, pack_type, single_price, ten_price, daily_free_draws, sale_start_at, sale_end_at, enabled, sort_order, probability_notice)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-      [id, value.name, "", null, value.description, value.packStory, value.packType, value.singlePrice, value.tenPrice, value.dailyFreeDraws, value.packType === "permanent" ? null : new Date(value.saleStartAt!), value.packType === "permanent" ? null : new Date(value.saleEndAt!), value.sortOrder, value.probabilityNotice]
+        (id, name, cover_url, cover_thumbnail, description, pack_story, pack_type, single_price, ten_price, daily_free_draws,
+         full_star_refund_normal, full_star_refund_rare, full_star_refund_epic, full_star_refund_legend,
+         sale_start_at, sale_end_at, enabled, sort_order, probability_notice)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+      [id, value.name, "", null, value.description, value.packStory, value.packType, value.singlePrice, value.tenPrice, value.dailyFreeDraws,
+        value.fullStarRefunds.normal, value.fullStarRefunds.rare, value.fullStarRefunds.epic, value.fullStarRefunds.legend,
+        value.packType === "permanent" ? null : new Date(value.saleStartAt!), value.packType === "permanent" ? null : new Date(value.saleEndAt!), value.sortOrder, value.probabilityNotice]
     );
     res.status(201).json({ id });
   });
 
   app.patch("/api/admin/asset-packs/:id", async (req, res) => {
-    if (!(await requireAdmin(req, res))) return;
+    const user = await requireAdmin(req, res);
+    if (!user) return;
     const parsed = packSchemaObject.partial().safeParse(req.body);
     if (!parsed.success || !Object.keys(parsed.data).length) return sendError(res, 400, "卡包资料无效");
+    if (!canSavePackRefunds(user.role, parsed.data.fullStarRefunds, false)) return sendError(res, 403, "仅超级管理员可修改满星返还");
     if (parsed.data.enabled) {
       const config = await packConfiguration(req.params.id);
       if (!config.ready) return sendError(res, 409, "概率必须合计100%，且至少包含稀有、史诗、传说保底卡片");
@@ -2058,9 +2127,16 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
     if (nextType !== "permanent" && (!nextStart || !nextEnd)) return sendError(res, 400, "限定卡包和联名卡包必须设置起止时间");
     if (nextStart && nextEnd && nextEnd <= nextStart) return sendError(res, 400, "下架时间必须晚于上架时间");
     const columns: Record<string, string> = { name: "name", description: "description", packStory: "pack_story", packType: "pack_type", singlePrice: "single_price", tenPrice: "ten_price", dailyFreeDraws: "daily_free_draws", saleStartAt: "sale_start_at", saleEndAt: "sale_end_at", enabled: "enabled", sortOrder: "sort_order", probabilityNotice: "probability_notice" };
-    const updateData: Record<string, unknown> = nextType === "permanent" ? { ...parsed.data, saleStartAt: null, saleEndAt: null } : { ...parsed.data };
+    const { fullStarRefunds, ...scalarData } = parsed.data;
+    const updateData: Record<string, unknown> = nextType === "permanent" ? { ...scalarData, saleStartAt: null, saleEndAt: null } : { ...scalarData };
     const entries = Object.entries(updateData);
-    await pool.query(`UPDATE asset_packs SET ${entries.map(([key]) => `${columns[key]} = ?`).join(", ")} WHERE id = ?`, [...entries.map(([key, value]) => key === "saleStartAt" || key === "saleEndAt" ? (value ? new Date(String(value)) : null) : typeof value === "boolean" ? (value ? 1 : 0) : value), req.params.id]);
+    const assignments = entries.map(([key]) => `${columns[key]} = ?`);
+    const values = entries.map(([key, value]) => key === "saleStartAt" || key === "saleEndAt" ? (value ? new Date(String(value)) : null) : typeof value === "boolean" ? (value ? 1 : 0) : value);
+    if (fullStarRefunds) for (const rarity of ["normal", "rare", "epic", "legend"] as const) {
+      assignments.push(`full_star_refund_${rarity} = ?`);
+      values.push(fullStarRefunds[rarity]);
+    }
+    await pool.query(`UPDATE asset_packs SET ${assignments.join(", ")} WHERE id = ?`, [...values, req.params.id]);
     res.json({ ok: true });
   });
 
@@ -2175,9 +2251,13 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
 }
 
 export const digitalAssetRules = {
+  performDraw,
+  packSchema,
+  canSavePackRefunds,
   pityLimits: PITY_LIMITS,
   collectionValues: COLLECTION_VALUES,
-  fullStarRefunds: FULL_STAR_REFUNDS,
+  fullStarRefunds: DEFAULT_FULL_STAR_REFUNDS,
+  packFullStarRefunds,
   starForTotal,
   duplicateProgress,
   nextStarRequirement,

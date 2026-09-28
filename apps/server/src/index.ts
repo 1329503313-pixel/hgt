@@ -52,6 +52,9 @@ import { recordChatMessageForRateLimit, stickerCooldownMessage } from "./chatMes
 import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
+import { canUseOriginalAccount } from "./accountLoginPolicy.js";
+import { consumePhoneChallenge, opaqueTokenDigest, phoneOwner, PhoneAuthError, sendPhoneChallenge, verifyPhoneChallenge } from "./phoneAuth.js";
+import { normalizeMainlandPhoneNumber, SmsDeliveryError } from "./sms.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
 import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
 import { SOUP_TOPIC_NAME_MAX_LENGTH, shouldRequireActiveSoupTopic, soupTopicDirectMatchOrderSql, soupTopicNameLength, soupKeywordFilter, soupTopicSummaryColumnsSql } from "./soupTopics.js";
@@ -984,7 +987,7 @@ async function currentUser(req: express.Request): Promise<AuthenticatedUser | nu
   if (pending) return pending;
   const request = (async () => {
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT id, username, nickname, bio,
+      `SELECT id, username, username_generated, nickname, bio,
          CASE
            WHEN role = 'vip' AND vip_legacy_active = 0 AND vip_expires_at IS NOT NULL AND vip_expires_at <= UTC_TIMESTAMP() THEN 'user'
            ELSE role
@@ -1084,7 +1087,7 @@ function toUser(row: mysql.RowDataPacket): PublicUser {
   const vip = vipGrowthSnapshot(row);
   return {
     id: row.id,
-    username: row.username,
+    username: Number(row.username_generated) === 1 ? "" : row.username,
     nickname: row.nickname,
     bio: String(row.bio ?? ""),
     avatar: avatarUrl(row.id, row.avatar, Boolean(row.has_avatar)),
@@ -2418,10 +2421,84 @@ app.get("/api/stickers", async (req, res) => {
   res.json({ series: await stickerSeriesForUser(user.id) });
 });
 
+app.get("/api/auth/phone/status", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT u.legacy_login_enabled, u.role,
+       (SELECT identifier FROM user_identities identity_row
+        WHERE identity_row.user_id = u.id AND identity_row.identity_type = 'phone'
+          AND identity_row.verified_at IS NOT NULL LIMIT 1) AS phone
+     FROM users u WHERE u.id = ? LIMIT 1`,
+    [user.id],
+  );
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({
+    bound: Boolean(row?.phone),
+    phone: row?.phone ? `${String(row.phone).slice(0, 3)}****${String(row.phone).slice(-4)}` : null,
+    legacyLoginEnabled: Number(row?.legacy_login_enabled) === 1,
+    superAdminExempt: row?.role === "super_admin",
+  });
+});
+
+app.post("/api/auth/phone/code", registerRateLimiter, async (req, res) => {
+  const parsed = z.object({
+    phone: z.string().trim(),
+    purpose: z.enum(["register", "upgrade", "recover"]),
+    upgradeToken: z.string().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "请输入有效的手机号");
+  let phone: string;
+  try { phone = normalizeMainlandPhoneNumber(parsed.data.phone); }
+  catch { return sendError(res, 400, "仅支持中国大陆手机号"); }
+  let userId: string | null = null;
+  if (parsed.data.purpose === "upgrade") {
+    if (parsed.data.upgradeToken) {
+      const [[token]] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT t.user_id FROM account_upgrade_tokens t JOIN users u ON u.id = t.user_id
+         WHERE t.token_hash = ? AND t.consumed_at IS NULL AND t.expires_at > UTC_TIMESTAMP()
+           AND t.auth_version = u.token_version
+           AND u.legacy_login_enabled = 1 AND u.role <> 'super_admin' LIMIT 1`,
+        [opaqueTokenDigest(parsed.data.upgradeToken)],
+      );
+      if (!token) return sendError(res, 401, "原始账号验证已失效，请重新登录");
+      userId = String(token.user_id);
+    } else {
+      const authenticated = await requireAuth(req, res);
+      if (!authenticated) return;
+      const [[account]] = await pool.query<mysql.RowDataPacket[]>(
+        "SELECT legacy_login_enabled, role FROM users WHERE id = ? LIMIT 1", [authenticated.id],
+      );
+      if (!account || account.role === "super_admin" || Number(account.legacy_login_enabled) !== 1) {
+        return sendError(res, 409, "当前账号无需绑定手机号");
+      }
+      userId = authenticated.id;
+    }
+    const owner = await phoneOwner(pool, phone);
+    if (owner && owner !== userId) return sendError(res, 409, "该手机号已绑定其他账号，请联系人工核实");
+  } else if (parsed.data.purpose === "register") {
+    if (await phoneOwner(pool, phone)) return sendError(res, 409, "该手机号已注册，请直接登录");
+  } else {
+    userId = await phoneOwner(pool, phone);
+    // Do not disclose whether a phone number belongs to an account.
+    if (!userId) return res.json({ ok: true, expiresInSeconds: 600, resendAfterSeconds: 60 });
+  }
+  try {
+    const result = await sendPhoneChallenge(pool, {
+      phone, purpose: parsed.data.purpose, userId, ip: req.ip ?? "unknown",
+    });
+    res.json(result);
+  } catch (error) {
+    if (error instanceof PhoneAuthError) return sendError(res, error.status, error.message);
+    throw error;
+  }
+});
+
 app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   const parsed = z
     .object({
-      username: accountUsernameSchema,
+      phone: z.string().trim(),
+      code: z.string().regex(/^\d{6}$/, "请输入 6 位短信验证码"),
       password: accountPasswordSchema,
       nickname: accountNicknameSchema,
       invitationCode: z.string().max(20).optional()
@@ -2429,7 +2506,11 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     .safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "注册信息不完整");
 
-  const { username, password, nickname } = parsed.data;
+  const { password, nickname } = parsed.data;
+  let phone: string;
+  try { phone = normalizeMainlandPhoneNumber(parsed.data.phone); }
+  catch { return sendError(res, 400, "仅支持中国大陆手机号"); }
+  const username = `hgtu_${nanoid(24)}`;
   const invitationCode = normalizeInviteCode(parsed.data.invitationCode);
   if (invitationCode && !INVITE_CODE_PATTERN.test(invitationCode)) {
     const error = REGISTRATION_ERRORS.invitationCodeFormatInvalid;
@@ -2460,6 +2541,17 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    const challenge = await verifyPhoneChallenge(connection, {
+      phone, purpose: "register", code: parsed.data.code,
+    });
+    if (!challenge.ok) {
+      await connection.commit();
+      return sendError(res, 400, challenge.message);
+    }
+    if (await phoneOwner(connection, phone)) {
+      await connection.rollback();
+      return sendError(res, 409, "该手机号已注册，请直接登录");
+    }
     const [existingAccounts] = await connection.query<mysql.RowDataPacket[]>(
       "SELECT id FROM users WHERE username = ? LIMIT 1 FOR UPDATE",
       [username]
@@ -2505,9 +2597,15 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
     if (!ownInviteCode) throw new Error("邀请码生成失败，请稍后重试");
 
     await connection.query(
-      "INSERT INTO users (id, username, password, nickname, invite_code, role) VALUES (?, ?, ?, ?, ?, 'user')",
+      "INSERT INTO users (id, username, password, nickname, invite_code, role, legacy_login_enabled, username_generated) VALUES (?, ?, ?, ?, ?, 'user', 0, 1)",
       [id, username, hash, nickname, ownInviteCode]
     );
+    await connection.query(
+      `INSERT INTO user_identities (id, user_id, identity_type, identifier, verified_at)
+       VALUES (?, ?, 'phone', ?, UTC_TIMESTAMP())`,
+      [nanoid(), id, phone],
+    );
+    await consumePhoneChallenge(connection, challenge.id);
     if (inviterId) {
       await connection.query(
         "INSERT INTO user_invite_bindings (invitee_user_id, inviter_user_id, invite_code) VALUES (?, ?, ?)",
@@ -2524,8 +2622,7 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   } catch (error) {
     await connection.rollback();
     if ((error as { code?: string }).code === "ER_DUP_ENTRY") {
-      const registrationError = REGISTRATION_ERRORS.usernameTaken;
-      return sendError(res, registrationError.status, registrationError.message, registrationError.code);
+      return sendError(res, 409, "手机号、昵称或账号刚被占用，请检查后重试");
     }
     if (["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT"].includes((error as { code?: string }).code ?? "")) {
       return sendError(res, 409, "账号或昵称刚被占用，请更换后重试");
@@ -2538,42 +2635,248 @@ app.post("/api/auth/register", registerRateLimiter, async (req, res) => {
   await ensureDailyEntitlementGrantForUser(id);
   queueActivityBadgeSync([id]);
 
-  const user: PublicUser = { id, username, nickname, bio: "", avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null, vipGrowthValue: 0, vipLevel: 0, vipActive: false };
+  const user: PublicUser = { id, username: "", nickname, bio: "", avatar: null, role: "user", createdAt: new Date().toISOString(), level: 0, equippedBadge: null, vipGrowthValue: 0, vipLevel: 0, vipActive: false };
   const token = signToken({ id, tokenVersion: 0 });
   setAuthCookie(res, token);
   res.json({ user, token });
 });
 
 app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
-  const parsed = z.object({ username: text, password: z.string().min(1) }).safeParse(req.body);
+  const parsed = z.object({
+    loginType: z.enum(["phone", "legacy"]).optional(),
+    identifier: z.string().trim().min(1).optional(),
+    username: z.string().trim().min(1).optional(),
+    password: z.string().min(1),
+  }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, "请输入账号和密码");
-
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, password, nickname, bio, role, token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
-       equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
-     FROM users WHERE username = ? LIMIT 1`,
-    [parsed.data.username]
-  );
-  const row = rows[0];
+  const identifier = parsed.data.identifier ?? parsed.data.username;
+  if (!identifier) return sendError(res, 400, "请输入账号和密码");
+  const loginType = parsed.data.loginType ?? "legacy";
+  let row: mysql.RowDataPacket | undefined;
+  if (loginType === "phone") {
+    // The super administrator may enter their original account in the phone field.
+    const [[administrator]] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT u.*, u.avatar IS NOT NULL AS has_avatar FROM users u
+       WHERE u.username = ? AND u.role = 'super_admin' LIMIT 1`,
+      [identifier],
+    );
+    if (administrator && await bcrypt.compare(parsed.data.password, String(administrator.password))) {
+      row = administrator;
+    } else {
+      let phone: string;
+      try { phone = normalizeMainlandPhoneNumber(identifier); }
+      catch { return sendError(res, 401, "手机号或密码错误"); }
+      const [rows] = await pool.query<mysql.RowDataPacket[]>(
+        `SELECT u.*, u.avatar IS NOT NULL AS has_avatar FROM users u
+         JOIN user_identities identity_row ON identity_row.user_id = u.id
+         WHERE identity_row.identity_type = 'phone' AND identity_row.identifier = ?
+           AND identity_row.verified_at IS NOT NULL LIMIT 1`,
+        [phone],
+      );
+      row = rows[0];
+    }
+  } else {
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT u.*, u.avatar IS NOT NULL AS has_avatar FROM users u WHERE u.username = ? LIMIT 1",
+      [identifier],
+    );
+    row = rows[0];
+    if (row && !canUseOriginalAccount({
+      role: String(row.role),
+      usernameGenerated: Number(row.username_generated) === 1,
+      legacyLoginEnabled: Number(row.legacy_login_enabled) === 1,
+    })) row = undefined;
+  }
   if (!row) return sendError(res, 401, "账号或密码错误");
 
   const ok = await bcrypt.compare(parsed.data.password, row.password);
   if (!ok) return sendError(res, 401, "账号或密码错误");
+  const [[verifiedState]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT password, token_version FROM users WHERE id = ? LIMIT 1", [row.id],
+  );
+  if (!verifiedState || verifiedState.password !== row.password ||
+    Number(verifiedState.token_version ?? 0) !== Number(row.token_version ?? 0)) {
+    return sendError(res, 401, "账号状态已变化，请重新登录");
+  }
 
   await reconcileAdminShellGrantsOnLogin(String(row.id));
   await recordLoginDay(String(row.id));
   await ensureDailyEntitlementGrantForUser(String(row.id));
   const [[refreshedRow]] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT id, username, nickname, bio, role, token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
+    `SELECT id, username, username_generated, password, nickname, bio, role, token_version, created_at, experience, vip_growth_value, vip_expires_at, vip_legacy_active,
        equipped_badge_key, equipped_badge_icon_url, avatar IS NOT NULL AS has_avatar
      FROM users WHERE id = ? LIMIT 1`,
     [row.id]
   );
-  const currentRow = refreshedRow ?? row;
+  if (!refreshedRow || refreshedRow.password !== row.password ||
+    Number(refreshedRow.token_version ?? 0) !== Number(row.token_version ?? 0)) {
+    return sendError(res, 401, "账号状态已变化，请重新登录");
+  }
+  const currentRow = refreshedRow;
   const user = toUser(currentRow);
   const token = signToken(toJwtPayload(currentRow));
   setAuthCookie(res, token);
   res.json({ user, token });
+});
+
+app.post("/api/auth/phone/upgrade", registerRateLimiter, async (req, res) => {
+  const parsed = z.object({
+    upgradeToken: z.string().min(20).optional(),
+    phone: z.string().trim(),
+    code: z.string().regex(/^\d{6}$/),
+    newPassword: accountPasswordSchema,
+  }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "请填写手机号、验证码和新密码");
+  let phone: string;
+  try { phone = normalizeMainlandPhoneNumber(parsed.data.phone); }
+  catch { return sendError(res, 400, "仅支持中国大陆手机号"); }
+  const authenticated = parsed.data.upgradeToken ? null : await requireAuth(req, res);
+  if (!parsed.data.upgradeToken && !authenticated) return;
+  const connection = await pool.getConnection();
+  let userId: string;
+  let nextTokenVersion: number;
+  try {
+    await connection.beginTransaction();
+    let tokenRow: { id?: string; user_id: string; auth_version: number } | undefined;
+    if (parsed.data.upgradeToken) {
+      const [[storedToken]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT id, user_id, auth_version FROM account_upgrade_tokens
+         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > UTC_TIMESTAMP()`,
+        [opaqueTokenDigest(parsed.data.upgradeToken)],
+      );
+      tokenRow = storedToken ? {
+        id: String(storedToken.id), user_id: String(storedToken.user_id),
+        auth_version: Number(storedToken.auth_version),
+      } : undefined;
+    } else {
+      tokenRow = { user_id: authenticated!.id, auth_version: authenticated!.tokenVersion };
+    }
+    if (!tokenRow) {
+      await connection.rollback();
+      return sendError(res, 401, "原始账号验证已失效，请重新登录");
+    }
+    userId = String(tokenRow.user_id);
+    const [[target]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT role, legacy_login_enabled, token_version FROM users WHERE id = ? FOR UPDATE", [userId],
+    );
+    let tokenStillValid = true;
+    if (tokenRow.id) {
+      const [[lockedToken]] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT id FROM account_upgrade_tokens
+         WHERE id = ? AND consumed_at IS NULL AND expires_at > UTC_TIMESTAMP() FOR UPDATE`,
+        [tokenRow.id],
+      );
+      tokenStillValid = Boolean(lockedToken);
+    }
+    if (!tokenStillValid || !target || target.role === "super_admin" || Number(target.legacy_login_enabled) !== 1 ||
+      Number(target.token_version ?? 0) !== Number(tokenRow.auth_version)) {
+      await connection.rollback();
+      return sendError(res, 409, "账号状态已变化，请重新登录");
+    }
+    const challenge = await verifyPhoneChallenge(connection, {
+      phone, purpose: "upgrade", code: parsed.data.code, userId,
+    });
+    if (!challenge.ok) {
+      await connection.commit();
+      return sendError(res, 400, challenge.message);
+    }
+    const owner = await phoneOwner(connection, phone);
+    if (owner && owner !== userId) {
+      await connection.rollback();
+      return sendError(res, 409, "手机号已绑定其他账号，请联系人工核实");
+    }
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    if (!owner) {
+      await connection.query(
+        `INSERT INTO user_identities (id, user_id, identity_type, identifier, verified_at)
+         VALUES (?, ?, 'phone', ?, UTC_TIMESTAMP())`,
+        [nanoid(), userId, phone],
+      );
+    }
+    nextTokenVersion = Number(target.token_version ?? 0) + 1;
+    await connection.query(
+      `UPDATE users SET password = ?, legacy_login_enabled = 0,
+         phone_upgraded_at = UTC_TIMESTAMP(), token_version = ? WHERE id = ?`,
+      [passwordHash, nextTokenVersion, userId],
+    );
+    await consumePhoneChallenge(connection, challenge.id);
+    await connection.query(
+      "UPDATE account_upgrade_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [userId],
+    );
+    await connection.query(
+      "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [userId],
+    );
+    await connection.query(
+      "UPDATE email_recovery_challenges SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [userId],
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    if ((error as { code?: string }).code === "ER_DUP_ENTRY") return sendError(res, 409, "手机号已绑定其他账号，请联系人工核实");
+    throw error;
+  } finally { connection.release(); }
+  currentUserCache.delete(`${userId!}:${nextTokenVersion! - 1}`);
+  const token = signToken({ id: userId!, tokenVersion: nextTokenVersion! });
+  setAuthCookie(res, token);
+  const [[row]] = await pool.query<mysql.RowDataPacket[]>(
+    "SELECT u.*, u.avatar IS NOT NULL AS has_avatar FROM users u WHERE u.id = ?", [userId!],
+  );
+  await recordLoginDay(userId!);
+  res.json({ user: toUser(row), token });
+});
+
+app.post("/api/auth/phone/reset", registerRateLimiter, async (req, res) => {
+  const parsed = z.object({
+    phone: z.string().trim(),
+    code: z.string().regex(/^\d{6}$/),
+    newPassword: accountPasswordSchema,
+  }).safeParse(req.body);
+  if (!parsed.success) return sendError(res, 400, "请填写手机号、验证码和新密码");
+  let phone: string;
+  try { phone = normalizeMainlandPhoneNumber(parsed.data.phone); }
+  catch { return sendError(res, 400, "仅支持中国大陆手机号"); }
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const userId = await phoneOwner(connection, phone);
+    if (!userId) {
+      await connection.rollback();
+      return sendError(res, 400, "验证码无效或已过期");
+    }
+    const challenge = await verifyPhoneChallenge(connection, {
+      phone, purpose: "recover", code: parsed.data.code, userId,
+    });
+    if (!challenge.ok) {
+      await connection.commit();
+      return sendError(res, 400, challenge.message);
+    }
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    await connection.query(
+      "UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?",
+      [passwordHash, userId],
+    );
+    await consumePhoneChallenge(connection, challenge.id);
+    await connection.query(
+      "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [userId],
+    );
+    await connection.query(
+      "UPDATE email_recovery_challenges SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [userId],
+    );
+    await connection.query(
+      "UPDATE account_upgrade_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [userId],
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally { connection.release(); }
+  res.json({ ok: true });
 });
 
 app.post("/api/auth/logout", (_req, res) => {
@@ -2586,21 +2889,44 @@ app.post("/api/auth/password", async (req, res) => {
   if (!user) return;
   const parsed = z
     .object({
+      currentPassword: z.string().min(1, "请输入当前密码"),
       newPassword: accountPasswordSchema
     })
     .safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码信息不正确");
 
-  const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT id, token_version FROM users WHERE id = ? LIMIT 1", [user.id]);
-  const row = rows[0];
-  if (!row) return sendError(res, 404, "用户不存在");
-  const hash = await bcrypt.hash(parsed.data.newPassword, 10);
-  const nextTokenVersion = Number(row.token_version ?? 0) + 1;
-  await pool.query("UPDATE users SET password = ?, token_version = ? WHERE id = ?", [hash, nextTokenVersion, user.id]);
-  await pool.query(
-    "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
-    [user.id]
-  );
+  const connection = await pool.getConnection();
+  let nextTokenVersion = 0;
+  try {
+    await connection.beginTransaction();
+    const [[row]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT id, password, token_version FROM users WHERE id = ? LIMIT 1 FOR UPDATE", [user.id],
+    );
+    if (!row) {
+      await connection.rollback();
+      return sendError(res, 404, "用户不存在");
+    }
+    if (!await bcrypt.compare(parsed.data.currentPassword, String(row.password))) {
+      await connection.rollback();
+      return sendError(res, 401, "当前密码错误");
+    }
+    const hash = await bcrypt.hash(parsed.data.newPassword, 10);
+    nextTokenVersion = Number(row.token_version ?? 0) + 1;
+    await connection.query("UPDATE users SET password = ?, token_version = ? WHERE id = ?", [hash, nextTokenVersion, user.id]);
+    await connection.query(
+      "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL", [user.id],
+    );
+    await connection.query(
+      "UPDATE account_upgrade_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL", [user.id],
+    );
+    await connection.query(
+      "UPDATE email_recovery_challenges SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL", [user.id],
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally { connection.release(); }
   setAuthCookie(res, signToken({ id: user.id, tokenVersion: nextTokenVersion }));
   res.json({ ok: true });
 });
@@ -7677,7 +8003,8 @@ app.delete("/api/admin/notices/:id", async (req, res) => {
 });
 
 app.get("/api/admin/users", async (req, res) => {
-  if (!(await requireBackofficeAdmin(req, res))) return;
+  const actor = await requireBackofficeAdmin(req, res);
+  if (!actor) return;
   const keyword = req.query.keyword ? String(req.query.keyword).trim() : "";
   const loggedToday = req.query.loggedToday === "yes" || req.query.loggedToday === "no" || req.query.loggedToday === "online"
     ? String(req.query.loggedToday)
@@ -7686,8 +8013,11 @@ app.get("/api/admin/users", async (req, res) => {
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (keyword) {
-    conditions.push("(u.nickname LIKE ? OR u.username LIKE ?)");
-    params.push(`%${keyword}%`, `%${keyword}%`);
+    conditions.push(`(u.nickname LIKE ? OR (u.username_generated = 0 AND u.username LIKE ?)
+      OR EXISTS (SELECT 1 FROM user_identities phone_identity
+        WHERE phone_identity.user_id = u.id AND phone_identity.identity_type = 'phone'
+          AND phone_identity.identifier LIKE ?))`);
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
   if (loggedToday === "online") {
     if (currentlyOnlineUserIds.length === 0) {
@@ -7731,7 +8061,11 @@ app.get("/api/admin/users", async (req, res) => {
       : ""
     : "";
   const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    `SELECT u.id, u.username, u.nickname, u.avatar, u.role, u.created_at, u.last_login_at, u.shell_balance,
+    `SELECT u.id, u.username, u.username_generated, u.legacy_login_enabled, u.phone_upgraded_at,
+      (SELECT identifier FROM user_identities phone_identity
+       WHERE phone_identity.user_id = u.id AND phone_identity.identity_type = 'phone'
+         AND phone_identity.verified_at IS NOT NULL LIMIT 1) AS phone,
+      u.nickname, u.avatar, u.role, u.created_at, u.last_login_at, u.shell_balance,
       u.experience, u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.charm_value, COALESCE(uas.total_collection_value, 0) AS collection_value,
       EXISTS (
         SELECT 1 FROM user_login_days uld
@@ -7758,6 +8092,12 @@ app.get("/api/admin/users", async (req, res) => {
     total: Number(totalRow.total ?? 0),
     users: rows.map((row) => ({
       ...toUser(row),
+      originalUsername: Number(row.username_generated) === 1 ? null : String(row.username),
+      phone: row.phone ? (isSuperAdminRole(actor.role) ? String(row.phone) :
+        `${String(row.phone).slice(0, 3)}****${String(row.phone).slice(-4)}`) : null,
+      phoneBound: Boolean(row.phone),
+      legacyLoginEnabled: Number(row.legacy_login_enabled) === 1,
+      phoneUpgradedAt: row.phone_upgraded_at ? new Date(row.phone_upgraded_at).toISOString() : null,
       isOnline: isUserOnline(row.id),
       lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
       shellBalance: Number(row.shell_balance ?? 0),
@@ -7857,7 +8197,10 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 app.post("/api/admin/users/:id/reset-password", async (req, res) => {
   const actor = await requireBackofficeAdmin(req, res);
   if (!actor) return;
-  const parsed = z.object({ newPassword: accountPasswordSchema }).safeParse(req.body);
+  const parsed = z.object({
+    newPassword: accountPasswordSchema,
+    reason: z.string().trim().min(8, "请填写身份核实或重置原因，至少 8 个字符").max(500),
+  }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "密码格式不正确");
   const [[target]] = await pool.query<mysql.RowDataPacket[]>("SELECT role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
   if (!target) return sendError(res, 404, "用户不存在");
@@ -7865,11 +8208,42 @@ app.post("/api/admin/users/:id/reset-password", async (req, res) => {
     return sendError(res, 403, "后台管理员不能重置管理员密码");
   }
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
-  await pool.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [hash, req.params.id]);
-  await pool.query(
-    "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
-    [req.params.id]
-  );
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[lockedTarget]] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT role FROM users WHERE id = ? FOR UPDATE", [req.params.id]
+    );
+    if (!lockedTarget) {
+      await connection.rollback();
+      return sendError(res, 404, "用户不存在");
+    }
+    if (!isSuperAdminRole(actor.role) && isBackofficeAdminRole(lockedTarget.role)) {
+      await connection.rollback();
+      return sendError(res, 403, "后台管理员不能重置管理员密码");
+    }
+    await connection.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [hash, req.params.id]);
+    await connection.query(
+      "UPDATE password_reset_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [req.params.id]
+    );
+    await connection.query(
+      "UPDATE account_upgrade_tokens SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [req.params.id]
+    );
+    await connection.query(
+      "UPDATE email_recovery_challenges SET consumed_at = UTC_TIMESTAMP() WHERE user_id = ? AND consumed_at IS NULL",
+      [req.params.id]
+    );
+    await connection.query(
+      "INSERT INTO admin_password_reset_audit (id, actor_id, target_user_id, reason) VALUES (?, ?, ?, ?)",
+      [nanoid(), actor.id, req.params.id, parsed.data.reason]
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally { connection.release(); }
   res.json({ ok: true });
 });
 

@@ -1,5 +1,6 @@
-import { battleCollectibleEffectTypes, battleCollectibleConfigError } from "@hgt/shared";
+import { battleCollectibleEffectTypes, battleCollectibleEffectsError, battleCollectibleEffects } from "@hgt/shared";
 import express from "express";
+import { collectibleEffectsFromRow } from "./battleCollectibles.js";
 import type mysql from "mysql2/promise";
 import { randomInt } from "node:crypto";
 import { nanoid } from "nanoid";
@@ -38,6 +39,7 @@ const collectibleSchema = z.object({
   rarity: z.enum(["epic", "legend"], { message: "收藏品品质只能设置为史诗或传说" }),
   collectibleType: z.enum(["treasure", "commemorative", "honor"]),
   collectibleValue: z.number().int().positive("收藏品价值必须是正整数"),
+  battleEffects: z.array(z.object({ type: z.enum(battleCollectibleEffectTypes).nullable(), value: z.number().finite().nullable() })).min(1, "至少保留一个效果").optional(),
   battleEffectDescription: z.string().max(10_000).optional(),
   battleEffectType: z.enum(battleCollectibleEffectTypes).nullable().optional(),
   battleEffectValue: z.number().finite().nullable().optional(),
@@ -59,6 +61,7 @@ function collectiblePayload(row: mysql.RowDataPacket) {
     rarity: String(row.rarity), rarityLabel: rarityLabels[row.rarity as keyof typeof rarityLabels] ?? String(row.rarity),
     collectibleType: String(row.collectible_type ?? "treasure"), collectibleTypeLabel: collectibleTypeLabels[row.collectible_type as keyof typeof collectibleTypeLabels] ?? "珍宝",
     collectibleValue: Number(row.collectible_value ?? 1),
+    battleEffects: collectibleEffectsFromRow(row),
     battleEffectDescription: String(row.battle_effect_description ?? ""),
     battleEffectType: row.battle_effect_type ?? null,
     battleEffectValue: row.battle_effect_value == null ? null : Number(row.battle_effect_value),
@@ -203,16 +206,28 @@ function queueMotion(id: string, staged: Awaited<ReturnType<typeof stageCardMoti
   jobs.set(key, job);
 }
 
-export async function awardCollectiblesForDraw(connection: mysql.PoolConnection, userId: string, packId: string, orderId: string, drawIndex: number, completedDrawCount: number): Promise<CollectibleAward[]> {
+// Keep this transaction-local: a ten-draw must lock/read candidates once, and
+// remove winners before the next roll. Never cache these across transactions.
+export async function loadDrawCollectibleCandidates(connection: mysql.PoolConnection, packId: string) {
   const [rows] = await connection.query<mysql.RowDataPacket[]>(
-    `SELECT c.*, b.probability AS draw_probability FROM collectibles c
+    `SELECT c.id, c.collectible_no, c.name, c.rarity, c.collectible_type, c.collectible_value,
+       c.battle_effects_json, c.battle_effect_description, c.battle_effect_type, c.battle_effect_value,
+       c.description, c.motion_mp4_path, c.motion_webm_path, c.motion_poster_path, c.motion_version,
+       c.motion_status, c.motion_error, c.owner_user_id, c.status, c.created_at, c.updated_at,
+       b.probability AS draw_probability FROM collectibles c
      INNER JOIN collectible_pack_bindings b ON b.collectible_id=c.id
      WHERE b.pack_id=? AND c.status='draw_linked' AND c.owner_user_id IS NULL AND c.deleted_at IS NULL
      ORDER BY CAST(c.collectible_no AS UNSIGNED), c.collectible_no, c.id FOR UPDATE`, [packId]
   );
+  return rows;
+}
+
+export async function awardCollectiblesForDraw(connection: mysql.PoolConnection, userId: string, packId: string, orderId: string, drawIndex: number, completedDrawCount: number, candidates?: mysql.RowDataPacket[]): Promise<CollectibleAward[]> {
+  const rows = candidates ?? await loadDrawCollectibleCandidates(connection, packId);
   const awarded: CollectibleAward[] = [];
   const packDrawNumber = completedDrawCount + 1;
   for (const row of rows) {
+    if (row.owner_user_id != null) continue;
     const { probability } = collectibleProbabilityDetails(Number(row.draw_probability), completedDrawCount);
     if (!collectibleProbabilityWins(probability, randomInt(100_000_000))) continue;
     await connection.query("UPDATE collectibles SET owner_user_id=?, status='owned' WHERE id=? AND status='draw_linked'", [userId, row.id]);
@@ -221,6 +236,7 @@ export async function awardCollectiblesForDraw(connection: mysql.PoolConnection,
     await connection.query("INSERT INTO collectible_transfers (id,collectible_id,to_user_id,transfer_type,related_type,related_id,collectible_snapshot) VALUES (?,?,?,'draw','asset_draw_order',?,?)", [nanoid(), row.id, userId, orderId, snapshot(row)]);
     await recordValueEvent(connection, row, userId, Number(row.collectible_value ?? 1), "draw", "asset_draw_order", orderId);
     await equipFirstOwnedCollectible(connection, userId, String(row.id));
+    row.owner_user_id = userId;
     awarded.push({ ...collectiblePayload({ ...row, owner_user_id: userId, status: "owned" }), drawIndex, packDrawNumber, probability });
   }
   return awarded;
@@ -479,10 +495,11 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
   });
   app.post("/api/admin/collectibles", async (req, res) => {
     const admin = await deps.requireAdmin(req, res); if (!admin) return; const parsed = collectibleSchema.safeParse(req.body); if (!parsed.success) return deps.sendError(res, 400, parsed.error.issues[0]?.message ?? "资料无效");
-    const effectError = battleCollectibleConfigError(parsed.data.battleEffectType, parsed.data.battleEffectValue);
+    const effectError = battleCollectibleEffectsError(parsed.data);
     if (effectError) return deps.sendError(res, 400, effectError);
+    const effects = battleCollectibleEffects(parsed.data);
     const id = nanoid(); const connection = await pool.getConnection();
-    try { await connection.beginTransaction(); const no = parsed.data.collectibleNo || await nextNumber(connection); if (parsed.data.collectibleNo) await advanceNumberSequence(connection, no); const media = await optimizeCollectibleImages(parsed.data.imageUrl, id); await connection.query("INSERT INTO collectibles (id,collectible_no,name,rarity,collectible_type,collectible_value,description,image_url,thumbnail_url,battle_effect_description,battle_effect_type,battle_effect_value) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [id,no,parsed.data.name,parsed.data.rarity,parsed.data.collectibleType,parsed.data.collectibleValue,parsed.data.description,media.full,media.thumbnail,parsed.data.battleEffectDescription ?? "",parsed.data.battleEffectType ?? null,parsed.data.battleEffectValue ?? null]); await connection.commit(); res.status(201).json({ id }); }
+    try { await connection.beginTransaction(); const no = parsed.data.collectibleNo || await nextNumber(connection); if (parsed.data.collectibleNo) await advanceNumberSequence(connection, no); const media = await optimizeCollectibleImages(parsed.data.imageUrl, id); await connection.query("INSERT INTO collectibles (id,collectible_no,name,rarity,collectible_type,collectible_value,description,image_url,thumbnail_url,battle_effect_description,battle_effect_type,battle_effect_value,battle_effects_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [id,no,parsed.data.name,parsed.data.rarity,parsed.data.collectibleType,parsed.data.collectibleValue,parsed.data.description,media.full,media.thumbnail,parsed.data.battleEffectDescription ?? "",effects[0]!.type,effects[0]!.value,JSON.stringify(effects)]); await connection.commit(); res.status(201).json({ id }); }
     catch (error) {
       await connection.rollback();
       if (databaseErrorCode(error) === "ER_DUP_ENTRY") return deps.sendError(res, 409, "收藏品编号已存在");
@@ -497,22 +514,25 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
       await connection.beginTransaction();
       const [[current]] = await connection.query<mysql.RowDataPacket[]>("SELECT * FROM collectibles WHERE id=? AND deleted_at IS NULL FOR UPDATE", [req.params.id]);
       if (!current) { await connection.rollback(); return deps.sendError(res, 404, "收藏品不存在"); }
-      // Validate the merged pair under the same lock as the update, including partial edits.
-      const effectError = battleCollectibleConfigError(
-        parsed.data.battleEffectType === undefined ? current.battle_effect_type : parsed.data.battleEffectType,
-        parsed.data.battleEffectValue === undefined ? (current.battle_effect_value == null ? null : Number(current.battle_effect_value)) : parsed.data.battleEffectValue,
-      );
+      // Old clients edit only the first effect; preserve entries they cannot display.
+      const effectsChanged = parsed.data.battleEffects !== undefined || parsed.data.battleEffectType !== undefined || parsed.data.battleEffectValue !== undefined;
+      const effects = parsed.data.battleEffects ?? (effectsChanged ? [{
+        type: parsed.data.battleEffectType === undefined ? current.battle_effect_type ?? null : parsed.data.battleEffectType,
+        value: parsed.data.battleEffectValue === undefined ? (current.battle_effect_value == null ? null : Number(current.battle_effect_value)) : parsed.data.battleEffectValue,
+      }, ...collectibleEffectsFromRow(current).slice(1)] : collectibleEffectsFromRow(current));
+      const effectError = battleCollectibleEffectsError({ battleEffects: effects });
       if (effectError) { await connection.rollback(); return deps.sendError(res, 400, effectError); }
       if (parsed.data.collectibleNo && parsed.data.collectibleNo !== current.collectible_no) {
         const [[flow]] = await connection.query<mysql.RowDataPacket[]>("SELECT id FROM collectible_transfers WHERE collectible_id=? LIMIT 1", [req.params.id]);
         if (flow) { await connection.rollback(); return deps.sendError(res, 409, "已经流转的收藏品不能修改编号"); }
       }
       const data: Record<string, unknown> = { ...parsed.data };
+      if (effectsChanged) Object.assign(data, { battleEffects: JSON.stringify(effects), battleEffectType: effects[0]!.type, battleEffectValue: effects[0]!.value });
       if (parsed.data.imageUrl) {
         const media = await optimizeCollectibleImages(parsed.data.imageUrl, req.params.id);
         data.imageUrl = media.full; data.thumbnailUrl = media.thumbnail;
       }
-      const columns: Record<string, string> = { battleEffectDescription: "battle_effect_description", battleEffectType: "battle_effect_type", battleEffectValue: "battle_effect_value", name: "name", rarity: "rarity", collectibleType: "collectible_type", collectibleValue: "collectible_value", description: "description", imageUrl: "image_url", thumbnailUrl: "thumbnail_url", collectibleNo: "collectible_no" };
+      const columns: Record<string, string> = { battleEffects: "battle_effects_json", battleEffectDescription: "battle_effect_description", battleEffectType: "battle_effect_type", battleEffectValue: "battle_effect_value", name: "name", rarity: "rarity", collectibleType: "collectible_type", collectibleValue: "collectible_value", description: "description", imageUrl: "image_url", thumbnailUrl: "thumbnail_url", collectibleNo: "collectible_no" };
       const entries = Object.entries(data);
       if (entries.length) await connection.query(`UPDATE collectibles SET ${entries.map(([key]) => `${columns[key]}=?`).join(",")} WHERE id=?`, [...entries.map(([, value]) => value), req.params.id]);
       const previousValue = Number(current.collectible_value ?? 1), nextValue = parsed.data.collectibleValue ?? previousValue;

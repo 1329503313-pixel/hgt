@@ -6,6 +6,7 @@ import { lockAndCompactCardBattleRanking, lockRankingForCardBattleRoom } from ".
 import { isBossRoom } from "./cardBattleBossRules.js";
 import { bossBattlePlayer, bossPublic, emitBossRewards, loadBoss, requireAvailableBoss, settleBossRewards } from "./cardBattleBoss.js";
 import { loadCardBattleTiers } from "./cardBattleConfig.js";
+import { cardTraitsFromJson } from "./cardBattleTraits.js";
 import { applyCardBattleCollectionStats, applyCardBattlePlayerCollection, loadCardBattleCollectionBonus } from "./cardBattleCollection.js";
 import { CARD_BATTLE_LINEUP_SIZE, calculateCardBattlePower, simulateCardBattle, type CardBattleDeckCard, type CardBattlePlayerInput, type CardBattleResult } from "./cardBattle.js";
 import { resolveCardBattlePlayback, surrenderCardBattleResult } from "./cardBattlePlayback.js";
@@ -193,7 +194,7 @@ export async function releaseCardBattleSeat(roomId: string, userId: string, db: 
 export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | mysql.PoolConnection = pool) {
   const collection = await loadCardBattleCollectionBonus(userId, db);
   const [rows] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
+    `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.battle_traits_json, cards.updated_at,
        cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level,
        tiers.max_hp, tiers.attack_value, tiers.defense_value, tiers.speed_value, tiers.energy_required, tiers.can_attack_rear, tiers.crit_rate, tiers.crit_damage,
        tiers.lifesteal_rate, tiers.stun_rate, tiers.extra_action_rate, tiers.counter_rate, tiers.dodge_rate, tiers.hit_rate,
@@ -227,6 +228,7 @@ export async function loadEligibleBattleCards(userId: string, db: mysql.Pool | m
       combatPower: calculateCardBattlePower(stats),
       skillName: String(row.skill_name ?? ""),
       skillDescription: String(row.skill_description ?? ""),
+      traits: cardTraitsFromJson(row.battle_traits_json),
     };
   });
 }
@@ -399,7 +401,7 @@ export async function setCardBattleReady(roomId: string, userId: string, ready: 
 
 async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId: string, db: mysql.PoolConnection): Promise<CardBattleDeckCard> {
   const [[row]] = await db.query<mysql.RowDataPacket[]>(
-    `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.updated_at,
+    `SELECT cards.id, cards.card_no, cards.name, cards.rarity, cards.battle_role, cards.battle_traits_json, cards.updated_at,
        cards.motion_mp4_path, cards.motion_webm_path, cards.motion_poster_path, cards.motion_version, owned.star_level
      FROM user_asset_cards owned JOIN asset_cards cards ON cards.id = owned.card_id
      WHERE owned.user_id = ? AND cards.id = ? AND cards.status = 'active' AND cards.rarity IN ('epic','legend') LIMIT 1`,
@@ -422,6 +424,7 @@ async function battleDeckCard(userId: string, seat: 1 | 2, slot: number, cardId:
     slot: slot as 1 | 2 | 3 | 4 | 5,
     ...battleMotionPayload(row, starLevel),
     tier,
+    traits: cardTraitsFromJson(row.battle_traits_json),
   };
 }
 
@@ -519,9 +522,9 @@ async function createCardBattleGame(roomId: string, playerInputs: CardBattlePlay
   const playbackEndsAt = new Date(startedAt.getTime() + result.playbackDurationMs);
   await db.query(
     `INSERT INTO online_card_battles
-      (id, room_id, game_number, random_seed, lineup_snapshot_json, result_json, playback_ends_at, started_at, mode, boss_reward_shells, boss_name_snapshot)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [gameId, roomId, Number(numberRow.next_number), seed, JSON.stringify(playerInputs), JSON.stringify(result), playbackEndsAt, startedAt, boss ? "boss" : "1v1", boss ? Number(boss.reward_shells) : null, boss ? String(boss.name) : null],
+      (id, room_id, game_number, random_seed, lineup_snapshot_json, result_json, playback_ends_at, started_at, mode, boss_reward_shells, boss_name_snapshot, boss_template_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [gameId, roomId, Number(numberRow.next_number), seed, JSON.stringify(playerInputs), JSON.stringify(result), playbackEndsAt, startedAt, boss ? "boss" : "1v1", boss ? Number(boss.reward_shells) : null, boss ? String(boss.name) : null, boss ? String(boss.room_id) : null],
   );
   if (boss) for (const player of playerInputs.filter((item) => item.seat === 1)) await db.query(
     "INSERT INTO card_battle_boss_participants (game_id, user_id, player_seat, nickname_snapshot) VALUES (?, ?, ?, ?)",
@@ -616,7 +619,10 @@ export async function finalizeCardBattleIfDue(roomId: string) {
     } else {
       await connection.query("UPDATE online_card_battle_seats SET is_ready = 0 WHERE room_id = ?", [roomId]);
     }
-    await connection.query("UPDATE online_soup_rooms SET status = 'ended', last_action_at = NOW() WHERE id = ? AND content_type = 'card_battle'", [roomId]);
+    await connection.query(`UPDATE online_soup_rooms
+      SET closed_at = IF(card_battle_mode = 'boss' AND boss_template_id IS NULL AND host_id IS NULL, NOW(), closed_at),
+          status = IF(card_battle_mode = 'boss' AND boss_template_id IS NULL AND host_id IS NULL, 'closed', 'ended'), last_action_at = NOW()
+      WHERE id = ? AND content_type = 'card_battle' AND status <> 'closed'`, [roomId]);
     if (!rankingChallenge) await connection.query(
       `DELETE seats FROM online_card_battle_seats seats
        LEFT JOIN online_soup_members members
@@ -706,13 +712,14 @@ export async function cardBattleClientState(roomId: string, viewerId: string) {
     ? resolveCardBattlePlayback(result, currentGame.started_at, gameStatus ?? "ended", new Date(currentGame.db_now).getTime())
     : null;
   const [[reward]] = bossRow ? await pool.query<mysql.RowDataPacket[]>(
-    "SELECT game_id, amount FROM card_battle_boss_rewards WHERE room_id = ? AND user_id = ?", [roomId, viewerId]) : [[]];
+    "SELECT game_id, amount FROM card_battle_boss_rewards WHERE room_id = ? AND user_id = ?", [bossRow.room_id, viewerId]) : [[]];
   const [[participant]] = bossRow && currentGame ? await pool.query<mysql.RowDataPacket[]>(
     "SELECT forfeited_at FROM card_battle_boss_participants WHERE game_id = ? AND user_id = ?", [currentGame.id, viewerId]) : [[]];
   return {
     mode: bossRow ? "boss" as const : "1v1" as const,
     boss: bossRow ? {
       ...bossPublic(bossRow),
+      clearLabel: bossRow.boss_clear_label as "uncleared" | "cleared" | null,
       lineup: parseBossLineupForPreview(bossRow),
       rewardClaimed: Boolean(reward),
       currentReward: currentGame ? {

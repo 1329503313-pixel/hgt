@@ -70,9 +70,9 @@ async function sendMail(options: { to: string; subject: string; text: string; ht
 export async function sendEmailVerificationCode(
   email: string,
   code: string,
-  purpose: "bind" | "change"
+  purpose: "bind" | "change" | "recover"
 ) {
-  const action = purpose === "change" ? "更换绑定邮箱" : "绑定邮箱";
+  const action = purpose === "recover" ? "找回登录密码" : purpose === "change" ? "更换绑定邮箱" : "绑定邮箱";
   await sendMail({
     to: email,
     subject: `【${BRAND_NAME}】${action}验证码`,

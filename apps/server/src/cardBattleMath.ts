@@ -6,6 +6,7 @@ export type CardBattleBuffStat = "critRate" | "critDamage" | "attack" | "skillDa
 export type CardBattleBuff = {
   stat: CardBattleBuffStat; value: number; expiresAfterRound: number; debuff?: boolean;
   applicationId?: number;
+  traitKey?: string;
   sourceId?: string;
   sourceOrder?: number;
   /** Bond layers retain their full individual value; flat debuffs subtract points. */

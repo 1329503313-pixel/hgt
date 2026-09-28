@@ -13,11 +13,13 @@ import { CARD_BATTLE_BOND_ACTIONS, type CardBattleBond, type CardBattleBondTarge
 import { createCardBattleBondQueue } from "./cardBattleBondQueue.js";
 import { auditCardBattleFormula } from "@hgt/shared";
 import { CARD_BATTLE_EVENT_CONDITION_CODES, type CardBattleEventCondition } from "@hgt/shared";
+import { activeCardBattleTraitEffects, CARD_BATTLE_TRAIT_EFFECT_LABELS, type CardBattleTrait, type CardBattleTraitEffect, type CardBattleTraitEffectType } from "@hgt/shared";
 
 export const CARD_BATTLE_MAX_ROUNDS = 30;
 export const CARD_BATTLE_LINEUP_SIZE = 5;
 export const CARD_BATTLE_MAX_TRIGGER_EFFECTS = 100;
 export const CARD_BATTLE_MAX_EVENTS = 400;
+const BOSS_ATTRIBUTE_DECAY_PERCENT_PER_ROUND = 0.5;
 // Keep the same simulation safety budget; presentation time is expanded uniformly.
 export const CARD_BATTLE_PLAYBACK_SCALE = 1.25;
 export const CARD_BATTLE_MAX_PLAYBACK_MS = 7 * 60_000 * CARD_BATTLE_PLAYBACK_SCALE;
@@ -28,6 +30,7 @@ export const cardBattleRoleCodes = ["damage", "tank", "support"] as const;
 export type CardBattleRole = typeof cardBattleRoleCodes[number];
 
 export const cardBattleConditionCodes = [
+  "battle_start",
   "energy_full",
   "self_death",
   "self_hp_below_percent",
@@ -114,6 +117,7 @@ export type CardBattleTier = CardBattleProcStats & import("@hgt/shared").CardBat
 };
 
 export type CardBattleDeckCard = {
+  traits?: import("@hgt/shared").CardBattleTrait[];
   /** Internal unboosted configuration, retained for ranking rematches. */
   collectionBaseTier?: CardBattleTier;
   collectible?: BattleCollectible | null;
@@ -142,6 +146,7 @@ export type CardBattlePlayerInput = {
 };
 
 export type CardBattlePublicCardState = CardBattleProcStats & import("@hgt/shared").CardBattleAccuracyStats & {
+  activeTraits?: Array<{ id: string; name: string }>;
   critRate?: number;
   critDamage?: number;
   shield?: number;
@@ -238,6 +243,7 @@ type RuntimeCard = CardBattleDeckCard & {
   hp: number;
   maxHp: number;
   energy: number;
+  baseEnergyRequired: number;
   alive: boolean;
   buffs: CardBattleBuff[];
   shields: CardBattleShield[];
@@ -250,9 +256,17 @@ type RuntimeCard = CardBattleDeckCard & {
   preventedStuns: CardBattleSupportShare[];
   lifeTriggeredThresholds: Set<string>;
   revivedRound: number | null;
+  collectibleSkillDamage: number;
+  collectibleSingleSkillDamage: number;
+  /** Encounter-wide linear decay; independent of removable buffs and revival. */
+  bossRoundMultiplier: number;
+  activeTraits: Array<{ id: string; name: string }>;
+  armorBreakPercent: number;
+  armorBreakFlat: number;
+  traitArmorBreak: Array<{ percent: number; flat: number; expiresAfterRound: number; traitKey?: string }>;
 };
 
-type TriggerKind = "self_death" | "hp_below" | "normal_kill" | "skill_kill" | "ally_death" | CardBattleEventCondition;
+type TriggerKind = "battle_start" | "self_death" | "hp_below" | "normal_kill" | "skill_kill" | "ally_death" | CardBattleEventCondition;
 const isEventCondition = (kind: string): kind is CardBattleEventCondition => CARD_BATTLE_EVENT_CONDITION_CODES.some(code => code === kind);
 type Trigger = {
   kind: TriggerKind;
@@ -295,11 +309,11 @@ function shuffled<T>(items: T[], random: () => number) {
 }
 
 function effectiveStat(card: RuntimeCard, stat: "attack" | "defense" | "speed") {
-  return cardBattleEffectiveStat(card.tier[stat], card.buffs, stat);
+  return cardBattleEffectiveStat(card.tier[stat] * card.bossRoundMultiplier, card.buffs, stat);
 }
 
 function effectiveSkillDamage(card: RuntimeCard, baseDamage: number) {
-  return cardBattleEffectiveStat(baseDamage + battleCollectibleBonus(card.collectible, "skill_damage"), card.buffs, "skillDamage");
+  return cardBattleEffectiveStat((baseDamage + battleCollectibleBonus(card.collectible, "skill_damage") + card.collectibleSkillDamage) * card.bossRoundMultiplier, card.buffs, "skillDamage");
 }
 
 function collectibleProtection(card: RuntimeCard, type: "debuff_resistance" | "invincible" | "death_protection", round: number) {
@@ -319,6 +333,7 @@ function protectedDamage(card: RuntimeCard, damage: number, round: number) {
 
 function publicState(card: RuntimeCard, round = 0): CardBattlePublicCardState {
   return {
+    activeTraits: card.activeTraits,
     instanceId: card.instanceId,
     userId: card.userId,
     seat: card.seat,
@@ -363,6 +378,7 @@ function isEnergyCondition(condition: CardBattleConditionCode) {
 }
 
 function baseTriggerCondition(condition: CardBattleConditionCode): TriggerKind | "turn_energy" {
+  if (condition === "battle_start") return "battle_start";
   if (isEventCondition(condition)) return condition;
   if (condition === "energy_full") return "turn_energy";
   if (condition === "self_death" || condition === "self_death_energy_full") return "self_death";
@@ -389,7 +405,7 @@ function effectLabel(type: CardBattleEffectCode, value: number) {
   if (type.startsWith("defense_")) return `防御 +${value}`;
   if (type.startsWith("speed_")) return `速度 +${value}`;
   if (type.startsWith("max_hp_")) return `生命上限 +${value}`;
-  if (type.startsWith("energy_")) return `能量 +${value}`;
+  if (type.startsWith("energy_")) return `能量 ${value > 0 ? "+" : ""}${value}`;
   if (type.startsWith("revive_")) return "复活";
   return "";
 }
@@ -435,6 +451,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     hp: card.tier.maxHp,
     maxHp: card.tier.maxHp,
     energy: 0,
+    baseEnergyRequired: card.tier.energyRequired,
     alive: true,
     buffs: [],
     shields: [],
@@ -447,10 +464,94 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     preventedStuns: [],
     lifeTriggeredThresholds: new Set<string>(),
     revivedRound: null,
+    collectibleSkillDamage: 0,
+    collectibleSingleSkillDamage: 0,
+    bossRoundMultiplier: 1,
+    activeTraits: [],
+    armorBreakPercent: 0,
+    armorBreakFlat: 0,
+    traitArmorBreak: [],
   }); }));
   let squadIndex = 0;
   const squadIds = challengers.map((player) => new Set(player.cards.map((card) => card.instanceId)));
   let cards = mode === "tower" ? allCards.filter((card) => card.seat === 2 || squadIds[0]!.has(card.instanceId)) : allCards;
+  const activeTraitsBySeat = new Map<1 | 2, Map<string, { trait: CardBattleTrait; effects: CardBattleTraitEffect[] }>>();
+  const fixedTraitKeys = new Set<string>();
+  const oneTimeTraitGrants = new Set<string>();
+  const traitBaseValue = (effect: CardBattleTraitEffect, target: RuntimeCard) => {
+    const baseByType: Partial<Record<CardBattleTraitEffectType, number>> = {
+      attack: target.tier.attack, skill_damage: target.tier.attack + battleCollectibleBonus(target.collectible, "skill_damage") + target.collectibleSkillDamage, attack_skill_damage: target.tier.attack,
+      defense: target.tier.defense, speed: target.tier.speed, max_hp: target.tier.maxHp, heal: target.tier.maxHp,
+      energy: target.tier.energyRequired, energy_required: target.tier.energyRequired,
+      lifesteal_rate: target.tier.lifestealRate ?? 0, stun_rate: target.tier.stunRate ?? 0,
+      extra_action_rate: target.tier.extraActionRate ?? 0, dodge_rate: target.tier.dodgeRate ?? 0,
+      hit_rate: target.tier.hitRate ?? 0, counter_rate: target.tier.counterRate ?? 0,
+      crit_rate: target.tier.critRate ?? 25, crit_damage: target.tier.critDamage ?? 150, shield: target.maxHp,
+    };
+    return effect.valueType === "percent" ? Math.round((baseByType[effect.type] ?? 0) * effect.value / 100) : effect.value;
+  };
+  const refreshTraitRoster = () => {
+    for (const card of allCards) card.activeTraits = [];
+    for (const seat of [1, 2] as const) {
+      const definitions = new Map<string, CardBattleTrait>();
+      for (const card of allCards.filter((item) => item.seat === seat)) for (const trait of card.traits ?? []) if (!definitions.has(trait.id)) definitions.set(trait.id, trait);
+      const active = new Map<string, { trait: CardBattleTrait; effects: CardBattleTraitEffect[] }>();
+      for (const trait of definitions.values()) {
+        const count = cards.filter((card) => card.seat === seat && card.traits?.some((item) => item.id === trait.id)).length;
+        const effects = activeCardBattleTraitEffects(trait, count);
+        if (effects.length) active.set(trait.id, { trait, effects });
+      }
+      activeTraitsBySeat.set(seat, active);
+      const summaries = [...active.values()].map(({ trait }) => ({ id: trait.id, name: trait.name }));
+      for (const card of cards.filter((item) => item.seat === seat)) card.activeTraits = summaries;
+    }
+    for (const card of allCards) {
+      card.buffs = card.buffs.filter((buff) => !buff.traitKey || !fixedTraitKeys.has(buff.traitKey));
+      card.shields = card.shields.filter((shield) => !shield.traitKey || !fixedTraitKeys.has(shield.traitKey));
+      card.traitArmorBreak = card.traitArmorBreak.filter((armor) => !armor.traitKey || !fixedTraitKeys.has(armor.traitKey));
+      card.tier.energyRequired = card.baseEnergyRequired;
+      card.maxHp = cardBattleEffectiveStat(card.tier.maxHp, card.buffs, "maxHp", 1);
+      card.hp = Math.min(card.hp, card.maxHp);
+    }
+    fixedTraitKeys.clear();
+    for (const seat of [1, 2] as const) for (const { trait, effects } of activeTraitsBySeat.get(seat)!.values()) {
+    for (const [effectIndex, effect] of effects.entries()) {
+      if (effect.cadence !== "fixed") continue;
+      const owners = cards.filter((card) => card.seat === seat && card.traits?.some((item) => item.id === trait.id));
+      const targets = effect.target === "all_allies" ? cards.filter((card) => card.seat === seat)
+        : effect.target === "trait_allies" ? owners
+          : effect.target === "all_enemies" ? cards.filter((card) => card.seat !== seat)
+            : cards.filter((card) => card.seat !== seat && card.traits?.some((item) => item.id === trait.id));
+      for (const target of targets) {
+        const key = `${seat}:${trait.id}:${effectIndex}`;
+        const value = traitBaseValue(effect, target);
+        fixedTraitKeys.add(key);
+        const grantKey = `${key}:${target.instanceId}`;
+        if (effect.type === "energy") { if (!oneTimeTraitGrants.has(grantKey)) { target.energy = Math.min(target.tier.energyRequired, target.energy + value); oneTimeTraitGrants.add(grantKey); } }
+        else if (effect.type === "shield") { if (!oneTimeTraitGrants.has(grantKey)) { target.shields.push({ remaining: value, expiresAfterRound: Infinity, sourceId: owners[0]?.instanceId ?? target.instanceId, order: effectIndex, traitKey: key }); oneTimeTraitGrants.add(grantKey); } }
+        else if (effect.type === "armor_break") target.traitArmorBreak.push({ percent: effect.valueType === "percent" ? effect.value : 0, flat: effect.valueType === "flat" ? value : 0, expiresAfterRound: Infinity, traitKey: key });
+        else if (effect.type === "energy_required") target.tier.energyRequired = Math.max(1, target.tier.energyRequired - value);
+        else {
+          const stat = effect.type === "attack" || effect.type === "attack_skill_damage" ? "attack"
+            : effect.type === "skill_damage" ? "skillDamage"
+              : effect.type === "defense" ? "defense" : effect.type === "speed" ? "speed"
+                : effect.type === "max_hp" ? "maxHp" : effect.type === "lifesteal_rate" ? "lifestealRate"
+                  : effect.type === "stun_rate" ? "stunRate" : effect.type === "extra_action_rate" ? "extraActionRate"
+                    : effect.type === "dodge_rate" ? "dodgeRate" : effect.type === "hit_rate" ? "hitRate"
+                      : effect.type === "counter_rate" ? "counterRate" : effect.type === "crit_rate" ? "critRate"
+                        : effect.type === "crit_damage" ? "critDamage" : null;
+          if (stat) {
+            const amount = traitBaseValue(effect, target);
+            target.buffs.push({ stat, value: amount, expiresAfterRound: Infinity, independent: true, sourceId: owners[0]?.instanceId, sourceOrder: effectIndex, traitKey: key });
+            if (effect.type === "attack_skill_damage") target.buffs.push({ stat: "skillDamage", value: traitBaseValue({ ...effect, type: "skill_damage" }, target), expiresAfterRound: Infinity, independent: true, sourceId: owners[0]?.instanceId, sourceOrder: effectIndex, traitKey: key });
+            if (effect.type === "max_hp") target.maxHp = cardBattleEffectiveStat(target.tier.maxHp, target.buffs, "maxHp", 1);
+          }
+        }
+      }
+    }
+    }
+  };
+  refreshTraitRoster();
   let currentRound = 0;
   const initialStates = cards.map((card) => publicState(card, currentRound));
   const events: CardBattleEvent[] = [];
@@ -504,8 +605,10 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     const availableShield = trueDamage ? 0 : cardBattleShieldValue(target.shields);
     const roll = damageRandom();
     const measure = ([outgoing, defending]: CardBattleBuff[][]) => {
-      const hit = rollCardBattleDamage(cardBattleEffectiveStat(base, outgoing!, stat) * multiplier,
-        cardBattleEffectiveStat(target.tier.defense, defending!, "defense"), target.hp + availableShield, () => roll, trueDamage ? 0 : ignoreDefensePercent);
+      const traitArmor = actor.traitArmorBreak.filter((layer) => layer.expiresAfterRound >= round);
+      const defense = Math.max(0, cardBattleEffectiveStat(target.tier.defense * target.bossRoundMultiplier, defending!, "defense") - actor.armorBreakFlat - traitArmor.reduce((sum, layer) => sum + layer.flat, 0));
+      const hit = rollCardBattleDamage(cardBattleEffectiveStat(base * actor.bossRoundMultiplier, outgoing!, stat) * multiplier,
+        defense, target.hp + availableShield, () => roll, trueDamage ? 0 : Math.min(100, ignoreDefensePercent + actor.armorBreakPercent + traitArmor.reduce((sum, layer) => sum + layer.percent, 0)));
       const shieldDamage = collectibleProtection(target, "invincible", round) ? 0 : Math.min(availableShield, hit.damage);
       const hpDamage = protectedDamage(target, hit.damage - shieldDamage, round);
       return { ...hit, unprotectedDamage: hit.damage, damage: shieldDamage + hpDamage, shieldDamage, hpDamage };
@@ -526,8 +629,8 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     target.shields = target.shields.filter(shield => shield.remaining > 0);
     return hit;
   };
-  const dodges = (actor: RuntimeCard, target: RuntimeCard) => {
-    const chance = cardBattleDodgeChance(cardBattleEffectiveAccuracy(target.tier, target.buffs, "dodgeRate"), cardBattleEffectiveAccuracy(actor.tier, actor.buffs, "hitRate"));
+  const dodges = (actor: RuntimeCard, target: RuntimeCard, critical: boolean) => {
+    const chance = cardBattleDodgeChance(cardBattleEffectiveAccuracy(target.tier, target.buffs, "dodgeRate"), cardBattleEffectiveAccuracy(actor.tier, actor.buffs, "hitRate"), critical);
     return chance > 0 && dodgeRandom() < chance / 100;
   };
   const allies = (card: RuntimeCard, aliveOnly = true) => cards.filter((candidate) => candidate.seat === card.seat && (!aliveOnly || candidate.alive));
@@ -737,7 +840,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       return;
     }
     const targets = bondTargets ?? (effect.type === "revival_block_damaged" ? [...damaged ?? []] : targetsFor(actor, effect.type));
-    const amount = Math.max(0, effect.value ?? 0);
+    const amount = effect.type === "energy_self" ? effect.value ?? 0 : Math.max(0, effect.value ?? 0);
     const visuals: CardBattleVisualEffect[] = [];
     const deadCards: RuntimeCard[] = [];
     const crossedThresholds: RuntimeCard[] = [];
@@ -789,15 +892,15 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         if (safetyStopped) break;
         if (!target.alive) continue;
         if (!canAddEvent(durationMs)) { safetyStopped = true; break; }
-        if (dodges(actor, target)) { visuals.push({ targetId: target.instanceId, dodged: true, label: "闪避", amount: 0 }); continue; }
-        const beforeRatio = target.maxHp > 0 ? target.hp / target.maxHp : 0;
         const { critical, multiplier } = rollCardBattleCritical(cardBattleEffectiveCritical(actor.tier, actor.buffs), criticalRandom);
+        if (dodges(actor, target, critical)) { visuals.push({ targetId: target.instanceId, dodged: true, label: "闪避", amount: 0 }); continue; }
+        const beforeRatio = target.maxHp > 0 ? target.hp / target.maxHp : 0;
         const formula = effect.damageType === "formula" ? auditCardBattleFormula(effect.damageFormula ?? "", {
           hp: actor.hp, attack: effectiveStat(actor, "attack"), defense: effectiveStat(actor, "defense"),
           speed: effectiveStat(actor, "speed"), energy: formulaEnergy,
         }) : null;
         const base = formula ? formula.ok ? Math.round(formula.value * (effect.formulaMultiplier ?? 1)) : 0 : amount;
-        const hit = damageHit(actor, target, base + battleCollectibleBonus(actor.collectible, "skill_damage"), "skillDamage", formula && !formula.ok ? 0 : multiplier, round, root, effect.ignoreDefensePercent ?? 0, isCardBattleTrueDamage(effect.type));
+        const hit = damageHit(actor, target, base + battleCollectibleBonus(actor.collectible, "skill_damage") + actor.collectibleSkillDamage + (["damage_single", "damage_rear", "damage_random"].includes(effect.type.replace("damage_true_", "damage_")) ? battleCollectibleBonus(actor.collectible, "single_skill_damage") + actor.collectibleSingleSkillDamage : 0), "skillDamage", formula && !formula.ok ? 0 : multiplier, round, root, effect.ignoreDefensePercent ?? 0, isCardBattleTrueDamage(effect.type));
         const { incomingDamage, damage } = hit;
         // 承伤统计包含防御抵消和溢出的伤害；命中即回能，完全抵挡也不例外。
         target.damageTaken += incomingDamage;
@@ -829,7 +932,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     } else if (visual === "heal") {
       for (const target of targets) {
         const { critical, multiplier } = rollCardBattleCritical(cardBattleEffectiveCritical(actor.tier, actor.buffs), criticalRandom);
-        const outgoing = Math.round(amount * multiplier * (1 + battleCollectibleBonus(actor.collectible, "healing") / 100));
+        const outgoing = Math.round(amount * actor.bossRoundMultiplier * multiplier * (1 + (battleCollectibleBonus(actor.collectible, "healing") + (["heal_self", "heal_lowest_ally"].includes(effect.type) ? battleCollectibleBonus(actor.collectible, "single_healing") : 0)) / 100));
         const measure = ([buffs]: CardBattleBuff[][]) => Math.min(
           cardBattleEffectiveStat(outgoing * (1 + battleCollectibleBonus(target.collectible, "healing_received") / 100), buffs!, "healingReceived"),
           Math.max(0, target.maxHp - target.hp));
@@ -847,10 +950,11 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     } else if (visual === "energy") {
       for (const target of targets) {
         const before = target.energy;
-        gainEnergy(target, amount);
+        if (effect.type === "energy_self" && amount < 0) target.energy = Math.max(0, before + amount);
+        else gainEnergy(target, amount);
         const gained = target.energy - before;
-        creditSupport(actor.instanceId, "energy", gained * 100);
-        if (gained > 0) visuals.push({ targetId: target.instanceId, amount: gained, label: effectLabel(effect.type, gained) });
+        if (gained > 0) creditSupport(actor.instanceId, "energy", gained * 100);
+        if (gained !== 0) visuals.push({ targetId: target.instanceId, amount: gained, label: effectLabel(effect.type, gained) });
       }
     } else if (visual === "debuff") {
       const debuff = cardBattleDebuff(effect.type)!;
@@ -1055,13 +1159,13 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
           safetyStopped = true;
           return;
         }
-        if (dodges(actor, target)) {
+        const { critical, multiplier } = rollCardBattleCritical(cardBattleEffectiveCritical(actor.tier, actor.buffs), criticalRandom);
+        if (dodges(actor, target, critical)) {
           if (!counterTarget) gainEnergy(actor, 10);
           addEvent({ round, kind: "attack", visual: "damage", actorId: actor.instanceId, skillName: null, ...(counterTarget ? { counterattack: true } : {}), effects: [{ targetId: target.instanceId, dodged: true, label: "闪避", amount: 0 }], durationMs: 1100, text: `${actor.name} ${counterTarget ? "反击" : "攻击"} ${target.name}，被闪避` }, false, root);
           bonds.emit("attack", actor, root);
         } else {
           const beforeRatio = target.hp / target.maxHp;
-          const { critical, multiplier } = rollCardBattleCritical(cardBattleEffectiveCritical(actor.tier, actor.buffs), criticalRandom);
           const hit = damageHit(actor, target, actor.tier.attack, "attack", multiplier, round, root);
           const { incomingDamage, damage } = hit;
           target.damageTaken += incomingDamage;
@@ -1235,6 +1339,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
       const nextIds = squadIds[++squadIndex]!;
       const incoming = allCards.filter(card => nextIds.has(card.instanceId));
       cards = [...cards.filter(card => card.seat === 2), ...incoming];
+      refreshTraitRoster();
       addEvent({round,kind:"round",visual:"round",actorId:null,skillName:null,effects:[],durationMs:900,text:`${challengers[squadIndex]!.nickname} 接替上场`});
       joined.push(...incoming);
       openBonds(incoming, round);
@@ -1242,14 +1347,128 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     return joined;
   };
   let completedRounds = 0;
+  const traitWindows = new Map<string, { startRound: number; endRound: number }>();
   let winnerSeat: 1 | 2 | null = null;
   let endReason: CardBattleResult["endReason"] = "round_limit";
 
-  for (let round = 1; round <= maxRounds && !safetyStopped; round += 1) {
+  const openingActors = cards.filter((card) => card.tier.effects.some((effect) => effect.condition === "battle_start"));
+  if (openingActors.length) {
+    currentRound = 1;
+    addEvent({ round: 1, kind: "round", visual: "round", actorId: null, skillName: null,
+      effects: [], durationMs: 500, text: "战斗开始前" });
+    if (!safetyStopped) openBonds(cards, 1);
+    if (!safetyStopped) advanceSquads(1);
+    // Capture opening speed once. Changes caused by faster opening skills affect
+    // combat normally, but cannot reorder an initiative already in progress.
+    const openingInitiative = shuffled(openingActors, seededRandom(`${seed}:battle-start`))
+      .sort((left, right) => effectiveStat(right, "speed") - effectiveStat(left, "speed"));
+    for (const actor of openingInitiative) {
+      if (safetyStopped || !sideAlive(1) || !sideAlive(2)) break;
+      if (!actor.alive || isStunned(actor) || !cards.includes(actor)) continue;
+      const root = ++rootSequence;
+      const formulaEnergy = actor.energy;
+      for (const effect of actor.tier.effects.filter((item) => item.condition === "battle_start").sort((left, right) => left.order - right.order)) {
+        if (safetyStopped || !actor.alive || isStunned(actor)) break;
+        applySkill(actor, effect, 1, root, formulaEnergy);
+      }
+      if (safetyStopped) break;
+      bonds.emit("skill", actor, root);
+      processTriggers(1);
+      drainBonds(1);
+      tryExtraAction(actor, 1, root);
+      advanceSquads(1);
+    }
+  }
+
+  for (let round = 1; round <= maxRounds && !safetyStopped && sideAlive(1) && sideAlive(2); round += 1) {
     currentRound = round;
     completedRounds = round;
-    if (!addEvent({ round, kind: "round", visual: "round", actorId: null, skillName: null, effects: [], durationMs: 500, text: `第 ${round} 回合` })) break;
-    if (round === 1) { openBonds(cards, round); advanceSquads(round); }
+    const decayNotice = mode !== "1v1" && round > 1 ? ` · BOSS攻击、防御、速度、技能伤害与技能治疗量累计降低 ${(round - 1) * BOSS_ATTRIBUTE_DECAY_PERCENT_PER_ROUND}%` : "";
+    if (!addEvent({ round, kind: "round", visual: "round", actorId: null, skillName: null, effects: [], durationMs: 500, text: `第 ${round} 回合${decayNotice}` })) break;
+    if (round === 1) { if (!openingActors.length) openBonds(cards, round); advanceSquads(round); }
+    for (const seat of [1, 2] as const) for (const { trait, effects } of activeTraitsBySeat.get(seat)!.values()) {
+      const owners = cards.filter((card) => card.seat === seat && card.traits?.some((item) => item.id === trait.id));
+      for (const [effectIndex, effect] of effects.entries()) {
+        if (effect.cadence !== "round") continue;
+        const key = `${seat}:${trait.id}:${effectIndex}`;
+        let window = traitWindows.get(key);
+        if (!window) { window = { startRound: round, endRound: round + (effect.durationRounds ?? 1) - 1 }; traitWindows.set(key, window); }
+        if (round > window.endRound) continue;
+        const targets = effect.target === "all_allies" ? cards.filter((card) => card.seat === seat)
+          : effect.target === "trait_allies" ? owners
+            : effect.target === "all_enemies" ? cards.filter((card) => card.seat !== seat)
+              : cards.filter((card) => card.seat !== seat && card.traits?.some((item) => item.id === trait.id));
+        const visualEffects: CardBattleVisualEffect[] = [];
+        for (const target of targets) {
+          if (!target.alive) continue;
+          const value = traitBaseValue(effect, target);
+          if (effect.type === "energy") {
+            const before = target.energy; target.energy = Math.min(target.tier.energyRequired, target.energy + value);
+            const gained = target.energy - before;
+            if (gained > 0) { creditSupport(owners[0]?.instanceId, "energy", gained * 100); visualEffects.push({ targetId: target.instanceId, amount: gained, label: `能量 +${gained}` }); }
+          } else if (effect.type === "heal") {
+            const healed = Math.min(value, target.maxHp - target.hp);
+            if (healed > 0) { target.hp += healed; target.healingDone += healed; creditSupport(owners[0]?.instanceId, "healing", healed); visualEffects.push({ targetId: target.instanceId, amount: healed, label: `生命值 +${healed}` }); }
+          } else if (effect.type === "shield") {
+            target.shields.push({ remaining: value, expiresAfterRound: window.endRound, sourceId: owners[0]?.instanceId ?? target.instanceId, order: ++buffSequence, traitKey: key });
+            visualEffects.push({ targetId: target.instanceId, amount: value, shieldGained: value, label: `护盾 +${value}` });
+          } else if (effect.type === "armor_break") {
+            target.traitArmorBreak.push({ percent: effect.valueType === "percent" ? effect.value : 0, flat: effect.valueType === "flat" ? value : 0, expiresAfterRound: window.endRound });
+            visualEffects.push({ targetId: target.instanceId, amount: value, label: `破防 +${value}${effect.valueType === "percent" ? "%" : ""}` });
+          } else {
+            const stat = effect.type === "attack" || effect.type === "attack_skill_damage" ? "attack"
+              : effect.type === "skill_damage" ? "skillDamage" : effect.type === "defense" ? "defense"
+                : effect.type === "speed" ? "speed" : effect.type === "max_hp" ? "maxHp"
+                  : effect.type === "lifesteal_rate" ? "lifestealRate" : effect.type === "stun_rate" ? "stunRate"
+                    : effect.type === "extra_action_rate" ? "extraActionRate" : effect.type === "dodge_rate" ? "dodgeRate"
+                      : effect.type === "hit_rate" ? "hitRate" : effect.type === "counter_rate" ? "counterRate"
+                        : effect.type === "crit_rate" ? "critRate" : effect.type === "crit_damage" ? "critDamage" : null;
+            if (stat) {
+              target.buffs.push({ stat, value, expiresAfterRound: window.endRound, independent: true, sourceId: owners[0]?.instanceId, traitKey: key, sourceOrder: ++buffSequence });
+              if (effect.type === "attack_skill_damage") target.buffs.push({ stat: "skillDamage", value: traitBaseValue({ ...effect, type: "skill_damage" }, target), expiresAfterRound: window.endRound, independent: true, sourceId: owners[0]?.instanceId, traitKey: key, sourceOrder: ++buffSequence });
+              if (effect.type === "max_hp") { target.maxHp = cardBattleEffectiveStat(target.tier.maxHp, target.buffs, "maxHp", 1); target.hp = Math.min(target.hp, target.maxHp); }
+              visualEffects.push({ targetId: target.instanceId, amount: value, label: `${CARD_BATTLE_TRAIT_EFFECT_LABELS[effect.type]} +${value}${effect.valueType === "percent" ? "%" : ""}` });
+            }
+          }
+        }
+        if (visualEffects.length) addEvent({ round, kind: "skill", visual: effect.type === "heal" ? "heal" : effect.type === "energy" ? "energy" : effect.type === "shield" || effect.type === "armor_break" ? "buff" : "buff",
+          actorId: owners[0]?.instanceId ?? null, skillName: trait.name, effects: visualEffects, durationMs: 650,
+          text: `${trait.name}：${visualEffects.map((item) => item.label).filter(Boolean).join("、")}` }, false, ++rootSequence);
+      }
+    }
+    for (const seat of [1, 2] as const) {
+      const activeSummaries = [...activeTraitsBySeat.get(seat)!.values()].filter(({ trait, effects }) =>
+        effects.some((effect, index) => effect.cadence === "fixed" || (() => {
+          const window = traitWindows.get(`${seat}:${trait.id}:${index}`);
+          return Boolean(window && round <= window.endRound);
+        })()),
+      ).map(({ trait }) => ({ id: trait.id, name: trait.name }));
+      for (const card of cards.filter((item) => item.seat === seat)) card.activeTraits = activeSummaries;
+    }
+    // Round passives are permanent base increments, independent of action count and stun.
+    for (const card of cards.filter(card => card.alive)) {
+      const attack = battleCollectibleBonus(card.collectible, "round_attack");
+      const skill = battleCollectibleBonus(card.collectible, "round_attack_skill_damage");
+      const single = battleCollectibleBonus(card.collectible, "round_attack_single_skill_damage");
+      if (attack || skill || single) {
+        if (!canAddEvent(650)) { safetyStopped = true; break; }
+        card.tier.attack += attack;
+        card.collectibleSkillDamage += skill;
+        card.collectibleSingleSkillDamage += single;
+        const label = [attack && `攻击力 +${attack}`, skill && `技能伤害 +${skill}`, single && `单体技能伤害 +${single}`].filter(Boolean).join("，");
+        addEvent({ round, kind: "skill", visual: "buff", actorId: card.instanceId, skillName: "收藏品回合效果", effects: [{ targetId: card.instanceId, label }], durationMs: 650, text: `${card.name} 的收藏品：${label}` });
+      }
+      const recovery = battleCollectibleBonus(card.collectible, "round_healing");
+      const healed = Math.min(Math.max(0, card.maxHp - card.hp), cardBattleEffectiveStat(recovery * (1 + battleCollectibleBonus(card.collectible, "healing_received") / 100), card.buffs, "healingReceived"));
+      if (recovery && healed > 0) {
+        if (!canAddEvent(650)) { safetyStopped = true; break; }
+        card.hp += healed;
+        card.healingDone += healed;
+        creditSupport(card.instanceId, "healing", healed);
+        addEvent({ round, kind: "skill", visual: "heal", actorId: card.instanceId, skillName: "收藏品回合恢复", effects: [{ targetId: card.instanceId, amount: healed }], durationMs: 650, text: `${card.name} 的收藏品恢复生命值 ${healed}` }, false, ++rootSequence);
+      }
+    }
+    drainBonds(round);
     const initiative = shuffled(cards.filter((card) => card.alive), random)
       .sort((left, right) => effectiveStat(right, "speed") - effectiveStat(left, "speed"));
     for (const actor of initiative) {
@@ -1289,6 +1508,22 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         card.maxHp = cardBattleEffectiveStat(card.tier.maxHp, card.buffs, "maxHp", 1);
         card.hp = Math.min(card.hp, card.maxHp);
       }
+      if (mode !== "1v1" && sideAlive(1) && sideAlive(2)) {
+        // Count completed global rounds, never individual actions or squad changes.
+        // Recompute from the original values to avoid compounding or rounding drift.
+        for (const card of allCards.filter(card => card.seat === 2)) {
+          card.bossRoundMultiplier = Math.max(0, 1 - round * BOSS_ATTRIBUTE_DECAY_PERCENT_PER_ROUND / 100);
+        }
+      }
+    }
+    for (const seat of [1, 2] as const) {
+      const activeSummaries = [...activeTraitsBySeat.get(seat)!.values()].filter(({ trait, effects }) =>
+        effects.some((effect, index) => effect.cadence === "fixed" || (() => {
+          const window = traitWindows.get(`${seat}:${trait.id}:${index}`);
+          return Boolean(window && window.endRound > round);
+        })()),
+      ).map(({ trait }) => ({ id: trait.id, name: trait.name }));
+      for (const card of cards.filter((item) => item.seat === seat)) card.activeTraits = activeSummaries;
     }
     if (!sideAlive(1) || !sideAlive(2)) break;
   }

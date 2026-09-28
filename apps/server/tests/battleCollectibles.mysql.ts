@@ -120,6 +120,25 @@ try {
   assert.equal((await request("patch", { battleEffectType: null, battleEffectValue: null }, createdId)).status, 200);
   const [[cleared]] = await connection.query<RowDataPacket[]>("SELECT battle_effect_type,battle_effect_value FROM collectibles WHERE id=?", [createdId]);
   assert.equal(cleared!.battle_effect_type, null); assert.equal(cleared!.battle_effect_value, null);
+  const effects = [{ type: "attack", value: 20 }, { type: "dodge_rate", value: 12.25 }, { type: "round_attack_single_skill_damage", value: 30 }];
+  assert.equal((await request("patch", { battleEffects: [] }, createdId)).status, 400);
+  assert.equal((await request("patch", { battleEffects: [...effects, { type: "stun_rate", value: 101 }] }, createdId)).status, 400);
+  assert.equal((await request("patch", { battleEffects: effects }, createdId)).status, 200);
+  assert.equal((await request("patch", { name: "保留全部效果" }, createdId)).status, 200);
+  const [[multiStored]] = await connection.query<RowDataPacket[]>("SELECT * FROM collectibles WHERE id=?", [createdId]);
+  assert.deepEqual(typeof multiStored!.battle_effects_json === "string" ? JSON.parse(multiStored!.battle_effects_json) : multiStored!.battle_effects_json, effects);
+  assert.equal(multiStored!.battle_effect_type, "attack");
+  assert.equal(Number(multiStored!.battle_effect_value), 20);
+  assert.equal((await request("patch", { battleEffectValue: 25 }, createdId)).status, 200);
+  const [[legacyEdited]] = await connection.query<RowDataPacket[]>("SELECT battle_effects_json FROM collectibles WHERE id=?", [createdId]);
+  assert.deepEqual(typeof legacyEdited!.battle_effects_json === "string" ? JSON.parse(legacyEdited!.battle_effects_json) : legacyEdited!.battle_effects_json, [{ type: "attack", value: 25 }, ...effects.slice(1)], "旧客户端编辑第一项时保留其他效果");
+  await connection.query("UPDATE collectibles SET owner_user_id='fixture-owner',status='owned',battle_effects_json=? WHERE id='fixture-relic'", [JSON.stringify(effects)]);
+  assert.deepEqual((await loadBattleCollectibles("fixture-owner", connection)).find(item => item.id === "fixture-relic")!.battleEffects, effects);
+  assert.equal((await listCardBattleRanking(10))[0]!.totalPower, (await cardBattleRankingDetail(1))!.totalPower, "排行榜与详情均计算多效果加成");
+  const createdMulti = await request("post", { ...createBody, collectibleNo: "010", battleEffects: effects });
+  assert.equal(createdMulti.status, 201);
+  const [[newMulti]] = await connection.query<RowDataPacket[]>("SELECT battle_effects_json FROM collectibles WHERE id=?", [createdMulti.payload.id]);
+  assert.deepEqual(typeof newMulti!.battle_effects_json === "string" ? JSON.parse(newMulti!.battle_effects_json) : newMulti!.battle_effects_json, effects);
   console.log("PASS: local MySQL temporary-table migrations, admin create/partial-edit/clear validation, multiline/decimal fields, legacy defaults, deck round trip, ready lock, frozen equipment, ranking SQL and ownership revalidation");
 } finally {
   pool.query = originalQuery;

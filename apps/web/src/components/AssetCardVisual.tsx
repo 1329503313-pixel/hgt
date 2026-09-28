@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Star } from "lucide-react";
 import type { AssetCard, AssetDrawResult, AssetPackType, OwnedAssetCard } from "../shared/digitalAssets";
 import { assetRarityLabel, warmAssetImage } from "../shared/digitalAssets";
 
 type AssetCardGlitterEffect = "gold" | "rainbow" | null;
+export const AssetAnimationPausedContext = createContext(false);
 export const ASSET_CARD_STAR_POINT_COUNT = 12;
 export const ASSET_MOTION_READY_TIMEOUT_MS = 12_000;
 
@@ -94,6 +95,7 @@ export function AssetCardVisual({
   motion = false,
   forceMotion = false,
   highDetail = false,
+  eager = false,
   historyCompact = false,
   compactBadges = false,
   packType,
@@ -113,6 +115,7 @@ export function AssetCardVisual({
   motion?: boolean;
   forceMotion?: boolean;
   highDetail?: boolean;
+  eager?: boolean;
   historyCompact?: boolean;
   compactBadges?: boolean;
   packType?: AssetPackType;
@@ -127,13 +130,14 @@ export function AssetCardVisual({
   className?: string;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
+  const animationsPaused = useContext(AssetAnimationPausedContext);
   const displayedStarLevel = "starLevel" in card && typeof card.starLevel === "number"
     ? card.starLevel
     : "starAfter" in card && typeof card.starAfter === "number"
       ? card.starAfter
       : null;
-  const motionAllowed = forceMotion || (displayedStarLevel ?? 0) >= 2;
-  const glitterEffect = assetCardGlitterEffect(card.rarity, displayedStarLevel);
+  const motionAllowed = !animationsPaused && (forceMotion || (displayedStarLevel ?? 0) >= 2);
+  const glitterEffect = animationsPaused ? null : assetCardGlitterEffect(card.rarity, displayedStarLevel);
   const showMotion = motion
     && Boolean(card.motionMp4Url)
     && motionAllowed;
@@ -199,7 +203,7 @@ export function AssetCardVisual({
       <span className="asset-card-frame">
         {showMotion
           ? <AssetMotionMedia card={card} className="asset-card-image" eager={highDetail || forceMotion} />
-          : <img src={highDetail ? card.imageUrl : (card.thumbnailUrl || card.imageUrl)} alt="" className="asset-card-image" loading={highDetail ? "eager" : "lazy"} decoding="async" draggable={false} />}
+          : <img src={highDetail ? card.imageUrl : (card.thumbnailUrl || card.imageUrl)} alt="" className="asset-card-image" loading={highDetail || eager ? "eager" : "lazy"} decoding="async" draggable={false} />}
         {glitterEffect && <AssetCardEffectTimer key={effectTimer.revision} effect={glitterEffect} clockDelay={effectTimer.clockDelay} />}
         {!historyCompact && <span className="asset-card-number" aria-hidden="true">NO.{card.cardNo}</span>}
         <span className="asset-card-rarity" aria-hidden="true"><span className="asset-card-rarity-text">{rarityLabel}</span></span>
@@ -236,6 +240,7 @@ export function AssetMotionMedia({
   onFailure?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const animationsPaused = useContext(AssetAnimationPausedContext);
   const [nearViewport, setNearViewport] = useState(eager);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const [failedPoster, setFailedPoster] = useState<string | null>(null);
@@ -285,17 +290,17 @@ export function AssetMotionMedia({
   }, [mediaSource]);
 
   useEffect(() => {
-    if (!nearViewport || reduceMotion || failedSource === mediaSource || !card.motionMp4Url) return;
+    if (!nearViewport || animationsPaused || reduceMotion || failedSource === mediaSource || !card.motionMp4Url) return;
     const timeout = window.setTimeout(() => {
       const video = videoRef.current;
       if (!readyRef.current && (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)) failMotion();
     }, ASSET_MOTION_READY_TIMEOUT_MS);
     return () => window.clearTimeout(timeout);
-  }, [card.motionMp4Url, failedSource, mediaSource, nearViewport, reduceMotion]);
+  }, [card.motionMp4Url, failedSource, mediaSource, nearViewport, reduceMotion, animationsPaused]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || reduceMotion) return;
+    if (!video || reduceMotion || animationsPaused) return;
     if (typeof IntersectionObserver === "undefined") {
       setNearViewport(true);
       void video.play().catch(() => undefined);
@@ -322,13 +327,13 @@ export function AssetMotionMedia({
       document.removeEventListener("visibilitychange", visibility);
       video.pause();
     };
-  }, [mediaSource, reduceMotion]);
+  }, [mediaSource, reduceMotion, animationsPaused]);
 
   const staticFallback = card.thumbnailUrl || card.imageUrl;
   const fallback = card.motionPosterUrl && failedPoster !== card.motionPosterUrl
     ? card.motionPosterUrl
     : staticFallback;
-  if (failedSource === mediaSource || reduceMotion || !card.motionMp4Url) {
+  if (failedSource === mediaSource || reduceMotion || animationsPaused || !card.motionMp4Url) {
     return (
       <img
         src={fallback}

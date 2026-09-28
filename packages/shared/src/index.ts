@@ -3,6 +3,7 @@ export { CARD_BATTLE_EVENT_CONDITION_CODES, CARD_BATTLE_EVENT_CONDITION_LABELS, 
 export { CARD_BATTLE_SUPPORT_LABELS, type CardBattleSupportKind, type CardBattleSupportBreakdown } from "./cardBattleSupport.js";
 export * from "./cardBattleProcs.js";
 export * from "./cardBattleDamage.js";
+export * from "./cardBattleTraits.js";
 export type UserRole = "super_admin" | "backoffice_admin" | "vip" | "user";
 export const VIP_GROWTH_LEVELS = [0, 5, 300, 800, 1500, 2800, 4500, 7000, 10000, 15000] as const;
 export type VipLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;

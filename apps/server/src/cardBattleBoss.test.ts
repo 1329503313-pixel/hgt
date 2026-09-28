@@ -11,7 +11,7 @@ function player(userId: string, seat: 1 | 2, personalSeat?: 1 | 2 | 3, values: P
     imageUrl: "/cover", motionMp4Url: null, motionWebmUrl: null, motionPosterUrl: null, battleRole: "damage", tier: { ...tier, ...values },
   })) };
 }
-const effect = (type: CardBattleSkillEffect["type"], value: number, duration: number | null = null): CardBattleSkillEffect => ({ id: "effect", order: 0, condition: "energy_full", conditionValue: null, type, value, duration });
+const effect = (type: CardBattleSkillEffect["type"], value: number | null, duration: number | null = null): CardBattleSkillEffect => ({ id: "effect", order: 0, condition: "energy_full", conditionValue: null, type, value, duration });
 
 test("BOSS 支持一至三名队友，允许同款卡但保留独立实例、三前排六后排及个人统计", () => {
   for (const count of [1, 2, 3]) {
@@ -60,6 +60,74 @@ test("BOSS 超过三名队友、个人重复卡、缺少卡牌均拒绝", () => 
 test("BOSS 三十回合未清空全部敌人视为失败，即使九张队友全部存活", () => {
   const result = simulateCardBattle([player("a", 1, 1, { attack: 0 }), player("b", 1, 2, { attack: 0 }), player("c", 1, 3, { attack: 0 }), player("boss", 2, undefined, { attack: 0 })], "timeout", "boss");
   assert.equal(result.endReason, "round_limit"); assert.equal(result.rounds, 30); assert.equal(result.winnerSeat, 2);
+});
+
+test("BOSS与闯关每过完整回合按初始值降低0.5%，玩家及普通对战属性不变", () => {
+  for (const mode of ["boss", "tower", "1v1"] as const) {
+    const stats = { maxHp: 1_000_000, attack: 1000, defense: 1000, speed: 1000, energyRequired: 100000 };
+    const team = player("team", mode === "boss" ? 1 : 2, undefined, stats);
+    team.seat = 1;
+    const boss = player("boss", 2, undefined, stats);
+    const input = [team, boss], frozen = structuredClone(input);
+    const result = simulateCardBattle(input, `linear-decay-${mode}`, mode);
+    const rounds = result.events.filter(e => e.kind === "round" && e.visual === "round");
+    assert.ok(rounds.some(e => e.round === 21), mode);
+    for (const event of rounds) {
+      for (const state of event.states) {
+        const expected = mode !== "1v1" && state.seat === 2 ? 1000 - (event.round - 1) * 5 : 1000;
+        assert.equal(state.attack, expected, `${mode}/${event.round}/attack`);
+        assert.equal(state.defense, expected, `${mode}/${event.round}/defense`);
+        assert.equal(state.speed, expected, `${mode}/${event.round}/speed`);
+        assert.equal(state.maxHp, 1_000_000);
+        assert.equal(state.energyRequired, 100000);
+        assert.equal(state.critRate, 0);
+      }
+    }
+    if (mode !== "1v1") {
+      assert.equal(result.rounds, mode === "tower" ? 50 : 30);
+      assert.ok(result.finalStates.filter(s => s.seat === 2).every(s => s.attack === 1000 - result.rounds * 5));
+      assert.match(rounds[1]!.text, /累计降低 0.5%/);
+    }
+    assert.deepEqual(input, frozen, "不改写BOSS配置或冻结阵容");
+    assert.deepEqual(result, simulateCardBattle(input, `linear-decay-${mode}`, mode));
+  }
+});
+
+test("BOSS速度衰减影响下一回合行动顺序，增益与净化不清除衰减", () => {
+  const team = player("team", 1, undefined, { maxHp: 1_000_000, attack: 0, speed: 996 });
+  const boss = player("boss", 2, undefined, { maxHp: 1_000_000, attack: 1000, defense: 1000, speed: 1000, energyRequired: 10 });
+  for (const card of boss.cards) card.tier.effects = [effect("cleanse_self", null)];
+  boss.cards[0]!.cardNo = "boss-first";
+  boss.cards[0]!.tier.bonds = [{ event: "energy_empty", cardNos: ["boss-first"], actions: [{ type: "attack_up", target: "allies", value: 200, duration: 30 }] }];
+  const result = simulateCardBattle([team, boss], "decay-initiative", "boss");
+  for (const [round, first] of [[1, "boss"], [2, "team"]] as const) {
+    const action = result.events.find(e => e.round === round && !e.bond && e.actorId && ["attack", "skill"].includes(e.kind))!;
+    assert.ok(action.actorId!.startsWith(first), `round ${round}`);
+  }
+  const cleansed = result.events.find(e => e.round === 2 && e.effectType === "cleanse_self")!;
+  assert.ok(cleansed);
+  const state = cleansed.states.find(s => s.instanceId === cleansed.actorId)!;
+  assert.equal(state.attack, 1195, "基础攻击995加羁绊增益200，衰减不是可净化的减益");
+  assert.equal(state.defense, 995);
+  assert.equal(state.speed, 995);
+});
+
+test("BOSS复活保留已经累计的回合衰减", () => {
+  const team = player("team", 1, undefined, { maxHp: 1_000_000, attack: 15, defense: 0, speed: 2000 });
+  const boss = player("boss", 2, undefined, { maxHp: 1_000_000, attack: 10, defense: 0, speed: 1000 });
+  boss.cards[0]!.tier = { ...boss.cards[0]!.tier, maxHp: 50,
+    effects: [{ ...effect("revive_self", null), condition: "self_death" }] };
+  const result = simulateCardBattle([team, boss], "decay-revival", "boss");
+  const revivals = result.events.filter(e => e.effectType === "revive_self");
+  assert.ok(revivals.length > 0);
+  for (const event of revivals) {
+    assert.ok(event.round > 1);
+    const revived = event.states.find(s => s.instanceId === "boss:0")!;
+    assert.equal(revived.speed, 1000 - (event.round - 1) * 5);
+    assert.equal(revived.attack, Math.round(10 * (1 - (event.round - 1) * .005)));
+    assert.equal(revived.hp, 50);
+    assert.ok(revived.alive);
+  }
 });
 test("BOSS 普攻遵循全队前排保护，群攻后排同时命中六张卡，全体增益覆盖九张友军", () => {
   const team = [player("a", 1, 1, { attack: 0, maxHp: 1_000_000, energyRequired: 10, effects: [effect("defense_all_allies", 1, 2)] }), player("b", 1, 2, { attack: 0, maxHp: 1_000_000 }), player("c", 1, 3, { attack: 0, maxHp: 1_000_000 })];

@@ -19,6 +19,11 @@ import { MAX_EXPERIENCE } from "../../shared/levelSystem";
 
 type AdminUser = PublicUser & {
   username: string;
+  originalUsername: string | null;
+  phone: string | null;
+  phoneBound: boolean;
+  legacyLoginEnabled: boolean;
+  phoneUpgradedAt: string | null;
   lastLoginAt: string | null;
   isOnline: boolean;
   loggedInToday: boolean;
@@ -34,11 +39,12 @@ type UsersResponseExt = { users: AdminUser[]; total: number };
 type LoginStatusFilter = "all" | "online" | "yes" | "no";
 type UserSortBy = "createdAt" | "lastLoginAt" | "soupCount" | "evaluationCount" | "likeCount" | "favoriteCount" | "shellBalance" | "charmValue" | "collectionValue" | "achievementPoints" | "experience" | "vipGrowth";
 type SortOrder = "asc" | "desc";
-type UserColumn = "user" | "role" | "level" | "vipGrowth" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "charmValue" | "collectionValue" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
+type UserColumn = "user" | "phone" | "role" | "level" | "vipGrowth" | "createdAt" | "lastLoginAt" | "loggedToday" | "shells" | "charmValue" | "collectionValue" | "achievementPoints" | "soups" | "evaluations" | "likes" | "favorites" | "password" | "actions";
 type BulkShellPreview = { matchedCount: number; eligibleCount: number; skippedCount: number };
 
 const userColumns: readonly AdminColumn<UserColumn>[] = [
-  { key: "user", label: "用户", width: "190px" },
+  { key: "user", label: "用户 / 原始账号", width: "190px" },
+  { key: "phone", label: "手机号", width: "150px" },
   { key: "role", label: "角色", width: "110px" },
   { key: "level", label: "等级 / 当前经验", width: "150px" },
   { key: "vipGrowth", label: "VIP成长值", width: "120px" },
@@ -70,6 +76,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [resetReason, setResetReason] = useState("");
   const [resetError, setResetError] = useState("");
   const [resetting, setResetting] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<UserColumn>>(() => new Set(userColumns.map((column) => column.key)));
@@ -183,6 +190,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   function openResetPassword(user: AdminUser) {
     setResetUser(user);
     setNewPassword("");
+    setResetReason("");
     setResetError("");
   }
 
@@ -190,6 +198,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
     if (resetting) return;
     setResetUser(null);
     setNewPassword("");
+    setResetReason("");
     setResetError("");
   }
 
@@ -331,10 +340,14 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       setResetError("新密码至少需要 6 位");
       return;
     }
+    if (resetReason.trim().length < 8) {
+      setResetError("请填写身份核实或重置原因，至少 8 个字符");
+      return;
+    }
     setResetting(true);
     setResetError("");
     try {
-      await api(`/api/admin/users/${resetUser.id}/reset-password`, { method: "POST", body: { newPassword } });
+      await api(`/api/admin/users/${resetUser.id}/reset-password`, { method: "POST", body: { newPassword, reason: resetReason.trim() } });
       setResetting(false);
       closeResetPassword();
     } catch (error) {
@@ -360,7 +373,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         <div className="relative min-w-0 flex-1">
           <input
             className="field h-10 pl-4 pr-24"
-            placeholder="搜索昵称、账号..."
+            placeholder="搜索昵称、原始账号、手机号..."
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") { setPage(1); setSubmittedKeyword(keyword.trim()); } }}
@@ -415,10 +428,11 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
                     )}
                     <div className="min-w-0">
                       <VipIdentity nickname={user.nickname} vipLevel={user.vipLevel} vipActive={user.vipActive} equippedBadge={user.equippedBadge} className="max-w-full font-semibold text-ink" />
-                      <div className="truncate text-xs text-muted">@{user.username}</div>
+                      <div className="truncate text-xs text-muted">原始账号：{user.originalUsername ?? "无"}</div>
                     </div>
                   </div>
                 )}
+                {visibleColumns.has("phone") && <span className="text-xs text-ink">{user.phone ?? "未绑定"}</span>}
                 {visibleColumns.has("role") && (
                   <span className="text-xs font-bold text-ink">{USER_ROLE_LABELS[user.role]}</span>
                 )}
@@ -506,7 +520,7 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
         <Modal onClose={closeResetPassword}>
           <form onSubmit={(event) => { event.preventDefault(); resetPassword(); }}>
             <h2 className="text-lg font-black text-ink">重置用户密码</h2>
-            <p className="mt-1 text-sm text-muted">为 {resetUser.nickname}（@{resetUser.username}）设置新密码。</p>
+            <p className="mt-1 text-sm text-muted">为 {resetUser.nickname}（原始账号：{resetUser.originalUsername ?? "无"}；手机号：{resetUser.phone ?? "未绑定"}）设置新密码。新密码将覆盖当前密码，并使旧登录状态失效。</p>
             <label className="mt-4 block text-sm font-bold text-ink" htmlFor="admin-reset-password">新密码</label>
             <input
               id="admin-reset-password"
@@ -521,6 +535,9 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               onChange={(event) => setNewPassword(event.target.value)}
             />
             {!resetError && <p id="admin-reset-password-help" className="mt-2 text-xs text-muted">新密码至少 {ACCOUNT_PASSWORD_MIN_LENGTH} 位</p>}
+            <label className="mt-4 block text-sm font-bold text-ink" htmlFor="admin-reset-reason">身份核实或重置原因</label>
+            <textarea id="admin-reset-reason" className="field mt-2 min-h-20 w-full" maxLength={500} value={resetReason} onChange={(event) => setResetReason(event.target.value)} placeholder="人工找回时记录核实方式和工单信息；普通重置时记录原因" required />
+            <p className="mt-2 text-xs text-muted">操作人、目标用户和原因会写入审计记录。请勿填写验证码或完整身份证件信息。</p>
             {resetError && <p className="mt-2 text-sm text-red-600" role="alert">{resetError}</p>}
             <div className="mt-5 grid grid-cols-2 gap-2">
               <button className="btn btn-secondary" type="button" onClick={closeResetPassword}>取消</button>

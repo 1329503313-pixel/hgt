@@ -3,8 +3,10 @@ param(
     [string]$ReleaseNotes,
     [string]$ProductionHost = 'root@47.239.5.69',
     [string]$VoiceEnvironmentFile,
+    [string]$SmsEnvironmentFile,
     [switch]$BuildImageLocally,
     [switch]$DeployRequestLogging,
+    [switch]$ForceAndroidUpdate,
     [switch]$ConfirmFullDeployment
 )
 
@@ -57,10 +59,16 @@ try {
     Invoke-ReleaseCommand 'android-prepare-and-verify' { npm run release:android:prepare }
     Invoke-ReleaseCommand 'production-entry-and-microphone-browser-checks' { npm run test:application-startup }
     Invoke-ReleaseCommand 'android-upload-and-public-hash-verification' { npm run app:android:upload -- --confirm-upload }
-    Invoke-ReleaseCommand 'android-release-descriptor' { npm run release:android:descriptor -- --notes $notesPath }
+    Invoke-ReleaseCommand 'android-release-descriptor' {
+        if ($ForceAndroidUpdate) {
+            npm run release:android:descriptor -- --notes $notesPath --force-update
+        } else {
+            npm run release:android:descriptor -- --notes $notesPath
+        }
+    }
     if (-not (Test-Path -LiteralPath $descriptorPath)) { throw 'Android release descriptor was not created.' }
     Invoke-ReleaseCommand 'production-web-server-deployment' {
-        & (Join-Path $scriptRoot 'deploy-production.ps1') -Commit $commit -ProductionHost $ProductionHost -VoiceEnvironmentFile $VoiceEnvironmentFile -BuildImageLocally:$BuildImageLocally -ConfirmFullDeployment
+        & (Join-Path $scriptRoot 'deploy-production.ps1') -Commit $commit -ProductionHost $ProductionHost -VoiceEnvironmentFile $VoiceEnvironmentFile -SmsEnvironmentFile $SmsEnvironmentFile -BuildImageLocally:$BuildImageLocally -ConfirmFullDeployment
     }
     if ($DeployRequestLogging) {
         Invoke-ReleaseCommand 'production-nginx-request-logging' {
@@ -75,7 +83,7 @@ try {
     Write-Output "PRODUCTION_COMMIT=$commit"
     Write-Output "ANDROID_VERSION=$($version.versionName)"
     Write-Output "ANDROID_VERSION_CODE=$($version.versionCode)"
-    Write-Output 'ANDROID_FORCE_UPDATE=false'
+    Write-Output "ANDROID_FORCE_UPDATE=$($ForceAndroidUpdate.ToString().ToLowerInvariant())"
 } finally {
     Pop-Location
 }

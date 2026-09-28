@@ -32,7 +32,13 @@ type PendingInvite = { roomId: string; inviteToken: string; room: InvitePreview 
 type MysteryEntry = { id: string; title: string; coverUrl: string | null; tags: string[] };
 
 export default function OnlineSoupLobbyPage() {
-  const [cardRoomType, setCardRoomType] = useState<"normal" | "tower">("normal");
+  const [cardRoomType, setCardRoomType] = useState<"normal" | "tower" | "boss">("normal");
+  const [bosses, setBosses] = useState<Array<{ id: string; name: string; rewardShells: number }>>([]);
+  const [bossTemplateId, setBossTemplateId] = useState("");
+  const [bossClearLabel, setBossClearLabel] = useState<"uncleared" | "cleared">("uncleared");
+  const [bossesLoading, setBossesLoading] = useState(false);
+  const [bossesError, setBossesError] = useState("");
+  const [bossRefresh, setBossRefresh] = useState(0);
   const { user, openAuth, showToast } = useApp();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -62,6 +68,22 @@ export default function OnlineSoupLobbyPage() {
     password: "",
     hostMode: "human" as "human" | "ai" | "voice",
   });
+
+  useEffect(() => {
+    if (!createOpen || form.contentType !== "card_battle" || cardRoomType !== "boss") return;
+    let cancelled = false;
+    setBossesLoading(true);
+    setBossesError("");
+    void api<{ bosses: typeof bosses }>("/api/online-soup/card-battle-bosses", { bypassCache: true })
+      .then(data => {
+        if (cancelled) return;
+        setBosses(data.bosses);
+        setBossTemplateId(current => data.bosses.some(boss => boss.id === current) ? current : "");
+      })
+      .catch(error => { if (!cancelled) { setBosses([]); setBossesError(error instanceof Error ? error.message : "BOSS 列表加载失败"); } })
+      .finally(() => { if (!cancelled) setBossesLoading(false); });
+    return () => { cancelled = true; };
+  }, [createOpen, form.contentType, cardRoomType, bossRefresh]);
 
   const loadRooms = useCallback(async () => {
     try {
@@ -206,6 +228,8 @@ export default function OnlineSoupLobbyPage() {
 
   function openCreate() {
     setCardRoomType("normal");
+    setBossTemplateId("");
+    setBossClearLabel("uncleared");
     if (!user) { openAuth(); return; }
     setEntryMystery(null);
     setMysteryChoice("restart");
@@ -219,18 +243,21 @@ export default function OnlineSoupLobbyPage() {
   }
 
   async function createRoom() {
+    if (creating) return;
     if (!form.contentType) return showToast("请选择房间类型");
     if (!form.name.trim()) return showToast("请填写房间名称");
+    const boss = form.contentType === "card_battle" && cardRoomType === "boss";
+    if (boss && (bossesLoading || bossesError || !bosses.some(item => item.id === bossTemplateId))) return showToast("请选择当前已上线的 BOSS");
     const tower = form.contentType === "card_battle" && cardRoomType === "tower";
     if (!tower && form.type === "password" && form.password.length !== 4) return showToast("房间密码必须为 4 位");
     setCreating(true);
     try {
       const data = await api<{ roomId: string }>(tower ? "/api/online-soup/card-tower/rooms" : "/api/online-soup/rooms", {
         method: "POST",
-        body: tower ? { name: form.name } : entryMystery ? { ...form, contentType: "mystery", hostMode: "human", mysteryId: entryMystery.id, mysteryChoice } : { ...form, hostMode: form.hostMode === "voice" ? "human" : form.hostMode, communicationMode: form.contentType === "soup" && form.hostMode === "voice" ? "voice" : "text" },
+        body: tower ? { name: form.name } : entryMystery ? { ...form, contentType: "mystery", hostMode: "human", mysteryId: entryMystery.id, mysteryChoice } : { ...form, ...(boss ? { cardBattleMode: "boss", bossTemplateId, bossClearLabel } : {}), hostMode: form.hostMode === "voice" ? "human" : form.hostMode, communicationMode: form.contentType === "soup" && form.hostMode === "voice" ? "voice" : "text" },
       });
       navigate(tower ? `/online-soup/tower/${data.roomId}` : `/online-soup/rooms/${data.roomId}`);
-    } catch (error) { showToast(error instanceof Error ? error.message : "创建房间失败"); }
+    } catch (error) { showToast(error instanceof Error ? error.message : "创建房间失败"); if (boss) setBossRefresh(value => value + 1); }
     finally { setCreating(false); }
   }
 
@@ -325,6 +352,7 @@ export default function OnlineSoupLobbyPage() {
                 <div className="flex shrink-0 items-center gap-1.5">{room.hasPassword && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"><LockKeyhole size={12} /> 密码房</span>}<span className={`rounded-full px-2 py-1 text-xs font-bold ${room.status === "playing" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-primary"}`}>{roomStatusText(room)}</span></div>
               </div>
               <div className="online-soup-room-current"><span className="flex items-center gap-1">{room.contentType === "card_battle" ? <Swords size={13} /> : room.contentType === "impostor" ? <VenetianMask size={13} /> : room.contentType === "mystery" ? <MessageCircleQuestion size={13} /> : room.hostMode === "ai" ? <Bot size={13} /> : <Crown size={13} />}{room.contentType === "card_battle" ? "自动对战" : room.contentType === "impostor" ? "阵营推理" : room.contentType === "mystery" ? "谜局" : room.communicationMode === "voice" ? "语音玩汤" : room.hostMode === "ai" ? "AI玩汤" : "文字玩汤"}</span><strong title={room.contentType === "card_battle" ? "卡牌对战" : room.contentType === "impostor" ? "谁是伪人" : room.mysteryTitle ?? room.soupTitle ?? "尚未选择内容"}>{room.contentType === "card_battle" ? (room.cardBattleMode === "boss" ? "卡牌对战 · BOSS" : "卡牌对战 · 1v1") : room.contentType === "impostor" ? "谁是伪人" : room.mysteryTitle ?? room.soupTitle ?? "尚未选择内容"}</strong></div>
+              {room.cardBattleMode === "boss" && <p className="mt-2 break-words text-xs font-bold text-violet-800">{room.bossName ?? "BOSS 战"} · {room.bossClearLabel === "cleared" ? "已通关" : "未通关"}</p>}
               <div className="mt-4 flex items-center justify-between"><span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted"><Users size={16} /> {room.participantCount}/{room.participantCapacity} 人</span><button className="online-soup-join-button" onClick={() => requestJoin(room)}>{room.viewerRole ? "返回房间" : "加入房间"}</button></div>
             </article>
           ))}
@@ -339,18 +367,25 @@ export default function OnlineSoupLobbyPage() {
           {form.contentType && <>
             <label className="block text-sm font-bold text-ink">房间名称<input className="field mt-1 w-full" maxLength={50} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：周五夜猫局" /></label>
             {form.contentType === "soup" && <fieldset><legend className="mb-2 text-sm font-bold text-ink">玩汤类型</legend><OnlineSoupModePicker value={form.hostMode} onChange={hostMode => setForm({ ...form, hostMode })} /></fieldset>}            {form.contentType === "impostor" && <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold leading-5 text-violet-800"><span className="font-black">4–6 人阵营推理</span> · 系统自动发放侦探、平民与伪人身份；开局后新成员只能旁观。</div>}
-            {form.contentType === "card_battle" && <fieldset><legend className="mb-2 text-sm font-bold text-ink">房间类型</legend><div className="grid grid-cols-2 gap-2">{([["normal", "普通对战"], ["tower", "卡牌闯关"]] as const).map(([value, label]) => <button key={value} type="button" className={`btn segmented-choice ${cardRoomType === value ? "btn-primary" : "btn-secondary"}`} aria-pressed={cardRoomType === value} onClick={() => setCardRoomType(value)}>{label}</button>)}</div>{cardRoomType === "tower" && <p className="mt-2 text-xs leading-5 text-muted">仅本人可进入的隐藏房间，三个五卡阵容依次接力，首次通关赢取贝壳。</p>}</fieldset>}
+            {form.contentType === "card_battle" && <fieldset><legend className="mb-2 text-sm font-bold text-ink">房间类型</legend><div className="grid grid-cols-3 gap-2">{([["normal", "普通对战"], ["boss", "BOSS战"], ["tower", "卡牌闯关"]] as const).map(([value, label]) => <button key={value} type="button" className={`btn segmented-choice ${cardRoomType === value ? "btn-primary" : "btn-secondary"}`} aria-pressed={cardRoomType === value} onClick={() => setCardRoomType(value)}>{label}</button>)}</div>{cardRoomType === "tower" && <p className="mt-2 text-xs leading-5 text-muted">仅本人可进入的隐藏房间，三个五卡阵容依次接力，首次通关赢取贝壳。</p>}</fieldset>}
+            {form.contentType === "card_battle" && cardRoomType === "boss" && <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
+              <label className="block text-sm font-bold text-ink">BOSS 战名称<select className="field mt-1 min-h-11 w-full" value={bossTemplateId} disabled={bossesLoading || creating} onChange={event => setBossTemplateId(event.target.value)}><option value="">{bossesLoading ? "正在加载…" : "请选择已上线的 BOSS"}</option>{bosses.map(boss => <option key={boss.id} value={boss.id}>{boss.name}</option>)}</select></label>
+              {bossesLoading ? <p role="status" className="text-xs text-muted">正在获取可挑战的 BOSS…</p> : bossesError ? <p role="alert" className="text-sm text-red-700">{bossesError}</p> : !bosses.length && <p role="status" className="text-sm text-muted">当前没有已上线的 BOSS，暂时无法创建 BOSS 战房间。</p>}
+              <button type="button" className="btn btn-secondary min-h-11" disabled={bossesLoading || creating} onClick={() => setBossRefresh(value => value + 1)}><RefreshCw size={14} />刷新 BOSS 列表</button>
+              <fieldset><legend className="mb-2 text-sm font-bold text-ink">是否通关（招募标签）</legend><div className="grid grid-cols-2 gap-2">{([["uncleared", "未通关"], ["cleared", "已通关"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={bossClearLabel === value} className={`btn segmented-choice min-h-11 ${bossClearLabel === value ? "btn-primary" : "btn-secondary"}`} onClick={() => setBossClearLabel(value)}>{label}</button>)}</div><p className="mt-2 text-xs leading-5 text-muted">仅作为房间招募标签，不限制任何人加入。</p></fieldset>
+              <p className="text-xs leading-5 text-violet-900">1–3 人协作，每人配置 3 张卡；在席玩家全部准备后自动开战，支持 10 人观战。每个账号首次通关同一 BOSS 仅领奖一次，跨房间共享。{bossTemplateId && `首次通关奖励 ${bosses.find(boss => boss.id === bossTemplateId)?.rewardShells ?? 0} 贝壳。`}</p>
+            </div>}
             {form.contentType === "card_battle" && cardRoomType === "normal" && <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-semibold leading-5 text-cyan-900"><span className="font-black">1v1 自动卡牌对战</span> · 拥有至少五张启用中的史诗或传说卡时自动进入对战席，否则进入观战席。</div>}
             {!(form.contentType === "card_battle" && cardRoomType === "tower") && <fieldset><legend className="mb-2 text-sm font-bold text-ink">房间权限</legend><div className="grid grid-cols-2 gap-2"><button type="button" aria-pressed={form.type === "public"} className={`btn segmented-choice ${form.type === "public" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "public", password: "" })}><DoorOpen size={16} />公开房</button><button type="button" aria-pressed={form.type === "password"} className={`btn segmented-choice ${form.type === "password" ? "btn-primary" : "btn-secondary"}`} onClick={() => setForm({ ...form, type: "password" })}><LockKeyhole size={16} />密码房</button></div></fieldset>}
             {!(form.contentType === "card_battle" && cardRoomType === "tower") && form.type === "password" && <label className="block text-sm font-bold text-ink">4 位房间密码<input className="field mt-1 w-full text-center tracking-[.3em]" type="password" inputMode="numeric" maxLength={4} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value.replace(/\D/g, "") })} placeholder="••••" /></label>}
           </>}
-          <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={closeCreate}>取消</button><button className="btn btn-primary" disabled={creating || !form.contentType} onClick={createRoom}>{creating ? "创建中…" : "创建并进入"}</button></div>
+          <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" onClick={closeCreate}>取消</button><button className="btn btn-primary" disabled={creating || !form.contentType || (form.contentType === "card_battle" && cardRoomType === "boss" && (bossesLoading || !!bossesError || !bossTemplateId))} onClick={createRoom}>{creating ? "创建中…" : "创建并进入"}</button></div>
         </div>
       </Modal>}
 
       {joinOpen && <Modal onClose={() => setJoinOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">通过房间号加入</h2><div className="flex gap-2"><input className="field flex-1 text-center text-lg tracking-[.3em]" inputMode="numeric" maxLength={6} value={roomCode} onChange={(e) => setRoomCode(e.target.value.replace(/\D/g, ""))} placeholder="6 位房间号" /><button className="btn btn-primary" onClick={lookupRoom}><Search size={17} /> 查找</button></div></div></Modal>}
 
-      {passwordRoom && <Modal onClose={() => setPasswordRoom(null)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">加入「{passwordRoom.name}」</h2><p className="mt-1 text-sm text-muted">#{passwordRoom.code} · 当前{["impostor", "card_battle"].includes(passwordRoom.contentType) ? "游戏者" : "主持人和玩家"} {passwordRoom.participantCount}/{passwordRoom.participantCapacity} 人</p></div>{passwordRoom.hasPassword && <input className="field w-full" type="password" inputMode="numeric" maxLength={4} value={password} onChange={(e) => setPassword(e.target.value.replace(/\D/g, ""))} placeholder="输入 4 位房间密码" />}{passwordRoom.contentType === "card_battle" ? <p className="rounded-xl bg-cyan-50 px-3 py-2 text-xs font-bold leading-5 text-cyan-900">系统会在你拥有至少五张可参战卡且席位空闲时自动安排对战，否则进入观战。</p> : <div className="grid grid-cols-2 gap-2"><button className={`btn segmented-choice ${joinRole === "player" ? "btn-primary" : "btn-secondary"}`} disabled={passwordRoom.playerCount >= passwordRoom.playerCapacity || (passwordRoom.contentType === "impostor" && passwordRoom.status === "playing")} onClick={() => setJoinRole("player")}>作为玩家</button>{passwordRoom.communicationMode !== "voice" && <button className={`btn segmented-choice ${joinRole === "spectator" ? "btn-primary" : "btn-secondary"}`} onClick={() => setJoinRole("spectator")}>作为旁观者</button>}</div>}{["impostor", "card_battle"].includes(passwordRoom.contentType) && passwordRoom.status === "playing" && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">对局已经开始，本次只能以旁观者身份加入。</p>}<button className="btn btn-primary w-full" onClick={() => joinRoom()}>进入房间</button></div></Modal>}
+      {passwordRoom && <Modal onClose={() => setPasswordRoom(null)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">加入「{passwordRoom.name}」</h2><p className="mt-1 text-sm text-muted">#{passwordRoom.code} · 当前{["impostor", "card_battle"].includes(passwordRoom.contentType) ? "游戏者" : "主持人和玩家"} {passwordRoom.participantCount}/{passwordRoom.participantCapacity} 人</p></div>{passwordRoom.hasPassword && <input className="field w-full" type="password" inputMode="numeric" maxLength={4} value={password} onChange={(e) => setPassword(e.target.value.replace(/\D/g, ""))} placeholder="输入 4 位房间密码" />}{passwordRoom.contentType === "card_battle" ? <p className="rounded-xl bg-cyan-50 px-3 py-2 text-xs font-bold leading-5 text-cyan-900">系统会在你拥有至少{passwordRoom.cardBattleMode === "boss" ? "三" : "五"}张可参战卡且席位空闲时自动安排对战，否则进入观战。</p> : <div className="grid grid-cols-2 gap-2"><button className={`btn segmented-choice ${joinRole === "player" ? "btn-primary" : "btn-secondary"}`} disabled={passwordRoom.playerCount >= passwordRoom.playerCapacity || (passwordRoom.contentType === "impostor" && passwordRoom.status === "playing")} onClick={() => setJoinRole("player")}>作为玩家</button>{passwordRoom.communicationMode !== "voice" && <button className={`btn segmented-choice ${joinRole === "spectator" ? "btn-primary" : "btn-secondary"}`} onClick={() => setJoinRole("spectator")}>作为旁观者</button>}</div>}{["impostor", "card_battle"].includes(passwordRoom.contentType) && passwordRoom.status === "playing" && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">对局已经开始，本次只能以旁观者身份加入。</p>}<button className="btn btn-primary w-full" onClick={() => joinRoom()}>进入房间</button></div></Modal>}
 
       {pendingInvite && <Modal onClose={cancelPendingInvite}>
         <div className="space-y-5">

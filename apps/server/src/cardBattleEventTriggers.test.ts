@@ -86,6 +86,8 @@ test("治疗暴击不触发攻击暴击条件，伤害被闪避也不会产生�
   assert.ok(!result.events.some(e => e.bond?.ownerId === "A5"));
   const dodged = setup("critical", { critRate: 100 });
   for (const card of dodged.b) card.tier.dodgeRate = 100;
+  // The opening buff keeps final dodge at 100% after the critical hit bonus.
+  dodged.b[0]!.tier.bonds = [bond("energy_empty", [{ type: "dodge_up", target: "allies", value: 50, duration: 30 }], ["B1"])];
   assert.equal(reactions(dodged.run()).length, 0);
 });
 

@@ -113,7 +113,7 @@ export async function listCardBattleRanking(
          'energyRequired', tiers.energy_required, 'critRate', tiers.crit_rate, 'critDamage', tiers.crit_damage,
          'lifestealRate', tiers.lifesteal_rate, 'extraActionRate', tiers.extra_action_rate,
          'counterRate', tiers.counter_rate, 'dodgeRate', tiers.dodge_rate, 'stunRate', tiers.stun_rate,
-         'battleEffectType', relic.battle_effect_type, 'battleEffectValue', relic.battle_effect_value)) AS power_cards
+         'battleEffects', relic.battle_effects_json, 'battleEffectType', relic.battle_effect_type, 'battleEffectValue', relic.battle_effect_value)) AS power_cards
      FROM card_battle_ranking_entries entries
      JOIN users ON users.id = entries.user_id
      LEFT JOIN JSON_TABLE(entries.lineup_json, '$[*]' COLUMNS(card_id VARCHAR(64) PATH '$')) lineup ON TRUE
@@ -143,6 +143,7 @@ export async function listCardBattleRanking(
       cardId: string | null;
       battleEffectType: import("@hgt/shared").BattleCollectibleEffectType | null;
       battleEffectValue: number | null;
+      battleEffects?: import("@hgt/shared").BattleCollectibleEffect[];
     }> =
       typeof row.power_cards === "string" ? JSON.parse(row.power_cards) : row.power_cards ?? [];
     const totalPower = powerCards.reduce((sum, card) => {
@@ -155,7 +156,7 @@ export async function listCardBattleRanking(
       };
       const boosted = applyCardBattleCollectionStats(base, card.cardId, collections.get(String(row.user_id))!);
       const stats = applyBattleCollectibleStats(boosted, {
-        battleEffectDescription: "", battleEffectType: card.battleEffectType,
+        battleEffectDescription: "", battleEffects: card.battleEffects ?? undefined, battleEffectType: card.battleEffectType,
         battleEffectValue: card.battleEffectValue == null ? null : Number(card.battleEffectValue),
       });
       return sum + calculateCardBattlePower(stats);

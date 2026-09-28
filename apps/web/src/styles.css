@@ -5506,6 +5506,7 @@ textarea {
 
 .asset-card-animated:hover .asset-card-frame { filter: brightness(1.04) saturate(1.06); }
 
+.asset-pack-draw-active { visibility: hidden; }
 .asset-pack-sealed { animation: asset-pack-float 1.15s ease-in-out infinite alternate; }
 .asset-draw-reveal { position: relative; isolation: isolate; perspective: 1200px; }
 .asset-draw-flip-card { position: relative; aspect-ratio: 5 / 7; transform-style: preserve-3d; }
@@ -5515,7 +5516,12 @@ textarea {
   transform: rotateY(180deg);
   transform-style: preserve-3d;
   animation: asset-draw-card-flip 680ms cubic-bezier(.2,.72,.2,1) both;
+  will-change: transform;
 }
+.asset-draw-loading .asset-draw-flip-inner { animation: none; transform: rotateY(0deg); }
+.asset-draw-loading .asset-draw-caption,
+.asset-draw-loading .asset-card-new-burst { visibility: hidden; animation: none; }
+.asset-draw-reveal .asset-card-stars { backdrop-filter: none; }
 .asset-draw-flip-face {
   position: absolute;
   inset: 0;
@@ -5538,7 +5544,8 @@ textarea {
   border-radius: 42%;
   content: "";
   opacity: 0.96;
-  filter: blur(34px) saturate(1.35);
+  -webkit-mask-image: radial-gradient(ellipse closest-side, #000 35%, transparent 100%);
+  mask-image: radial-gradient(ellipse closest-side, #000 35%, transparent 100%);
   transform: scale(1.08);
 }
 .asset-draw-aura-normal::before { background: radial-gradient(ellipse, rgb(14 165 233 / 0.96), rgb(37 99 235 / 0.58) 48%, transparent 74%); }
@@ -5608,7 +5615,7 @@ textarea {
   47% { opacity: 0; transform: translate(-50%, -50%) scale(0.26) rotate(var(--rainbow-star-rotation, 0deg)); }
 }
 @keyframes asset-draw-legend-aura { from { opacity: 0.78; transform: scale(1.02); } to { opacity: 1; transform: scale(1.16); } }
-@keyframes asset-pack-float { to { transform: translateY(-10px) rotate(1.5deg); filter: drop-shadow(0 20px 26px rgb(37 99 235 / 0.35)); } }
+@keyframes asset-pack-float { to { transform: translateY(-10px) rotate(1.5deg); } }
 @keyframes asset-draw-card-flip {
   0% { transform: rotateY(0deg) scale(.78); }
   42% { transform: rotateY(82deg) scale(.94); }

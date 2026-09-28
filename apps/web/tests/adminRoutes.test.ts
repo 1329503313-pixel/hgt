@@ -34,8 +34,8 @@ test("BOSS 后台直达、刷新路由只向超级管理员开放", () => {
 });
 
 
-test("卡牌对战两个子模块使用已注册路径并继承权限", () => {
-  assert.deepEqual(cardBattleAdminRoutes.map((route) => route.path), ["/admin/card-battle/boss", "/admin/card-battle/tower"]);
+test("卡牌对战子模块使用已注册路径并继承权限", () => {
+  assert.deepEqual(cardBattleAdminRoutes.map((route) => route.path), ["/admin/card-battle/boss", "/admin/card-battle/tower", "/admin/card-battle/traits"]);
   for (const child of cardBattleAdminRoutes) {
     const parent = adminRouteFromPathname(child.path)!;
     assert.equal(parent.label, "卡牌对战");

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { PoolConnection } from "mysql2/promise";
-import { applyBattleCollectibleStats, battleCollectibleConfigError, battleCollectibleEffectTypes, type BattleCollectible, type BattleCollectibleEffectType } from "@hgt/shared";
+import { applyBattleCollectibleStats, battleCollectibleConfigError, battleCollectibleEffectsError, battleCollectibleEffectTypes, type BattleCollectible, type BattleCollectibleEffectType } from "@hgt/shared";
 import { simulateCardBattle, type CardBattleDeckCard, type CardBattlePlayerInput, type CardBattleSkillEffect } from "./cardBattle.js";
 import { parseBattleCollectibleBindings, resolveBattleCollectibles, validateBattleCollectibleBindings } from "./battleCollectibles.js";
 import { createSavedCardBattleDeck, loadSavedCardBattleDecks, saveCardBattleLineup, setCardBattleReady, updateSavedCardBattleDeck } from "./cardBattleRoom.js";
@@ -26,8 +26,8 @@ function effect(type: CardBattleSkillEffect["type"], value = 100, condition: Car
   return { id: type, order: 0, type, value, condition, conditionValue: 100, duration: 2 };
 }
 
-test("14种效果统一校验单位、空值、非法类型、精度及回合边界", () => {
-  assert.equal(battleCollectibleEffectTypes.length, 14);
+test("26种效果统一校验单位、空值、非法类型、精度及回合边界", () => {
+  assert.equal(battleCollectibleEffectTypes.length, 26);
   for (const type of battleCollectibleEffectTypes) assert.equal(battleCollectibleConfigError(type, 2), null);
   assert.equal(battleCollectibleConfigError(null, null), null);
   assert.equal(battleCollectibleConfigError("crit_rate", 12.25), null);
@@ -199,4 +199,85 @@ test("榜位顺延保留全部收藏品绑定", () => {
   const entry = (userId: string, rank: number) => ({ userId, rank, lineup: [userId], collectibleBindings: [{ cardId: userId, collectibleId: `r-${userId}` }], totalPower: 1, achievedAt: new Date() });
   const next = promoteCardBattleRankingEntries([entry("a", 1), entry("b", 2)], entry("c", 8), 1);
   assert.deepEqual(next.map((e) => [e.userId, e.rank, e.collectibleBindings![0]!.collectibleId]), [["c", 1, "r-c"], ["a", 2, "r-a"], ["b", 3, "r-b"]]);
+});
+
+function multi(...effects: Array<[BattleCollectibleEffectType, number]>): BattleCollectible {
+  return { ...relic(null, null), battleEffects: effects.map(([type, value]) => ({ type, value })) };
+}
+
+test("多效果叠加且不会重复计算兼容字段，空列表和非法行不能保存", () => {
+  const item = { ...multi(["attack", 20], ["attack_skill_damage", 30], ["energy_reduction", 100]), battleEffectType: "attack" as const, battleEffectValue: 20 };
+  const stats = applyBattleCollectibleStats(card("a", 1).tier, item);
+  assert.equal(stats.attack, 150);
+  assert.equal(stats.energyRequired, 10);
+  assert.equal(battleCollectibleEffectsError(item), null);
+  assert.ok(battleCollectibleEffectsError({ battleEffects: [] }));
+  assert.ok(battleCollectibleEffectsError(multi(["attack", 2], ["dodge_rate", 101])));
+  assert.equal(battleCollectibleEffectsError(multi(["single_healing", 12.25])), null);
+});
+
+test("收藏品六种概率增加百分点，叠加封顶并实际触发闪避、命中、吸血、击晕、再动与反击", () => {
+  const rates = multi(["dodge_rate", 100], ["hit_rate", 100], ["lifesteal_rate", 100], ["stun_rate", 100], ["extra_action_rate", 100], ["counter_rate", 100]);
+  const base = card("a", 1, { dodgeRate: 20, hitRate: 10, lifestealRate: 20, stunRate: 20, extraActionRate: 20, counterRate: 20 }).tier;
+  const changed = applyBattleCollectibleStats(base, rates);
+  for (const key of ["dodgeRate", "hitRate", "lifestealRate", "stunRate", "extraActionRate", "counterRate"] as const) assert.equal(changed[key], 100);
+  const dodge = simulate(team("a"), team("b", {}, multi(["dodge_rate", 100])));
+  assert.ok(dodge.events.filter(e => e.kind === "attack" && e.actorId?.startsWith("a")).every(e => e.effects.every(v => v.dodged)));
+  const hit = simulate(team("a", {}, multi(["hit_rate", 100])), team("b", {}, multi(["dodge_rate", 100])));
+  assert.ok(hit.events.some(e => e.actorId?.startsWith("a") && e.effects.some(v => v.amount! < 0)));
+  const procs = simulate(team("a", { speed: 50 }, multi(["lifesteal_rate", 100], ["stun_rate", 100], ["extra_action_rate", 100], ["counter_rate", 100])), team("b"));
+  assert.ok(procs.events.some(e => e.actorId?.startsWith("a") && e.lifesteal! > 0));
+  assert.ok(procs.events.some(e => e.actorId?.startsWith("a") && e.effects.some(v => v.stunned)));
+  assert.ok(procs.events.some(e => e.actorId?.startsWith("a") && e.extraAction));
+  assert.ok(procs.events.some(e => e.actorId?.startsWith("a") && e.counterattack));
+});
+
+test("单体伤害加成覆盖前后排、随机与真实伤害，不误加到仅剩一个目标的群攻", () => {
+  for (const type of ["damage_single", "damage_rear", "damage_random", "damage_true_single", "damage_all", "damage_random_2"] as const) {
+    const one = team("a", { attack: 0 });
+    one[0] = card("a1", 1, { attack: 0, energyRequired: 10, effects: [effect(type, 100)] }, multi(["skill_damage", 20], ["single_skill_damage", 50]));
+    const two = team("b", { attack: 10 });
+    // Other targets die immediately, leaving group targeting with just one survivor.
+    for (const target of two.slice(1)) target.tier.maxHp = 1;
+    const result = simulate(one, two);
+    const hits = result.events.filter(e => e.actorId === "a1" && e.effectType === type && e.effects.some(v => v.targetId === "b1" && v.amount! < 0));
+    assert.ok(hits.length, type);
+    const single = !["damage_all", "damage_random_2"].includes(type);
+    for (const event of hits) {
+      const damage = -event.effects.find(v => v.targetId === "b1")!.amount!;
+      assert.ok(damage >= (single ? 166 : 117) && damage <= (single ? 174 : 123), type + ": " + damage);
+    }
+  }
+});
+
+test("单体治疗量与通用治疗相加，群体治疗不享受单体加成", () => {
+  for (const type of ["heal_self", "heal_lowest_ally", "heal_all_allies"] as const) {
+    const one = team("a", { attack: 0 });
+    one[0] = card("a1", 1, { attack: 0, energyRequired: 10, effects: [effect(type, 100)] }, multi(["healing", 20], ["single_healing", 50]));
+    const result = simulate(one, team("b", { speed: 200, energyRequired: 10, effects: [effect("damage_all", 1000)] }));
+    const heal = result.events.find(e => e.actorId === "a1" && e.effectType === type && e.round >= 3 && e.effects.length)!;
+    assert.ok(heal, type);
+    assert.ok(heal.effects.every(v => v.amount === (type === "heal_all_allies" ? 120 : 170)), JSON.stringify({ type, effects: heal.effects }));
+  }
+});
+
+test("每回合恢复受缺血及受治疗效果约束，每回合成长叠加且不受再动次数影响", () => {
+  const one = team("a", { attack: 0 });
+  one[0] = card("a1", 1, { energyRequired: 10, effects: [effect("damage_single", 100), { ...effect("damage_all", 100), order: 1 }] }, multi(["round_healing", 100], ["healing_received", 50], ["round_attack", 10], ["round_attack_skill_damage", 20], ["round_attack_single_skill_damage", 30], ["extra_action_rate", 100]));
+  const result = simulate(one, team("b", { speed: 200, energyRequired: 10, effects: [effect("damage_all", 1000)] }));
+  const growth = result.events.filter(e => e.actorId === "a1" && e.skillName === "收藏品回合效果");
+  assert.ok(growth.length >= 2);
+  assert.equal(new Set(growth.map(e => e.round)).size, growth.length);
+  for (const event of growth) assert.equal(event.states.find(c => c.instanceId === "a1")!.attack, 100 + 60 * event.round);
+  const heals = result.events.filter(e => e.actorId === "a1" && e.skillName === "收藏品回合恢复");
+  assert.ok(heals.length);
+  assert.ok(heals.every(e => e.round >= 2 && e.effects[0]!.amount! > 0 && e.effects[0]!.amount! <= 150), JSON.stringify(heals.map(e => [e.round, e.effects])));
+  assert.ok(heals.some(e => e.effects[0]!.amount === 150));
+  for (const type of ["damage_single", "damage_all"] as const) {
+    const event = result.events.find(e => e.actorId === "a1" && e.effectType === type)!;
+    const base = 100 + event.round * (type === "damage_single" ? 50 : 20);
+    assert.ok(event.effects.every(v => -v.amount! >= Math.floor(base * .98) && -v.amount! <= Math.ceil(base * 1.02)));
+  }
+  assert.equal(one[0].tier.attack, 100, "不修改冻结卡牌");
+  assert.ok(result.events.every(e => e.states.every(c => c.hp <= c.maxHp)));
 });

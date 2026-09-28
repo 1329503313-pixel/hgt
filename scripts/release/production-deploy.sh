@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 5 ] && [ "$#" -ne 6 ] && [ "$#" -ne 8 ]; then
+if [ "$#" -ne 5 ] && [ "$#" -ne 6 ] && [ "$#" -ne 7 ] && [ "$#" -ne 8 ] && [ "$#" -ne 9 ]; then
   echo "usage: production-deploy.sh <bundle> <commit> <sha256> <expected-container-id> <confirmation>" >&2
   exit 2
 fi
@@ -15,6 +15,14 @@ voice_env=${6:-}
 if [ "$voice_env" = - ]; then voice_env=''; fi
 image_bundle=${7:-}
 image_bundle_hash=${8:-}
+sms_env=''
+if [ "$#" -eq 7 ]; then
+  sms_env=$7
+  image_bundle=''
+  image_bundle_hash=''
+elif [ "$#" -eq 9 ]; then
+  sms_env=$9
+fi
 current=hgt-app
 
 test "$confirmation" = deploy-hgt-production
@@ -141,8 +149,23 @@ if [ -n "$voice_env" ]; then
   cat "$voice_env" >> "$expected_env"
   sort -o "$expected_env" "$expected_env"
 fi
-# Logging is the only additional environment change. Never replace an existing
-# custom directory silently; it needs a matching audited host mount first.
+# Only the five SMS settings may be added or replaced. Keep the file private
+# and never print its contents or source it as shell code.
+if [ -n "$sms_env" ]; then
+  test "$sms_env" = "/opt/hgt-releases/incoming/sms-$short/runtime.env"
+  test -f "$sms_env"
+  test "$(wc -l < "$sms_env" | tr -d ' ')" -eq 5
+  for key in ALIYUN_SMS_ENDPOINT ALIYUN_SMS_ACCESS_KEY_ID ALIYUN_SMS_ACCESS_KEY_SECRET ALIYUN_SMS_SIGN_NAME ALIYUN_SMS_VERIFICATION_TEMPLATE_CODE; do
+    test "$(grep -c "^${key}=[^=][^=]*$" "$sms_env")" -eq 1
+  done
+  grep -Eq '^ALIYUN_SMS_VERIFICATION_TEMPLATE_CODE=SMS_[0-9]+$' "$sms_env"
+  grep -Eq '^ALIYUN_SMS_ENDPOINT=[A-Za-z0-9.-]+$' "$sms_env"
+  grep -Ev '^(ALIYUN_SMS_ENDPOINT|ALIYUN_SMS_ACCESS_KEY_ID|ALIYUN_SMS_ACCESS_KEY_SECRET|ALIYUN_SMS_SIGN_NAME|ALIYUN_SMS_VERIFICATION_TEMPLATE_CODE)=' "$expected_env" > "$runtime_env"
+  cat "$sms_env" >> "$runtime_env"
+  sort "$runtime_env" > "$expected_env"
+fi
+# Never replace an existing custom request-log directory silently; it needs a
+# matching audited host mount first.
 if grep -q '^REQUEST_LOG_DIR=' "$expected_env"; then
   grep -qx 'REQUEST_LOG_DIR=/app/logs/requests' "$expected_env"
 else

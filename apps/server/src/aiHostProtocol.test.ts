@@ -11,6 +11,7 @@ import {
   compileRuntimeFacts,
   detectPromptInjection,
   parseStrictModelJson,
+  preserveFastAnswer,
   resolveRepeatedVerifierRejection,
   shouldVerifyAdjudication,
   validateAdjudicationFactIds,
@@ -63,6 +64,19 @@ test("Verifier 连续拒绝时保留一致回答但清空争议事实", () => {
   const disagreed = resolveRepeatedVerifierRejection(candidate, "NO");
   assert.equal(disagreed.answer, "UNKNOWN");
   assert.deepEqual(disagreed.matchedFacts, []);
+});
+
+test("快速回答成功后是唯一对外答案，终审只提供进度事实", () => {
+  const adjudication = result({
+    answer: "UNKNOWN",
+    confidence: 0.9,
+    matchedFacts: [{ factId: "F01", matchStrength: 0.95, discoveryStrength: 0.95, proposedState: "DISCOVERED" }],
+  });
+  const publicResult = preserveFastAnswer(adjudication, "YES", 0.95);
+  assert.equal(publicResult.answer, "YES");
+  assert.equal(publicResult.confidence, 0.95);
+  assert.deepEqual(publicResult.matchedFacts, adjudication.matchedFacts);
+  assert.equal(preserveFastAnswer(adjudication, null), adjudication);
 });
 
 test("不存在或重复 Fact ID 使整次判定失败", () => {

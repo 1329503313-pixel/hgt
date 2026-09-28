@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { useState } from "react";
-import { BATTLE_COLLECTIBLE_EFFECT_LABELS, battleCollectibleEffectUnit } from "@hgt/shared";
+import { battleCollectibleEffects, BATTLE_COLLECTIBLE_EFFECT_LABELS, battleCollectibleEffectUnit } from "@hgt/shared";
 import type { OnlineCardBattleCard } from "../shared/types";
 import { Modal } from "./Modal";
 
@@ -14,7 +14,7 @@ export function BossLineupDetails({ groups, onClose }: { groups: Array<{ name: s
         ["生命", card.stats.maxHp], ["攻击", card.stats.attack], ["防御", card.stats.defense], ["速度", card.stats.speed], ["能量", card.stats.energyRequired],
         ["吸血", `${card.stats.lifestealRate ?? 0}%`], ["暴击率", `${card.stats.critRate}%`], ["暴击伤害", `${card.stats.critDamage}%`], ["反击", `${card.stats.counterRate ?? 0}%`], ["再动", `${card.stats.extraActionRate ?? 0}%`], ["击晕", `${card.stats.stunRate ?? 0}%`], ["闪避率", `${card.stats.dodgeRate ?? 0}%`], ["命中率", `${card.stats.hitRate ?? 0}%`], ["普攻后排", card.stats.canAttackRear ? "允许" : "不允许"],
       ] as const).map(([label, value]) => <div key={label} className="flex justify-between gap-2"><dt className="text-muted">{label}</dt><dd className="font-bold text-ink">{value}</dd></div>)}</dl>
-      {card.collectible && <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900"><strong>收藏品 · {card.collectible.name}</strong><p className="mt-1 whitespace-pre-wrap">{card.collectible.battleEffectDescription}</p>{card.collectible.battleEffectType && <p className="mt-1">{BATTLE_COLLECTIBLE_EFFECT_LABELS[card.collectible.battleEffectType]} {card.collectible.battleEffectValue}{battleCollectibleEffectUnit(card.collectible.battleEffectType)}</p>}</div>}
+      {card.collectible && <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900"><strong>收藏品 · {card.collectible.name}</strong><p className="mt-1 whitespace-pre-wrap">{card.collectible.battleEffectDescription}</p>{battleCollectibleEffects(card.collectible).map((effect, index) => effect.type && <p key={index} className="mt-1">{BATTLE_COLLECTIBLE_EFFECT_LABELS[effect.type]} {effect.value}{battleCollectibleEffectUnit(effect.type)}</p>)}</div>}
     </article>)}</div>{!groups[selected]?.cards.length && <p className="py-10 text-center text-muted">该席位尚未配置卡牌</p>}
   </Modal>;
 }

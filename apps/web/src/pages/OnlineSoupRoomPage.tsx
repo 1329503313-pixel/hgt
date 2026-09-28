@@ -1730,6 +1730,34 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
     </Modal>}
   </div>;
 
+  const memberManagementDialog = isHost && managedMember && <Modal onClose={() => { if (!memberManagementLoading) { setManagedMemberId(null); setMemberManagementAction(null); } }}><div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <span className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-blue-100 font-black text-primary">{managedMember.avatar ? <img className="h-full w-full rounded-full object-cover" src={managedMember.avatar} alt={`${managedMember.nickname}头像`} /> : managedMember.nickname.slice(0, 1)}{isActiveMute(managedMember.mutedUntil) && <MutedAvatarIndicator />}</span>
+          <div className="min-w-0"><h2 className="truncate text-xl font-black text-ink">{managedMember.nickname}</h2><p className="mt-1 text-xs text-muted">{managedMember.role === "player" ? "玩家" : "旁观者"} · Lv{managedMember.level}</p></div>
+        </div>
+        {memberManagementAction ? <>
+          <div className={`rounded-xl p-4 text-sm leading-6 ${memberManagementAction === "kick" ? "bg-red-50 text-red-700" : "bg-violet-50 text-violet-700"}`}>
+            {memberManagementAction === "kick"
+              ? `确认将「${managedMember.nickname}」踢出房间？该成员的当前席位会立即释放。`
+              : memberManagementAction === "transfer"
+                ? (impostorMode || cardBattleMode)
+                  ? `确认将房主转让给「${managedMember.nickname}」？双方当前的游戏者或旁观者身份不会改变，对方将获得房间管理权限。`
+                  : `确认将房主转让给「${managedMember.nickname}」？转让后你将变为${managedMember.role === "player" ? "玩家" : "旁观者"}，对方将立即获得主持权限。`
+                : `请选择禁言「${managedMember.nickname}」的时长。禁言期间无法发送讨论、正式提问或表情。`}
+          </div>
+          {memberManagementAction === "mute" ? <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary min-h-11" disabled={memberManagementLoading} onClick={() => void manageMember("mute", 1)}>1 分钟</button><button className="btn min-h-11 bg-red-500 text-white hover:bg-red-600" disabled={memberManagementLoading} onClick={() => void manageMember("mute", 5)}>{memberManagementLoading ? "处理中…" : "5 分钟"}</button><button className="btn btn-secondary col-span-2 min-h-11" disabled={memberManagementLoading} onClick={() => setMemberManagementAction(null)}>返回</button></div> : <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={memberManagementLoading} onClick={() => setMemberManagementAction(null)}>返回</button><button className={`btn text-white ${memberManagementAction === "kick" ? "bg-red-500 hover:bg-red-600" : "bg-violet-600 hover:bg-violet-700"}`} disabled={memberManagementLoading} onClick={() => void manageMember(memberManagementAction)}>{memberManagementLoading ? "处理中…" : memberManagementAction === "kick" ? "确认踢出" : "确认转让"}</button></div>}
+        </> : <>
+          <button className="btn w-full justify-start bg-blue-50 text-primary hover:bg-blue-100" onClick={() => { const targetId = managedMember.id; setManagedMemberId(null); navigate(`/users/${targetId}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } }); }}><Eye size={17} />查看主页</button>
+          <button className="btn w-full justify-start bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => setMemberManagementAction("transfer")}><ArrowRightLeft size={17} />转让房主</button>
+          {!((impostorMode || cardBattleMode) && snapshot.room.status === "playing" && managedMember.role === "player") && <button className="btn w-full justify-start bg-red-50 text-red-600 hover:bg-red-100" onClick={() => setMemberManagementAction("kick")}><LogOut size={17} />踢出房间</button>}
+          {(impostorMode || cardBattleMode) && snapshot.room.status === "playing" && managedMember.role === "player" && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-700">对局中的游戏者席位已锁定，不能踢出；请等待本局结束。</p>}
+          {isActiveMute(managedMember.mutedUntil)
+            ? <button className="btn w-full justify-start bg-emerald-50 text-emerald-700 hover:bg-emerald-100" disabled={memberManagementLoading} onClick={() => void manageMember("unmute")}><Volume2 size={17} />{memberManagementLoading ? "处理中…" : "取消禁言"}</button>
+            : <button className="btn w-full justify-start bg-amber-50 text-amber-700 hover:bg-amber-100" onClick={() => setMemberManagementAction("mute")}><VolumeX size={17} />禁言</button>}
+          <button className="btn btn-secondary w-full" onClick={() => setManagedMemberId(null)}>取消</button>
+        </>}
+      </div></Modal>;
+
   if (snapshot.room.contentType === "card_battle" && snapshot.room.cardBattle) {
     const memberById = new Map(snapshot.members.map((member) => [member.id, member]));
     const battleSeatUserIds = new Set(snapshot.room.cardBattle.seats.flatMap((seat) => seat.user ? [seat.user.id] : []));
@@ -1762,7 +1790,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
                 return <div key={seat.seat} className="rounded-xl border border-line bg-white p-2">
                   <p className="mb-1.5 px-1 text-[11px] font-black text-primary">{seat.seat} 号对战席</p>
                   {member
-                    ? <MemberRow member={member} displayName={member.nickname} onOpenProfile={openMemberProfile} />
+                    ? <MemberRow member={member} displayName={member.nickname} onOpenProfile={openMemberProfile} onManage={isHost && member.id !== user?.id ? openMemberManagement : undefined} />
                     : <div className="grid min-h-14 place-items-center rounded-lg bg-slate-50 text-sm font-bold text-muted">等待玩家进入对战席</div>}
                 </div>;
               })}
@@ -1771,7 +1799,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
           <section>
             <p className="mb-2 text-xs font-bold text-muted">观战席 {spectatorMembers.length}/{snapshot.room.cardBattle.mode === "boss" ? 10 : 20}</p>
             <div className="space-y-2">
-              {spectatorMembers.map((member) => <MemberRow key={member.id} member={member} displayName={member.nickname} onOpenProfile={openMemberProfile} />)}
+              {spectatorMembers.map((member) => <MemberRow key={member.id} member={member} displayName={member.nickname} onOpenProfile={openMemberProfile} onManage={isHost && member.id !== user?.id ? openMemberManagement : undefined} />)}
               {spectatorMembers.length === 0 && <div className="grid min-h-14 place-items-center rounded-xl bg-slate-50 text-sm font-bold text-muted">暂无观战成员</div>}
             </div>
           </section>
@@ -1781,6 +1809,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
           </button>
         </div>
       </Modal>}
+      {memberManagementDialog}
       {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
     </>;
   }
@@ -2163,33 +2192,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
           onClick={() => { if (suppressHostMenuClickRef.current) { suppressHostMenuClickRef.current = false; return; } setHostActionsOpen((open) => !open); }} aria-label="更多操作，可拖动" title="更多操作（按住可拖动）"><Menu size={22} /></button>
       </div> : null}
 
-      {managedMember && <Modal onClose={() => { if (!memberManagementLoading) { setManagedMemberId(null); setMemberManagementAction(null); } }}><div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <span className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-blue-100 font-black text-primary">{managedMember.avatar ? <img className="h-full w-full rounded-full object-cover" src={managedMember.avatar} alt={`${managedMember.nickname}头像`} /> : managedMember.nickname.slice(0, 1)}{isActiveMute(managedMember.mutedUntil) && <MutedAvatarIndicator />}</span>
-          <div className="min-w-0"><h2 className="truncate text-xl font-black text-ink">{managedMember.nickname}</h2><p className="mt-1 text-xs text-muted">{managedMember.role === "player" ? "玩家" : "旁观者"} · Lv{managedMember.level}</p></div>
-        </div>
-        {memberManagementAction ? <>
-          <div className={`rounded-xl p-4 text-sm leading-6 ${memberManagementAction === "kick" ? "bg-red-50 text-red-700" : "bg-violet-50 text-violet-700"}`}>
-            {memberManagementAction === "kick"
-              ? `确认将「${managedMember.nickname}」踢出房间？该成员的当前席位会立即释放。`
-              : memberManagementAction === "transfer"
-                ? impostorMode
-                  ? `确认将房主转让给「${managedMember.nickname}」？双方当前的游戏者或旁观者身份不会改变，对方将获得房间管理权限。`
-                  : `确认将房主转让给「${managedMember.nickname}」？转让后你将变为${managedMember.role === "player" ? "玩家" : "旁观者"}，对方将立即获得主持权限。`
-                : `请选择禁言「${managedMember.nickname}」的时长。禁言期间无法发送讨论、正式提问或表情。`}
-          </div>
-          {memberManagementAction === "mute" ? <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary min-h-11" disabled={memberManagementLoading} onClick={() => void manageMember("mute", 1)}>1 分钟</button><button className="btn min-h-11 bg-red-500 text-white hover:bg-red-600" disabled={memberManagementLoading} onClick={() => void manageMember("mute", 5)}>{memberManagementLoading ? "处理中…" : "5 分钟"}</button><button className="btn btn-secondary col-span-2 min-h-11" disabled={memberManagementLoading} onClick={() => setMemberManagementAction(null)}>返回</button></div> : <div className="grid grid-cols-2 gap-2"><button className="btn btn-secondary" disabled={memberManagementLoading} onClick={() => setMemberManagementAction(null)}>返回</button><button className={`btn text-white ${memberManagementAction === "kick" ? "bg-red-500 hover:bg-red-600" : "bg-violet-600 hover:bg-violet-700"}`} disabled={memberManagementLoading} onClick={() => void manageMember(memberManagementAction)}>{memberManagementLoading ? "处理中…" : memberManagementAction === "kick" ? "确认踢出" : "确认转让"}</button></div>}
-        </> : <>
-          <button className="btn w-full justify-start bg-blue-50 text-primary hover:bg-blue-100" onClick={() => { const targetId = managedMember.id; setManagedMemberId(null); navigate(`/users/${targetId}`, { state: { onlineSoupRoomId: roomId, onlineSoupMember: true } }); }}><Eye size={17} />查看主页</button>
-          <button className="btn w-full justify-start bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => setMemberManagementAction("transfer")}><ArrowRightLeft size={17} />转让房主</button>
-          {!(impostorMode && snapshot.room.status === "playing" && managedMember.role === "player") && <button className="btn w-full justify-start bg-red-50 text-red-600 hover:bg-red-100" onClick={() => setMemberManagementAction("kick")}><LogOut size={17} />踢出房间</button>}
-          {impostorMode && snapshot.room.status === "playing" && managedMember.role === "player" && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-700">对局中的游戏者席位已锁定，需先由房主终止本局。</p>}
-          {isActiveMute(managedMember.mutedUntil)
-            ? <button className="btn w-full justify-start bg-emerald-50 text-emerald-700 hover:bg-emerald-100" disabled={memberManagementLoading} onClick={() => void manageMember("unmute")}><Volume2 size={17} />{memberManagementLoading ? "处理中…" : "取消禁言"}</button>
-            : <button className="btn w-full justify-start bg-amber-50 text-amber-700 hover:bg-amber-100" onClick={() => setMemberManagementAction("mute")}><VolumeX size={17} />禁言</button>}
-          <button className="btn btn-secondary w-full" onClick={() => setManagedMemberId(null)}>取消</button>
-        </>}
-      </div></Modal>}
+      {memberManagementDialog}
       {membersOpen && <Modal onClose={() => setMembersOpen(false)}><div className="space-y-4"><h2 className="text-xl font-black text-ink">房间成员</h2><p className="text-xs font-bold text-muted">{impostorMode ? "游戏者" : "主持人和玩家"} {(groupedMembers.host ? 1 : 0) + groupedMembers.players.length}/{snapshot.room.participantCapacity} 人</p>{groupedMembers.host && <MemberRow member={groupedMembers.host} displayName={impostorMemberName(groupedMembers.host)} onOpenProfile={openMemberProfile} />}<div><p className="mb-2 text-xs font-bold text-muted">{impostorMode ? "游戏者" : "玩家"} {groupedMembers.players.length}/{snapshot.room.playerCapacity}</p><div className="space-y-2">{groupedMembers.players.map((member) => <MemberRow key={member.id} member={member} displayName={impostorMemberName(member)} onOpenProfile={openMemberProfile} onManage={isHost && member.id !== user?.id ? openMemberManagement : undefined} />)}{groupedMembers.players.length === 0 && <p className="text-sm text-muted">等待玩家加入</p>}</div></div>{groupedMembers.spectators.length > 0 && <div><p className="mb-2 text-xs font-bold text-muted">旁观者</p>{groupedMembers.spectators.map((member) => <MemberRow key={member.id} member={member} displayName={impostorMemberName(member)} onOpenProfile={openMemberProfile} onManage={isHost && member.id !== user?.id ? openMemberManagement : undefined} />)}</div>}<button className="flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-2.5 text-left text-primary transition hover:border-primary hover:bg-blue-50" onClick={() => { setMembersOpen(false); setInviteOpen(true); }}><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300"><Plus size={18} /></span><span><span className="block font-black">分享房间</span><span className="block text-xs font-medium text-muted">分享到微信、圈子或好友</span></span></button><button className="btn btn-secondary w-full" onClick={() => { setMembersOpen(false); requestRoomExit(); }}><LogOut size={16} /> 房间退出选项</button></div></Modal>}
       {inviteOpen && <OnlineSoupInviteModal roomId={roomId} roomName={snapshot.room.name} roomCode={snapshot.room.code} onClose={() => setInviteOpen(false)} showToast={showToast} />}
       {backgroundMusicOpen && <Modal onClose={() => { if (backgroundMusicSavingId === null) setBackgroundMusicOpen(false); }}><div className="space-y-4">

@@ -147,6 +147,31 @@ try {
   await fields.getByLabel("卡牌对战效果类型", { exact: true }).selectOption("");
   await expect(fields.getByLabel("卡牌对战效果属性（点）")).toBeDisabled();
   assert.equal(JSON.parse(await fields.locator("#config").textContent()).battleEffectValue, null);
+  await expect(fields.getByRole("button", { name: "删除效果 1", exact: true })).toBeDisabled();
+  await fields.getByRole("button", { name: "添加效果", exact: true }).click();
+  await fields.getByRole("button", { name: "添加效果", exact: true }).click();
+  await expect(fields.getByRole("combobox")).toHaveCount(3);
+  await fields.getByRole("group", { name: "效果 1", exact: true }).getByRole("combobox").selectOption("single_skill_damage");
+  await fields.getByRole("group", { name: "效果 1", exact: true }).getByRole("spinbutton").fill("50");
+  await fields.getByRole("group", { name: "效果 2", exact: true }).getByRole("combobox").selectOption("dodge_rate");
+  await fields.getByRole("group", { name: "效果 2", exact: true }).getByRole("spinbutton").fill("101");
+  await expect(fields.getByRole("alert")).toContainText("不能超过 100%");
+  await fields.getByRole("group", { name: "效果 2", exact: true }).getByRole("spinbutton").fill("12.25");
+  await fields.getByRole("group", { name: "效果 3", exact: true }).getByRole("combobox").selectOption("round_attack_single_skill_damage");
+  await fields.getByRole("group", { name: "效果 3", exact: true }).getByRole("spinbutton").fill("20");
+  assert.deepEqual(JSON.parse(await fields.locator("#config").textContent()).battleEffects, [{ type: "single_skill_damage", value: 50 }, { type: "dodge_rate", value: 12.25 }, { type: "round_attack_single_skill_damage", value: 20 }]);
+  for (const viewport of [{ width: 375, height: 812 }, { width: 812, height: 375 }, { width: 1440, height: 1000 }]) {
+    await fields.setViewportSize(viewport);
+    assert.ok(await fields.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "多效果表单无横向溢出");
+  }
+  await fields.setViewportSize({ width: 375, height: 812 });
+  await fields.screenshot({ path: resolve("test-results/collectible-effects-mobile.png"), fullPage: true });
+  await fields.getByRole("button", { name: "删除效果 2", exact: true }).click();
+  assert.deepEqual(JSON.parse(await fields.locator("#config").textContent()).battleEffects, [{ type: "single_skill_damage", value: 50 }, { type: "round_attack_single_skill_damage", value: 20 }]);
+  await fields.getByRole("button", { name: "删除效果 1", exact: true }).click();
+  await expect(fields.getByRole("button", { name: "删除效果 1", exact: true })).toBeDisabled();
+  await expect(fields.getByRole("combobox")).toHaveValue("round_attack_single_skill_damage");
+  await expect(fields.getByRole("spinbutton")).toHaveValue("20");
   assert.deepEqual(errors, []);
   console.log("PASS: two-step equip, move, unequip, deck round trip, refresh, ready lock, load/save failure, plain-text description, field units, responsive layout and reduced motion");
 } finally { await browser.close(); }

@@ -7,6 +7,7 @@ import { AdminPagination } from "./AdminPagination";
 import { BossEditor, CardBattleBossManagement } from "./CardBattleBossManagement";
 import type { BossCard, CardBattleBoss } from "../../shared/cardBattleBoss";
 import { cardBattleAdminRoutes } from "./adminRouteManifest";
+import { CardBattleTraitManagement } from "./CardBattleTraitManagement";
 
 type Floor = { id: string; floorNumber: number; enabled: boolean; rewardShells: number; cards: Array<BossCard | null>; revision: number; clearCount: number };
 function asBoss(floor: Floor): CardBattleBoss {
@@ -16,9 +17,9 @@ function asBoss(floor: Floor): CardBattleBoss {
 export function CardBattleManagement() {
   const { pathname } = useLocation();
   if (!cardBattleAdminRoutes.some((route) => route.path === pathname)) return <Navigate to={cardBattleAdminRoutes[0].path} replace />;
-  return <div className="space-y-4"><h1 className="text-xl font-black text-ink">卡牌对战</h1><nav aria-label="卡牌对战管理" className="flex gap-2">
+  return <div className="space-y-4"><h1 className="text-xl font-black text-ink">卡牌对战</h1><nav aria-label="卡牌对战管理" className="flex flex-wrap gap-2">
     {cardBattleAdminRoutes.map((route) => <NavLink key={route.path} to={route.path} className={({ isActive }) => `btn ${isActive ? "btn-primary" : "btn-secondary"}`}>{route.label}</NavLink>)}
-  </nav>{pathname.endsWith("/tower") ? <CardTowerManagement /> : <CardBattleBossManagement />}</div>;
+  </nav>{pathname.endsWith("/tower") ? <CardTowerManagement /> : pathname.endsWith("/traits") ? <CardBattleTraitManagement /> : <CardBattleBossManagement />}</div>;
 }
 function Clears({ floor, onClose }: { floor: Floor; onClose: () => void }) {
   const [page, setPage] = useState(1), [error, setError] = useState("");

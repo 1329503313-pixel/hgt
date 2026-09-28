@@ -70,7 +70,7 @@ const adminRoutePresentations: Record<AdminTab, AdminRoutePresentation> = {
   "ai-host": { icon: Bot, render: () => <AiHostAuditManagement /> },
   circles: { icon: CircleEllipsis, render: () => <CircleManagement /> },
   collectibles: { icon: Gem, render: () => <CollectibleManagement /> },
-  assets: { icon: PackageOpen, render: () => <StoreManagement /> },
+  assets: { icon: PackageOpen, render: ({ isSuperAdmin }) => <StoreManagement isSuperAdmin={isSuperAdmin} /> },
   notices: { icon: Bell, render: () => <NoticeManagement /> },
   feedback: { icon: MessageSquareText, render: () => <FeedbackManagement /> }
 };
