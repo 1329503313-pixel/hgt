@@ -50,7 +50,7 @@ test("动画穷举服务端全部技能类型含全部复活与38种减益，状
   assert.notEqual(CARD_BATTLE_MOTIONS.damage_random.pattern, CARD_BATTLE_MOTIONS.damage_all.pattern);
 });
 import { reorderCardBattleLineup } from "../src/shared/cardBattleLineup.js";
-import { filterCardBattleSelection } from "../src/shared/cardBattleSelection.js";
+import { collectCardBattleTraits, filterCardBattleSelection } from "../src/shared/cardBattleSelection.js";
 import { cardBattleEventTiming, seekCardBattleAnimations } from "../src/shared/cardBattlePlayback.js";
 import type { OnlineCardBattlePlayback } from "../src/shared/types.js";
 import { defaultCardBattleTiersForRarity } from "../src/shared/digitalAssets.js";
@@ -274,11 +274,32 @@ test("卡牌定位默认全部，三类定位筛选与搜索叠加且不改变�
   assert.deepEqual(filterCardBattleSelection([], "", "tank"), []);
   assert.deepEqual(cards.map((card) => card.cardNo), ["002", "004", "026"]);
   assert.match(view, /useState<CardBattleRoleFilter>\("all"\)/);
-  assert.match(view, /filterCardBattleSelection\(eligibleCards, cardQuery, cardRoleFilter\)/);
+  assert.match(view, /filterCardBattleSelection\(eligibleCards, cardQuery, cardRoleFilter, selectedTraitId\)/);
+  assert.match(view, /<CardBattleTraitFilter traits=\{eligibleTraits\}/);
   assert.match(view, /role="group" aria-label="卡牌定位"/);
   assert.match(view, /\["all", "damage", "tank", "support"\] as const/);
   assert.match(view, /aria-pressed=\{cardRoleFilter === role\}/);
   assert.match(view, /onClick=\{\(\) => setCardRoleFilter\(role\)\}/);
+});
+
+test("收藏柜和选卡的特质筛选列出全部唯一特质并筛选拥有特质的卡牌", () => {
+  const ward = { id: "ward", name: "守护", description: "增加防御", effects: [] };
+  const swift = { id: "swift", name: "迅捷", description: "增加速度", effects: [] };
+  const cards = [
+    { name: "火焰", cardNo: "002", battleRole: "damage" as const, traits: [ward] },
+    { name: "守卫", cardNo: "004", battleRole: "tank" as const, traits: [ward, swift] },
+    { name: "治愈", cardNo: "026", battleRole: "support" as const, traits: [swift] },
+  ];
+  assert.deepEqual(collectCardBattleTraits(cards).map((trait) => trait.id), ["ward", "swift"]);
+  assert.deepEqual(filterCardBattleSelection(cards, "", "all", "ward"), cards.slice(0, 2));
+  assert.deepEqual(filterCardBattleSelection(cards, "守卫", "tank", "swift"), [cards[1]]);
+  assert.deepEqual(filterCardBattleSelection(cards, "", "damage", "swift"), []);
+});
+
+test("对战选卡将特质筛选放在卡牌数量与视角切换之间，并在卡面底部展示特质", () => {
+  assert.match(view, /共 \{visibleEligibleCards\.length\} 张卡牌<\/p><CardBattleTraitFilter traits=\{eligibleTraits\}/);
+  assert.match(view, /absolute bottom-9 left-2 right-2 z-10"><CardBattleTraitBadges traits=\{card\.traits\} dark \/><\/span>/);
+  assert.match(view, /absolute bottom-2 right-2 rounded-full bg-amber-400/);
 });
 
 test("备战支持保存、编辑和按固定位置使用卡组", () => {

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { Star } from "lucide-react";
 import type { AssetCard, AssetDrawResult, AssetPackType, OwnedAssetCard } from "../shared/digitalAssets";
 import { assetRarityLabel, warmAssetImage } from "../shared/digitalAssets";
+import { CardBattleTraitBadges } from "./CardBattleTraitBadges";
 
 type AssetCardGlitterEffect = "gold" | "rainbow" | null;
 export const AssetAnimationPausedContext = createContext(false);
@@ -95,6 +96,7 @@ export function AssetCardVisual({
   motion = false,
   forceMotion = false,
   highDetail = false,
+  warmHighDetailOnInteraction = true,
   eager = false,
   historyCompact = false,
   compactBadges = false,
@@ -115,6 +117,7 @@ export function AssetCardVisual({
   motion?: boolean;
   forceMotion?: boolean;
   highDetail?: boolean;
+  warmHighDetailOnInteraction?: boolean;
   eager?: boolean;
   historyCompact?: boolean;
   compactBadges?: boolean;
@@ -186,9 +189,9 @@ export function AssetCardVisual({
       type="button"
       className={`asset-card asset-card-${card.rarity} ${motionAllowed ? "asset-card-motion-allowed" : "asset-card-motion-disabled"} ${animated ? "asset-card-animated" : ""} ${highDetail ? "asset-card-high-detail" : ""} ${historyCompact ? "asset-card-history-compact" : ""} ${compactBadges ? "asset-card-compact-badges" : ""} ${selected ? "asset-card-selected" : ""} ${owned === false ? "asset-card-locked" : ""} ${className}`}
       onPointerMove={animated ? move : undefined}
-      onPointerEnter={warmHighDetail}
-      onFocus={warmHighDetail}
-      onTouchStart={warmHighDetail}
+      onPointerEnter={warmHighDetailOnInteraction ? warmHighDetail : undefined}
+      onFocus={warmHighDetailOnInteraction ? warmHighDetail : undefined}
+      onTouchStart={warmHighDetailOnInteraction ? warmHighDetail : undefined}
       onPointerLeave={animated ? reset : undefined}
       onClick={onClick}
       disabled={disabled}
@@ -209,11 +212,14 @@ export function AssetCardVisual({
         <span className="asset-card-rarity" aria-hidden="true"><span className="asset-card-rarity-text">{rarityLabel}</span></span>
         <span className="asset-card-caption">
           <span className="min-w-0 flex-1">
-            {displayedStarLevel != null && (
-              <span className="asset-card-stars" aria-label={`${displayedStarLevel}星`}>
-                {[1, 2, 3].map((star) => <Star key={star} size={11} fill={star <= displayedStarLevel ? "currentColor" : "none"} className={star <= displayedStarLevel ? "text-amber-300" : "text-white/55"} />)}
-              </span>
-            )}
+            <span className="flex min-w-0 items-center gap-1">
+              {displayedStarLevel != null && (
+                <span className="asset-card-stars" aria-label={`${displayedStarLevel}星`}>
+                  {[1, 2, 3].map((star) => <Star key={star} size={11} fill={star <= displayedStarLevel ? "currentColor" : "none"} className={star <= displayedStarLevel ? "text-amber-300" : "text-white/55"} />)}
+                </span>
+              )}
+              {!historyCompact && <CardBattleTraitBadges traits={"traits" in card ? card.traits ?? [] : []} dark />}
+            </span>
             <span className={`mt-0.5 block min-w-0 text-[11px] font-black sm:text-xs ${historyCompact ? "line-clamp-2 leading-tight" : "truncate"}`}>{card.name}</span>
             {!historyCompact && card.story && <span className="asset-card-story mt-0.5 block line-clamp-2 text-[8px] font-medium leading-tight opacity-80 sm:text-[9px]">{card.story}</span>}
           </span>

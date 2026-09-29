@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Gem, Plus, Search } from "lucide-react";
 import type { BattleCollectibleBinding, CardTowerFormation } from "@hgt/shared";
 import type { OnlineCardBattleCard, OnlineCardBattleDeck } from "../shared/types";
-import { filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
+import { collectCardBattleTraits, filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
 import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
 import { BattleCollectiblePicker } from "./BattleCollectiblePicker";
+import { CardBattleTraitBadges } from "./CardBattleTraitBadges";
+import { CardBattleTraitFilter } from "./CardBattleTraitFilter";
 
 export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, lineupSize = 5, currentLineup, onSavingChange, tower }: {
   tower?: { formation: CardTowerFormation; onChange: (formation: CardTowerFormation) => Promise<void> };
@@ -22,6 +24,7 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
   const [slot, setSlot] = useState(0);
   const [query, setQuery] = useState("");
   const [role, setRole] = useState<CardBattleRoleFilter>("all");
+  const [selectedTraitId, setSelectedTraitId] = useState<string | null>(null);
   const [sort, setSort] = useState("number");
   const [view, setView] = useState<"stats" | "skill">("stats");
   const [bindings, setBindings] = useState<BattleCollectibleBinding[]>(tower?.formation.collectibleBindings ?? initialDeck?.collectibleBindings ?? []);
@@ -30,8 +33,9 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
   const [error, setError] = useState("");
   useEffect(() => { if (tower && !saving) { setSelectedIds([...tower.formation.cardIds]); setBindings([...tower.formation.collectibleBindings]); } }, [tower?.formation, saving]);
   const cardsById = useMemo(() => new Map(cards.map((card) => [card.id, card])), [cards]);
+  const traits = useMemo(() => collectCardBattleTraits(cards), [cards]);
   const selected = selectedIds.map((id) => id ? cardsById.get(id) ?? null : null);
-  const filtered = filterCardBattleSelection(cards, query, role).sort((a, b) =>
+  const filtered = filterCardBattleSelection(cards, query, role, selectedTraitId).sort((a, b) =>
     (sort === "star" ? b.starLevel - a.starLevel : sort === "power" ? b.combatPower - a.combatPower : sort === "rarity" ? Number(b.rarity === "legend") - Number(a.rarity === "legend") : 0)
       || a.cardNo.localeCompare(b.cardNo, "zh-CN", { numeric: true }));
   const complete = selected.every(Boolean) && new Set(selectedIds).size === lineupSize;
@@ -78,6 +82,7 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
       <label><span className="label inline-flex items-center gap-1"><Search size={14} />搜索卡牌或特质</span><input className="field mt-1 min-h-11 w-full" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名称、编号或特质" /></label>
       <label><span className="label">卡牌定位</span><select className="field mt-1 min-h-11 w-full" value={role} onChange={(event) => setRole(event.target.value as CardBattleRoleFilter)}><option value="all">全部</option>{Object.entries(CARD_BATTLE_ROLE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     </div>
+    <CardBattleTraitFilter traits={traits} selectedTraitId={selectedTraitId} onSelect={setSelectedTraitId} />
     <div className="flex flex-wrap items-center justify-between gap-2">
       <label className="min-w-0"><span className="sr-only">卡牌排序方式</span><select className="field min-h-11" value={sort} onChange={(event) => setSort(event.target.value)}><option value="number">按编号排序</option><option value="rarity">按品质排序</option><option value="star">按星级排序</option><option value="power">按战力排序</option></select></label>
       <div className="flex gap-2" aria-label="卡牌信息视角"><button type="button" aria-pressed={view === "stats"} className={`btn min-h-11 ${view === "stats" ? "btn-primary" : "btn-secondary"}`} onClick={() => setView("stats")}>数值</button><button type="button" aria-pressed={view === "skill"} className={`btn min-h-11 ${view === "skill" ? "btn-primary" : "btn-secondary"}`} onClick={() => setView("skill")}>技能</button></div>
@@ -87,8 +92,7 @@ export function CardBattleDeckEditor({ cards, actionLabel, onSave, initialDeck, 
       const usedAt = selectedIds.indexOf(card.id);
       return <button key={card.id} type="button" aria-label={`选择${card.name}`} aria-pressed={selectedIds[slot] === card.id} disabled={saving || (usedAt >= 0 && usedAt !== slot)} onClick={() => choose(card.id)} className="min-w-0 rounded-xl border border-line p-2 text-left transition hover:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50">
         <img className="aspect-[5/7] w-full rounded-lg object-cover" src={card.imageUrl} alt={card.name} loading="lazy" />
-        <p className="mt-2 truncate text-sm font-bold text-ink">{card.name}</p><p className="mt-1 text-xs text-muted">{card.starLevel} 星 · {CARD_BATTLE_ROLE_LABELS[card.battleRole]}</p><p className="mt-1 text-xs font-bold text-amber-700">战力 {card.combatPower.toLocaleString()}</p>
-        {!!card.traits?.length && <div className="mt-2 flex flex-wrap gap-1">{card.traits.map((trait) => <span key={trait.id} className="rounded-full bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-800">{trait.name}</span>)}</div>}
+        <p className="mt-2 truncate text-sm font-bold text-ink">{card.name}</p><div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted"><span className="shrink-0">{card.starLevel} 星</span><CardBattleTraitBadges traits={card.traits ?? []} /><span className="shrink-0">{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span></div><p className="mt-1 text-xs font-bold text-amber-700">战力 {card.combatPower.toLocaleString()}</p>
         {view === "stats" ? <dl className="mt-2 space-y-1 text-xs text-muted">{[["生命",card.stats.maxHp],["攻击",card.stats.attack],["防御",card.stats.defense],["速度",card.stats.speed],["能量",card.stats.energyRequired]].map(([label,value]) => <div key={label} className="flex justify-between gap-1"><dt>{label}</dt><dd className="font-bold tabular-nums text-ink">{value}</dd></div>)}</dl> : <div className="mt-2 text-xs leading-5"><p className="font-bold text-violet-700">{card.skillName || "无技能"}</p><p className="whitespace-pre-wrap break-words text-muted">{card.skillDescription || "暂无技能描述"}</p></div>}
         {usedAt >= 0 && <p className="mt-1 text-xs font-bold text-violet-700">已配置{slots[usedAt]}</p>}
       </button>;

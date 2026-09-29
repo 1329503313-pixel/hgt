@@ -3,15 +3,15 @@ import { ArrowDown01, ChevronLeft, ChevronRight, GalleryVerticalEnd, Gem, Layers
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { CardCabinet, OwnedAssetCard } from "../shared/digitalAssets";
-import { assetRarityLabel, warmAssetImage } from "../shared/digitalAssets";
-import { AssetCardVisual } from "./AssetCardVisual";
-import { CARD_BATTLE_TRAIT_EFFECT_LABELS, CARD_BATTLE_TRAIT_TARGET_LABELS } from "@hgt/shared";
+import { assetRarityLabel } from "../shared/digitalAssets";
+import { AssetAnimationPausedContext, AssetCardVisual } from "./AssetCardVisual";
+import { collectCardBattleTraits } from "../shared/cardBattleSelection";
+import { CardBattleTraitFilter } from "./CardBattleTraitFilter";
 import { ListSkeleton } from "./Skeletons";
 import { Modal } from "./Modal";
 
 const raritySortRank = { normal: 0, rare: 1, epic: 2, legend: 3 } as const;
-const CARD_BACK_URL = "/card-back.webp?v=20260721";
-const DETAIL_CARD_FLIP_MS = 1200;
+const DETAIL_CARD_FLIGHT_MS = 380;
 const DETAIL_CHROME_FADE_MS = 200;
 
 type CardDetailAnimation = {
@@ -53,14 +53,11 @@ export function CardCabinetSection({
   const [detailAnimation, setDetailAnimation] = useState<CardDetailAnimation | null>(null);
   const detailCardRef = useRef<HTMLDivElement | null>(null);
   const [activePackId, setActivePackId] = useState("all");
+  const [selectedTraitId, setSelectedTraitId] = useState<string | null>(null);
   const [showcaseCollapsed, setShowcaseCollapsed] = useState(true);
   const [cardSort, setCardSort] = useState<"number" | "rarity">("number");
   const [cardGridColumns, setCardGridColumns] = useState(getCardGridColumnCount);
   const [cardPage, setCardPage] = useState(1);
-
-  useEffect(() => {
-    warmAssetImage(CARD_BACK_URL);
-  }, []);
 
   useEffect(() => {
     const phoneQuery = window.matchMedia("(min-width: 640px)");
@@ -88,6 +85,8 @@ export function CardCabinetSection({
     }
     return a.cardNo.localeCompare(b.cardNo, "zh-CN", { numeric: true, sensitivity: "base" });
   }), [cabinet, cardSort]);
+  const allTraits = useMemo(() => collectCardBattleTraits(cabinet?.cards ?? []), [cabinet]);
+  const selectedTrait = allTraits.find((trait) => trait.id === selectedTraitId);
 
   const packTabs = useMemo(() => {
     const map = new Map<string, { id: string; name: string; packType: OwnedAssetCard["packs"][number]["packType"]; cards: OwnedAssetCard[] }>();
@@ -105,7 +104,10 @@ export function CardCabinetSection({
     if (activePackId !== "all" && !packTabs.some((pack) => pack.id === activePackId)) setActivePackId("all");
   }, [activePackId, packTabs]);
 
-  const filteredCards = activePackId === "all" ? sortedCards : (packTabs.find((pack) => pack.id === activePackId)?.cards ?? []);
+  const packCards = activePackId === "all" ? sortedCards : (packTabs.find((pack) => pack.id === activePackId)?.cards ?? []);
+  const filteredCards = selectedTraitId
+    ? sortedCards.filter((card) => card.traits?.some((trait) => trait.id === selectedTraitId))
+    : packCards;
   const activePackType = activePackId === "all" ? undefined : packTabs.find((pack) => pack.id === activePackId)?.packType;
   const detailPackType = activePackType ?? detail?.packs[0]?.packType;
   const cardsPerPage = cardGridColumns * 3;
@@ -114,7 +116,7 @@ export function CardCabinetSection({
 
   useEffect(() => {
     setCardPage(1);
-  }, [activePackId, cardSort]);
+  }, [activePackId, cardSort, selectedTraitId]);
 
   useEffect(() => {
     setCardPage((page) => Math.min(page, cardPageCount));
@@ -130,7 +132,6 @@ export function CardCabinetSection({
   }
 
   function openDetail(card: OwnedAssetCard, source?: HTMLElement) {
-    warmAssetImage(card.imageUrl);
     setDetail(card);
     if (source) setDetailAnimation({ phase: "measuring", sourceRect: source.getBoundingClientRect() });
     else setDetailAnimation(null);
@@ -155,7 +156,7 @@ export function CardCabinetSection({
     if (detailAnimation?.phase !== "opening") return;
     const timer = window.setTimeout(() => {
       setDetailAnimation((current) => current?.phase === "opening" ? { ...current, phase: "revealing" } : current);
-    }, DETAIL_CARD_FLIP_MS);
+    }, DETAIL_CARD_FLIGHT_MS);
     return () => window.clearTimeout(timer);
   }, [detailAnimation?.phase]);
 
@@ -199,7 +200,7 @@ export function CardCabinetSection({
           <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-cyan-200 transition hover:bg-white/10 active:scale-95" onClick={() => setShowcaseCollapsed((collapsed) => !collapsed)} aria-expanded={!showcaseCollapsed} aria-label={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"} title={showcaseCollapsed ? "展开收藏柜" : "收起收藏柜"}><GalleryVerticalEnd size={30} /></button>
         </div>
         {!showcaseCollapsed && <><div className="mt-4 grid grid-cols-3 gap-2 lg:grid-cols-6 lg:gap-3">
-          {visibleShowcase.map((card) => <AssetCardVisual key={card.id} card={card} animated={!editing && card.rarity === "legend"} motion={!editing} compactBadges className="asset-card-cabinet" ariaLabel={editing ? `${card.name}，点击撤下陈列` : undefined} onClick={(event) => editing ? toggle(card, event.currentTarget) : openDetail(card, event.currentTarget)} />)}
+          {visibleShowcase.map((card) => <AssetCardVisual key={card.id} card={card} animated={!editing && card.rarity === "legend"} compactBadges warmHighDetailOnInteraction={false} className="asset-card-cabinet" ariaLabel={editing ? `${card.name}，点击撤下陈列` : undefined} onClick={(event) => editing ? toggle(card, event.currentTarget) : openDetail(card, event.currentTarget)} />)}
           {Array.from({ length: Math.max(0, 6 - visibleShowcase.length) }, (_, index) => <div key={`empty-${index}`} className="aspect-[5/7] rounded-xl border border-dashed border-white/20 bg-white/5" />)}
         </div>
         {editing && <p className="mt-3 text-right text-xs font-bold text-cyan-200">点击已陈列卡片即可撤下</p>}
@@ -211,14 +212,14 @@ export function CardCabinetSection({
       {!compact && (cabinet.cards.length === 0 ? <div className="card p-8 text-center text-sm text-muted">还没有获得卡片，前往商城开启第一包吧。</div> : (
         <div className="card p-4">
           <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-4">
-            <button type="button" className={`min-w-24 shrink-0 snap-start rounded-xl border px-4 py-2.5 text-center transition ${activePackId === "all" ? "border-primary bg-blue-50 text-primary" : "border-line bg-white text-ink"}`} onClick={() => setActivePackId("all")}><span className="block text-sm font-black">全部</span><span className="mt-1 block text-[11px] font-bold opacity-70">{sortedCards.length} 张</span></button>
-            {packTabs.map((pack) => <button key={pack.id} type="button" className={`min-w-28 shrink-0 snap-start rounded-xl border px-4 py-2.5 text-center transition ${activePackId === pack.id ? "border-primary bg-blue-50 text-primary" : "border-line bg-white text-ink"}`} onClick={() => setActivePackId(pack.id)}><span className="block max-w-32 truncate text-sm font-black">{pack.name}</span><span className="mt-1 block text-[11px] font-bold opacity-70">收藏 {pack.cards.length} 张</span></button>)}
+            <button type="button" className={`min-w-24 shrink-0 snap-start rounded-xl border px-4 py-2.5 text-center transition ${activePackId === "all" ? "border-primary bg-blue-50 text-primary" : "border-line bg-white text-ink"}`} onClick={() => { setActivePackId("all"); setSelectedTraitId(null); }}><span className="block text-sm font-black">全部</span><span className="mt-1 block text-[11px] font-bold opacity-70">{sortedCards.length} 张</span></button>
+            {packTabs.map((pack) => <button key={pack.id} type="button" className={`min-w-28 shrink-0 snap-start rounded-xl border px-4 py-2.5 text-center transition ${activePackId === pack.id ? "border-primary bg-blue-50 text-primary" : "border-line bg-white text-ink"}`} onClick={() => { setActivePackId(pack.id); setSelectedTraitId(null); }}><span className="block max-w-32 truncate text-sm font-black">{pack.name}</span><span className="mt-1 block text-[11px] font-bold opacity-70">收藏 {pack.cards.length} 张</span></button>)}
           </div>
-          <div className="mb-4 flex items-center justify-between gap-3"><h3 className="font-black text-ink">{activePackId === "all" ? "全部卡牌" : packTabs.find((pack) => pack.id === activePackId)?.name}</h3><div className="flex items-center gap-2">{editing && <span className="hidden text-xs font-bold text-primary sm:inline">按选择顺序陈列</span>}<button type="button" className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-black transition active:scale-95 ${cardSort === "rarity" ? "border-violet-200 bg-violet-50 text-violet-700" : "border-blue-200 bg-blue-50 text-blue-700"}`} onClick={() => setCardSort((sort) => sort === "number" ? "rarity" : "number")} aria-label={`当前${cardSort === "number" ? "按序号排序" : "按品质排序"}，点击切换`}><span className="relative grid h-4 w-4 place-items-center">{cardSort === "number" ? <ArrowDown01 size={16} /> : <Gem size={16} />}</span>{cardSort === "number" ? "按序号排序" : "按品质排序"}</button></div></div>
+          <div className="mb-4 flex items-center justify-between gap-3"><h3 className="min-w-0 truncate font-black text-ink">{selectedTrait ? `${selectedTrait.name}特质卡牌` : activePackId === "all" ? "全部卡牌" : packTabs.find((pack) => pack.id === activePackId)?.name}</h3><div className="flex shrink-0 items-center gap-2">{editing && <span className="hidden text-xs font-bold text-primary sm:inline">按选择顺序陈列</span>}<CardBattleTraitFilter traits={allTraits} selectedTraitId={selectedTraitId} onSelect={(traitId) => { setSelectedTraitId(traitId); if (traitId) setActivePackId("all"); }} /><button type="button" className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-black transition active:scale-95 ${cardSort === "rarity" ? "border-violet-200 bg-violet-50 text-violet-700" : "border-blue-200 bg-blue-50 text-blue-700"}`} onClick={() => setCardSort((sort) => sort === "number" ? "rarity" : "number")} aria-label={`当前${cardSort === "number" ? "按序号排序" : "按品质排序"}，点击切换`}><span className="relative grid h-4 w-4 place-items-center">{cardSort === "number" ? <ArrowDown01 size={16} /> : <Gem size={16} />}</span>{cardSort === "number" ? "按序号排序" : "按品质排序"}</button></div></div>
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 md:grid-cols-6">
             {visibleCards.map((card) => {
               const displayPackType = activePackType ?? card.packs[0]?.packType;
-              return <div key={card.id} className="min-w-0"><AssetCardVisual card={card} motion compactBadges packType={displayPackType} className="asset-card-cabinet" selected={editing && selected.includes(card.id)} onClick={(event) => toggle(card, event.currentTarget)} /><div className="mt-2 flex items-center justify-between gap-1 text-[10px] font-bold"><span className="truncate text-muted">{assetRarityLabel(card.rarity, displayPackType)}</span><span className="text-ink">收藏值 {card.collectionValue}</span></div></div>;
+              return <div key={card.id} className="min-w-0"><AssetCardVisual card={card} compactBadges warmHighDetailOnInteraction={false} packType={displayPackType} className="asset-card-cabinet" selected={editing && selected.includes(card.id)} onClick={(event) => toggle(card, event.currentTarget)} /><div className="mt-2 flex items-center justify-between gap-1 text-[10px] font-bold"><span className="truncate text-muted">{assetRarityLabel(card.rarity, displayPackType)}</span><span className="text-ink">收藏值 {card.collectionValue}</span></div></div>;
             })}
           </div>
           {cardPageCount > 1 && (
@@ -240,12 +241,16 @@ export function CardCabinetSection({
         bare
         onClose={closeDetail}
         contentClassName="scrollbar-hidden"
-        overlayClassName={`transition-colors duration-[400ms] ${detailAnimation?.phase === "measuring" ? "bg-slate-950/0" : "bg-slate-950/80 backdrop-blur-sm"}`}
+        overlayClassName={`transition-colors duration-[200ms] ${detailAnimation?.phase === "measuring" ? "bg-slate-950/0" : "bg-slate-950/85"}`}
       >
         <div className="flex min-h-full items-center justify-center py-4">
           <div className="w-full max-w-md">
             <div className={`flex items-center justify-between gap-4 text-white transition-opacity duration-200 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "pointer-events-none opacity-0" : "opacity-100"}`}><div><p className="flex items-baseline gap-1.5 font-bold text-cyan-200"><span className="text-sm">NO.{detail.cardNo}</span><span className="text-sm opacity-70">·</span><span className="text-base">{assetRarityLabel(detail.rarity, detailPackType)}</span></p><h2 className="mt-1.5 text-2xl font-black leading-tight">{detail.name}</h2></div><button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-slate-900 shadow-lg ring-1 ring-white/80 transition-transform hover:scale-105 active:scale-95" onClick={closeDetail} aria-label="关闭卡片详情"><X size={22} strokeWidth={2.4} /></button></div>
-            <div ref={detailCardRef} className={`relative mx-auto mt-4 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "invisible" : "visible"}`}><AssetCardVisual card={detail} animated={detail.rarity === "legend"} motion highDetail packType={detailPackType} className="asset-card-cabinet" /></div>
+            <div ref={detailCardRef} className="relative mx-auto mt-4">
+              {!detailAnimation || detailAnimation.phase === "revealing" || detailAnimation.phase === "open"
+                ? <AssetCardVisual card={detail} animated={detail.rarity === "legend"} motion highDetail packType={detailPackType} className="asset-card-cabinet" />
+                : <div aria-hidden="true" className="aspect-[5/7] w-full rounded-[15px] border-[3px] border-sky-300/70 bg-slate-900/80 shadow-xl" />}
+            </div>
             <div className={`mt-4 overflow-hidden rounded-2xl bg-white text-ink shadow-soft transition-opacity duration-200 ${detailAnimation && detailAnimation.phase !== "revealing" && detailAnimation.phase !== "open" ? "opacity-0" : "opacity-100"}`}>
               <div className="grid grid-cols-3 divide-x divide-line px-2 py-5 text-center text-sm">
                 <div className="px-2"><Star className="mx-auto text-amber-500" size={24} /><p className="mt-2 font-black">{detail.starLevel} 星</p></div>
@@ -256,7 +261,7 @@ export function CardCabinetSection({
                 {detail.starLevel < 3 ? <p className="text-base text-muted"><span className="font-black text-ink">升星进度</span><span className="float-right font-bold text-primary">{detail.duplicateProgress}/{detail.nextStarRequirement}</span></p> : <p className="text-base font-bold text-amber-600">已满星，后续重复卡将自动转化为贝壳。</p>}
               </div>
               {detail.story && <div className="border-t border-line px-5 py-5"><h3 className="text-base font-black">卡片故事</h3><p className="mt-2 whitespace-pre-wrap text-base leading-8 text-muted">{detail.story}</p></div>}
-              {!!detail.traits?.length && <section className="border-t border-line px-5 py-5" aria-labelledby="card-traits-title"><h3 id="card-traits-title" className="text-base font-black">卡牌特质</h3><div className="mt-3 space-y-3">{detail.traits.map((trait) => <article key={trait.id} className="rounded-xl bg-blue-50 p-3"><h4 className="font-black text-blue-900">{trait.name}</h4>{trait.description && <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">{trait.description}</p>}<ul className="mt-2 space-y-1 text-xs leading-5 text-blue-950">{trait.effects.map((effect, index) => <li key={index}>{effect.requiredCount}张：{CARD_BATTLE_TRAIT_EFFECT_LABELS[effect.type]} +{effect.value}{effect.valueType === "percent" ? "%" : ""} · {CARD_BATTLE_TRAIT_TARGET_LABELS[effect.target]}{effect.cadence === "round" ? ` · 每回合，持续${effect.durationRounds}回合` : ""}</li>)}</ul></article>)}</div></section>}
+              {!!detail.traits?.length && <section className="border-t border-line px-5 py-5" aria-labelledby="card-traits-title"><h3 id="card-traits-title" className="text-base font-black">卡牌特质</h3><div className="mt-3 space-y-3">{detail.traits.map((trait) => <article key={trait.id} className="rounded-xl bg-blue-50 p-3"><h4 className="font-black text-blue-900">{trait.name}</h4>{trait.description && <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">{trait.description}</p>}</article>)}</div></section>}
               {detail.battleTier && <section className="border-t border-line px-5 py-5" aria-labelledby="card-battle-attributes-title">
                 <div className="flex items-start gap-3">
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary" aria-hidden="true"><Swords size={20} /></span>
@@ -294,7 +299,7 @@ export function CardCabinetSection({
         </div>
         {detailAnimation?.phase === "opening" && detailAnimation.targetRect && (
           <div
-            className="pointer-events-none fixed z-10 [perspective:1400px]"
+            className="pointer-events-none fixed z-10"
             style={{
               left: detailAnimation.targetRect.left,
               top: detailAnimation.targetRect.top,
@@ -308,10 +313,9 @@ export function CardCabinetSection({
           >
             <div className="card-cabinet-detail-flight absolute inset-0">
               <div className="card-cabinet-detail-flight-face">
-                <AssetCardVisual card={detail} animated={false} highDetail packType={detailPackType} className="asset-card-cabinet" />
-              </div>
-              <div className="card-cabinet-detail-flight-face card-cabinet-detail-flight-back">
-                <img src={CARD_BACK_URL} alt="" className="h-full w-full object-cover" decoding="async" draggable={false} />
+                <AssetAnimationPausedContext.Provider value>
+                  <AssetCardVisual card={detail} eager compactBadges packType={detailPackType} className="asset-card-cabinet" />
+                </AssetAnimationPausedContext.Provider>
               </div>
             </div>
           </div>

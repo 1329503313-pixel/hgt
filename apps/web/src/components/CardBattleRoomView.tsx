@@ -18,8 +18,10 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { reorderCardBattleLineup } from "../shared/cardBattleLineup";
 import { useCardBattleDrag } from "../shared/useCardBattleDrag";
-import { filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
+import { collectCardBattleTraits, filterCardBattleSelection, type CardBattleRoleFilter } from "../shared/cardBattleSelection";
 import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
+import { CardBattleTraitBadges } from "./CardBattleTraitBadges";
+import { CardBattleTraitFilter } from "./CardBattleTraitFilter";
 import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleDeck, OnlineCardBattleEvent, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
 import { activeCardBattleTraitEffects } from "@hgt/shared";
 import { BattleMotionMedia } from "./BattleMotionMedia";
@@ -383,6 +385,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   const [eligibleCards, setEligibleCards] = useState<OnlineCardBattleCard[]>([]);
   const [pickSlot, setPickSlot] = useState<number | null>(null);
   const [cardQuery, setCardQuery] = useState("");
+  const [selectedTraitId, setSelectedTraitId] = useState<string | null>(null);
   const [cardRoleFilter, setCardRoleFilter] = useState<CardBattleRoleFilter>("all");
   const [cardSort, setCardSort] = useState<CardSort>("power");
   const [cardView, setCardView] = useState<CardView>("stats");
@@ -415,8 +418,9 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
   const seenBubbleIdsRef = useRef(new Set(snapshot.messages.map((message) => message.id)));
   const allStickers = useMemo(() => stickerSeries.flatMap((series) => series.stickers), [stickerSeries]);
   const stickersById = useMemo(() => new Map(allStickers.map((sticker) => [sticker.id, sticker])), [allStickers]);
+  const eligibleTraits = useMemo(() => collectCardBattleTraits(eligibleCards), [eligibleCards]);
   const visibleEligibleCards = useMemo(() => {
-    const filtered = filterCardBattleSelection(eligibleCards, cardQuery, cardRoleFilter);
+    const filtered = filterCardBattleSelection(eligibleCards, cardQuery, cardRoleFilter, selectedTraitId);
     const direction = cardSort === "number" ? 1 : -1;
     return [...filtered].sort((left, right) => {
       const compared = cardSort === "star"
@@ -428,7 +432,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
             : left.cardNo.localeCompare(right.cardNo, "zh-CN", { numeric: true });
       return compared * direction || left.name.localeCompare(right.name, "zh-CN");
     });
-  }, [cardQuery, cardRoleFilter, cardSort, eligibleCards]);
+  }, [cardQuery, cardRoleFilter, cardSort, eligibleCards, selectedTraitId]);
   const enqueueChatBubbles = useCallback((messages: CardBattleChatMessage[]) => {
     const incoming = messages.filter((message) => {
       if (seenBubbleIdsRef.current.has(message.id)) return false;
@@ -759,7 +763,7 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
         {(["all", "damage", "tank", "support"] as const).map((role) => <button key={role} type="button" aria-pressed={cardRoleFilter === role} onClick={() => setCardRoleFilter(role)} className={`min-h-11 rounded-full border px-2 text-sm font-bold transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${cardRoleFilter === role ? "border-primary bg-primary text-white shadow-sm" : "border-line bg-slate-50 text-muted hover:border-primary/40 hover:text-primary active:bg-blue-50"}`}>{role === "all" ? "全部" : CARD_BATTLE_ROLE_LABELS[role]}</button>)}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-bold text-muted" aria-live="polite">共 {visibleEligibleCards.length} 张卡牌</p>
+        <div className="flex min-w-0 flex-wrap items-center gap-3"><p className="text-xs font-bold text-muted" aria-live="polite">共 {visibleEligibleCards.length} 张卡牌</p><CardBattleTraitFilter traits={eligibleTraits} selectedTraitId={selectedTraitId} onSelect={setSelectedTraitId} /></div>
         <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1" role="group" aria-label="卡牌信息视角">
           <button type="button" aria-pressed={cardView === "stats"} onClick={() => setCardView("stats")} className={`min-h-11 min-w-16 rounded-lg px-3 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${cardView === "stats" ? "bg-white text-cyan-700 shadow-sm" : "text-muted hover:text-ink"}`}>数值</button>
           <button type="button" aria-pressed={cardView === "skill"} onClick={() => setCardView("skill")} className={`min-h-11 min-w-16 rounded-lg px-3 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${cardView === "skill" ? "bg-white text-cyan-700 shadow-sm" : "text-muted hover:text-ink"}`}>技能</button>
@@ -771,8 +775,8 @@ export function CardBattleRoomView({ roomId, snapshot, rankingInvalidated: rankC
           ? `生命${card.stats.maxHp}，攻击${card.stats.attack}，防御${card.stats.defense}，速度${card.stats.speed}，能量${card.stats.energyRequired}`
           : `技能${card.skillName || "未配置技能"}，技能描述${card.skillDescription || "暂无技能说明"}`;
         return <button key={card.id} type="button" aria-pressed={selected} aria-label={`${card.name}，${card.starLevel}星，战力${card.combatPower}，${CARD_BATTLE_ROLE_LABELS[card.battleRole]}，${viewLabel}${selected ? "，已上场" : ""}`} className={`relative overflow-hidden rounded-xl border-2 bg-white text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${selected ? "border-cyan-500 ring-2 ring-cyan-200" : "border-line hover:border-cyan-300"}`} onClick={() => void chooseCard(card.id)}>
-          <div className="relative aspect-[5/7] overflow-hidden bg-slate-100"><img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} loading="lazy" decoding="async" /><span className={`absolute left-2 top-2 rounded-full border px-2 py-1 text-[10px] font-black shadow-md backdrop-blur-sm ${battleRoleTone(card.battleRole)}`}>{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span><span className="absolute bottom-2 right-2 rounded-full bg-amber-400 px-2 py-1 text-[10px] font-black text-slate-950 shadow-md">战力 {combatPowerFormatter.format(card.combatPower)}</span></div>
-          <div className="min-h-[128px] p-2"><p className="truncate text-xs font-black text-ink">{card.name} · {card.starLevel}★</p><p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">序号 {card.cardNo}</p>{cardView === "skill"
+          <div className="relative aspect-[5/7] overflow-hidden bg-slate-100"><img className="h-full w-full object-cover" src={card.imageUrl} alt={card.name} loading="lazy" decoding="async" /><span className={`absolute left-2 top-2 rounded-full border px-2 py-1 text-[10px] font-black shadow-md backdrop-blur-sm ${battleRoleTone(card.battleRole)}`}>{CARD_BATTLE_ROLE_LABELS[card.battleRole]}</span>{!!card.traits?.length && <span className="absolute bottom-9 left-2 right-2 z-10"><CardBattleTraitBadges traits={card.traits} dark /></span>}<span className="absolute bottom-2 right-2 rounded-full bg-amber-400 px-2 py-1 text-[10px] font-black text-slate-950 shadow-md">战力 {combatPowerFormatter.format(card.combatPower)}</span></div>
+          <div className="min-h-[128px] p-2"><p className="truncate text-xs font-black text-ink">{card.name}</p><div className="mt-1 flex min-w-0 items-center gap-1"><span className="shrink-0 text-[10px] font-bold text-slate-500">{card.starLevel}★</span></div><p className="mt-0.5 truncate text-[10px] font-bold text-slate-400">序号 {card.cardNo}</p>{cardView === "skill"
             ? <div className="mt-2"><p className="text-xs font-black leading-5 text-cyan-700">{card.skillName || "未配置技能"}</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted">{card.skillDescription || "暂无技能说明"}</p></div>
             : <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-xs leading-5 text-muted"><div className="flex justify-between gap-1"><dt>生命</dt><dd className="font-bold text-ink">{card.stats.maxHp}</dd></div><div className="flex justify-between gap-1"><dt>攻击</dt><dd className="font-bold text-ink">{card.stats.attack}</dd></div><div className="flex justify-between gap-1"><dt>防御</dt><dd className="font-bold text-ink">{card.stats.defense}</dd></div><div className="flex justify-between gap-1"><dt>速度</dt><dd className="font-bold text-ink">{card.stats.speed}</dd></div><div className="col-span-2 flex justify-between gap-1"><dt>能量</dt><dd className="font-bold text-ink">{card.stats.energyRequired}</dd></div></dl>}
           </div>{selected && <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-cyan-500 text-white shadow-md" aria-hidden="true"><Check size={15} /></span>}

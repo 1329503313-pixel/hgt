@@ -2115,12 +2115,10 @@ export function registerDigitalAssetRoutes(app: express.Express, dependencies: R
       const config = await packConfiguration(req.params.id);
       if (!config.ready) return sendError(res, 409, "概率必须合计100%，且至少包含稀有、史诗、传说保底卡片");
     }
-    const [[currentPack], [orders]] = await Promise.all([
-      pool.query<mysql.RowDataPacket[]>("SELECT pack_type, sale_start_at, sale_end_at FROM asset_packs WHERE id = ? LIMIT 1", [req.params.id]).then(([rows]) => rows),
-      pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM asset_draw_orders WHERE pack_id = ?", [req.params.id]).then(([rows]) => rows)
-    ]);
+    const [[currentPack]] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT pack_type, sale_start_at, sale_end_at FROM asset_packs WHERE id = ? LIMIT 1", [req.params.id]
+    );
     if (!currentPack) return sendError(res, 404, "卡包不存在");
-    if (parsed.data.packType && parsed.data.packType !== currentPack.pack_type && Number(orders.count) > 0) return sendError(res, 409, "已有抽卡记录的卡包不能修改类型");
     const nextType = packType(parsed.data.packType ?? currentPack.pack_type);
     const nextStart = nextType === "permanent" ? null : parsed.data.saleStartAt === undefined ? iso(currentPack.sale_start_at) : parsed.data.saleStartAt;
     const nextEnd = nextType === "permanent" ? null : parsed.data.saleEndAt === undefined ? iso(currentPack.sale_end_at) : parsed.data.saleEndAt;
