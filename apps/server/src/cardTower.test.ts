@@ -67,6 +67,8 @@ test("闯关BOSS普攻、普通及真实技能伤害与治疗技能按累计衰�
       effects: [{ id: "damage", order: 0, condition: "energy_full", conditionValue: null, type, value: 10000, duration: null },
         { id: "heal", order: 1, condition: "energy_full", conditionValue: null, type: "heal_all_allies", value: 1000, duration: null }] });
     // Keep one caster and four basic attackers to cover both paths without hitting event limits.
+    // Use support cards so hits still charge the same per-round casting schedule.
+    for (const card of [...team.cards, ...boss.cards]) card.battleRole = "support";
     for (const card of boss.cards.slice(1)) card.tier.effects = [];
     const input = [team, boss];
     const normal = simulateCardBattle(input, `decay-output-${type}`, "1v1");

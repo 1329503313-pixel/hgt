@@ -109,8 +109,10 @@ test("五类减益的抵抗只在开局N回合有效，不吞掉其他目标的�
   }
 });
 
-test("无敌期间普攻与技能扣血为0，承伤及命中回能保留，到期恢复扣血", () => {
-  const result = simulate(team("a", { speed: 200, energyRequired: 10, effects: [effect("damage_all", 1000)] }), team("b", {}, relic("invincible", 2)));
+test("坦克无敌期间普攻与技能扣血为0，承伤及命中回能保留，到期恢复扣血", () => {
+  const defenders = team("b", {}, relic("invincible", 2));
+  for (const target of defenders) target.battleRole = "tank";
+  const result = simulate(team("a", { speed: 200, energyRequired: 10, effects: [effect("damage_all", 1000)] }), defenders);
   const early = result.events.filter((e) => e.round <= 2 && e.visual === "damage" && e.actorId?.startsWith("a"));
   assert.ok(early.some((e) => e.kind === "attack")); assert.ok(early.some((e) => e.kind === "skill"));
   assert.ok(early.every((e) => e.effects.every((v) => v.amount === 0 && v.label === "无敌")));

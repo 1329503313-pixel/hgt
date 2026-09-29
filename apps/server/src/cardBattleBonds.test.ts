@@ -30,6 +30,8 @@ test('暴击羁绊按百分点全额叠加、独立到期，暴击伤害可以�
 test('暴击羁绊作用于普攻、伤害技能和治疗，回合到期后恢复原值',()=>{
   for(const mode of ['attack','damage','heal'] as const) {
     const input=players(), owner=input[0]!.cards[0]!;
+    // These timing fixtures need incoming hits to charge skills in the same round.
+    for (const player of input) for (const member of player.cards) member.battleRole = 'support';
     owner.tier.bonds=[bond('energy_empty',[action('crit_rate_up','self',100,1),action('crit_damage_up','self',50,2)],['A2'])];
     if(mode!=='attack') { owner.tier.energyRequired=10;owner.tier.effects=[skill(mode==='damage'?'damage_all':'heal_all_allies',100)]; }
     const result=simulateCardBattle(input,`critical-bond-${mode}`);
@@ -158,6 +160,7 @@ test('技能伤害羁绊全额叠加并独立到期，组合类型同时增攻�
   for (const type of ['skill_damage_up','attack_skill_damage_up'] as const) {
     for (const mode of ['attack','damage','heal'] as const) {
       const input=players(), target=input[0]!.cards[0]!;
+      for (const player of input) for (const member of player.cards) member.battleRole = 'support';
       target.tier.bonds=[bond('energy_empty',[action(type,'self',100,1),action(type,'self',200,2)],['A2'])];
       if (mode!=='attack') {
         target.tier.energyRequired=10;

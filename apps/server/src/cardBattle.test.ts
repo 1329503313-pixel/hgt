@@ -148,10 +148,11 @@ test("五种属性各自首层100%后续50%，过期后的最早存活层恢复1
   assert.equal(cardBattleBuffBonus([{ stat: "attack", value: 100, expiresAfterRound: 2 }, { stat: "defense", value: 200, expiresAfterRound: 2 }], "defense"), 200);
 });
 
-test("普攻与群攻完全抵挡仍逐次回能10，满能量不溢出且生命不下降", () => {
+test("坦克和辅助完全抵挡普攻与群攻仍逐次回能10，满能量不溢出且生命不下降", () => {
   const skill: CardBattleSkillEffect = { id: "blocked-aoe", order: 0, condition: "energy_full", conditionValue: null, type: "damage_all", value: 100, duration: null };
   const one = [1, 2, 3, 4, 5].map((slot) => card(`a${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 100, defense: 1000, energyRequired: 20 }, slot === 1 ? [skill] : []));
   const two = [1, 2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 100, defense: 1000, energyRequired: 20 }));
+  for (const target of [...one, ...two]) target.battleRole = target.slot % 2 ? "tank" : "support";
   const result = simulateCardBattle(players(one, two), "blocked-energy");
   let previous = result.initialStates;
   let normalHits = 0, skillHits = 0, cappedHits = 0;
@@ -173,6 +174,52 @@ test("普攻与群攻完全抵挡仍逐次回能10，满能量不溢出且生命
   assert.deepEqual(simulateCardBattle(players(one, two), "blocked-energy"), result, "同种子完整对局可复现");
   assert.ok(new Set(rolls).size > 1, "同伤害基数应实际随机跳动");
   assert.ok(rolls.every((amount) => amount >= 98 && amount <= 102));
+});
+
+test("受击回能只对坦克和辅助生效，普攻群攻多段遵守定位、闪避、反击与能量上限", () => {
+  for (const scenario of ["hit", "blocked", "dodge", "counter"] as const) {
+    const roles = ["damage", "tank", "support", "tank", "support"] as const;
+    const opening = [0, 1, 2].map((order): CardBattleSkillEffect => ({
+      id: `opening-${order}`, order, condition: "battle_start", conditionValue: null,
+      type: "damage_all", value: 100, duration: null,
+    }));
+    const side = (prefix: string) => ([1, 2, 3, 4, 5] as const).map((slot) => ({
+      ...card(`${prefix}${slot}`, slot, { maxHp: 1_000_000, attack: 100,
+        defense: scenario === "blocked" ? 1000 : 0, energyRequired: 25,
+        dodgeRate: scenario === "dodge" ? 100 : 0, counterRate: scenario === "counter" ? 100 : 0,
+      }, slot === 1 ? opening : []),
+      battleRole: roles[slot - 1]!,
+    }));
+    const one = side("a"), two = side("b");
+    const roleById = new Map([...one, ...two].map((item) => [item.instanceId, item.battleRole]));
+    const result = simulateCardBattle(players(one, two), `role-hit-energy-${scenario}`);
+    let previous = result.initialStates;
+    const checkedRoles = new Set<string>();
+    let basicHits = 0, skillHits = 0, counters = 0;
+    for (const event of result.events) {
+      if (event.visual === "damage") {
+        for (const effect of event.effects) {
+          const before = previous.find((state) => state.instanceId === effect.targetId)!;
+          const after = event.states.find((state) => state.instanceId === effect.targetId)!;
+          const role = roleById.get(effect.targetId)!;
+          const gain = role !== "damage" && !effect.dodged && !event.counterattack ? 10 : 0;
+          assert.equal(after.energy, Math.min(25, before.energy + gain), `${scenario}: ${event.kind} -> ${role}`);
+          checkedRoles.add(role);
+          if (event.kind === "attack") basicHits++; else skillHits++;
+        }
+        if (event.kind === "attack") {
+          const before = previous.find((state) => state.instanceId === event.actorId)!;
+          const after = event.states.find((state) => state.instanceId === event.actorId)!;
+          assert.equal(after.energy, Math.min(25, before.energy + (event.counterattack ? 0 : 10)), "各定位主动攻击回能保留，反击不回能");
+          if (event.counterattack) counters++;
+        }
+      }
+      previous = event.states;
+    }
+    assert.equal(checkedRoles.size, 3);
+    assert.ok(basicHits > 0 && skillHits > 0);
+    if (scenario === "counter") assert.ok(counters > 0);
+  }
 });
 
 test("组合增益按攻击与技能伤害分别叠层，首层到期后下一层恢复全额", () => {
@@ -484,7 +531,7 @@ test("每方五张卡且前排存活时不可攻击后排，前排清空后自�
   assert.ok(result.events.some((event) => event.kind === "attack" && event.effects.some((effect) => ["b3", "b4", "b5"].includes(effect.targetId))));
 });
 
-test("满能量技能代替普通攻击且技能伤害为双方恢复能量", () => {
+test("满能量技能代替普通攻击且施法者保留攻击回能", () => {
   const skill: CardBattleSkillEffect = { id: "energy", order: 0, condition: "energy_full", conditionValue: null, type: "damage_single", value: 900, duration: null };
   const one = [card("a1", 1, { energyRequired: 10, speed: 1000 }, [skill]), ...[2, 3, 4, 5].map((slot) => card(`a${slot}`, slot as 2 | 3 | 4 | 5, { attack: 0, speed: 1 }))];
   const two = [1, 2, 3, 4, 5].map((slot) => card(`b${slot}`, slot as 1 | 2 | 3 | 4 | 5, { attack: 0, maxHp: 5000 }));
@@ -588,9 +635,10 @@ test("生命比例条件每条生命只触发一次，复活后可再次触发",
   assert.ok(thresholdHeals.length <= revives.length + 1, "threshold must not repeatedly trigger during the same life");
 });
 
-test("造成伤害按实际扣血统计，承伤按减防前统计，格挡仍产生受击能量", () => {
+test("造成伤害按实际扣血统计，承伤按减防前统计，坦克格挡仍产生受击能量", () => {
   const one = [card("a1", 1, { attack: 10_000, speed: 1000 }), ...[2, 3, 4, 5].map((slot) => card(`a${slot}`, slot as 2 | 3 | 4 | 5, { attack: 0 }))];
   const two = [card("b1", 1, { maxHp: 123, defense: 0 }), card("b2", 2, { maxHp: 1000, defense: 20_000 }), ...[3, 4, 5].map((slot) => card(`b${slot}`, slot as 3 | 4 | 5, { maxHp: 1, defense: 20_000 }))];
+  for (const target of two) target.battleRole = "tank";
   const result = simulateCardBattle(players(one, two), "actual-damage");
   const first = result.events.find((event) => event.kind === "attack" && event.actorId === "a1");
   assert.ok(first);
@@ -629,7 +677,7 @@ for (const { label, defense, maxHp } of [
     if (defense >= 800) {
       assert.ok(result.finalStates.filter((state) => state.instanceId.startsWith("b")).every((state) => state.hp === maxHp));
       const targetId = attacks[0]!.effects[0]!.targetId;
-      assert.equal(attacks[0]!.states.find((state) => state.instanceId === targetId)?.energy, 10);
+      assert.equal(attacks[0]!.states.find((state) => state.instanceId === targetId)?.energy, 0, "输出卡即使格挡也不获得受击能量");
     }
   });
 

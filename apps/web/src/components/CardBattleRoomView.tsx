@@ -23,7 +23,7 @@ import { CARD_BATTLE_ROLE_LABELS } from "../shared/digitalAssets";
 import { CardBattleTraitBadges } from "./CardBattleTraitBadges";
 import { CardBattleTraitFilter } from "./CardBattleTraitFilter";
 import type { OnlineCardBattleCard, OnlineCardBattleCardState, OnlineCardBattleDeck, OnlineCardBattleEvent, OnlineSoupMessage, OnlineSoupSnapshot, StickerAsset, StickerSeries } from "../shared/types";
-import { activeCardBattleTraitEffects } from "@hgt/shared";
+import { CardBattleTraitAggregate as TraitAggregate } from "./CardBattleTraitAggregate";
 import { BattleMotionMedia } from "./BattleMotionMedia";
 import { Modal } from "./Modal";
 import { BossLineupDetails } from "./BossLineupDetails";
@@ -69,21 +69,6 @@ function battleRoleTone(role: OnlineCardBattleCard["battleRole"]) {
   if (role === "tank") return "border-sky-200/70 bg-sky-700/90 text-sky-50";
   if (role === "support") return "border-emerald-200/70 bg-emerald-700/90 text-emerald-50";
   return "border-rose-200/70 bg-rose-700/90 text-rose-50";
-}
-
-function TraitAggregate({ title, cards, activeIds, activeOnly = false }: { title: string; cards: Array<OnlineCardBattleCard | null>; activeIds?: Set<string>; activeOnly?: boolean }) {
-  const grouped = new Map<string, { trait: NonNullable<OnlineCardBattleCard["traits"]>[number]; count: number }>();
-  for (const card of cards) for (const trait of card?.traits ?? []) {
-    const entry = grouped.get(trait.id);
-    if (entry) entry.count += 1; else grouped.set(trait.id, { trait, count: 1 });
-  }
-  const entries = [...grouped.values()].flatMap(({ trait, count }) => {
-    const effects = activeCardBattleTraitEffects(trait, count);
-    const active = activeOnly ? Boolean(activeIds?.has(trait.id)) : effects.length > 0;
-    return activeOnly && !active ? [] : [{ trait, count, active, threshold: effects[0]?.requiredCount ?? Math.min(...trait.effects.map((effect) => effect.requiredCount)) }];
-  });
-  if (!entries.length) return null;
-  return <section className="shrink-0 border-b border-white/10 bg-slate-950/70 px-3 py-2" aria-label={`${title}特质聚合`}><p className="mb-1 text-[10px] font-bold text-slate-400">{title}特质</p><div className="flex flex-wrap gap-1.5">{entries.map(({ trait, count, active, threshold }) => <span key={trait.id} title={trait.description} className={`rounded-full border px-2.5 py-1 text-[10px] font-black ${active ? "border-blue-300/40 bg-blue-500/20 text-blue-200" : "border-white/10 bg-white/5 text-slate-400"}`}>{trait.name} {count}/{threshold}</span>)}</div></section>;
 }
 
 export const BattleCard = memo(function BattleCard({ card, state, cardBack, seat, activeEvent, showPower, onClick, selectable, drag }: {

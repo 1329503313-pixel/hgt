@@ -681,6 +681,9 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
     if (!card.alive || value <= 0) return;
     card.energy = Math.min(card.tier.energyRequired, card.energy + value);
   };
+  const gainHitEnergy = (card: RuntimeCard) => {
+    if (card.battleRole === "tank" || card.battleRole === "support") gainEnergy(card, 10);
+  };
   const randomOne = <T,>(list: T[]) => list.length ? list[Math.floor(random() * list.length)] : null;
   const fallbackRow = (list: RuntimeCard[], preferred: "front" | "rear") => {
     const preferredCards = list.filter((card) => card.row === preferred);
@@ -902,9 +905,9 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
         const base = formula ? formula.ok ? Math.round(formula.value * (effect.formulaMultiplier ?? 1)) : 0 : amount;
         const hit = damageHit(actor, target, base + battleCollectibleBonus(actor.collectible, "skill_damage") + actor.collectibleSkillDamage + (["damage_single", "damage_rear", "damage_random"].includes(effect.type.replace("damage_true_", "damage_")) ? battleCollectibleBonus(actor.collectible, "single_skill_damage") + actor.collectibleSingleSkillDamage : 0), "skillDamage", formula && !formula.ok ? 0 : multiplier, round, root, effect.ignoreDefensePercent ?? 0, isCardBattleTrueDamage(effect.type));
         const { incomingDamage, damage } = hit;
-        // 承伤统计包含防御抵消和溢出的伤害；命中即回能，完全抵挡也不例外。
+        // 承伤统计包含防御抵消和溢出的伤害；坦克和辅助命中即回能，完全抵挡也不例外。
         target.damageTaken += incomingDamage;
-        gainEnergy(target, 10);
+        gainHitEnergy(target);
         if (damage > 0) {
           target.hp -= hit.hpDamage;
           actor.damageDealt += damage;
@@ -1169,7 +1172,7 @@ export function simulateCardBattle(players: CardBattlePlayerInput[], seed: strin
           const hit = damageHit(actor, target, actor.tier.attack, "attack", multiplier, round, root);
           const { incomingDamage, damage } = hit;
           target.damageTaken += incomingDamage;
-          if (!counterTarget) { gainEnergy(actor, 10); gainEnergy(target, 10); }
+          if (!counterTarget) { gainEnergy(actor, 10); gainHitEnergy(target); }
           if (damage > 0) {
             target.hp -= hit.hpDamage;
             actor.damageDealt += damage;

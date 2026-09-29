@@ -158,6 +158,7 @@ test("群体伤害逐目标独立击晕，未击晕不误加状态，抵抗负�
 test("普攻与所有非伤害施法均可立即再动，再动整条触发链不再次触发", () => {
   for (const skill of [null, effect("heal_self", 10, null), effect("energy_self", 10, null), effect("defense_self"), effect("lifesteal_self"), effect("stun_down_all")]) {
     const one = side("a", { extraActionRate: 100, speed: 100, energyRequired: 10 }, skill ? [skill] : []);
+    for (const caster of one) caster.battleRole = "support";
     const result = simulateCardBattle(inputs(one, side("b")), skill?.type ?? "basic-extra");
     const extras = result.events.filter(event => event.kind === "extra_action");
     assert.ok(extras.length > 0);
