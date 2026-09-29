@@ -1,5 +1,12 @@
 # AGENTS.md
 
+### 2026-09-29 卡包类型与卡牌特质 Web/Server 全量部署（不更新 APP）
+
+- 状态：已完成并失效。用户明确要求“全量部署web werver，先不更新APP，不做检查，检查一下所有没提交的，一起提交”。审阅并提交全部 10 个未提交文件，包含已有抽卡记录卡包的类型修改、卡牌特质展示和筛选、收藏柜详情动画与媒体加载优化及相关测试文件。
+- 发布提交 `87efa472a41f82567bdb7e386818ea482b68c5d2`，提交说明 `release: ship pack type editing and card trait UI updates`。生产镜像 `hgt:87efa47`，归档 SHA256 `28868a9a0a5e1ccfd3021ac9859c161a54397c2084d3491040c2880553f6b4aa`；生产容器 `8d9f489df8e50f04cbe44fedfba096378373da07b133d36a236c42afde85c0fe`，回滚容器 `hgt-app-rollback-87efa47` 保留。
+- 按要求未运行测试套件或完整检查；完成本地生产镜像构建及部署脚本必要保护：认证源码契约、269 项公共资源完整性、生产认证预检、JWT/Cookie/既有挂载与预期环境核验、公网健康及 APP 凭据 CORS。生产认证配置不变。
+- 未构建、上传或发布 APP，未修改 APP 版本与更新记录；未推送 GitHub。报告 `artifacts/pack-type-traits-release-20260929/REPORT.md`，日志 `.local/web-server-release-20260929.log`。本次部署授权已失效。
+
 ### 2026-09-28 卡牌特质新增档位 Web/Server 部署（不更新 APP）
 
 - 状态：已完成并失效。用户明确要求“全量部署web server，不更新APP，不做检查”。仅部署新增档位自动沿用上一档全部数据的卡牌特质管理改动；未构建、上传或发布 APP，未运行测试套件或业务检查。
