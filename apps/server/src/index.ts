@@ -51,6 +51,7 @@ import { parseGiftMessage, registerGiftRoutes } from "./gifts.js";
 import { registerCircleRedPacketRoutes, startCircleRedPacketScheduler } from "./circleRedPackets.js";
 import { canonicalConversationUserIds, conversationOtherUserIdentity } from "./conversations.js";
 import { recordChatMessageForRateLimit, stickerCooldownMessage } from "./chatMessageRateLimit.js";
+import { CHAT_CONTENT_BLOCK_MESSAGE, isChatTextBlocked } from "./chatFallbackWords.js";
 import { registerSeoRoutes } from "./seo.js";
 import { pushSoupUrl, pushFullSiteToBaidu } from "./baiduPush.js";
 import { registerEmailAuthRoutes } from "./emailAuth.js";
@@ -4124,6 +4125,9 @@ app.post("/api/circles/:id/messages", async (req, res) => {
   if (!circle) return sendError(res, 403, "请先加入圈子");
   const parsed = circleMessageSchema.safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
+  if (parsed.data.content && isChatTextBlocked(parsed.data.content)) {
+    return sendError(res, 400, CHAT_CONTENT_BLOCK_MESSAGE, "CHAT_CONTENT_BLOCKED");
+  }
   const sticker = parsed.data.stickerId ? getSticker(parsed.data.stickerId) : null;
   if (parsed.data.stickerId && !sticker) return sendError(res, 400, "表情不存在或已下架");
   if (parsed.data.stickerId && !(await userOwnsSticker(user.id, parsed.data.stickerId))) return sendError(res, 403, "尚未拥有该表情，请先前往商城购买");
@@ -4802,6 +4806,9 @@ app.post("/api/conversations/:id/messages", async (req, res) => {
     }
   }).safeParse(req.body);
   if (!parsed.success) return sendError(res, 400, parsed.error.issues[0]?.message ?? "消息内容不正确");
+  if (parsed.data.content && isChatTextBlocked(parsed.data.content)) {
+    return sendError(res, 400, CHAT_CONTENT_BLOCK_MESSAGE, "CHAT_CONTENT_BLOCKED");
+  }
   const sticker = parsed.data.stickerId ? getSticker(parsed.data.stickerId) : null;
   if (parsed.data.stickerId && !sticker) return sendError(res, 400, "表情不存在或已下架");
   if (parsed.data.stickerId && !(await userOwnsSticker(user.id, parsed.data.stickerId))) return sendError(res, 403, "尚未拥有该表情，请先前往商城购买");
