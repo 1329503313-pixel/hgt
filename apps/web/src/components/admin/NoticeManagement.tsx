@@ -358,7 +358,7 @@ export function NoticeManagement() {
           <div className="flex h-full flex-col">
             <div className="mb-4 flex items-center justify-between border-b border-line pb-3">
               <div><h3 className="text-xl font-black text-ink">{editingId ? "编辑通知" : "新增通知"}</h3><p className="mt-1 text-xs text-muted">支持富文本排版和正文图片上传</p></div>
-              <button className="btn btn-secondary h-10 w-10 p-0" onClick={() => { setEditingId(null); setForm(emptyForm); }}><X size={18} /></button>
+              <button className="btn btn-secondary h-11 w-11 p-0" aria-label="关闭通知编辑" onClick={() => { setEditingId(null); setForm(emptyForm); }}><X size={18} /></button>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-3">
               <label className="block"><span className="label mb-1.5 block">标题</span><input className="field" maxLength={200} value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} placeholder="请输入通知标题" /></label>
@@ -386,7 +386,7 @@ export function NoticeManagement() {
           <article className="mx-auto max-w-3xl">
             <div className="mb-6 flex items-start justify-between gap-4 border-b border-line pb-4">
               <div><h3 className="text-2xl font-black leading-tight text-ink">{viewing.title}</h3><p className="mt-2 text-sm text-muted">作者：{viewing.author}　 发布时间：{formatDate(viewing.publishedAt)}　 有效时间：{formatDuration(viewing.validDurationMinutes)}　 状态：{currentNoticeStatus(viewing) === "published" ? "已发布" : "已失效"}　 阅读：{viewing.readCount}</p></div>
-              <button className="btn btn-secondary h-10 w-10 shrink-0 p-0" onClick={() => setViewing(null)}><X size={18} /></button>
+              <button className="btn btn-secondary h-11 w-11 shrink-0 p-0" aria-label="关闭通知详情" onClick={() => setViewing(null)}><X size={18} /></button>
             </div>
             <div className="notice-rich-content text-ink" dangerouslySetInnerHTML={{ __html: sanitizeHtml(viewing.content) }} />
           </article>
@@ -395,7 +395,7 @@ export function NoticeManagement() {
 
       {readers && (
         <Modal onClose={() => setReaders(null)}>
-          <div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-black text-ink">阅读用户</h3><p className="mt-1 line-clamp-1 text-xs text-muted">{readerTitle}</p></div><button className="btn btn-secondary h-9 w-9 p-0" onClick={() => setReaders(null)}><X size={16} /></button></div>
+          <div><h3 className="text-lg font-black text-ink">阅读用户</h3><p className="mt-1 line-clamp-1 text-xs text-muted">{readerTitle}</p></div>
           <div className="mt-4 max-h-[55vh] overflow-y-auto">
             <div className="grid grid-cols-[1fr_1fr_150px] gap-2 border-b border-line px-2 pb-2 text-center text-xs font-bold text-muted"><span>昵称</span><span>账号</span><span>阅读时间</span></div>
             {readers.map((reader) => <div key={reader.id} className="grid grid-cols-[1fr_1fr_150px] gap-2 border-b border-line/60 px-2 py-3 text-center text-sm"><span className="truncate font-semibold text-ink">{reader.nickname}</span><span className="truncate text-muted">{reader.username}</span><span className="text-xs text-muted">{formatDate(reader.readAt)}</span></div>)}

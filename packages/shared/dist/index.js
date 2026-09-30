@@ -1,3 +1,4 @@
+export * from "./collectibleAchievements.js";
 export { calculateCardBattleScore } from "./cardBattleScore.js";
 export { CARD_BATTLE_EVENT_CONDITION_CODES, CARD_BATTLE_EVENT_CONDITION_LABELS } from "./cardBattleTriggers.js";
 export { CARD_BATTLE_SUPPORT_LABELS } from "./cardBattleSupport.js";

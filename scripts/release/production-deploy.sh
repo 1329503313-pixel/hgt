@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 5 ] && [ "$#" -ne 6 ] && [ "$#" -ne 7 ] && [ "$#" -ne 8 ] && [ "$#" -ne 9 ]; then
+if [ "$#" -ne 5 ] && [ "$#" -ne 6 ] && [ "$#" -ne 7 ] && [ "$#" -ne 8 ]; then
   echo "usage: production-deploy.sh <bundle> <commit> <sha256> <expected-container-id> <confirmation>" >&2
   exit 2
 fi
@@ -11,17 +11,15 @@ commit=$2
 expected_bundle_hash=$3
 expected_container_id=$4
 confirmation=$5
-voice_env=${6:-}
-if [ "$voice_env" = - ]; then voice_env=''; fi
-image_bundle=${7:-}
-image_bundle_hash=${8:-}
+image_bundle=${6:-}
+image_bundle_hash=${7:-}
 sms_env=''
-if [ "$#" -eq 7 ]; then
-  sms_env=$7
+if [ "$#" -eq 6 ]; then
+  sms_env=$6
   image_bundle=''
   image_bundle_hash=''
-elif [ "$#" -eq 9 ]; then
-  sms_env=$9
+elif [ "$#" -eq 8 ]; then
+  sms_env=$8
 fi
 current=hgt-app
 
@@ -133,22 +131,6 @@ test "$(grep -c '^COOKIE_SECURE=' "$old_env")" -eq 1
 test "$(sed -n 's/^COOKIE_DOMAIN=//p' "$old_env")" = .caqis.com
 test "$(sed -n 's/^COOKIE_SECURE=//p' "$old_env")" = false
 cp "$old_env" "$expected_env"
-if [ -n "$voice_env" ]; then
-  test "$voice_env" = "/opt/hgt-releases/incoming/voice-$short/runtime.env"
-  test -f "$voice_env"
-  # Never source the file. Only these RTC values may differ from the old container.
-  test "$(wc -l < "$voice_env" | tr -d ' ')" -eq 6
-  for key in VOICE_ROOMS_ENABLED TRTC_ADVANCED_PERMISSION TRTC_SDK_APP_ID TRTC_SDK_SECRET TRTC_SECRET_ID TRTC_SECRET_KEY; do
-    test "$(grep -Ec "^${key}=[A-Za-z0-9_+/=.-]+$" "$voice_env")" -eq 1
-  done
-  grep -qx 'VOICE_ROOMS_ENABLED=true' "$voice_env"
-  grep -qx 'TRTC_ADVANCED_PERMISSION=true' "$voice_env"
-  grep -Eq '^TRTC_SDK_APP_ID=[1-9][0-9]*$' "$voice_env"
-  ! grep -Eq '^TRTC_(SDK_SECRET|SECRET_ID|SECRET_KEY)_FILE=' "$old_env"
-  grep -Ev '^(VOICE_ROOMS_ENABLED|TRTC_ADVANCED_PERMISSION|TRTC_SDK_APP_ID|TRTC_SDK_SECRET|TRTC_SECRET_ID|TRTC_SECRET_KEY)=' "$old_env" > "$expected_env"
-  cat "$voice_env" >> "$expected_env"
-  sort -o "$expected_env" "$expected_env"
-fi
 # Only the five SMS settings may be added or replaced. Keep the file private
 # and never print its contents or source it as shell code.
 if [ -n "$sms_env" ]; then
@@ -246,9 +228,6 @@ curl -fsS https://hgt.caqis.com/ >/dev/null
 cors_headers=$(curl -fsS -D - -o /dev/null -H 'Origin: https://app.caqis.com' 'https://hgt.caqis.com/api/soups?limit=1' | tr -d '\r')
 printf '%s\n' "$cors_headers" | grep -qi '^Access-Control-Allow-Origin: https://app.caqis.com$'
 printf '%s\n' "$cors_headers" | grep -qi '^Access-Control-Allow-Credentials: true$'
-if [ -n "$voice_env" ]; then
-  curl -fsS http://127.0.0.1:4000/api/online-soup/voice/capabilities | grep -q '"enabled":true'
-fi
 
 deployment_succeeded=true
 echo "DEPLOYMENT=complete"

@@ -27,7 +27,7 @@ export type ImpostorRecordState = {
 };
 export type GameRecordDetail = {record:GameRecord;messages?:RecordedMessage[];hasMore?:boolean;nextCursor?:string|null;
   replay?:BossReplay;state?:ImpostorRecordState;steps?:Array<{at:string;state:ImpostorRecordState}>;legacy?:boolean};
-export const gameRecordType = {human:'文字玩汤',ai:'AI玩汤',voice:'语音玩汤',impostor:'谁是伪人',room:'房间对战',boss:'BOSS对战',ranking:'排行榜对战'};
+export const gameRecordType = {human:'文字玩汤',ai:'AI玩汤',voice:'语音玩汤（已下架）',impostor:'谁是伪人',room:'房间对战',boss:'BOSS对战',ranking:'排行榜对战'};
 export const gameRecordTime = (value:string) => new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value));
 export function gameRecordOutcome(record:GameRecord,userId:string) {
   if(record.kind==='impostor')return record.winner==='good'?'好人胜利':'伪人胜利';

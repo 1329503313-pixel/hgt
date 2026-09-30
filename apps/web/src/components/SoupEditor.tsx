@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ImagePlus, Plus, Trash2, X } from "lucide-react";
 import type { SoupForm } from "../context/AppContext";
-import { soupDifficulties, soupTypes } from "../context/AppContext";
+import { soupDifficulties, soupTypes, useSoupForm } from "../context/AppContext";
 import { Modal } from "./Modal";
 import { CheckRow } from "./FormWidgets";
 import { useApp } from "../context/AppContext";
@@ -15,6 +15,19 @@ type SoupTopicOption = {
   name: string;
   isActive: boolean;
 };
+
+function normalizeKeyFactText(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function isKeyFactExplicitlyShown(content: string, publicTexts: string[]) {
+  const fact = normalizeKeyFactText(content);
+  if (!fact) return false;
+  return publicTexts.some((text) => {
+    const known = normalizeKeyFactText(text);
+    return known === fact || (fact.length >= 4 && known.includes(fact));
+  });
+}
 
 function SupplementEditor({
   title,
@@ -88,7 +101,8 @@ function TermsModal({ onClose, onAccept }: { onClose: () => void; onAccept: () =
 }
 
 export function SoupEditor() {
-  const { user, soupForm: value, setSoupForm: setValue, editingSoupId, closeSoupEditor, showToast, triggerRefresh, checkBadgeUnlocks } = useApp();
+  const { user, editingSoupId, closeSoupEditor, showToast, triggerRefresh, checkBadgeUnlocks } = useApp();
+  const [value, setValue] = useSoupForm();
   const navigate = useNavigate();
   const editing = Boolean(editingSoupId);
 
@@ -149,7 +163,7 @@ export function SoupEditor() {
   const keyFactsWeightValid = value.keyFacts.length === 0 || keyFactsTotalWeight === 100;
   const emptyKeyFactIndex = value.keyFacts.findIndex((keyFact) => !keyFact.content.trim());
   const invalidKeyFactWeightIndex = value.keyFacts.findIndex(
-    (keyFact) => !Number.isInteger(keyFact.weight) || keyFact.weight < 1 || keyFact.weight > 99
+    (keyFact) => !Number.isInteger(keyFact.weight) || keyFact.weight < 1 || keyFact.weight > 100
   );
   const invalidKeyFactHintIndex = value.keyFacts.findIndex(
     (keyFact) => !(keyFact.hintContent ?? "").trim() || (keyFact.hintContent ?? "").trim().length > 50
@@ -161,7 +175,7 @@ export function SoupEditor() {
     : emptyKeyFactIndex >= 0
     ? `AI 主持高级设置：第 ${emptyKeyFactIndex + 1} 个关键点未填写`
     : invalidKeyFactWeightIndex >= 0
-      ? `AI 主持高级设置：第 ${invalidKeyFactWeightIndex + 1} 个关键点未填写有效进度值（1–99）`
+      ? `AI 主持高级设置：第 ${invalidKeyFactWeightIndex + 1} 个关键点未填写有效进度值（1–100）`
       : invalidKeyFactHintIndex >= 0
         ? `AI 主持高级设置：第 ${invalidKeyFactHintIndex + 1} 个关键点提示内容需填写且不超过 50 个字`
       : !keyFactsWeightValid
@@ -173,7 +187,7 @@ export function SoupEditor() {
     if (!editingSoupId) return;
     try {
       await api(`/api/soups/${editingSoupId}/reanalyze-keyfacts`, { method: "POST" });
-      patch({ keyFacts: [], keyFactsCustomized: false });
+      patch({ keyFacts: [], keyFactsCustomized: false, keyFactsGenerationIssue: null });
       showToast("关键点和提示内容已清除，稍后刷新查看重新生成结果");
       setReanalyzeConfirmOpen(false);
     } catch (e) {
@@ -492,6 +506,7 @@ export function SoupEditor() {
         <Modal onClose={() => setAdvSettingsOpen(false)}>
           <div className="space-y-5 p-2 max-h-[80vh] overflow-auto">
             <h2 className="text-lg font-black text-ink">AI 高级设置</h2>
+            {value.keyFactsGenerationIssue && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800" role="status">自动关键点未通过质量审核，现有关键点未被覆盖。请手动检查汤面与关键点；确认后可保存修改，或清除后重新生成。</p>}
 
             {/* 进度关键点 */}
             <div className="space-y-3">
@@ -511,13 +526,15 @@ export function SoupEditor() {
                   <Plus size={14} className="mr-1" />添加关键点
                 </button>
               </div>
+              <p className="text-xs leading-5 text-muted">自动拆分会根据汤底中可独立推理的隐藏结论生成 1–15 项，不会为凑数添加汤面已公开的信息。</p>
 
               {value.keyFacts.map((kf) => (
                 <div key={kf.id} className="flex gap-2 rounded-lg border border-line bg-page p-3">
                   <div className="flex-1 space-y-2">
                     <div>
                       <label className="text-[11px] font-bold text-muted">关键点</label>
-                      <p className="text-[10px] text-muted">请以陈述句输入本故事的关键点，即盘到这个关键点则增长进度</p>
+                      <p className="text-[10px] text-muted">请填写汤面未告知、且玩家推理后可确认的故事结论。唯一关键点可以设置为 100 分。</p>
+                      {isKeyFactExplicitlyShown(kf.content, [value.surface, ...value.supplementalSurfaces]) && <p className="mt-1 text-[10px] font-bold text-amber-700">这条内容疑似已在汤面或补充汤面公开，不能作为有效计分点；建议改成未公开的隐藏结论。</p>}
                       <input
                         className={`field mt-1 w-full text-sm ${!kf.content.trim() ? "border-red-400" : ""}`}
                         placeholder="如：凶手是父亲"
@@ -547,19 +564,19 @@ export function SoupEditor() {
                       <label className="text-[11px] font-bold text-muted">进度值</label>
                       <p className="text-[10px] text-muted">请输入该关键点的进度值，总和应该为 100</p>
                       <input
-                        className={`field mt-1 w-24 text-sm ${!Number.isInteger(kf.weight) || kf.weight < 1 || kf.weight > 99 ? "border-red-400" : ""}`}
+                        className={`field mt-1 w-24 text-sm ${!Number.isInteger(kf.weight) || kf.weight < 1 || kf.weight > 100 ? "border-red-400" : ""}`}
                         type="number"
                         min={1}
-                        max={99}
+                        max={100}
                         value={Number.isInteger(kf.weight) && kf.weight >= 1 ? kf.weight : ""}
-                        aria-invalid={!Number.isInteger(kf.weight) || kf.weight < 1 || kf.weight > 99}
+                        aria-invalid={!Number.isInteger(kf.weight) || kf.weight < 1 || kf.weight > 100}
                         onWheel={(event) => event.currentTarget.blur()}
                         onChange={(e) => {
                           const input = e.target.value;
                           updateKeyFact(
                             kf.id,
                             "weight",
-                            input === "" ? 0 : Math.max(1, Math.min(99, Number(input)))
+                            input === "" ? 0 : Math.max(1, Math.min(100, Number(input)))
                           );
                         }}
                       />

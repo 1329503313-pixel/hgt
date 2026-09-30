@@ -6,6 +6,7 @@ import {
   compactRoomAiHistory,
   completedProgressKeyIds,
   gameSessionStatus,
+  hasCompleteAtomicProgress,
   normalizeAtomicFacts,
   normalizeFactMatches,
   normalizeHintDimension,
@@ -82,6 +83,22 @@ test("原子事实权重按作者进度关键点确定性分摊", () => {
 test("缺失的原子事实安全回退为原进度关键点", () => {
   const atoms = normalizeAtomicFacts([], [{ id: 7, content: "关键道具是一封信", weight: 100 }]);
   assert.deepEqual(atoms, [{ id: 1, keyId: 7, content: "关键道具是一封信", weight: 100 }]);
+});
+
+test("公开汤面事实不会进入自动生成的原子事实，单点可独占全部进度", () => {
+  const atoms = normalizeAtomicFacts([
+    { keyId: 1, content: "女孩全身湿透" },
+    { keyId: 1, content: "她故意走到伞外以伪装落水" },
+  ], [{ id: 1, content: "她故意走到伞外以伪装落水", weight: 100 }], ["女孩全身湿透"]);
+  assert.deepEqual(atoms, [{ id: 1, keyId: 1, content: "她故意走到伞外以伪装落水", weight: 100 }]);
+  assert.equal(hasCompleteAtomicProgress(atoms), true);
+  const publicOnly = normalizeAtomicFacts(
+    [{ keyId: 1, content: "女孩全身湿透" }],
+    [{ id: 1, content: "女孩全身湿透", weight: 100 }],
+    ["女孩全身湿透"],
+  );
+  assert.deepEqual(publicOnly, []);
+  assert.equal(hasCompleteAtomicProgress(publicOnly), false);
 });
 
 test("只有 DIRECT 和 STRONG 匹配可用于计分", () => {

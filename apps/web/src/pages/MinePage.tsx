@@ -232,7 +232,7 @@ export default function MinePage() {
             <p className="pb-1 text-sm font-bold text-muted">{levelProgress?.isMaxLevel ? "已满级" : `还需 ${levelProgress?.remainingExperience.toLocaleString() ?? "—"}`}</p>
           </div>
           <div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>{levelProgress?.isMaxLevel ? "MAX" : `${levelProgress?.currentLevelExperience.toLocaleString() ?? 0} / ${levelProgress?.experienceForNextLevel.toLocaleString() ?? 0}`}</span><span>{levelProgress?.progressPercent ?? 0}%</span></div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600 transition-all" style={{ width: `${levelProgress?.progressPercent ?? 0}%` }} /></div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-primary transition-all" style={{ width: `${levelProgress?.progressPercent ?? 0}%` }} /></div>
           <div className="mt-auto grid grid-cols-2 gap-3 pt-5">
             <button className="mine-growth-action mine-card-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />查看任务</button>
             <button className="mine-growth-action mine-card-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />贝壳明细</button>
@@ -249,7 +249,7 @@ export default function MinePage() {
             <p className="pb-1 text-sm font-bold text-muted">今日 +{shellSummary?.earnedToday ?? 0}</p>
           </div>
           <div className="mt-3 flex justify-between text-xs font-bold text-muted"><span>每日上限</span><span>{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span></div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all" style={{ width: `${shellProgress}%` }} /></div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-amber-500 transition-all" style={{ width: `${shellProgress}%` }} /></div>
           <div className="mt-auto grid grid-cols-2 gap-3 pt-5"><button className="mine-shell-action mine-card-action" onClick={() => navigate("/mine/tasks")}><ListChecks size={17} />赚取贝壳</button><button className="mine-shell-action mine-card-action" onClick={() => navigate("/mine/shells/transactions")}><Shell size={17} />收支明细</button></div>
         </aside>
         <div className="hidden min-w-0 lg:flex"><VipCard overview={vipOverview} onOpen={openVip} onOpenDetails={refreshVipOverview} /></div>
@@ -278,7 +278,7 @@ export default function MinePage() {
               <span className="truncate tabular-nums">{levelProgress.isMaxLevel ? "MAX" : `${levelProgress.currentLevelExperience.toLocaleString()} / ${levelProgress.experienceForNextLevel.toLocaleString()}`}</span>
               <span className="shrink-0">{levelProgress.progressPercent}%</span>
             </div>
-            <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-600" style={{ width: `${levelProgress.progressPercent}%` }} /></div>
+          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-primary" style={{ width: `${levelProgress.progressPercent}%` }} /></div>
           </div>
         )}
         <div className="card min-w-0 p-3 sm:p-4">
@@ -295,7 +295,7 @@ export default function MinePage() {
             <span className="truncate">今日 +{shellSummary?.earnedToday ?? 0}</span>
             <span className="shrink-0 tabular-nums">{shellSummary?.earnedToday ?? 0} / {shellSummary?.dailyLimit ?? 60}</span>
           </div>
-          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${shellProgress}%` }} /></div>
+          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-amber-100"><span className="block h-full rounded-full bg-amber-500" style={{ width: `${shellProgress}%` }} /></div>
         </div>
       </div>
       <div className="lg:hidden"><VipCard overview={vipOverview} onOpen={openVip} onOpenDetails={refreshVipOverview} /></div>

@@ -92,7 +92,7 @@ export default function ExcellentAuthorPage() {
       <MineBackButton />
 
       <div className="card overflow-hidden">
-        <div className="bg-gradient-to-br from-amber-50 via-white to-blue-50 p-5">
+        <div className="bg-amber-50 p-5">
           <div className="flex items-start gap-3">
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-amber-100 text-amber-600"><Award size={26} /></span>
             <div>
@@ -152,7 +152,7 @@ export default function ExcellentAuthorPage() {
               <h2 className="text-lg font-black text-ink">{selectorMode === "qualification" ? "选择5篇资格汤" : "选择1篇认证汤"}</h2>
               <p className="mt-1 text-sm text-muted">{selectorMode === "qualification" ? "仅展示满足3000热力值、评分3.5及以上的原创海龟汤。" : "仅展示已选资格汤中满足5000热力值、评分4.0及以上的作品。"}</p>
             </div>
-            <button className="btn btn-secondary px-3" type="button" onClick={() => setSelectorMode(null)}><X size={18} /></button>
+            <button className="btn btn-secondary px-3" type="button" aria-label="关闭选择窗口" onClick={() => setSelectorMode(null)}><X size={18} /></button>
           </div>
           <div className="mt-4 space-y-3 pb-20">
             {(selectorMode === "qualification" ? data?.eligibleSoups ?? [] : primaryCandidates).map((soup) => {

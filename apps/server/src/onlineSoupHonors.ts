@@ -30,6 +30,7 @@ export type OnlineSoupAiHonors = {
   };
 };
 
+// Read-only compatibility for archived records from the retired voice mode.
 export type OnlineSoupVoiceHonors = {
   version: 2; communicationMode: "voice"; mvp: OnlineSoupAiHonors["mvp"]; bestQuestion: null;
 };

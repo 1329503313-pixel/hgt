@@ -120,16 +120,16 @@ function SoupListManagement({ canDelete }: { canDelete: boolean }) {
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <div className="relative min-w-0 flex-1">
           <input
-            className="field h-10 pl-4 pr-24"
-            placeholder="搜索标题、作者、话题..."
+            className="field h-11 pl-4 pr-12 sm:pr-24"
+            placeholder="标题或作者"
             aria-label="搜索标题、作者、话题"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
           />
-          <button className="absolute right-1 top-1/2 inline-flex h-8 -translate-y-1/2 items-center gap-1 px-2 text-sm font-semibold text-primary" onClick={handleSearch}>
+          <button type="button" className="absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center gap-1 rounded-xl text-sm font-semibold text-primary hover:bg-blue-50 sm:right-1 sm:w-auto sm:px-2" aria-label="搜索汤品" onClick={handleSearch}>
             <Search size={18} />
-            <span>搜索</span>
+            <span className="hidden sm:inline">搜索</span>
           </button>
         </div>
         <select className="field h-10 sm:w-36" value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); }}>

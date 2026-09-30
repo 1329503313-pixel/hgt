@@ -60,7 +60,7 @@ export default function MyInteractionsPage() {
       </div>
 
       {detail && <Modal full onClose={() => setDetail(null)}>
-        <div className="flex items-center justify-between"><div><h2 className="text-lg font-black text-ink">{detail.type === "likes" ? "点赞用户" : detail.type === "favorites" ? "收藏用户" : "评价明细"}</h2><p className="mt-1 text-xs text-muted">{detail.title}</p></div><button className="btn btn-secondary h-9 w-9 p-0" onClick={() => setDetail(null)}><X size={16} /></button></div>
+        <div className="flex items-center justify-between"><div><h2 className="text-lg font-black text-ink">{detail.type === "likes" ? "点赞用户" : detail.type === "favorites" ? "收藏用户" : "评价明细"}</h2><p className="mt-1 text-xs text-muted">{detail.title}</p></div><button className="btn btn-secondary h-11 w-11 p-0" aria-label="关闭互动明细" onClick={() => setDetail(null)}><X size={16} /></button></div>
         <div className="mt-4 divide-y divide-line">
           {detail.items.map((item) => (
             <div key={item.id ?? `${item.userId}-${item.createdAt}`} className="flex gap-3 py-3">

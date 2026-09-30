@@ -35,9 +35,8 @@ expect(manifest.includes('android:allowBackup="false"'), "Android backup must st
 expect(manifest.includes('android:screenOrientation="portrait"'), "Android must remain portrait-only.");
 expect(manifest.includes('android.permission.INTERNET'), "INTERNET permission is required.");
 expect(manifest.includes('android.permission.REQUEST_INSTALL_PACKAGES'), "APK update install permission is required.");
-expect(manifest.includes('android.permission.RECORD_AUDIO'), "Voice rooms require microphone permission.");
-expect(manifest.includes('android.permission.MODIFY_AUDIO_SETTINGS'), "Voice rooms require audio routing permission.");
-expect(mainActivity.includes("hgt-native-background"), "Voice rooms must stop capture when Android leaves the foreground.");
+expect(!manifest.includes('android.permission.RECORD_AUDIO'), "Retired voice rooms must not request microphone permission.");
+expect(!manifest.includes('android.permission.MODIFY_AUDIO_SETTINGS'), "Retired voice rooms must not request audio routing permission.");
 expect(manifest.includes('android:scheme="https" android:host="hgt.caqis.com"'), "Official HTTPS app-link entry is missing.");
 for (const permission of ["CAMERA", "ACCESS_FINE_LOCATION", "READ_CONTACTS", "MANAGE_EXTERNAL_STORAGE"]) {
   expect(!manifest.includes(`android.permission.${permission}`), `Unexpected sensitive permission: ${permission}.`);

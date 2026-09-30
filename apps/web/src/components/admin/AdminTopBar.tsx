@@ -17,11 +17,11 @@ export function AdminTopBar() {
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-4 py-2.5">
         <h1 className="truncate text-xl font-black text-ink">管理员后台</h1>
         <div className="flex items-center gap-2">
-          <button className="btn btn-secondary rounded-full px-3 sm:px-4" onClick={() => window.location.reload()}>
+          <button className="btn btn-secondary rounded-full px-3 sm:px-4" onClick={() => window.location.reload()} aria-label="刷新后台">
             <RefreshCw size={16} />
             <span className="hidden sm:inline">刷新</span>
           </button>
-          <button className="btn btn-secondary rounded-full px-3 sm:px-4" onClick={() => navigate("/", { replace: true })}>
+          <button className="btn btn-secondary rounded-full px-3 sm:px-4" onClick={() => navigate("/", { replace: true })} aria-label="返回首页">
             <ArrowLeft size={16} />
             <span className="hidden sm:inline">返回首页</span>
           </button>

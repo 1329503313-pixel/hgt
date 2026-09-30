@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { CircleAlert } from "lucide-react";
 
 interface Props {
   children: ReactNode;
@@ -24,7 +25,7 @@ export default class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="flex min-h-screen items-center justify-center bg-page px-4">
           <div className="text-center">
-            <div className="mb-3 text-4xl">🫗</div>
+            <CircleAlert className="mx-auto mb-3 text-muted" size={36} aria-hidden="true" />
             <h2 className="mb-2 text-lg font-semibold text-ink">页面出错了</h2>
             <p className="mb-4 text-sm text-muted">请刷新页面重试，或联系管理员</p>
             <button
@@ -32,7 +33,7 @@ export default class ErrorBoundary extends Component<Props, State> {
                 this.setState({ error: null });
                 window.location.reload();
               }}
-              className="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-white shadow-soft transition-colors hover:bg-primary/90"
+              className="btn btn-primary"
             >
               刷新页面
             </button>

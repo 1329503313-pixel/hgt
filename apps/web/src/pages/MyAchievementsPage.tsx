@@ -8,6 +8,7 @@ import { api, StatsResponse } from "../api";
 import { BadgeType, LegendaryBadge, LegendaryBadgeIcon, TimedRankingBadge, versionBadgeAssetUrl } from "../components/BadgeVisuals";
 import { resolveBadgeOwnership } from "../shared/badgeOwnership";
 import { subscribeServerEvent } from "../shared/serverEvents";
+import { COLLECTIBLE_ACHIEVEMENTS, COLLECTIBLE_ACHIEVEMENT_POINTS } from "@hgt/shared";
 
 // ============================================================
 // 类型定义
@@ -89,6 +90,15 @@ function legendarySystemBadgeIcon(src: string, alt: string) {
 }
 
 const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints" | "ownershipRate" | "badgeType" | "unlockedAt">[] = [
+  ...COLLECTIBLE_ACHIEVEMENTS.map((badge) => ({
+    series: badge.series, tier: badge.tier, tierIndex: badge.tierIndex,
+    label: badge.name, description: badge.description, requirement: badge.requirement,
+    nextBadgeLabel: badge.nextBadgeLabel, progressTarget: badge.target,
+    progressCurrent: 0, earned: false,
+    icon: badge.tier === "legend"
+      ? legendarySystemBadgeIcon(badge.iconUrl, badge.name)
+      : <img src={badge.iconUrl} alt="" className="h-full w-full object-cover" draggable={false} />,
+  })),
   { series: "publish", tier: "normal", tierIndex: 1, label: "熬汤新秀", description: "你已经是一个合格的厨子了", icon: <img src="/badges/publish-normal.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布一篇海龟汤", nextBadgeLabel: "熬汤达人", progressCurrent: 0, progressTarget: 1, earned: false },
   { series: "publish", tier: "rare", tierIndex: 2, label: "熬汤达人", description: "没有你该怎么办？", icon: <img src="/badges/publish-rare.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布十篇海龟汤", nextBadgeLabel: "熬汤大师", progressCurrent: 0, progressTarget: 10, earned: false },
   { series: "publish", tier: "epic", tierIndex: 3, label: "熬汤大师", description: "再……再来一口汤……", icon: <img src="/badges/publish-epic.png" alt="" className="h-full w-full object-cover" draggable={false} />, requirement: "累计发布五十篇海龟汤", progressCurrent: 0, progressTarget: 50, earned: false },
@@ -168,6 +178,7 @@ const BADGE_DEFINITIONS: Omit<BadgeDef, "achievementPoints" | "ownershipRate" | 
 ];
 
 export const BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
+  ...COLLECTIBLE_ACHIEVEMENT_POINTS,
   "publish:normal": 10, "publish:rare": 30, "publish:epic": 100,
   "insight:normal": 10, "insight:rare": 35, "insight:epic": 120,
   "favorite:normal": 10, "favorite:rare": 30, "favorite:epic": 100,
@@ -216,6 +227,9 @@ export function buildBadgesFromStats(
 ): BadgeDef[] {
   const permanentlyOwnedBadgeKeys = new Set([...badgeKeys, ...Object.keys(unlockDates)]);
   const progressBySeries: Record<string, number> = {
+    epicCollectible: stats.epicCollectibleAcquired ?? 0,
+    legendCollectible: stats.legendCollectibleAcquired ?? 0,
+    collectibleValue: stats.highestCollectibleValue ?? 0,
     publish: stats.soupCount,
     insight: stats.criticalHitCount,
     favorite: stats.favoriteCount,
@@ -950,8 +964,8 @@ export default function MyAchievementsPage() {
                   {badge.label}
                 </span>
                 <span
-                  className={`text-[11px] font-bold ${
-                    badge.earned ? badge.colors.label : "text-slate-400"
+                  className={`text-xs font-bold ${
+                    badge.earned ? badge.colors.label : "text-muted"
                   } ${isThis ? "opacity-0" : "opacity-100"} transition-opacity duration-200`}
                 >
                   {badge.tierLabel}

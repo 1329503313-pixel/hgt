@@ -3,6 +3,22 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --ui-page: #f5f7fa;
+  --ui-surface: #ffffff;
+  --ui-primary: #2563eb;
+  --ui-accent: #14b8a6;
+  --ui-ink: #111827;
+  --ui-body: #374151;
+  --ui-muted: #6b7280;
+  --ui-line: #e5e7eb;
+  --ui-danger: #dc2626;
+  --ui-warning: #f97316;
+  --ui-radius-card: 16px;
+  --ui-radius-control: 12px;
+  --ui-shadow-soft: 0 8px 24px rgb(17 24 39 / 0.06);
+}
+
 /* Size the formation from its actual half-arena, without scaling combat transforms. */
 .card-battle-card { width: var(--battle-card-width, clamp(48px, min(23vw, 12dvh), 160px)); }
 .card-battle-half { min-height: 184px; gap: 20px; padding: 24px 16px 4px; }
@@ -1043,10 +1059,17 @@ textarea {
   font: inherit;
 }
 
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+}
+
 .unified-back-button {
   display: inline-flex;
   min-width: 88px;
-  height: 40px;
+  height: 44px;
   align-items: center;
   justify-content: center;
   gap: 7px;
@@ -1070,8 +1093,8 @@ textarea {
 .unified-back-button:active { transform: scale(0.97); }
 
 .unified-back-button-mobile-compact {
-  width: 40px;
-  min-width: 40px;
+  width: 44px;
+  min-width: 44px;
   border-radius: 999px;
   padding: 0;
 }
@@ -1101,21 +1124,27 @@ textarea {
 
 .card {
   @apply border border-line bg-card shadow-soft;
-  border-radius: 16px;
+  border-radius: var(--ui-radius-card);
 }
 
 .btn {
   @apply inline-flex min-h-11 items-center justify-center gap-2 px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50;
-  border-radius: 12px;
+  border-radius: var(--ui-radius-control);
+  touch-action: manipulation;
+}
+
+.btn:focus-visible,
+.unified-back-button:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
 }
 
 .btn-primary {
   @apply bg-primary text-white hover:bg-blue-700;
-  font-size: 16px;
 }
 
 .btn-secondary {
-  @apply border border-line bg-blue-50 text-primary hover:border-primary hover:bg-blue-50 hover:text-primary;
+  @apply border border-line bg-white text-body hover:border-primary hover:bg-blue-50 hover:text-primary;
 }
 
 .btn.segmented-choice {
@@ -1123,8 +1152,8 @@ textarea {
 }
 
 .mine-card-action {
-  height: 42px;
-  min-height: 42px;
+  height: 44px;
+  min-height: 44px;
   padding-top: 0;
   padding-bottom: 0;
   white-space: nowrap;
@@ -1137,7 +1166,16 @@ textarea {
 .field {
   @apply min-h-11 w-full border border-line bg-slate-50 px-3 py-2 text-sm outline-none focus:border-primary focus:bg-white focus:ring-2 focus:ring-blue-100;
   color: #374151;
-  border-radius: 12px;
+  border-radius: var(--ui-radius-control);
+}
+
+.field[aria-invalid="true"] {
+  border-color: var(--ui-danger);
+  background: #fff;
+}
+
+@media (max-width: 639px) {
+  .field { font-size: 16px; }
 }
 
 .room-message-input {
@@ -1726,8 +1764,8 @@ textarea {
 
 .online-soup-refresh-button {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   border: 1px solid var(--color-line, #e5e7eb);
   border-radius: 9px;
@@ -1757,7 +1795,7 @@ textarea {
 .online-soup-code-button,
 .online-soup-create-button {
   display: none;
-  height: 40px;
+  min-height: 44px;
   padding: 0 16px;
   font-size: 13px;
 }
@@ -2154,8 +2192,8 @@ textarea {
   }
 
   .online-soup-refresh-button {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
   }
 
   .online-soup-code-button,
@@ -5888,33 +5926,3 @@ textarea {
 /* Cooperative BOSS: each third of the allied half contains one front and two rear cards. */
 .card-battle-half.card-battle-team-member { min-height:244px; gap:20px; padding:56px 2px 8px; }
 .card-battle-team-member .card-battle-formation-row { gap:4px; }
-
-
-/* Voice soup: fixed player positions, central host and touch-safe microphone controls. */
-.voice-stage { display: grid; grid-template-columns: minmax(0,1fr) minmax(80px,1fr) minmax(0,1fr); gap: 8px; padding: 12px; max-width: 640px; margin: auto; }
-.voice-seat-column { display: grid; grid-template-rows: repeat(5,minmax(66px,auto)); gap: 4px; }
-.voice-seat { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; min-height: 66px; width: 100%; padding: 2px; border-radius: 12px; }
-.voice-seat:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
-.voice-seat strong { font-size: 12px; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.voice-seat small,.voice-host small { font-size: 11px; line-height: 14px; color: #64748b; text-align: center; }
-.voice-avatar { position: relative; display: grid; place-items: center; height: 36px; width: 36px; border-radius: 50%; background: #eff6ff; color: #2563eb; outline: 2px solid #cbd5e1; }
-.voice-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-.voice-seat.is-speaking .voice-avatar { outline-color: #2563eb; animation: voice-wave 1s ease-out infinite; }
-.voice-seat.is-speaking small { color: #1d4ed8; font-weight: 700; }
-.voice-host { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
-.voice-host .voice-avatar { width: 56px; height: 56px; outline-color: #d97706; }
-.voice-host p { font-weight: 900; font-size: 14px; }
-.voice-mute { position: absolute; bottom: -4px; right: -4px; border-radius: 50%; background: white; color: #dc2626; }
-.voice-controls { padding: 8px 12px 12px; display: grid; gap: 8px; background: #fff; }
-.voice-status { min-height: 24px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #334155; font-size: 12px; }
-.voice-ptt { min-height: 48px; display: flex; flex: 1; align-items: center; justify-content: center; gap: 8px; border-radius: 12px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; font-weight: 700; touch-action: none; user-select: none; -webkit-user-select: none; }
-.voice-ptt.is-speaking { background: #2563eb; color: white; }
-.voice-mode-toggle { min-height: 48px; min-width: 44px; max-width: 88px; padding: 4px 8px; border-radius: 10px; border: 1px solid #e2e8f0; font-size: 11px; color: #334155; }
-.voice-ptt:disabled,.voice-mode-toggle:disabled { opacity: .5; cursor: not-allowed; }
-.voice-equalizer { display: flex; height: 18px; align-items: center; gap: 3px; }
-.voice-equalizer i { width: 3px; height: 12px; background: #2563eb; border-radius: 2px; animation: voice-level .7s ease-in-out infinite alternate; }
-.voice-equalizer i:nth-child(2n) { animation-delay: -.35s; }
-@keyframes voice-wave { from { box-shadow: 0 0 0 2px #60a5fa66; } to { box-shadow: 0 0 0 9px #60a5fa00; } }
-@keyframes voice-level { from { transform: scaleY(.3); } to { transform: scaleY(1); } }
-@media (prefers-reduced-motion: reduce) { .voice-seat.is-speaking .voice-avatar,.voice-equalizer i { animation: none; } }
-@media (min-width: 1024px) { .voice-seat-column { grid-template-rows: repeat(5,minmax(84px,auto)); gap: 12px; } .voice-avatar { width: 44px; height: 44px; } }

@@ -1,3 +1,5 @@
+import { registerRetiredVoiceRoutes } from "./onlineSoupRetirement.js";
+import { COLLECTIBLE_ACHIEVEMENT_NAMES } from "@hgt/shared";
 import { BattleCollectibleRuleError, battleCollectibleBindingsSchema } from "./battleCollectibles.js";
 import { appendImpostorRecordStep, archiveImpostorRecord, startGameRecord, recallGameRecordMessage, type ImpostorRecordAction } from "./gameRecords.js";
 import { registerGameRecordRoutes } from "./gameRecordRoutes.js";
@@ -115,8 +117,6 @@ import {
   replaceCardBattleRankingDeck,
 } from "./cardBattleRanking.js";
 
-import { isVoiceRoom, voiceEnabled, registerVoiceRoutes, syncVoiceSeats, reconcileVoiceSessions, voiceMvpCandidates } from "./onlineSoupVoice.js";
-import type { OnlineSoupVoiceHonors } from "./onlineSoupHonors.js";
 
 type OnlineUser = { id: string; nickname: string; role: UserRole };
 type ImpostorMessageEvent =
@@ -140,7 +140,7 @@ export function setOnlineSoupBadgeProgressListener(listener: BadgeProgressListen
 }
 
 const router = Router();
-registerVoiceRoutes(router, userOf);
+registerRetiredVoiceRoutes(router, pool);
 registerGameRecordRoutes(router);
 const HOST_ONLINE_SECONDS = 75;
 export const HOST_OFFLINE_GRACE_MINUTES = 15;
@@ -149,7 +149,7 @@ export const ONLINE_SOUP_PARTICIPANT_CAPACITY = 11;
 export const ONLINE_SOUP_PLAYER_CAPACITY = ONLINE_SOUP_PARTICIPANT_CAPACITY - 1;
 const PLAYER_CAPACITY = ONLINE_SOUP_PLAYER_CAPACITY;
 const SPECTATOR_CAPACITY = 20;
-function spectatorCapacityForRoom(room: mysql.RowDataPacket) { return isVoiceRoom(room) ? 0 : isBossRoom(room) ? BOSS_SPECTATOR_SEATS : SPECTATOR_CAPACITY; }
+function spectatorCapacityForRoom(room: mysql.RowDataPacket) { return isBossRoom(room) ? BOSS_SPECTATOR_SEATS : SPECTATOR_CAPACITY; }
 
 function isImpostorRoom(room: mysql.RowDataPacket) {
   return String(room.content_type ?? "soup") === "impostor";
@@ -300,7 +300,7 @@ function memberBadge(keyValue: unknown, iconValue: unknown, specialName: unknown
   const [series, rawTier] = key.split(":");
   const tier = rawTier === "rare" || rawTier === "epic" || rawTier === "legend" ? rawTier : "normal";
   const tierIndex = tier === "normal" ? 0 : tier === "rare" ? 1 : tier === "epic" ? 2 : 3;
-  return { key, iconUrl: String(iconValue), name: badgeNames[series]?.[tierIndex] ?? key, tier };
+  return { key, iconUrl: String(iconValue), name: COLLECTIBLE_ACHIEVEMENT_NAMES[key] ?? badgeNames[series]?.[tierIndex] ?? key, tier };
 }
 
 async function roomByCode(code: string, db: mysql.Pool | mysql.PoolConnection = pool) {
@@ -313,7 +313,7 @@ async function roomByCode(code: string, db: mysql.Pool | mysql.PoolConnection = 
      LEFT JOIN soups s ON s.id = r.current_soup_id
      LEFT JOIN mystery_stories mystery ON mystery.id = r.current_mystery_id
      LEFT JOIN mystery_runs mystery_run ON mystery_run.id = r.current_mystery_run_id
-     WHERE r.room_code = ? LIMIT 1`,
+     WHERE r.room_code = ? AND r.communication_mode = 'text' LIMIT 1`,
     [code]
   );
   return rows[0] ?? null;
@@ -375,7 +375,6 @@ function notifyLobby(reason: string) {
 }
 
 function notifyRoom(roomId: string, reason: string, details: Record<string, unknown> = {}) {
-  if (["member_left", "member_kicked", "member_muted", "member_unmuted", "room_closed", "host_transferred"].includes(reason)) void reconcileVoiceSessions().catch(() => {});
   emitRoomEvent(roomId, "online_soup_changed", { roomId, reason, ...details, at: new Date().toISOString() });
   if (lobbyChangingReasons.has(reason)) notifyLobby(reason);
 }
@@ -610,7 +609,6 @@ async function transferDepartedHost(
       [hostMode === "ai" ? "player" : "host", roomId, successor.userId]
     );
   }
-  await syncVoiceSeats(db, roomId);
 }
 
 export async function cleanupOnlineSoupStaleSeats() {
@@ -1757,7 +1755,6 @@ function lobbyRoom(row: mysql.RowDataPacket) {
     name: String(row.name),
     type: String(row.room_type),
     status: String(row.status),
-    communicationMode: String(row.communication_mode ?? "text"),
     hostMode: String(row.host_mode ?? "human"),
     contentType: String(row.content_type ?? "soup"),
     cardBattleMode: isBossRoom(row) ? "boss" : "1v1",
@@ -2212,7 +2209,7 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
   const canViewRound = adminAudit || await canViewOnlineSoupRoundHistory(pool, room.current_round_id ? String(room.current_round_id) : null, viewer.id);
   const [[memberRows], messagePage, finishVote, impostorGame, cardBattle] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>(
-    `SELECT m.user_id, m.member_role, m.voice_seat, m.joined_at, m.last_seen_at, m.muted_until, u.nickname, u.experience, u.role,
+    `SELECT m.user_id, m.member_role, m.joined_at, m.last_seen_at, m.muted_until, u.nickname, u.experience, u.role,
        u.vip_growth_value, u.vip_expires_at, u.vip_legacy_active, u.avatar IS NOT NULL AS has_avatar,
        u.equipped_badge_key, u.equipped_badge_icon_url, lb.name AS special_badge_name, lb.tier AS special_badge_tier
      FROM online_soup_members m JOIN users u ON u.id = m.user_id
@@ -2283,7 +2280,6 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
     room: {
       id: String(room.id), code: String(room.room_code), name: String(room.name), type: String(room.room_type),
       status: String(room.status), hostOnline, hostOfflineDeadline,
-      communicationMode: String(room.communication_mode ?? "text"),
       hostMode: String(room.host_mode ?? "human"),
       contentType: String(room.content_type ?? "soup"),
       aiProgress: canViewRound && String(room.host_mode ?? "human") === "ai" && room.current_round_id
@@ -2345,7 +2341,6 @@ async function roomSnapshot(roomId: string, viewer: OnlineUser, knownRoom?: mysq
     },
     me: { role: String(viewerMember?.member_role ?? (isSuperAdminRole(viewer.role) ? "admin" : "spectator")), isHost },
     members: memberRows.map((row) => ({
-      voiceSeat: row.voice_seat == null ? null : Number(row.voice_seat),
       id: String(row.user_id), nickname: String(row.nickname), role: String(row.member_role),
       isRoomHost: String(row.user_id) === String(room.host_id),
       level: levelForExperience(row.experience),
@@ -2381,13 +2376,13 @@ router.get("/rooms", async (req, res) => {
      LEFT JOIN mystery_stories mystery ON mystery.id = r.current_mystery_id
      LEFT JOIN mystery_runs mystery_run ON mystery_run.id = r.current_mystery_run_id
      LEFT JOIN online_soup_members m ON m.room_id = r.id
-     WHERE r.status IN ('preparing','playing','ended') AND r.room_scope = 'public'
+     WHERE r.status IN ('preparing','playing','ended') AND r.room_scope = 'public' AND r.communication_mode = 'text'
        AND (r.card_battle_mode <> 'boss' OR EXISTS (SELECT 1 FROM card_battle_bosses bosses
          WHERE bosses.room_id = r.boss_template_id AND bosses.enabled = 1 AND bosses.starts_at <= NOW(3) AND bosses.ends_at > NOW(3)))
      GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 100`,
     [user?.id ?? ""]
   );
-  res.json({ rooms: rows.map(lobbyRoom), voiceEnabled: voiceEnabled() });
+  res.json({ rooms: rows.map(lobbyRoom), voiceEnabled: false });
 });
 
 router.get("/active-room", async (req, res) => {
@@ -2398,7 +2393,7 @@ router.get("/active-room", async (req, res) => {
     `SELECT m.*, r.status
      FROM online_soup_members m
      JOIN online_soup_rooms r ON r.id = m.room_id
-     WHERE m.user_id = ? AND m.is_active = 1 AND r.status <> 'closed'
+     WHERE m.user_id = ? AND m.is_active = 1 AND r.status <> 'closed' AND r.communication_mode = 'text'
      ORDER BY m.last_seen_at DESC, m.joined_at DESC LIMIT 1`,
     [user.id]
   );
@@ -2461,7 +2456,6 @@ router.get("/rooms/:roomId/invite-preview", async (req, res) => {
       playerCapacity: playerCapacityForRoom(room),
       participantCount: participantCountForRoom(room, Number(counts.player_count ?? 0)),
       participantCapacity: participantCapacityForRoom(room),
-      communicationMode: String(room.communication_mode ?? "text"),
       spectatorCapacity: spectatorCapacityForRoom(room),
       hasPassword: room.room_type === "password"
     }
@@ -2531,7 +2525,6 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
     const existing = await activeMember(room.id, user.id, connection);
     if (existing) {
       await recordOnlineSoupRoundViewers(connection, String(room.id), user.id);
-      await syncVoiceSeats(connection, String(req.params.roomId));
     await connection.commit();
       return res.json({ roomId: String(room.id), role: String(existing.member_role), joined: false });
     }
@@ -2586,7 +2579,6 @@ router.post("/rooms/:roomId/join-auto", async (req, res) => {
     );
     await roomEntrySystemMessage(String(room.id), room.current_round_id ? String(room.current_round_id) : null, user, connection);
     await recordOnlineSoupRoundViewers(connection, String(room.id), user.id);
-    await syncVoiceSeats(connection, String(room.id));
     await connection.commit();
     recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role, joined: true });
@@ -2718,7 +2710,7 @@ router.post("/rooms", async (req, res) => {
     password: z.string().max(4).optional().default(""),
     contentType: z.enum(["soup", "mystery", "impostor", "card_battle"]).default("soup"),
     hostMode: z.enum(["human", "ai"]).default("human"),
-    communicationMode: z.enum(["text", "voice"]).default("text"),
+    communicationMode: z.literal("text").default("text"),
     cardBattleMode: z.enum(["1v1", "boss"]).default("1v1"),
     bossTemplateId: z.string().trim().min(1).max(64).optional(),
     bossClearLabel: z.enum(["uncleared", "cleared"]).optional(),
@@ -2735,11 +2727,6 @@ router.post("/rooms", async (req, res) => {
   if (contentType === "mystery" && parsed.data.hostMode !== "human") return fail(res, 400, "谜局固定使用世界裁决器，不能选择 AI 主持模式");
   if (contentType === "impostor" && parsed.data.hostMode !== "human") return fail(res, 400, "谁是伪人由系统主持，不能选择主持模式");
   if (contentType === "card_battle" && parsed.data.hostMode !== "human") return fail(res, 400, "卡牌对战由系统自动结算，不能选择主持模式");
-  if (parsed.data.communicationMode === "voice") {
-    if (!voiceEnabled()) return fail(res, 503, "语音玩汤暂未开放");
-    if (contentType !== "soup" || parsed.data.hostMode !== "human") return fail(res, 400, "语音玩汤仅支持真人主持的海龟汤");
-    if (req.get("X-HGT-Voice-Version") !== "1") return fail(res, 426, "请更新客户端后创建语音房");
-  }
   let code = "";
   for (let i = 0; i < 10; i++) {
     code = String(Math.floor(100000 + Math.random() * 900000));
@@ -2965,7 +2952,7 @@ router.post("/rooms/:roomId/join", async (req, res) => {
         return fail(
           res,
           409,
-          parsed.data.role === "player" ? (isVoiceRoom(room) ? "语音房玩家席位已满" : "玩家席位已满，可以选择旁观") : "房间已满",
+          parsed.data.role === "player" ? "玩家席位已满，可以选择旁观" : "房间已满",
           parsed.data.role === "player" ? "PLAYER_FULL" : "ROOM_FULL"
         );
       }
@@ -2993,7 +2980,6 @@ router.post("/rooms/:roomId/join", async (req, res) => {
       ? (isCardBattleRoom(room) ? resolvedRole : isImpostorRoom(room) || String(room.host_mode ?? "human") === "ai" ? "player" : "host")
       : resolvedRole);
     await recordOnlineSoupRoundViewers(connection, String(room.id), user.id);
-    await syncVoiceSeats(connection, String(req.params.roomId));
     await connection.commit();
     if (!existing) recordUserBehavior("join_online_room");
     res.json({ roomId: String(room.id), role: String(role), joined: !existing });
@@ -4030,7 +4016,6 @@ router.post("/rooms/:roomId/members/:userId/transfer-host", async (req, res) => 
       `${context.user.nickname} 将房主转让给 ${targetNickname}`,
       connection
     );
-    await syncVoiceSeats(connection, String(req.params.roomId));
     await connection.commit();
   } catch (error) {
     await connection.rollback();
@@ -4366,7 +4351,7 @@ router.post("/rooms/:roomId/start", async (req, res) => {
       return fail(res, 409, "当前房间无法开始新一轮");
     }
     const hostMode = String(room.host_mode ?? "human");
-    const questionLimit = hostMode === "human" && !isVoiceRoom(room) ? startOptions.data.questionLimit : null;
+    const questionLimit = hostMode === "human" ? startOptions.data.questionLimit : null;
     if (hostMode === "ai" && (!aiSoupSnapshot || aiSoupSnapshot.soupId !== String(room.current_soup_id))) {
       await connection.rollback();
       return fail(res, 409, "房间配置已更新，请重新开始本轮");
@@ -5223,7 +5208,7 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
   const connection = await pool.getConnection();
   let ended = false;
   let completedRound = false;
-  let humanHonors: OnlineSoupAiHonors | OnlineSoupVoiceHonors | null = null;
+  let humanHonors: OnlineSoupAiHonors | null = null;
   try {
     await connection.beginTransaction();
     const [[lockedRoom]] = await connection.query<mysql.RowDataPacket[]>(
@@ -5244,13 +5229,7 @@ router.post("/rooms/:roomId/publish-bottom", async (req, res) => {
     }
     const nextPublished = [...published, parsed.data.bottomIndex].sort((a, b) => a - b);
     ended = nextPublished.length === bottoms.length;
-    if (ended && isVoiceRoom(context.room)) {
-      const candidates = await voiceMvpCandidates(connection, String(context.room.id), String(context.room.current_round_id));
-      const mvp = candidates.find(candidate => candidate.id === parsed.data.mvpUserId);
-      if (!mvp || parsed.data.bestQuestionMessageId) { await connection.rollback(); return fail(res, 400, "请选择本轮在席玩家为 MVP；语音房不评选提问"); }
-      humanHonors = { version: 2, communicationMode: "voice", mvp: { userId: mvp.id, nickname: mvp.nickname, avatar: mvp.avatar, progressContribution: 0 }, bestQuestion: null };
-    }
-    if (ended && !isVoiceRoom(context.room)) {
+    if (ended) {
       if (!parsed.data.mvpUserId || !parsed.data.bestQuestionMessageId) {
         await connection.rollback();
         return fail(res, 400, "发布最后一条汤底前，请先选择本场 MVP 和最佳提问");

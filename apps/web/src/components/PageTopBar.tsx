@@ -17,7 +17,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", titleState, bac
   return (
     <div className="top-nav-shell">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5">
-        <button className="flex min-h-10 min-w-0 shrink-0 items-center text-left" type="button" onClick={() => navigate(titleTo, { state: titleState })}>
+        <button className="flex min-h-11 min-w-0 shrink-0 items-center text-left" type="button" onClick={() => navigate(titleTo, { state: titleState })}>
           {titleContent ?? <h1 className="truncate py-0.5 text-[22px] font-black leading-[1.25] text-ink sm:text-[24px]">{title}</h1>}
         </button>
         <div className="flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
@@ -28,7 +28,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", titleState, bac
               {backTo ? (
                 <UnifiedBackButton to={backTo} state={backState} compactOnMobile />
               ) : (
-                <button className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate("/messages")} aria-label="消息">
+                <button className="relative grid h-11 w-11 place-items-center rounded-full bg-white text-ink shadow-soft" onClick={() => navigate("/messages")} aria-label="消息">
                   <Bell size={20} />
                   {unread > 0 && (
                     <span className="absolute right-1.5 top-0 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
@@ -38,7 +38,7 @@ export function PageTopBar({ title, titleContent, titleTo = "/", titleState, bac
                 </button>
               )}
               {canAccessAdmin(user.role) && (
-                <button className="hidden h-10 w-10 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={() => navigate("/admin")} aria-label="后台">
+                <button className="hidden h-11 w-11 place-items-center rounded-full bg-white text-primary shadow-soft sm:grid" onClick={() => navigate("/admin")} aria-label="后台">
                   <Shield size={19} />
                 </button>
               )}
@@ -67,7 +67,7 @@ function UserMenuDropdown({ user }: { user: AccountUser }) {
 
   return (
     <details ref={userMenuRef} className="user-menu">
-      <summary className="avatar-name-gap flex min-h-10 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:px-2.5 sm:py-1.5">
+      <summary className="avatar-name-gap flex min-h-11 min-w-0 cursor-pointer list-none items-center rounded-full bg-white px-2 shadow-soft sm:px-2.5 sm:py-1.5">
         {user.avatar ? (
           <img className="h-7 w-7 shrink-0 rounded-full object-cover" src={user.avatar} alt="" />
         ) : (
@@ -79,7 +79,7 @@ function UserMenuDropdown({ user }: { user: AccountUser }) {
         <VipIcon level={user.vipLevel} active={user.vipActive} className="h-3.5 w-3.5" />
       </summary>
       <div className="user-menu-panel left-0 top-[calc(100%+8px)] sm:left-auto sm:right-0">
-        <button className="user-menu-item" onClick={logout}>
+        <button className="user-menu-item" aria-label="退出登录" onClick={logout}>
           <LogOut size={17} />
           退出登录
         </button>

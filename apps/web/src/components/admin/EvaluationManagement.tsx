@@ -147,15 +147,16 @@ export function EvaluationManagement() {
         <label className="space-y-1"><span className="block text-xs font-bold text-muted">评价类型</span><select aria-label="评价类型" className="field min-h-11" value={evaluationType} onChange={(event) => { setPage(1); setEvaluationType(event.target.value); }}><option value="all">全部评价</option><option value="normal">正常评价</option><option value="anonymous">匿名评价</option></select></label>
         <div className="relative min-w-0 flex-1">
           <input
-            className="field h-10 pl-4 pr-24"
-            placeholder="搜索评价者、汤标题、内容..."
+            className="field h-11 pl-4 pr-12 sm:pr-24"
+            placeholder="评价者或汤名"
+            aria-label="搜索评价者、汤标题、内容"
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") { setPage(1); setSubmittedKeyword(keyword.trim()); } }}
           />
-          <button className="absolute right-1 top-1/2 inline-flex h-8 -translate-y-1/2 items-center gap-1 px-2 text-sm font-semibold text-primary" onClick={() => { setPage(1); setSubmittedKeyword(keyword.trim()); }}>
+          <button type="button" className="absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center gap-1 rounded-xl text-sm font-semibold text-primary hover:bg-blue-50 sm:right-1 sm:w-auto sm:px-2" aria-label="搜索评价" onClick={() => { setPage(1); setSubmittedKeyword(keyword.trim()); }}>
             <Search size={18} />
-            <span>搜索</span>
+            <span className="hidden sm:inline">搜索</span>
           </button>
         </div>
       </div>

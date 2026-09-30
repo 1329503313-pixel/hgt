@@ -218,7 +218,7 @@ export function AssetDrawOverlay({ order, balance, onClose, onDrawAgain }: { ord
         <div className="absolute inset-x-0 bottom-0 z-[90] border-t border-white/15 bg-slate-950/90 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,.35)] backdrop-blur-xl">
           <div className="mx-auto flex max-w-xl gap-3">
             <button className="min-h-12 flex-1 rounded-xl border border-white/25 bg-white/10 px-4 text-sm font-black text-white transition hover:bg-white/15 active:scale-[.98]" onClick={(event) => { event.stopPropagation(); onClose(); }}>收下奖励</button>
-            <button className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 px-4 text-sm font-black text-white shadow-[0_8px_24px_rgba(99,102,241,.35)] transition hover:brightness-110 active:scale-[.98]" onClick={(event) => { event.stopPropagation(); onDrawAgain(order.drawMode); }}><Shell size={17} />{order.drawMode === "ten" ? "再来十连" : "再来一次"}</button>
+            <button className="btn btn-primary min-h-12 flex-1" onClick={(event) => { event.stopPropagation(); onDrawAgain(order.drawMode); }}><Shell size={17} />{order.drawMode === "ten" ? "再来十连" : "再来一次"}</button>
           </div>
         </div>
       )}

@@ -56,7 +56,7 @@ export default function DetailPage() {
   const [showShare, setShowShare] = useState(false);
   const [showRoomCreate, setShowRoomCreate] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
-  const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "", hostMode: "human" as "human" | "ai" | "voice" });
+  const [roomForm, setRoomForm] = useState({ name: "", type: "public" as "public" | "password", password: "", hostMode: "human" as "human" | "ai" });
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   const [likePending, setLikePending] = useState(false);
   const [favoritePending, setFavoritePending] = useState(false);
@@ -81,7 +81,7 @@ export default function DetailPage() {
     if (roomForm.type === "password" && roomForm.password.length !== 4) return showToast("房间密码必须为 4 位");
     setCreatingRoom(true);
     try {
-      const created = await api<{ roomId: string }>("/api/online-soup/rooms", { method: "POST", body: { ...roomForm, hostMode: roomForm.hostMode === "voice" ? "human" : roomForm.hostMode, communicationMode: roomForm.hostMode === "voice" ? "voice" : "text" } });
+      const created = await api<{ roomId: string }>("/api/online-soup/rooms", { method: "POST", body: roomForm });
       await api(`/api/online-soup/rooms/${created.roomId}/select-soup`, { method: "POST", body: { soupId: soup.id } });
       navigate(`/online-soup/rooms/${created.roomId}`);
     } catch (error) { showToast(error instanceof Error ? error.message : "创建房间失败"); }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AtomicFact, ProgressKeyFact } from "./gameLogic.js";
 
@@ -42,6 +43,10 @@ export type AiSoupRoundSnapshot = {
   atomicFacts: AtomicFact[];
   contentHash: string;
 };
+
+export function hashAiSoupRoundSnapshot(snapshot: Omit<AiSoupRoundSnapshot, "contentHash">): string {
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+}
 
 export function parseAiSoupRoundSnapshot(value: unknown): AiSoupRoundSnapshot | null {
   let parsed = value;

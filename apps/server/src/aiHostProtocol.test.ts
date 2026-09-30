@@ -12,6 +12,7 @@ import {
   detectPromptInjection,
   parseStrictModelJson,
   preserveFastAnswer,
+  suppressPublicFactDiscoveries,
   resolveRepeatedVerifierRejection,
   shouldVerifyAdjudication,
   validateAdjudicationFactIds,
@@ -50,6 +51,20 @@ test("验证器将模型已出现的同义错误码归一化为标准协议码",
     verdict: "REJECT",
     issueCodes: ["FACT_NOT_MATCHED", "UNSUPPORTED_ASSUMPTION"],
   });
+});
+
+test("已公开事实即使被准确确认也不能推进进度", () => {
+  const adjudication = result({
+    matchedFacts: [
+      { factId: "F01", matchStrength: 0.99, discoveryStrength: 0.99, proposedState: "DISCOVERED" },
+      { factId: "F02", matchStrength: 0.99, discoveryStrength: 0.99, proposedState: "DISCOVERED" },
+    ],
+  });
+  const safe = suppressPublicFactDiscoveries(adjudication, facts, ["丈夫关了窗户"]);
+  assert.equal(safe.matchedFacts[0].proposedState, "TOUCHED");
+  assert.equal(safe.matchedFacts[0].discoveryStrength, 0);
+  assert.equal(safe.matchedFacts[1].proposedState, "DISCOVERED");
+  assert.equal(applyFactAdjudication(facts, safe).progress, 40);
 });
 
 test("Verifier 连续拒绝时保留一致回答但清空争议事实", () => {

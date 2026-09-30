@@ -2,7 +2,6 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ReleaseNotes,
     [string]$ProductionHost = 'root@47.239.5.69',
-    [string]$VoiceEnvironmentFile,
     [string]$SmsEnvironmentFile,
     [switch]$BuildImageLocally,
     [switch]$DeployRequestLogging,
@@ -57,7 +56,7 @@ try {
     Invoke-ReleaseCommand 'web-server-build' { npm run build:all }
     Invoke-ReleaseCommand 'production-auth-source-contract' { npm run release:check:auth }
     Invoke-ReleaseCommand 'android-prepare-and-verify' { npm run release:android:prepare }
-    Invoke-ReleaseCommand 'production-entry-and-microphone-browser-checks' { npm run test:application-startup }
+    Invoke-ReleaseCommand 'production-entry-and-permissions-browser-checks' { npm run test:application-startup }
     Invoke-ReleaseCommand 'android-upload-and-public-hash-verification' { npm run app:android:upload -- --confirm-upload }
     Invoke-ReleaseCommand 'android-release-descriptor' {
         if ($ForceAndroidUpdate) {
@@ -68,7 +67,7 @@ try {
     }
     if (-not (Test-Path -LiteralPath $descriptorPath)) { throw 'Android release descriptor was not created.' }
     Invoke-ReleaseCommand 'production-web-server-deployment' {
-        & (Join-Path $scriptRoot 'deploy-production.ps1') -Commit $commit -ProductionHost $ProductionHost -VoiceEnvironmentFile $VoiceEnvironmentFile -SmsEnvironmentFile $SmsEnvironmentFile -BuildImageLocally:$BuildImageLocally -ConfirmFullDeployment
+        & (Join-Path $scriptRoot 'deploy-production.ps1') -Commit $commit -ProductionHost $ProductionHost -SmsEnvironmentFile $SmsEnvironmentFile -BuildImageLocally:$BuildImageLocally -ConfirmFullDeployment
     }
     if ($DeployRequestLogging) {
         Invoke-ReleaseCommand 'production-nginx-request-logging' {

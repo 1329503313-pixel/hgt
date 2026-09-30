@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
+import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupKeyFactsSchema, soupValidationMessage } from "./soupInput.js";
 
 test("编辑海龟汤时将当前 OSS 封面转换为站内封面标记", () => {
   const body = {
@@ -57,6 +57,27 @@ test("开启 AI 主持并手动管理关键点时禁止保存空列表", () => {
   assert.equal(hasEmptyManualAiKeyFacts({ enableAiGame: true, keyFactsCustomized: true, keyFacts: [{}] }), false);
 });
 
+test("单个 AI 关键点可分配 100 分，多个关键点仍要求权重合计为 100", () => {
+  assert.equal(soupKeyFactsSchema.safeParse([
+    { id: 1, content: "唯一隐藏反转", weight: 100, hintContent: "从反常行为入手" },
+  ]).success, true);
+  assert.equal(soupKeyFactsSchema.safeParse([
+    { id: 1, content: "隐藏动机", weight: 60, hintContent: "从人物目的入手" },
+    { id: 2, content: "隐藏手法", weight: 40, hintContent: "追问事件经过" },
+  ]).success, true);
+  assert.equal(soupKeyFactsSchema.safeParse([
+    { id: 1, content: "隐藏动机", weight: 100, hintContent: "从人物目的入手" },
+    { id: 2, content: "隐藏手法", weight: 1, hintContent: "追问事件经过" },
+  ]).success, false);
+  const legacyManualFacts = Array.from({ length: 16 }, (_, index) => ({
+    id: index + 1,
+    content: `手动隐藏结论${index + 1}`,
+    weight: index === 0 ? 85 : 1,
+    hintContent: "留意故事因果",
+  }));
+  assert.equal(soupKeyFactsSchema.safeParse(legacyManualFacts).success, true);
+});
+
 test("未开启 AI 主持时忽略残留关键点，开启自动关键点时也不采信客户端残留", () => {
   assert.deepEqual(normalizeSoupAiConfigurationInput({
     title: "测试汤",
@@ -95,7 +116,7 @@ test("海龟汤校验错误明确指出 AI 高级设置中的问题", () => {
   );
   assert.equal(
     soupValidationMessage([{ path: ["keyFacts", 1, "weight"], message: "Too small" }]),
-    "AI 主持高级设置：第 2 个关键点未填写有效进度值（1–99）"
+    "AI 主持高级设置：第 2 个关键点未填写有效进度值（1–100）"
   );
   assert.equal(
     soupValidationMessage([{ path: ["keyFacts", 2, "hintContent"], message: "Too small" }]),

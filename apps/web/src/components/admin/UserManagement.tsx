@@ -357,14 +357,14 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
 
   return (
     <div className="card p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
+      <div className="mb-3 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="font-black text-ink">用户管理</h2>
           <div className="mt-1 text-sm text-muted">{total} 位用户</div>
         </div>
-        <div className="flex items-center gap-2">
-          {isSuperAdmin && <button type="button" className="btn btn-secondary h-10 px-3 text-xs whitespace-nowrap" onClick={() => { setAdminRoleOpen(true); setAdminRoleError(""); }}><ShieldCheck size={16} />设置管理员</button>}
-          {isSuperAdmin && <button type="button" className="btn btn-primary h-10 px-3 text-xs whitespace-nowrap" onClick={() => { setBulkShellOpen(true); setBulkShellPreview(null); setBulkShellError(""); }}><Shell size={16} />发放/扣除贝壳</button>}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {isSuperAdmin && <button type="button" className="btn btn-secondary min-w-0 px-3 text-xs" onClick={() => { setAdminRoleOpen(true); setAdminRoleError(""); }}><ShieldCheck className="shrink-0" size={16} />设置管理员</button>}
+          {isSuperAdmin && <button type="button" className="btn btn-primary min-w-0 px-3 text-xs" onClick={() => { setBulkShellOpen(true); setBulkShellPreview(null); setBulkShellError(""); }}><Shell className="shrink-0" size={16} />发放/扣除贝壳</button>}
           <ColumnSelector columns={userColumns} visible={visibleColumns} onChange={setVisibleColumns} />
         </div>
       </div>
@@ -372,15 +372,16 @@ export function UserManagement({ isSuperAdmin }: { isSuperAdmin: boolean }) {
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <div className="relative min-w-0 flex-1">
           <input
-            className="field h-10 pl-4 pr-24"
-            placeholder="搜索昵称、原始账号、手机号..."
+            className="field h-11 pl-4 pr-12 sm:pr-24"
+            placeholder="昵称或账号"
+            aria-label="搜索昵称、账号或手机号"
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") { setPage(1); setSubmittedKeyword(keyword.trim()); } }}
           />
-          <button className="absolute right-1 top-1/2 inline-flex h-8 -translate-y-1/2 items-center gap-1 px-2 text-sm font-semibold text-primary" onClick={() => { setPage(1); setSubmittedKeyword(keyword.trim()); }}>
+          <button type="button" className="absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center gap-1 rounded-xl text-sm font-semibold text-primary hover:bg-blue-50 sm:right-1 sm:w-auto sm:px-2" aria-label="搜索用户" onClick={() => { setPage(1); setSubmittedKeyword(keyword.trim()); }}>
             <Search size={18} />
-            <span>搜索</span>
+            <span className="hidden sm:inline">搜索</span>
           </button>
         </div>
         <select className="field h-10 sm:w-40" aria-label="登录状态筛选" value={loginStatusFilter} onChange={(event) => { setPage(1); setLoginStatusFilter(event.target.value as LoginStatusFilter); }}>

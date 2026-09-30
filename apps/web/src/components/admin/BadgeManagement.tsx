@@ -282,7 +282,7 @@ export function BadgeManagement() {
 
       {userAction && (
         <Modal full onClose={closeUserModal}>
-          <div className="flex items-center justify-between border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">{userAction === "view" ? "查看徽章" : userAction === "grant" ? "发放徽章" : "收回徽章"}</h2>{userDetail && <p className="mt-1 text-sm text-muted">{userDetail.user.nickname}（@{userDetail.user.username}）</p>}</div><button className="btn btn-secondary px-3" onClick={closeUserModal}><X size={17} /></button></div>
+          <div className="flex items-center justify-between border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">{userAction === "view" ? "查看徽章" : userAction === "grant" ? "发放徽章" : "收回徽章"}</h2>{userDetail && <p className="mt-1 text-sm text-muted">{userDetail.user.nickname}（@{userDetail.user.username}）</p>}</div><button className="btn btn-secondary px-3" aria-label="关闭徽章窗口" onClick={closeUserModal}><X size={17} /></button></div>
           {modalLoading && !userDetail ? <div className="py-5"><CardSkeleton rows={5} /></div> : userDetail && (
             <div className="py-5">
               {userAction === "view" && <div className="space-y-6">
@@ -310,7 +310,7 @@ export function BadgeManagement() {
         <Modal full onClose={() => { if (!modalLoading) setConditionBadge(null); }}>
           <div className="flex items-center justify-between border-b border-line pb-3">
             <div><h2 className="text-lg font-black text-ink">设置活动发放条件</h2><p className="mt-1 text-sm text-muted">{conditionBadge.name} · 多个条件需同时满足；已获得用户不会被收回或重复发放</p></div>
-            <button className="btn btn-secondary px-3" disabled={modalLoading} onClick={() => setConditionBadge(null)}><X size={17} /></button>
+            <button className="btn btn-secondary px-3" aria-label="关闭徽章条件" disabled={modalLoading} onClick={() => setConditionBadge(null)}><X size={17} /></button>
           </div>
           <div className="py-4"><ActivityConditionsEditor value={conditionDraft} onChange={setConditionDraft} disabled={modalLoading} emptyText="未设置活动规则时不会自动发放" /></div>
           <div className="flex justify-end gap-2 border-t border-line pt-3"><button className="btn btn-secondary" disabled={modalLoading} onClick={() => setConditionBadge(null)}>取消</button><button className="btn btn-primary" disabled={modalLoading} onClick={saveActivityConditions}>{modalLoading ? "保存中…" : "保存条件"}</button></div>
@@ -319,7 +319,7 @@ export function BadgeManagement() {
 
       {ownersBadge && (
         <Modal full onClose={() => setOwnersBadge(null)}>
-          <div className="flex items-center justify-between border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">拥有「{ownersBadge.name}」的用户</h2><p className="mt-1 text-sm text-muted">共 {owners.length} 位</p></div><button className="btn btn-secondary px-3" onClick={() => setOwnersBadge(null)}><X size={17} /></button></div>
+          <div className="flex items-center justify-between border-b border-line pb-3"><div><h2 className="text-lg font-black text-ink">拥有「{ownersBadge.name}」的用户</h2><p className="mt-1 text-sm text-muted">共 {owners.length} 位</p></div><button className="btn btn-secondary px-3" aria-label="关闭拥有者列表" onClick={() => setOwnersBadge(null)}><X size={17} /></button></div>
           <div className="space-y-2 py-4">{owners.map((user) => <div key={user.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-3"><UserIdentity user={user} /><button className="btn btn-danger shrink-0" disabled={modalLoading} onClick={() => revokeBadge(user, ownersBadge, true)}>撤销徽章</button></div>)}</div>
           {owners.length === 0 && !modalLoading && <p className="py-10 text-center text-sm text-muted">暂时没有用户拥有该徽章</p>}
         </Modal>

@@ -157,23 +157,21 @@ export default function ShellTaskCenterPage() {
       <MineBackButton hideOnDesktop />
 
       <div className="grid gap-4 lg:grid-cols-12 lg:gap-5">
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-sky-500 via-blue-600 to-indigo-700 p-5 text-white shadow-soft lg:col-span-6 lg:min-h-60 lg:p-7">
-          <div className="absolute -right-12 -top-16 h-48 w-48 rounded-full border-[32px] border-white/5" />
-          <div className="absolute -bottom-20 right-24 h-44 w-44 rounded-full bg-white/5 blur-2xl" />
+        <div className="relative overflow-hidden rounded-2xl bg-blue-700 p-5 text-white shadow-soft lg:col-span-6 lg:min-h-60 lg:p-7">
           <div className="relative flex h-full flex-col">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-sm font-bold text-white/70">当前贝壳余额</p>
+                <p className="text-sm font-bold text-blue-100">当前贝壳余额</p>
                 <p className="mt-2 flex items-center gap-2 text-4xl font-black tracking-tight lg:text-5xl"><Shell size={34} />{(liveShellBalance ?? data.balance).toLocaleString()}</p>
               </div>
-              <button className="rounded-full border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold backdrop-blur-sm transition hover:bg-white/20 lg:px-4 lg:py-2.5" onClick={goToTransactions}>
+              <button type="button" className="inline-flex min-h-11 items-center rounded-xl border border-white/40 bg-white/10 px-3 text-sm font-semibold text-white transition hover:bg-white/20 lg:px-4" onClick={goToTransactions}>
                 贝壳明细 <ChevronRight className="inline" size={14} />
               </button>
             </div>
             <div className="mt-7 lg:mt-auto">
               <div className="flex items-center justify-between text-xs font-bold text-white/80"><span>今日获取进度</span><span className="text-white">{data.earnedToday} / {data.dailyLimit}</span></div>
               <div className="mt-2.5 h-2.5 overflow-hidden rounded-full bg-white/20"><div className="h-full rounded-full bg-white transition-all" style={{ width: `${percentage}%` }} /></div>
-              <p className="mt-3 text-xs leading-5 text-white/65">任务奖励自动到账；每日实际最多获得 {data.dailyLimit} 贝壳</p>
+              <p className="mt-3 text-xs leading-5 text-blue-100">任务奖励自动到账；每日实际最多获得 {data.dailyLimit} 贝壳</p>
             </div>
           </div>
         </div>
@@ -190,7 +188,7 @@ export default function ShellTaskCenterPage() {
           <div className="card col-span-2 p-4 lg:p-5">
             <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold text-muted">累计经验值</p><p className="mt-1 text-2xl font-black text-ink lg:text-3xl">{data.levelProgress.experience.toLocaleString()}<span className="ml-1 text-sm font-bold text-muted">EXP</span></p></div><div className="rounded-2xl bg-violet-50 px-3 py-2 text-right text-xs font-bold leading-5 text-violet-700">今日获得<br />+{data.earnedExperienceToday} EXP</div></div>
             <div className="mt-3 flex items-center justify-between text-xs font-bold text-muted"><span>{data.levelProgress.isMaxLevel ? "已达到最高等级" : `距 Lv${data.levelProgress.level + 1} 还需 ${data.levelProgress.remainingExperience.toLocaleString()} EXP`}</span><span className="text-ink">{data.levelProgress.isMaxLevel ? "MAX" : `${data.levelProgress.currentLevelExperience.toLocaleString()} / ${data.levelProgress.experienceForNextLevel.toLocaleString()}`}</span></div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-500" style={{ width: `${data.levelProgress.progressPercent}%` }} /></div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-primary" style={{ width: `${data.levelProgress.progressPercent}%` }} /></div>
           </div>
         </div>
       </div>

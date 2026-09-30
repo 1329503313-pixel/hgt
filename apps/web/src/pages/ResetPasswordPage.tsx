@@ -12,19 +12,22 @@ export default function ResetPasswordPage() {
   const navigate = useNavigate();
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<{ field: "current" | "next" | "confirm" | "form"; message: string } | null>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (saving) return;
-    if (password.next.length < 6) return showToast("新密码至少需要 6 位");
-    if (password.next !== password.confirm) return showToast("两次输入的新密码不一致");
+    if (!password.current) return setError({ field: "current", message: "请输入当前密码" });
+    if (password.next.length < ACCOUNT_PASSWORD_MIN_LENGTH) return setError({ field: "next", message: `新密码至少需要 ${ACCOUNT_PASSWORD_MIN_LENGTH} 位` });
+    if (password.next !== password.confirm) return setError({ field: "confirm", message: "两次输入的新密码不一致" });
+    setError(null);
     setSaving(true);
     try {
       await api<PasswordResponse>("/api/auth/password", { method: "POST", body: { currentPassword: password.current, newPassword: password.next } });
       showToast("密码已修改");
       navigate("/mine/settings", { replace: true });
     } catch (error) {
-      showToast((error as Error).message);
+      setError({ field: "form", message: (error as Error).message });
     } finally {
       setSaving(false);
     }
@@ -38,10 +41,11 @@ export default function ResetPasswordPage() {
       <PageTopBar title="修改密码" />
       <MineBackButton />
       <div>
-        <form className="card space-y-4 p-4" onSubmit={submit}>
-          <div><label className="label mb-2 block" htmlFor="current-password">当前密码</label><input id="current-password" className="field" type="password" autoComplete="current-password" value={password.current} onChange={(event) => setPassword((current) => ({ ...current, current: event.target.value }))} placeholder="请输入当前密码" required /></div>
-          <div><label className="label mb-2 block" htmlFor="new-password">新密码</label><input id="new-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" aria-describedby="new-password-help" value={password.next} onChange={(event) => setPassword((current) => ({ ...current, next: event.target.value }))} placeholder="请输入新密码" required /><p id="new-password-help" className="mt-2 text-xs text-muted">密码至少 {ACCOUNT_PASSWORD_MIN_LENGTH} 位</p></div>
-          <div><label className="label mb-2 block" htmlFor="confirm-password">再次输入新密码</label><input id="confirm-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" value={password.confirm} onChange={(event) => setPassword((current) => ({ ...current, confirm: event.target.value }))} placeholder="请再次输入新密码" required /></div>
+        <form className="card space-y-4 p-4" onSubmit={submit} noValidate>
+          <div><label className="label mb-2 block" htmlFor="current-password">当前密码</label><input id="current-password" className="field" type="password" autoComplete="current-password" value={password.current} onChange={(event) => { setPassword((current) => ({ ...current, current: event.target.value })); if (error?.field === "current") setError(null); }} aria-invalid={error?.field === "current"} aria-describedby={error?.field === "current" ? "current-password-error" : undefined} placeholder="请输入当前密码" required />{error?.field === "current" && <p id="current-password-error" role="alert" className="mt-2 text-sm text-danger">{error.message}</p>}</div>
+          <div><label className="label mb-2 block" htmlFor="new-password">新密码</label><input id="new-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" aria-invalid={error?.field === "next"} aria-describedby={error?.field === "next" ? "new-password-error" : "new-password-help"} value={password.next} onChange={(event) => { setPassword((current) => ({ ...current, next: event.target.value })); if (error?.field === "next") setError(null); }} placeholder="请输入新密码" required /><p id="new-password-help" className="mt-2 text-xs text-muted">密码至少 {ACCOUNT_PASSWORD_MIN_LENGTH} 位</p>{error?.field === "next" && <p id="new-password-error" role="alert" className="mt-2 text-sm text-danger">{error.message}</p>}</div>
+          <div><label className="label mb-2 block" htmlFor="confirm-password">再次输入新密码</label><input id="confirm-password" className="field" type="password" minLength={ACCOUNT_PASSWORD_MIN_LENGTH} maxLength={ACCOUNT_PASSWORD_MAX_LENGTH} autoComplete="new-password" value={password.confirm} onChange={(event) => { setPassword((current) => ({ ...current, confirm: event.target.value })); if (error?.field === "confirm") setError(null); }} aria-invalid={error?.field === "confirm"} aria-describedby={error?.field === "confirm" ? "confirm-password-error" : undefined} placeholder="请再次输入新密码" required />{error?.field === "confirm" && <p id="confirm-password-error" role="alert" className="mt-2 text-sm text-danger">{error.message}</p>}</div>
+          {error?.field === "form" && <p role="alert" className="text-sm text-danger">{error.message}</p>}
           <button className="btn btn-primary w-full" disabled={saving}>{saving ? "提交中……" : "确认重置"}</button>
         </form>
       </div>

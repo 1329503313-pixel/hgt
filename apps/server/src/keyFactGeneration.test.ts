@@ -67,9 +67,15 @@ test("解析历史关键点缺失提示内容的 AI 补齐结果", () => {
 
 test("兼容历史数组格式并拒绝无效关键点", () => {
   const facts = parseGeneratedKeyFactsResponse('[{"id":1,"content":"有效事实","weight":20},{"id":1,"content":"重复","weight":10}]');
-  assert.equal(facts.length, 1);
-  assert.equal(facts[0].weight, 100);
+  assert.deepEqual(facts, []);
   assert.deepEqual(parseGeneratedKeyFactsResponse('{"keyFacts":[]}'), []);
+  const singleton = parseGeneratedKeyFactsResponse('{"keyFacts":[{"id":1,"content":"唯一隐藏反转","weight":1}]}');
+  assert.equal(singleton.length, 1);
+  assert.equal(singleton[0].weight, 100);
+  const fifteen = parseGeneratedKeyFactsResponse(JSON.stringify({ keyFacts: Array.from({ length: 15 }, (_, index) => ({ id: index + 1, content: `隐藏结论${index + 1}`, weight: 1, hintContent: "留意关键因果" })) }));
+  assert.equal(fifteen.length, 15);
+  assert.equal(fifteen.reduce((sum, fact) => sum + fact.weight, 0), 100);
+  assert.equal(parseGeneratedKeyFactsResponse(JSON.stringify({ keyFacts: Array.from({ length: 16 }, (_, index) => ({ id: index + 1, content: `隐藏事实${index + 1}`, weight: 1 })) })).length, 0);
 });
 
 test("历史零权重关键点全部保留并只在运行时确定性分配权重", () => {

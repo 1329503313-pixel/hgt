@@ -43,6 +43,8 @@ import {
 } from "./inviteRewards.js";
 import { registerDigitalAssetRoutes } from "./digitalAssets.js";
 import { registerCollectibleRoutes, startCollectibleAuctionScheduler } from "./collectibles.js";
+import { COLLECTIBLE_ACHIEVEMENTS, COLLECTIBLE_ACHIEVEMENT_NAMES } from "@hgt/shared";
+import { getCollectibleAchievementStats, COLLECTIBLE_ACHIEVEMENT_USERS_SQL } from "./collectibleAchievements.js";
 import { registerBannerRoutes } from "./banners.js";
 import { registerBackgroundMusicRoutes } from "./backgroundMusic.js";
 import { parseGiftMessage, registerGiftRoutes } from "./gifts.js";
@@ -56,7 +58,7 @@ import { canUseOriginalAccount } from "./accountLoginPolicy.js";
 import { consumePhoneChallenge, opaqueTokenDigest, phoneOwner, PhoneAuthError, sendPhoneChallenge, verifyPhoneChallenge } from "./phoneAuth.js";
 import { normalizeMainlandPhoneNumber, SmsDeliveryError } from "./sms.js";
 import { publicOssUrl, storeMediaBuffer } from "./ossStorage.js";
-import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupValidationMessage } from "./soupInput.js";
+import { SOUP_TITLE_EXISTS_MESSAGE, duplicateSoupTitleLookup, hasEmptyManualAiKeyFacts, hasSoupReviewContentChanged, normalizeExistingSoupCover, normalizeSoupAiConfigurationInput, normalizeStoredJsonForSql, soupKeyFactsSchema, soupValidationMessage } from "./soupInput.js";
 import { SOUP_TOPIC_NAME_MAX_LENGTH, shouldRequireActiveSoupTopic, soupTopicDirectMatchOrderSql, soupTopicNameLength, soupKeywordFilter, soupTopicSummaryColumnsSql } from "./soupTopics.js";
 import {
   evaluationCountsTowardScore,
@@ -690,19 +692,7 @@ const soupSchema = z.preprocess(normalizeSoupAiConfigurationInput, z.object({
   isSurfacePublic: z.boolean().default(true),
   isBottomPublic: z.boolean().default(false),
   enableAiGame: z.boolean().default(false),
-  keyFacts: z
-    .array(
-      z.object({
-        id: z.number(),
-        content: z.string().trim().min(1).max(200),
-        weight: z.number().int().min(1).max(99),
-        hintContent: z.string().trim().min(1).max(50)
-      })
-    )
-    .max(20)
-    .refine((facts) => facts.length === 0 || facts.reduce((sum, fact) => sum + fact.weight, 0) === 100, "进度关键点权重总和必须为 100")
-    .optional()
-    .default([]),
+  keyFacts: soupKeyFactsSchema,
   keyFactsCustomized: z.boolean().optional().default(false)
 }).superRefine((soup, context) => {
   if (hasEmptyManualAiKeyFacts(soup)) {
@@ -1149,6 +1139,9 @@ const SYSTEM_BADGE_ICON_BASE: Record<string, string> = {
   aiClear: "ai-clear",
   heat: "heat",
   collectionValue: "collection-value",
+  epicCollectible: "epic-collectible",
+  legendCollectible: "legend-collectible",
+  collectibleValue: "collectible-value",
   cardCollector: "card-collector",
   drawLuck: "draw-luck",
   generosity: "generosity",
@@ -1623,6 +1616,9 @@ function queueLoginDayRecord(userId: string) {
 }
 
 type AchievementStats = {
+  epicCollectibleAcquired: number;
+  legendCollectibleAcquired: number;
+  highestCollectibleValue: number;
   soupCount: number;
   favoriteCount: number;
   evaluationCount: number;
@@ -1653,6 +1649,7 @@ type AchievementStats = {
 };
 
 const BADGE_THRESHOLDS: Array<{ key: string; stat: keyof AchievementStats; target: number }> = [
+  ...COLLECTIBLE_ACHIEVEMENTS.map(({ key, stat, target }) => ({ key, stat, target })),
   { key: "publish:normal", stat: "soupCount", target: 1 },
   { key: "publish:rare", stat: "soupCount", target: 10 },
   { key: "publish:epic", stat: "soupCount", target: 50 },
@@ -1771,6 +1768,7 @@ const BADGE_NOTIFICATION_LABELS: Record<string, string[]> = {
 };
 
 function badgeNotificationLabel(key: string) {
+  if (COLLECTIBLE_ACHIEVEMENT_NAMES[key]) return COLLECTIBLE_ACHIEVEMENT_NAMES[key];
   const [series, tier] = key.split(":");
   const tierIndex = tier === "normal" ? 0 : tier === "rare" ? 1 : tier === "epic" ? 2 : 3;
   return BADGE_NOTIFICATION_LABELS[series]?.[tierIndex] ?? key;
@@ -1821,7 +1819,8 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
     [completePackRows],
     [shellRows],
     [shiningCrownReceivedRows],
-    [shiningCrownSentRows]
+    [shiningCrownSentRows],
+    collectibleAchievementStats
   ] = await Promise.all([
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soups WHERE creator_id = ?", [userId]),
     pool.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM soup_favorites WHERE user_id = ?", [userId]),
@@ -1908,10 +1907,12 @@ async function getAchievementStats(userId: string): Promise<AchievementStats> {
          )
        )`,
       [userId]
-    )
+    ),
+    getCollectibleAchievementStats(pool, userId)
   ]);
 
   const stats = {
+    ...collectibleAchievementStats,
     soupCount: Number(soupRows[0]?.count ?? 0),
     favoriteCount: Number(favRows[0]?.count ?? 0),
     evaluationCount: Number(evalRows[0]?.count ?? 0),
@@ -2314,6 +2315,13 @@ async function backfillAiAchievementBadges() {
     await Promise.all(userIds.slice(index, index + 5).map((userId) => syncBadgeUnlocksForUser(userId)));
   }
   return userIds.length;
+}
+
+async function backfillCollectibleAchievementBadges() {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(COLLECTIBLE_ACHIEVEMENT_USERS_SQL);
+  for (let index = 0; index < rows.length; index += 5) {
+    await Promise.all(rows.slice(index, index + 5).map((row) => syncBadgeUnlocksForUser(String(row.user_id))));
+  }
 }
 
 async function backfillShiningCrownBadges() {
@@ -3615,7 +3623,7 @@ async function onlineSoupRoomInvite(roomId: string, inviteToken: string) {
         WHERE m.room_id = r.id AND m.member_role = 'player' AND m.is_active = 1) AS player_count
      FROM online_soup_rooms r
      LEFT JOIN soups s ON s.id = r.current_soup_id
-     WHERE r.id = ? LIMIT 1`,
+     WHERE r.id = ? AND r.communication_mode = 'text' LIMIT 1`,
     [roomId]
   );
   if (!room || String(room.status) === "closed") return null;
@@ -6019,6 +6027,7 @@ app.get("/api/soups/:id", async (req, res) => {
       canConfigureAiGame: canEnableAiGameRole(statsRows[0]?.creator_role),
       keyFacts: canEdit ? safeParseJson(soup.key_facts) : null,
       keyFactsCustomized: canEdit && (soup.key_facts_customized as number) === 1,
+      keyFactsGenerationIssue: canEdit ? soup.key_facts_generation_issue ?? null : null,
       topic: statsRows[0]?.topic_id ? {
         id: String(statsRows[0].topic_id),
         name: String(statsRows[0].topic_name),
@@ -6359,7 +6368,7 @@ app.put("/api/soups/:id", async (req, res) => {
            is_surface_public = ?, is_bottom_public = ?, enable_ai_game = ?, review_status = ?, review_reason = ?, review_version = review_version + ?,
            reviewed_at = CASE WHEN ? THEN NULL ELSE reviewed_at END,
            reviewed_by = CASE WHEN ? THEN NULL ELSE reviewed_by END,
-           key_facts = ?, key_facts_hash = ?, key_facts_customized = ?, topic_id = ?
+            key_facts = ?, key_facts_hash = ?, key_facts_customized = ?, key_facts_generation_issue = NULL, key_facts_generation_hash = NULL, topic_id = ?
        WHERE id = ?`,
       [
         next.title,
@@ -8716,7 +8725,7 @@ onlineSoupAiRecoveryTimer.unref();
 const fillMissingAiKeyFacts = async () => {
   const result = await backfillMissingAiKeyFacts(
     pool,
-    (soupId) => splitKeyFactsForSoup(soupId, { generationAttempts: 3 }),
+    (soupId) => splitKeyFactsForSoup(soupId, { generationAttempts: 3, retryFailedGeneration: true }),
   );
   if (result.checked > 0) {
     console.log(`AI key fact backfill checked ${result.checked} soup(s); ${result.remaining} still incomplete`);
@@ -8753,6 +8762,7 @@ const aiAchievementBadgeBackfillCount = await backfillAiAchievementBadges();
 if (aiAchievementBadgeBackfillCount > 0) {
   console.log(`Synced AI completion and key hit badges for ${aiAchievementBadgeBackfillCount} user(s)`);
 }
+await backfillCollectibleAchievementBadges();
 await refreshBadgeOwnershipRates();
 const badgeOwnershipRefreshTimer = setInterval(() => {
   refreshBadgeOwnershipRates().catch((error) => console.error("Badge ownership rate refresh failed:", error));
@@ -8854,7 +8864,7 @@ server.on("upgrade", async (request, socket, head) => {
       pool.query<mysql.RowDataPacket[]>(
         `SELECT m.user_id, r.host_id FROM online_soup_members m
          JOIN online_soup_rooms r ON r.id = m.room_id
-         WHERE m.room_id = ? AND m.user_id = ? AND m.is_active = 1 AND r.status <> 'closed' LIMIT 1`,
+         WHERE m.room_id = ? AND m.user_id = ? AND m.is_active = 1 AND r.status <> 'closed' AND r.communication_mode = 'text' LIMIT 1`,
         [roomId, claims.id]
       )
     ]);

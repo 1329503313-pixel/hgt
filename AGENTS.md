@@ -1,5 +1,11 @@
 # AGENTS.md
 
+### 2026-09-30 AI 玩汤关键点纠正部署首次尝试（门禁失败）
+
+- 状态：本次一次性全量部署授权因 Android APK 最终校验失败而失效；未上传 APK、未部署 Web/Server、未发布 APP 更新记录，线上服务与作品数据未变。
+- 完整发布门禁、服务端测试（373 项）、Web/Server 构建及 Android Release 构建均通过。最终 APK 校验脚本仍把已退役语音功能的 `RECORD_AUDIO` 和 `MODIFY_AUDIO_SETTINGS` 当作必需权限，和本次移除麦克风权限的 APP 冲突。
+- 已修正 `scripts/android/verify-android-artifact.ps1`：只要求联网和安装 APK 权限，并将麦克风/音频路由权限列为禁止项。修正后 p0.54 APK `100054` 验签、权限检查及 Android 启动回归通过，SHA256 `545575974b8002feb0a68daf38d45d1b047ababa132c89e0c8e6a9d271103c50`。已准备本地候选；按一次性授权规则，线上上传与部署需重新授权。
+
 ### 2026-09-29 受击回能与特质界面 Web/Server 全量部署（不更新 APP）
 
 - 状态：已完成并失效。用户明确要求“全量部署web server，不更新APP”。纳入全部 9 个待发布业务和测试文件：受击回能仅对坦克/辅助生效、特质下拉框边界适配、准备阶段按数量排序及点击查看效果。

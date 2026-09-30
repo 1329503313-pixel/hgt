@@ -295,7 +295,7 @@ function ExcellentAuthorApprovalList({ onPendingChange }: { onPendingChange: () 
               <h2 className="text-xl font-black text-ink">优秀作者认证申请详情</h2>
               <p className="mt-1 text-sm text-muted">申请人：{detail.applicantName} · 申请时间：{new Date(detail.createdAt).toLocaleString()}</p>
             </div>
-            <button className="btn btn-secondary px-3" onClick={() => setDetail(null)}><X size={18} /></button>
+            <button className="btn btn-secondary px-3" aria-label="关闭申请详情" onClick={() => setDetail(null)}><X size={18} /></button>
           </div>
           <div className="mt-5 space-y-6 pb-6">
             <section>
@@ -308,7 +308,7 @@ function ExcellentAuthorApprovalList({ onPendingChange }: { onPendingChange: () 
                 {detail.qualificationSoups.map((soup) => <SoupCard key={soup.id} soup={soup} onOpen={(id) => navigate(`/soup/${id}`)} />)}
               </div>
             </section>
-            {detail.status === "pending" && <div className="flex gap-3 border-t border-line pt-4"><button className="btn btn-primary flex-1" onClick={() => decide(detail.id, "approved")}><Check size={16} />通过</button><button className="btn btn-secondary flex-1" onClick={() => decide(detail.id, "rejected")}><X size={16} />驳回</button></div>}
+            {detail.status === "pending" && <div className="flex gap-3 border-t border-line pt-4"><button className="btn btn-primary flex-1" onClick={() => decide(detail.id, "approved")}><Check size={16} />通过</button><button className="btn btn-danger flex-1" onClick={() => decide(detail.id, "rejected")}><X size={16} />驳回</button></div>}
           </div>
         </Modal>
       )}
@@ -320,7 +320,7 @@ function ActionButtons({ status, onView, onApprove, onReject }: { status: Reques
   return (
     <div className="flex items-center justify-center gap-1 whitespace-nowrap">
       <button className="btn btn-secondary h-8 px-2 text-xs" onClick={onView}><ExternalLink size={14} />查看</button>
-      {status === "pending" && <><button className="btn btn-primary h-8 px-2 text-xs" onClick={onApprove}><Check size={14} />通过</button><button className="btn btn-secondary h-8 px-2 text-xs" onClick={onReject}><X size={14} />驳回</button></>}
+      {status === "pending" && <><button className="btn btn-primary h-8 px-2 text-xs" onClick={onApprove}><Check size={14} />通过</button><button className="btn btn-danger h-8 px-2 text-xs" onClick={onReject}><X size={14} />驳回</button></>}
     </div>
   );
 }

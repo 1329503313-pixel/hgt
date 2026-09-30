@@ -51,8 +51,13 @@ export function GlobalNoticeModal() {
       }
       void loadPendingNotice();
     };
+    let lastForegroundRefreshAt = -Infinity;
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState !== "visible") return;
+      const now = performance.now();
+      if (now - lastForegroundRefreshAt < 500) return;
+      lastForegroundRefreshAt = now;
+      refresh();
     };
     const unsubscribe = subscribeServerEvent("unread_changed", (event) => {
       try {
@@ -62,11 +67,11 @@ export function GlobalNoticeModal() {
         // 格式异常时由窗口聚焦补拉恢复。
       }
     });
-    window.addEventListener("focus", refresh);
+    window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       unsubscribe();
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [user, loadPendingNotice]);

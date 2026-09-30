@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AtomicFact, ProgressKeyFact } from "./gameLogic.js";
+import { isFactExplicitlyPublic } from "./keyFactQuality.js";
 
 export const AI_HOST_ANSWERS = ["YES", "NO", "BOTH", "UNKNOWN", "IRRELEVANT"] as const;
 export type AiHostAnswer = (typeof AI_HOST_ANSWERS)[number];
@@ -43,6 +44,24 @@ export const aiAdjudicationSchema = z.object({
 }).strict();
 
 export type AiAdjudication = z.infer<typeof aiAdjudicationSchema>;
+
+/** Publicly stated facts may receive a correct yes/no answer, but never advance progress. */
+export function suppressPublicFactDiscoveries(
+  adjudication: AiAdjudication,
+  facts: readonly Pick<AiFactDefinition, "id" | "content">[],
+  publicTexts: readonly string[],
+): AiAdjudication {
+  const publicFactIds = new Set(
+    facts.filter((fact) => isFactExplicitlyPublic(fact.content, publicTexts)).map((fact) => fact.id),
+  );
+  if (publicFactIds.size === 0) return adjudication;
+  return {
+    ...adjudication,
+    matchedFacts: adjudication.matchedFacts.map((match) => publicFactIds.has(match.factId)
+      ? { ...match, proposedState: "TOUCHED", discoveryStrength: 0 }
+      : match),
+  };
+}
 
 export const aiFastAnswerSchema = z.object({
   answer: z.enum(AI_HOST_ANSWERS),

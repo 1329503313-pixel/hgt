@@ -65,7 +65,14 @@ export function useShellBalance(userId: string | undefined) {
       }
     });
     const unsubscribeConnected = subscribeServerEvent("connected", loadBalance);
-    const resume = () => { if (document.visibilityState === "visible") loadBalance(); };
+    let lastForegroundRefreshAt = -Infinity;
+    const resume = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = performance.now();
+      if (now - lastForegroundRefreshAt < 500) return;
+      lastForegroundRefreshAt = now;
+      loadBalance();
+    };
     window.addEventListener("focus", resume);
     window.addEventListener("online", resume);
     document.addEventListener("visibilitychange", resume);

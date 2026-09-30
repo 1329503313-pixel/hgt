@@ -1,4 +1,7 @@
+import { COLLECTIBLE_ACHIEVEMENT_POINTS } from "@hgt/shared";
+
 export const SYSTEM_BADGE_ACHIEVEMENT_POINTS: Record<string, number> = {
+  ...COLLECTIBLE_ACHIEVEMENT_POINTS,
   "publish:normal": 10, "publish:rare": 30, "publish:epic": 100,
   "insight:normal": 10, "insight:rare": 35, "insight:epic": 120,
   "favorite:normal": 10, "favorite:rare": 30, "favorite:epic": 100,

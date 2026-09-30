@@ -149,7 +149,7 @@ export default function CirclesPage() {
       {(loadingUser || loading) ? <div className="rounded-2xl bg-white"><ListSkeleton rows={6} /></div> : (
         <>
           <div className="space-y-4 lg:hidden">
-            <div className="rounded-2xl bg-gradient-to-r from-blue-50 to-amber-50 p-4 shadow-soft"><h1 className="text-lg font-black text-ink">找到同好，一起聊汤</h1></div>
+            <div className="card p-4"><h1 className="text-lg font-bold text-ink">找到同好，一起聊汤</h1></div>
             <div className="overflow-hidden rounded-2xl bg-white shadow-soft">
               {circles.map((circle) => (
                 <button key={circle.id} type="button" className="flex w-full items-center gap-3 border-b border-line px-4 py-4 text-left transition last:border-b-0 hover:bg-slate-50 active:bg-slate-100" onClick={() => openCircle(circle)}>

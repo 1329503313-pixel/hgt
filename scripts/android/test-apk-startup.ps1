@@ -27,7 +27,7 @@ try {
     $archive = $null
     $env:HGT_STARTUP_ANDROID_DIST = $extractRoot
     npm run test:application-startup -- --android-only
-    if ($LASTEXITCODE -ne 0) { throw 'The signed APK web assets failed the startup / microphone browser gate.' }
+    if ($LASTEXITCODE -ne 0) { throw 'The signed APK web assets failed the startup / permissions browser gate.' }
 } finally {
     if ($archive) { $archive.Dispose() }
     $env:HGT_STARTUP_ANDROID_DIST = $previousDist

@@ -1,3 +1,19 @@
+import { z } from "zod";
+
+export const soupKeyFactsSchema = z
+  .array(
+    z.object({
+      id: z.number(),
+      content: z.string().trim().min(1).max(200),
+      weight: z.number().int().min(1).max(100),
+      hintContent: z.string().trim().min(1).max(50),
+    }),
+  )
+  .max(20)
+  .refine((facts) => facts.length === 0 || facts.reduce((sum, fact) => sum + fact.weight, 0) === 100, "进度关键点权重总和必须为 100")
+  .optional()
+  .default([]);
+
 export function normalizeExistingSoupCover(
   body: unknown,
   soupId: string,
@@ -100,7 +116,7 @@ export function soupValidationMessage(issues: SoupValidationIssue[]) {
     if (typeof rawIndex === "number") {
       const position = rawIndex + 1;
       if (keyFactField === "content") return `AI 主持高级设置：第 ${position} 个关键点未填写`;
-      if (keyFactField === "weight") return `AI 主持高级设置：第 ${position} 个关键点未填写有效进度值（1–99）`;
+      if (keyFactField === "weight") return `AI 主持高级设置：第 ${position} 个关键点未填写有效进度值（1–100）`;
       if (keyFactField === "hintContent") return `AI 主持高级设置：第 ${position} 个关键点提示内容需填写且不超过 50 个字`;
     }
     if (issue.message.includes("权重总和")) return "AI 主持高级设置：进度值总和必须为 100";

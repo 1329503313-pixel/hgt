@@ -1,10 +1,12 @@
+import { apiEndpoint } from "./runtime";
+
 type MetricName = "navigation" | "lcp" | "long-task" | "interaction";
 
 function report(name: MetricName, value: number) {
   if (!Number.isFinite(value) || value < 0) return;
   const route = window.location.pathname.replace(/[A-Za-z0-9_-]{12,}/g, ":id").slice(0, 160);
   const payload = JSON.stringify({ name, value: Math.round(value), route });
-  navigator.sendBeacon?.("/api/telemetry/performance", new Blob([payload], { type: "application/json" }));
+  navigator.sendBeacon?.(apiEndpoint("/api/telemetry/performance"), new Blob([payload], { type: "application/json" }));
 }
 
 export function setupPerformanceMonitoring() {

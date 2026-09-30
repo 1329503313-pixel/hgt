@@ -154,6 +154,7 @@ export type SoupDetail = SoupSummary & {
   canConfigureAiGame: boolean;
   keyFacts: KeyFact[] | null;
   keyFactsCustomized: boolean;
+  keyFactsGenerationIssue?: string | null;
   canViewFull: boolean;
   canEdit: boolean;
   canPinToProfile: boolean;
@@ -706,7 +707,6 @@ export type OnlineSoupLobbyRoom = {
   type: "public" | "password";
   status: OnlineSoupRoomStatus;
   hostMode: OnlineSoupHostMode;
-  communicationMode?: "text" | "voice";
   contentType: "soup" | "mystery" | "impostor" | "card_battle";
   cardBattleMode?: "1v1" | "boss";
   bossName?: string | null;
@@ -809,7 +809,6 @@ export type OnlineSoupSnapshot = {
     type: "public" | "password";
     status: OnlineSoupRoomStatus;
     hostMode: OnlineSoupHostMode;
-  communicationMode?: "text" | "voice";
     contentType: "soup" | "mystery" | "impostor" | "card_battle";
     aiProgress: number | null;
     finishVote: {
@@ -864,7 +863,7 @@ export type OnlineSoupSnapshot = {
     createdAt: string;
   };
   me: { role: OnlineSoupMemberRole; isHost: boolean };
-  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; isRoomHost: boolean; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; voiceSeat?: number | null; mutedUntil: string | null; joinedAt: string }>;
+  members: Array<{ id: string; nickname: string; level: number; role: OnlineSoupMemberRole; isRoomHost: boolean; avatar: string | null; equippedBadge: EquippedBadge | null; vipGrowthValue: number; vipLevel: VipLevel; vipActive: boolean; mutedUntil: string | null; joinedAt: string }>;
   messages: OnlineSoupMessage[];
   messagesHasMore: boolean;
   messagesNextCursor: string | null;

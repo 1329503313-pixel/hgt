@@ -3,6 +3,7 @@ import { initCardBattleBossSchema } from "./cardBattleBossSchema.js";
 import { initCardTowerSchema } from "./cardTowerSchema.js";
 import { initOnlineSoupHistory } from "./onlineSoupHistory.js";
 import { initGameRecords } from "./gameRecords.js";
+import { retireLegacyVoiceRooms } from "./onlineSoupRetirement.js";
 import { backfillOnlineSoupKeyHits } from "./gameKeyHits.js";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -765,6 +766,7 @@ export async function initDatabase() {
       revealed_atoms JSON NULL,
       revealed_supplements JSON NULL,
       content_hash VARCHAR(64) NULL,
+      fact_snapshot JSON NULL,
       progress INT NOT NULL DEFAULT 0,
       version INT UNSIGNED NOT NULL DEFAULT 0,
       status ENUM('active','awaiting_retell','completed') NOT NULL DEFAULT 'active',
@@ -1311,15 +1313,9 @@ export async function initDatabase() {
     "host_mode",
     "host_mode ENUM('human','ai') NOT NULL DEFAULT 'human' AFTER host_id"
   );
+  // Retain the legacy discriminator so archived records keep their original mode.
   await ensureColumn("online_soup_rooms", "communication_mode", "communication_mode ENUM('text','voice') NOT NULL DEFAULT 'text'");
   await ensureColumn("online_soup_rounds", "communication_mode", "communication_mode ENUM('text','voice') NOT NULL DEFAULT 'text'");
-  await ensureColumn("online_soup_members", "voice_seat", "voice_seat TINYINT UNSIGNED NULL");
-  await pool.query(`CREATE TABLE IF NOT EXISTS online_soup_voice_sessions (
-    id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, room_id VARCHAR(64) NOT NULL,
-    rtc_user_id VARCHAR(32) NOT NULL, can_publish BOOLEAN NOT NULL, revoked BOOLEAN NOT NULL DEFAULT 0,
-    ticket_expires_at DATETIME(3) NOT NULL, last_seen_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    INDEX idx_voice_user(user_id,revoked), INDEX idx_voice_room(room_id,revoked)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
   await ensureColumn("online_soup_rooms", "content_type", "content_type ENUM('soup','mystery','impostor','card_battle') NOT NULL DEFAULT 'soup' AFTER host_mode");
   const [[onlineSoupContentType]] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
@@ -2593,11 +2589,24 @@ export async function initDatabase() {
   await backfillOnlineSoupKeyHits(pool);
   await ensureColumn("game_sessions", "revealed_atoms", "revealed_atoms JSON NULL AFTER revealed_keys");
   await ensureColumn("game_sessions", "content_hash", "content_hash VARCHAR(64) NULL AFTER revealed_supplements");
+  await ensureColumn("game_sessions", "fact_snapshot", "fact_snapshot JSON NULL AFTER content_hash");
   await ensureColumn("game_sessions", "version", "version INT UNSIGNED NOT NULL DEFAULT 0 AFTER progress");
   await ensureColumn("game_sessions", "status", "status ENUM('active','awaiting_retell','completed') NOT NULL DEFAULT 'active' AFTER version");
   await ensureColumn("soups", "key_facts", "key_facts JSON NULL AFTER enable_ai_game");
-  await ensureColumn("soups", "key_facts_hash", "key_facts_hash VARCHAR(64) NULL AFTER key_facts");
+  await ensureColumn("soups", "key_facts_hash", "key_facts_hash VARCHAR(128) NULL AFTER key_facts");
+  const [keyFactsHashColumns] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT CHARACTER_MAXIMUM_LENGTH AS max_length
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'soups' AND COLUMN_NAME = 'key_facts_hash'
+     LIMIT 1`,
+    [config.db.database],
+  );
+  if (Number(keyFactsHashColumns[0]?.max_length ?? 0) < 128) {
+    await pool.query("ALTER TABLE soups MODIFY COLUMN key_facts_hash VARCHAR(128) NULL");
+  }
   await ensureColumn("soups", "key_facts_customized", "key_facts_customized TINYINT(1) NOT NULL DEFAULT 0 AFTER key_facts_hash");
+  await ensureColumn("soups", "key_facts_generation_issue", "key_facts_generation_issue VARCHAR(500) NULL AFTER key_facts_customized");
+  await ensureColumn("soups", "key_facts_generation_hash", "key_facts_generation_hash VARCHAR(128) NULL AFTER key_facts_generation_issue");
   await ensureColumn("soups", "key_fact_atoms", "key_fact_atoms JSON NULL AFTER key_facts_customized");
   await ensureColumn("soups", "key_fact_atoms_hash", "key_fact_atoms_hash VARCHAR(64) NULL AFTER key_fact_atoms");
   await ensureColumn("soups", "review_status", "review_status ENUM('approved','pending','rejected') NOT NULL DEFAULT 'approved' AFTER enable_ai_game");
@@ -3401,6 +3410,9 @@ export async function initDatabase() {
       CONSTRAINT fk_collectible_value_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  // Null for old events: incomplete historical deltas must not invent a peak.
+  await ensureColumn("collectible_value_events", "holdings_value_before", "holdings_value_before BIGINT UNSIGNED NULL");
+  await ensureColumn("collectible_value_events", "holdings_value_after", "holdings_value_after BIGINT UNSIGNED NULL");
   const [collectibleValueEventTypeColumns] = await pool.query<mysql.RowDataPacket[]>(
     `SELECT COLUMN_TYPE
      FROM information_schema.COLUMNS
@@ -3671,6 +3683,12 @@ export async function initDatabase() {
   await backfillInviteCodes();
   await seedDefaultCircles();
   await initGameRecords(pool);
+  const retirementConnection = await pool.getConnection();
+  try {
+    await retireLegacyVoiceRooms(retirementConnection);
+  } finally {
+    retirementConnection.release();
+  }
 }
 
 const VIP_GROWTH_INITIALIZATION_MIGRATION = "vip-growth-initialization-v1";

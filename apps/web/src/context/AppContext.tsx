@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AccountUser, SoupDetail, KeyFact } from "../shared/types";
 import { api, BadgeUnlocksResponse, clearApiCache, MeResponse, SpecialBadgeUnlock, StatsResponse } from "../api";
 import { resetServerEventConnection, subscribeServerEvent } from "../shared/serverEvents";
@@ -39,6 +39,7 @@ export type SoupForm = {
   enableAiGame: boolean;
   keyFacts: KeyFact[];
   keyFactsCustomized: boolean;
+  keyFactsGenerationIssue?: string | null;
 };
 
 export type EvalForm = {
@@ -75,7 +76,8 @@ export const emptySoup: SoupForm = {
   canConfigureAiGame: false,
   enableAiGame: false,
   keyFacts: [],
-  keyFactsCustomized: false
+  keyFactsCustomized: false,
+  keyFactsGenerationIssue: null
 };
 
 export const emptyEval: EvalForm = {
@@ -89,6 +91,33 @@ export const emptyEval: EvalForm = {
   depth: "",
   content: ""
 };
+
+function createFormStore<T>(initialValue: T) {
+  let value = initialValue;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => value,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    set: (next: T) => {
+      value = next;
+      for (const listener of listeners) listener();
+    }
+  };
+}
+
+const soupFormStore = createFormStore<SoupForm>(emptySoup);
+const evalFormStore = createFormStore<EvalForm>(emptyEval);
+
+export function useSoupForm() {
+  return [useSyncExternalStore(soupFormStore.subscribe, soupFormStore.getSnapshot), soupFormStore.set] as const;
+}
+
+export function useEvalForm() {
+  return [useSyncExternalStore(evalFormStore.subscribe, evalFormStore.getSnapshot), evalFormStore.set] as const;
+}
 
 // ---------- Context 类型 ----------
 type AppContextValue = {
@@ -127,15 +156,11 @@ type AppContextValue = {
   // SoupEditor 模态框
   showSoupForm: boolean;
   editingSoupId: string | null;
-  soupForm: SoupForm;
-  setSoupForm: (next: SoupForm) => void;
   openSoupEditor: (soup?: SoupDetail) => void;
   closeSoupEditor: () => void;
 
   // EvalEditor 模态框
   showEvalForm: boolean;
-  evalForm: EvalForm;
-  setEvalForm: (next: EvalForm) => void;
   soupIdForEval: string;
   setSoupIdForEval: (id: string) => void;
   openEvalEditor: (soupId: string, ownEval?: any) => void;
@@ -178,11 +203,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // SoupEditor 模态框
   const [showSoupForm, setShowSoupForm] = useState(false);
   const [editingSoupId, setEditingSoupId] = useState<string | null>(null);
-  const [soupForm, setSoupForm] = useState<SoupForm>(emptySoup);
 
   // EvalEditor 模态框
   const [showEvalForm, setShowEvalForm] = useState(false);
-  const [evalForm, setEvalForm] = useState<EvalForm>(emptyEval);
   const [soupIdForEval, setSoupIdForEval] = useState("");
 
   // 导出预览
@@ -354,7 +377,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const openSoupEditor = useCallback((soup?: SoupDetail) => {
     if (soup) {
       setEditingSoupId(soup.id);
-      setSoupForm({
+      soupFormStore.set({
         title: soup.title,
         author: soup.author,
         type: soup.type,
@@ -376,11 +399,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         canConfigureAiGame: soup.canConfigureAiGame,
         enableAiGame: (soup as any).enableAiGame ?? false,
         keyFacts: (soup.keyFacts ?? []).map((fact) => ({ ...fact, hintContent: fact.hintContent ?? "" })),
-        keyFactsCustomized: soup.keyFactsCustomized ?? false
+        keyFactsCustomized: soup.keyFactsCustomized ?? false,
+        keyFactsGenerationIssue: soup.keyFactsGenerationIssue ?? null
       });
     } else {
       setEditingSoupId(null);
-      setSoupForm({ ...emptySoup, author: "" });
+      soupFormStore.set({ ...emptySoup, author: "" });
     }
     setShowSoupForm(true);
   }, []);
@@ -392,7 +416,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const openEvalEditor = useCallback((soupId: string, ownEval?: any) => {
     setSoupIdForEval(soupId);
     if (ownEval) {
-      setEvalForm({
+      evalFormStore.set({
         isAnonymous: Boolean(ownEval.isAnonymous),
         total: String(ownEval.total),
         writing: ownEval.writing?.toString() ?? "",
@@ -404,7 +428,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         content: ownEval.content ?? ""
       });
     } else {
-      setEvalForm(emptyEval);
+      evalFormStore.set(emptyEval);
     }
     setShowEvalForm(true);
   }, []);
@@ -435,13 +459,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshPhoneStatus,
     showSoupForm,
     editingSoupId,
-    soupForm,
-    setSoupForm,
     openSoupEditor,
     closeSoupEditor,
     showEvalForm,
-    evalForm,
-    setEvalForm,
     soupIdForEval,
     setSoupIdForEval,
     openEvalEditor,

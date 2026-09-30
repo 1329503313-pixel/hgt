@@ -28,7 +28,11 @@ try {
   await expect(balance).toHaveText('1700');
   await page.evaluate(() => { window.serverBalance=1800;window.dispatchEvent(new Event('focus')); });
   await expect(balance).toHaveText('1800');
+  const requestsAfterFocus = await page.evaluate(() => window.requestCount);
   await page.evaluate(() => { window.serverBalance=1900;document.dispatchEvent(new Event('visibilitychange')); });
+  assert.equal(await page.evaluate(() => window.requestCount), requestsAfterFocus, 'same foreground transition should refresh once');
+  await page.waitForTimeout(550);
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await expect(balance).toHaveText('1900');
   await page.evaluate(() => { window.hold=true;window.send('connected');window.send('unread_changed',{source:'admin_shell_grant_claimed'}); });
   await expect.poll(() => page.evaluate(() => window.pending.length)).toBe(2);

@@ -18,7 +18,6 @@ const bundle = await build({
   plugins: [{ name: 'local-room-services', setup(build) {
     build.onLoad({ filter: /[\\/]context[\\/]AppContext\.tsx$/ }, () => ({ loader: 'js', contents: `const context={user:{id:'u0',nickname:'房主甲'},loadingUser:false,showToast(message){window.toast=message},openAuth(){}};export function useApp(){return context}` }));
     build.onLoad({ filter: /[\\/]context[\\/]OnlineSoupDockContext\.tsx$/ }, () => ({ loader: 'js', contents: `const context={minimizeRoom(){},showFullRoom(){},syncRoomBackgroundMusic(){},toggleBackgroundMusicMuted(){}};export function useOnlineSoupDock(){return context}` }));
-    build.onLoad({ filter: /[\\/]context[\\/]OnlineSoupVoiceContext\.tsx$/ }, () => ({ loader: 'js', contents: `const context={sync(){},disconnect(){}};export function useOnlineSoupVoice(){return context}` }));
     build.onLoad({ filter: /[\\/]shared[\\/]onlineSoupSocket\.ts$/ }, () => ({ loader: 'js', contents: `export function connectOnlineSoupSocket(id,changed){window.roomChanged=changed;return ()=>{}}` }));
     build.onLoad({ filter: /[\\/]api\.ts$/ }, () => ({ loader: 'js', contents: `
       export class ApiError extends Error{}

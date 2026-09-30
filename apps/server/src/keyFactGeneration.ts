@@ -53,18 +53,22 @@ function candidateArray(raw: string): unknown {
 /** 兼容新的 JSON 对象协议和历史数组协议，并把模型权重归一化为精确 100。 */
 export function parseGeneratedKeyFactsResponse(raw: string): GeneratedKeyFact[] {
   const value = candidateArray(raw);
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value) || value.length < 1 || value.length > 15) return [];
   const seen = new Set<number>();
+  let invalid = false;
   const facts = value.flatMap((fact: any) => {
     const id = Number(fact?.id);
     const weight = Number(fact?.weight);
     const content = typeof fact?.content === "string" ? fact.content.trim() : "";
     const hintContent = typeof fact?.hintContent === "string" ? fact.hintContent.trim().slice(0, 50) : "";
-    if (!Number.isInteger(id) || seen.has(id) || !Number.isFinite(weight) || weight <= 0 || !content) return [];
+    if (!Number.isInteger(id) || seen.has(id) || !Number.isFinite(weight) || weight <= 0 || !content) {
+      invalid = true;
+      return [];
+    }
     seen.add(id);
     return [{ id, content, weight, hintContent }];
-  }).slice(0, 15);
-  if (facts.length === 0) return [];
+  });
+  if (invalid || facts.length !== value.length) return [];
 
   const remaining = 100 - facts.length;
   const total = facts.reduce((sum, fact) => sum + fact.weight, 0);

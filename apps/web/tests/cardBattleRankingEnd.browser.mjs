@@ -48,7 +48,6 @@ function Harness(){const location=useLocation();window.navigate=useNavigate();wi
 const app=<MemoryRouter initialEntries={[window.initialPath]}><ErrorBoundary><Harness/></ErrorBoundary></MemoryRouter>;
 createRoot(document.getElementById('root')).render(window.strictMode?<React.StrictMode>{app}</React.StrictMode>:app);
 ` }, bundle: true, write: false, format: "iife", define: { "import.meta.env": "{}" }, plugins: [{name:"fixture-context",setup(builder){
-  builder.onLoad({filter:/[/\\]context[/\\]OnlineSoupVoiceContext.tsx$/},()=>({loader:"tsx",contents:`const noop=()=>{};export const useOnlineSoupVoice=()=>({disconnect:noop,sync:noop});`}));
   builder.onLoad({filter:/[/\\]context[/\\]AppContext.tsx$/},()=>({loader:"tsx",contents:`const context={user:{id:'u1',nickname:'玩家1'},loadingUser:false,showToast:message=>window.toasts.push(message),openAuth:()=>{}};export const useApp=()=>context;`}));
   builder.onLoad({filter:/[/\\]context[/\\]OnlineSoupDockContext.tsx$/},()=>({loader:"tsx",contents:`const noop=()=>{};const context={minimizeRoom:noop,showFullRoom:noop,syncRoomBackgroundMusic:noop,toggleBackgroundMusicMuted:noop};export const useOnlineSoupDock=()=>context;`}));
 }}] });

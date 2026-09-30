@@ -19,6 +19,7 @@ function estimateHeight(soup: SoupSummary) {
 
 export function MasonryList({
   soups,
+  isDesktop,
   onOpen,
   hasMore,
   loading,
@@ -28,6 +29,7 @@ export function MasonryList({
   desktopSkipCount = 0
 }: {
   soups: SoupSummary[];
+  isDesktop: boolean;
   onOpen: (id: string) => void;
   hasMore: boolean;
   loading: boolean;
@@ -41,13 +43,6 @@ export function MasonryList({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const cardNodesRef = useRef(new Map<string, HTMLElement>());
-  const handleHeight = useCallback((id: string, height: number) => {
-    setHeights((old) => (
-      Math.abs((old[id] ?? 0) - height) < 1
-        ? old
-        : { ...old, [id]: height }
-    ));
-  }, []);
   const registerCardNode = useCallback((id: string, node: HTMLElement | null) => {
     const previous = cardNodesRef.current.get(id);
     if (previous && previous !== node) resizeObserverRef.current?.unobserve(previous);
@@ -60,11 +55,23 @@ export function MasonryList({
   }, []);
 
   useEffect(() => {
+    if (isDesktop) return;
     const observer = new ResizeObserver((entries) => {
+      const measured = new Map<string, number>();
       for (const entry of entries) {
         const id = (entry.target as HTMLElement).dataset.soupId;
-        if (id) handleHeight(id, entry.contentRect.height);
+        if (id) measured.set(id, entry.contentRect.height);
       }
+      if (measured.size === 0) return;
+      setHeights((old) => {
+        let next = old;
+        for (const [id, height] of measured) {
+          if (Math.abs((old[id] ?? 0) - height) < 1) continue;
+          if (next === old) next = { ...old };
+          next[id] = height;
+        }
+        return next;
+      });
     });
     resizeObserverRef.current = observer;
     for (const node of cardNodesRef.current.values()) observer.observe(node);
@@ -72,16 +79,18 @@ export function MasonryList({
       observer.disconnect();
       resizeObserverRef.current = null;
     };
-  }, [handleHeight]);
+  }, [isDesktop]);
 
   useEffect(() => {
+    if (isDesktop) return;
     const update = () => setColCount(getColumnCount());
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
-  }, []);
+  }, [isDesktop]);
 
   useEffect(() => {
+    if (isDesktop) return;
     const node = sentinelRef.current;
     if (!node || !hasMore || loading) return;
     const observer = new IntersectionObserver(
@@ -92,9 +101,10 @@ export function MasonryList({
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasMore, loading, onLoadMore]);
+  }, [hasMore, isDesktop, loading, onLoadMore]);
 
   const columns = useMemo(() => {
+    if (isDesktop) return [];
     const count = Math.max(1, Math.min(colCount, Math.max(soups.length, 1)));
     const cols: SoupSummary[][] = Array.from({ length: count }, () => []);
     const colHeights = Array.from({ length: count }, () => 0);
@@ -109,11 +119,11 @@ export function MasonryList({
     });
 
     return cols;
-  }, [colCount, heights, soups]);
+  }, [colCount, heights, isDesktop, soups]);
 
   return (
     <>
-      <div className="home-masonry home-mobile-masonry">
+      {!isDesktop ? <div className="home-masonry home-mobile-masonry">
         {columns.map((column, idx) => (
           <div className="home-masonry-column" key={idx}>
             {column.map((soup) => (
@@ -126,15 +136,14 @@ export function MasonryList({
             ))}
           </div>
         ))}
-      </div>
-      <div className="home-desktop-grid" aria-busy={loading}>
+      </div> : <div className="home-desktop-grid" aria-busy={loading}>
         {desktopLeadingContent && <div className="home-desktop-grid-banner">{desktopLeadingContent}</div>}
         {soups.slice(desktopSkipCount).map((soup) => (
           <SoupCard key={soup.id} soup={soup} onOpen={onOpen} />
         ))}
         {desktopLoadingContent}
-      </div>
-      <div ref={sentinelRef} className="h-1 w-full" />
+      </div>}
+      {!isDesktop && <div ref={sentinelRef} className="h-1 w-full" />}
     </>
   );
 }

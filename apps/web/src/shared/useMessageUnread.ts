@@ -31,6 +31,7 @@ const countsByUser = new Map<string, MessageUnreadCounts>();
 const inFlightByUser = new Map<string, Promise<MessageUnreadCounts>>();
 const refreshQueuedByUser = new Set<string>();
 const listeners = new Set<(userId: string, counts: MessageUnreadCounts) => void>();
+const lastForegroundRefreshByUser = new Map<string, number>();
 
 function publish(userId: string, counts: MessageUnreadCounts) {
   countsByUser.set(userId, counts);
@@ -58,6 +59,15 @@ async function loadUnreadCounts(userId: string, force = false): Promise<MessageU
   return request;
 }
 
+function refreshUnreadAfterForeground(userId: string) {
+  if (document.visibilityState !== "visible") return;
+  const now = performance.now();
+  if (now - (lastForegroundRefreshByUser.get(userId) ?? -Infinity) < 500) return;
+  lastForegroundRefreshByUser.set(userId, now);
+  if (inFlightByUser.has(userId)) return;
+  void loadUnreadCounts(userId, true).catch(() => {});
+}
+
 export function useMessageUnreadCounts(userId: string | undefined, enabled = true) {
   const [counts, setCounts] = useState<MessageUnreadCounts>(() => userId ? countsByUser.get(userId) ?? emptyCounts : emptyCounts);
 
@@ -71,21 +81,19 @@ export function useMessageUnreadCounts(userId: string | undefined, enabled = tru
       if (changedUserId === userId) setCounts(value);
     };
     const refresh = () => void loadUnreadCounts(userId, true).catch(() => {});
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
+    const refreshWhenVisible = () => refreshUnreadAfterForeground(userId);
     listeners.add(listener);
     void loadUnreadCounts(userId).catch(() => {});
     const unsubscribe = subscribeServerEvent("unread_changed", refresh);
     // SSE 负责实时更新；两分钟轮询仅用于代理断流但浏览器尚未触发重连的兜底场景。
     const fallbackTimer = window.setInterval(refresh, 2 * 60_000);
-    window.addEventListener("focus", refresh);
+    window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       listeners.delete(listener);
       unsubscribe();
       window.clearInterval(fallbackTimer);
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [enabled, userId]);

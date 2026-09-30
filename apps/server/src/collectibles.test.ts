@@ -62,6 +62,7 @@ test("抽中收藏品时记录当前卡包的真实累计抽数", async () => {
         }]];
       }
       if (sql.includes("COUNT(*) AS owned_count")) return [[{ owned_count: 1 }]];
+      if (sql.includes("SELECT collectible_value FROM collectibles")) return [[{ collectible_value: 10 }]];
       return [{ affectedRows: 1 }];
     }
   };
@@ -74,6 +75,8 @@ test("抽中收藏品时记录当前卡包的真实累计抽数", async () => {
   assert.equal(awards[0].packDrawNumber, 110);
   assert.match(awardInsert?.sql ?? "", /pack_draw_number/);
   assert.deepEqual(awardInsert?.params.slice(1), ["collectible-1", "order-1", 3, 110, "user-1", 100]);
+  const valueInsert = calls.find((call) => call.sql.includes("INSERT INTO collectible_value_events"));
+  assert.deepEqual(valueInsert?.params.slice(-2), [0, 10], "中奖事务保存收藏品持有价值快照");
 });
 
 test("十连复用事务内收藏品候选，中奖后不再重复发放且不读取图片大字段", async () => {
@@ -85,6 +88,7 @@ test("十连复用事务内收藏品候选，中奖后不再重复发放且不�
       collectible_value: 10, draw_probability: 100, owner_user_id: null
     }]];
     if (sql.includes("COUNT(*) AS owned_count")) return [[{ owned_count: 1 }]];
+    if (sql.includes("SELECT collectible_value FROM collectibles")) return [[{ collectible_value: 10 }]];
     return [{ affectedRows: 1 }];
   } };
   const candidates = await loadDrawCollectibleCandidates(connection as never, "pack");

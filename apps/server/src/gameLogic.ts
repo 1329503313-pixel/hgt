@@ -1,3 +1,5 @@
+import { isFactExplicitlyPublic } from "./keyFactQuality.js";
+
 export const NORMAL_GAME_ANSWERS = ["是也不是", "不重要", "不知道", "不是", "是"] as const;
 
 export type PublicGameMessage = {
@@ -81,24 +83,26 @@ function normalizedFactText(value: string): string {
  * 原子事实只作为服务端内部判定依据。作者配置的关键点仍是进度分组，
  * 每组权重由服务端确定性地分摊给该组原子事实，避免模型自行决定进度。
  */
-export function normalizeAtomicFacts(value: unknown, keyFacts: ProgressKeyFact[]): AtomicFact[] {
+export function normalizeAtomicFacts(value: unknown, keyFacts: ProgressKeyFact[], publicTexts: readonly string[] = []): AtomicFact[] {
   const rawFacts = Array.isArray(value) ? value : [];
   const factsByKey = new Map<number, string[]>();
 
   for (const keyFact of keyFacts) {
     const seen = new Set<string>();
-    const maxAtoms = Math.max(1, Math.min(5, Math.floor(keyFact.weight)));
+    const maxAtoms = Math.max(1, Math.min(3, Math.floor(keyFact.weight)));
     const candidates: string[] = [];
     for (const raw of rawFacts) {
       if (Number(raw?.keyId ?? raw?.parentKeyId) !== keyFact.id) continue;
       const content = typeof raw?.content === "string" ? raw.content.trim().slice(0, 240) : "";
       const normalized = normalizedFactText(content);
-      if (!content || seen.has(normalized)) continue;
+      if (!content || seen.has(normalized) || isFactExplicitlyPublic(content, publicTexts)) continue;
       seen.add(normalized);
       candidates.push(content);
       if (candidates.length >= maxAtoms) break;
     }
-    factsByKey.set(keyFact.id, candidates.length > 0 ? candidates : [keyFact.content]);
+    factsByKey.set(keyFact.id, candidates.length > 0
+      ? candidates
+      : isFactExplicitlyPublic(keyFact.content, publicTexts) ? [] : [keyFact.content]);
   }
 
   let nextId = 1;
@@ -113,6 +117,10 @@ export function normalizeAtomicFacts(value: unknown, keyFacts: ProgressKeyFact[]
       weight: baseWeight + (index < remainder ? 1 : 0),
     }));
   });
+}
+
+export function hasCompleteAtomicProgress(atomicFacts: readonly AtomicFact[]): boolean {
+  return atomicFacts.length > 0 && atomicFacts.reduce((sum, fact) => sum + fact.weight, 0) === 100;
 }
 
 export function calculateAtomicProgress(revealedFactIds: unknown, atomicFacts: AtomicFact[]): number {

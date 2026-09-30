@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, LoaderCircle, Shell, ShoppingBag, SmilePlus } from "lucide-react";
+import { Check, LoaderCircle, Shell, ShoppingBag } from "lucide-react";
 import { api } from "../api";
 import { MineBackButton } from "../components/MineBackButton";
 import { Modal } from "../components/Modal";
@@ -74,9 +74,8 @@ export default function StickerStorePage() {
     <section className="space-y-4">
       <PageTopBar title="表情包" />
       <MineBackButton to="/mine/store" hideOnDesktop />
-      <div className="card flex items-center justify-between gap-4 overflow-hidden bg-gradient-to-r from-cyan-500 to-blue-600 p-5 text-white">
-        <div><p className="text-xs font-bold text-cyan-50">当前贝壳余额</p><p className="mt-1 flex items-center gap-2 text-3xl font-black tabular-nums"><Shell size={25} />{(data?.balance ?? 0).toLocaleString()}</p></div>
-        <SmilePlus size={48} className="text-white/65" aria-hidden="true" />
+      <div className="rounded-2xl bg-blue-700 p-5 text-white shadow-soft">
+        <p className="text-xs font-bold text-blue-100">当前贝壳余额</p><p className="mt-1 flex items-center gap-2 text-3xl font-black tabular-nums"><Shell size={25} />{(data?.balance ?? 0).toLocaleString()}</p>
       </div>
 
       {(data?.series.length ?? 0) > 0 && <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="表情包系列">

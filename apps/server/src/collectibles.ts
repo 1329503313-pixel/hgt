@@ -15,6 +15,7 @@ import {
 } from "./assetVideos.js";
 import { vipGrowthSnapshot } from "./vipGrowth.js";
 import { COLLECTIBLE_RANKING_ELIGIBLE_ROLES_SQL, CURRENT_COLLECTIBLE_HOLDINGS_SQL } from "./collectibleRankings.js";
+import { collectibleHoldingValueSnapshot } from "./collectibleAchievements.js";
 
 type RouteUser = { id: string; role: UserRole };
 type Dependencies = {
@@ -129,9 +130,10 @@ function snapshot(row: mysql.RowDataPacket) {
 }
 
 async function recordValueEvent(connection: mysql.PoolConnection, row: mysql.RowDataPacket, userId: string, amount: number, eventType: "grant" | "reclaim" | "auction" | "draw" | "adjustment", relatedType: string, relatedId: string) {
+  const holdings = await collectibleHoldingValueSnapshot(connection, userId, amount);
   await connection.query(
-    "INSERT INTO collectible_value_events (id,collectible_id,user_id,amount,event_type,related_type,related_id) VALUES (?,?,?,?,?,?,?)",
-    [nanoid(), row.id, userId, amount, eventType, relatedType, relatedId]
+    "INSERT INTO collectible_value_events (id,collectible_id,user_id,amount,event_type,related_type,related_id,holdings_value_before,holdings_value_after) VALUES (?,?,?,?,?,?,?,?,?)",
+    [nanoid(), row.id, userId, amount, eventType, relatedType, relatedId, holdings.before, holdings.after]
   );
 }
 
@@ -538,6 +540,7 @@ export function registerCollectibleRoutes(app: express.Express, deps: Dependenci
       const previousValue = Number(current.collectible_value ?? 1), nextValue = parsed.data.collectibleValue ?? previousValue;
       if (current.owner_user_id && nextValue !== previousValue) await recordValueEvent(connection, current, String(current.owner_user_id), nextValue - previousValue, "adjustment", "admin", req.params.id);
       await connection.commit();
+      if (current.owner_user_id) deps.onBadgeProgress?.(String(current.owner_user_id));
       res.json({ ok: true });
     } catch (error) {
       await connection.rollback();

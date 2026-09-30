@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AI_KEY_FACT_GENERATION_VERSION } from "./keyFactQuality.js";
 import { AI_KEY_FACT_BACKFILL_INTERVAL_MS, backfillMissingAiKeyFacts, rebuildAllAiAtomicFacts } from "./keyFactBackfill.js";
 
 test("关键点补齐任务固定每小时执行", () => {
@@ -9,10 +10,12 @@ test("关键点补齐任务固定每小时执行", () => {
 test("关键点补齐任务去重并处理全部缺失作品", async () => {
   const generated: string[] = [];
   let querySql = "";
+  let queryValues: unknown[] = [];
   let queryCount = 0;
   const db = {
-    async query(sql: string) {
+    async query(sql: string, values: unknown[] = []) {
       querySql = sql;
+      queryValues = values;
       queryCount += 1;
       return [queryCount === 1 ? [{ id: "soup-1" }, { id: "soup-2" }, { id: "soup-1" }] : [], []];
     },
@@ -26,6 +29,10 @@ test("关键点补齐任务去重并处理全部缺失作品", async () => {
   assert.deepEqual(generated.sort(), ["soup-1", "soup-2"]);
   assert.match(querySql, /hintContent/);
   assert.match(querySql, /JSON_TABLE/);
+  assert.match(querySql, /s\.key_facts_customized = 0/);
+  assert.match(querySql, /key_facts_hash NOT LIKE \?/);
+  assert.doesNotMatch(querySql, /key_facts_generation_issue IS NULL/);
+  assert.deepEqual(queryValues, [`${AI_KEY_FACT_GENERATION_VERSION}:%`]);
 });
 
 test("关键点补齐任务隔离单件失败并复查剩余作品", async () => {
@@ -36,10 +43,13 @@ test("关键点补齐任务隔离单件失败并复查剩余作品", async () =>
       return [queryCount === 1 ? [{ id: "good" }, { id: "bad" }] : [{ id: "bad" }], []];
     },
   } as any;
+  const attempted: string[] = [];
   const result = await backfillMissingAiKeyFacts(db, async (soupId) => {
+    attempted.push(soupId);
     if (soupId === "bad") throw new Error("provider unavailable");
   });
   assert.deepEqual(result, { checked: 2, remaining: 1, failed: ["bad"] });
+  assert.deepEqual(attempted.sort(), ["bad", "good"]);
 });
 
 test("内部原子事实重建覆盖全部有效 AI 主持作品并汇总结果", async () => {

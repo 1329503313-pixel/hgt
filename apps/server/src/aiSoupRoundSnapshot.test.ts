@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseAiSoupRoundSnapshot } from "./aiSoupRoundSnapshot.js";
+import { hashAiSoupRoundSnapshot, parseAiSoupRoundSnapshot } from "./aiSoupRoundSnapshot.js";
 
 const validSnapshot = {
   soupId: "soup-1",
@@ -22,4 +22,15 @@ test("AI 回合快照只接受完整且严格的冻结数据", () => {
   assert.equal(parseAiSoupRoundSnapshot({ ...validSnapshot, atomicFacts: [] }), null);
   assert.equal(parseAiSoupRoundSnapshot({ ...validSnapshot, unexpected: true }), null);
   assert.equal(parseAiSoupRoundSnapshot("not-json"), null);
+});
+
+test("单人局事实快照哈希包含原子事实", () => {
+  const snapshot = { ...validSnapshot };
+  Reflect.deleteProperty(snapshot, "contentHash");
+  const originalHash = hashAiSoupRoundSnapshot(snapshot);
+  const changedAtomicHash = hashAiSoupRoundSnapshot({
+    ...snapshot,
+    atomicFacts: [{ ...snapshot.atomicFacts[0], content: "改动后的原子事实" }],
+  });
+  assert.notEqual(originalHash, changedAtomicHash);
 });

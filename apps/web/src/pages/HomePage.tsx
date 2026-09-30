@@ -713,6 +713,9 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
         </div>
         {homeCategory !== "mystery" && <button
           className="relative inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line bg-white px-4 text-sm font-bold text-primary shadow-soft"
+          type="button"
+          aria-label="筛选海龟汤"
+          aria-expanded={filtersOpen}
           onClick={() => setFiltersOpen((o) => !o)}
         >
           <SlidersHorizontal size={19} />
@@ -842,6 +845,7 @@ export default function HomePage({ category: homeCategory = "recommended" }: { c
 
       {homeCategory !== "mystery" && <MasonryList
         soups={isDesktop && loading ? [] : soups}
+        isDesktop={isDesktop}
         onOpen={(id) => {
           saveHomeViewSnapshot();
           navigate(`/soup/${id}`, {

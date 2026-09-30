@@ -624,7 +624,7 @@ export function DigitalAssetManagement({ isSuperAdmin }: { isSuperAdmin: boolean
       )}
 
       {cardModal && <Modal full onClose={() => setCardModal(false)}>
-        <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingCardId ? "编辑卡牌" : "新增卡牌"}</h2><button className="grid h-10 w-10 place-items-center rounded-full bg-slate-100" onClick={() => setCardModal(false)}><X size={18} /></button></div>
+        <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingCardId ? "编辑卡牌" : "新增卡牌"}</h2><button className="grid h-11 w-11 place-items-center rounded-full bg-slate-100" aria-label="关闭卡牌编辑" onClick={() => setCardModal(false)}><X size={18} /></button></div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div className="sm:row-span-5">
             <span className="text-sm font-bold text-ink">卡面素材</span>
@@ -647,7 +647,7 @@ export function DigitalAssetManagement({ isSuperAdmin }: { isSuperAdmin: boolean
           {isBattleRarity(cardForm.rarity) && <div className="sm:col-span-2">
             <label htmlFor="card-trait-search" className="text-sm font-bold">特质（可选）</label>
             <div className="mt-1 flex min-h-11 flex-wrap items-center gap-2 rounded-xl border border-line bg-white p-2 focus-within:border-primary">
-              {cardForm.traitIds.map((id) => { const trait = battleTraits.find((item) => item.id === id); return trait ? <span key={id} className="inline-flex min-h-8 items-center gap-2 rounded-full bg-blue-50 px-3 text-xs font-bold text-blue-800">{trait.name}<button type="button" className="grid h-6 w-6 place-items-center rounded-full hover:bg-blue-100" aria-label={`移除特质${trait.name}`} onClick={() => setCardForm((current) => ({ ...current, traitIds: current.traitIds.filter((value) => value !== id) }))}><X size={13} /></button></span> : null; })}
+              {cardForm.traitIds.map((id) => { const trait = battleTraits.find((item) => item.id === id); return trait ? <span key={id} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-blue-50 pl-3 pr-1 text-xs font-bold text-blue-800">{trait.name}<button type="button" className="grid h-11 w-11 place-items-center rounded-full hover:bg-blue-100" aria-label={`移除特质${trait.name}`} onClick={() => setCardForm((current) => ({ ...current, traitIds: current.traitIds.filter((value) => value !== id) }))}><X size={16} /></button></span> : null; })}
               <input id="card-trait-search" className="min-w-36 flex-1 border-0 bg-transparent text-sm outline-none" value={traitQuery} placeholder="输入名称检索并选择" onChange={(event) => setTraitQuery(event.target.value)} aria-invalid={Boolean(traitQuery.trim())} />
             </div>
             {traitQuery.trim() && <div className="mt-1 max-h-44 overflow-y-auto rounded-xl border border-line bg-white p-1 shadow-lg" role="listbox" aria-label="特质选项">
@@ -680,7 +680,7 @@ export function DigitalAssetManagement({ isSuperAdmin }: { isSuperAdmin: boolean
       </Modal>}
 
       {packModal && <Modal full onClose={() => setPackModal(false)}>
-        <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingPackId ? "编辑卡包" : "新增卡包"}</h2><button className="grid h-10 w-10 place-items-center rounded-full bg-slate-100" onClick={() => setPackModal(false)}><X size={18} /></button></div>
+        <div className="flex items-center justify-between"><h2 className="text-xl font-black text-ink">{editingPackId ? "编辑卡包" : "新增卡包"}</h2><button className="grid h-11 w-11 place-items-center rounded-full bg-slate-100" aria-label="关闭卡包编辑" onClick={() => setPackModal(false)}><X size={18} /></button></div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div className="rounded-xl border border-line bg-slate-50 p-4"><span className="text-sm font-bold">卡包封面</span><p className="mt-2 text-xs leading-5 text-muted">保存卡包后，系统自动选取卡号最小的启用传说卡作为封面；该卡存在动态卡面时商城自动播放。</p></div>
           <div className="space-y-4">

@@ -1,12 +1,13 @@
 import type mysql from "mysql2/promise";
+import { AI_KEY_FACT_GENERATION_VERSION } from "./keyFactQuality.js";
 
 export const AI_KEY_FACT_BACKFILL_INTERVAL_MS = 60 * 60 * 1000;
 
 type Queryable = Pick<mysql.Pool, "query">;
 
 /**
- * 补齐所有已开启 AI 主持、但尚无进度关键点或关键点提示内容的作品。
- * 不筛选审核状态，使待审核作品也能提前准备；生成器自身负责保护用户手动配置。
+ * 补齐缺少关键点/提示的自动作品，并按生成版本重拆过期的自动关键点。
+ * 不筛选审核状态，使待审核作品也能提前准备；手动配置的关键点完全跳过。
  */
 export async function backfillMissingAiKeyFacts(
   db: Queryable,
@@ -18,6 +19,7 @@ export async function backfillMissingAiKeyFacts(
      JOIN users creator ON creator.id = s.creator_id
      WHERE s.enable_ai_game = 1
        AND creator.role IN ('super_admin','backoffice_admin','admin','vip')
+       AND s.key_facts_customized = 0
        AND (
          s.key_facts IS NULL
          OR JSON_LENGTH(s.key_facts) = 0
@@ -29,9 +31,15 @@ export async function backfillMissingAiKeyFacts(
            ) AS key_fact
            WHERE NULLIF(TRIM(key_fact.hint_content), '') IS NULL
          )
+         OR (
+           s.key_facts IS NOT NULL
+           AND JSON_LENGTH(s.key_facts) > 0
+           AND (s.key_facts_hash IS NULL OR s.key_facts_hash NOT LIKE ?)
+         )
        )
      ORDER BY s.created_at ASC`;
-  const [rows] = await db.query<mysql.RowDataPacket[]>(missingSql);
+  const currentGenerationPattern = `${AI_KEY_FACT_GENERATION_VERSION}:%`;
+  const [rows] = await db.query<mysql.RowDataPacket[]>(missingSql, [currentGenerationPattern]);
   const soupIds = [...new Set(rows.map((row) => String(row.id)).filter(Boolean))];
   if (soupIds.length === 0) return { checked: 0, remaining: 0, failed: [] as string[] };
 
@@ -49,7 +57,7 @@ export async function backfillMissingAiKeyFacts(
       }
     }
   }));
-  const [remainingRows] = await db.query<mysql.RowDataPacket[]>(missingSql);
+  const [remainingRows] = await db.query<mysql.RowDataPacket[]>(missingSql, [currentGenerationPattern]);
   const remaining = new Set(remainingRows.map((row) => String(row.id)).filter(Boolean)).size;
   return { checked: soupIds.length, remaining, failed };
 }

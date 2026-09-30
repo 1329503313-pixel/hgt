@@ -1,5 +1,3 @@
-import { OnlineSoupVoiceStage, OnlineSoupVoiceControls } from "../components/OnlineSoupVoiceRoom";
-import { useOnlineSoupVoice } from "../context/OnlineSoupVoiceContext";
 import { useImpostorActions } from "../shared/useImpostorActions";
 import { impostorActionLabels } from "../shared/impostorActions";
 import { ImpostorActionDialog } from "../components/ImpostorActionDialog";
@@ -213,8 +211,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
   const [publishOpen, setPublishOpen] = useState(false);
   const [materialPublishTarget, setMaterialPublishTarget] = useState<MaterialPublishTarget | null>(null);
   const [materialPublishing, setMaterialPublishing] = useState(false);
-  const voice = useOnlineSoupVoice();
-  const [voiceMvpCandidates, setVoiceMvpCandidates] = useState<Array<{ id: string; nickname: string; avatar: string | null }>>([]);
   const [honorSelection, setHonorSelection] = useState<HumanHonorSelection | null>(null);
   const [preparingHonorBottomIndex, setPreparingHonorBottomIndex] = useState<number | null>(null);
   const [preparingQuestionLimitHonors, setPreparingQuestionLimitHonors] = useState(false);
@@ -634,7 +630,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
       return;
     }
     if (reason === "room_closed") {
-      voice.disconnect();
       leavingRoomRef.current = true;
       roomReadAbortRef.current.abort();
       const ranking = snapshotRef.current?.room.cardBattle?.rankingChallenge
@@ -645,7 +640,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
       return;
     }
     if (reason === "member_kicked" && payload.userId === user?.id) {
-      voice.disconnect();
       showToast("你已被主持人移出房间");
       navigate("/online-soup", { replace: true });
       return;
@@ -804,15 +798,11 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
   const impostorMode = snapshot?.room.contentType === "impostor";
   const cardBattleMode = snapshot?.room.contentType === "card_battle";
   const impostorNightMode = Boolean(impostorMode && ["night", "clue"].includes(snapshot?.room.impostorGame?.phase ?? ""));
-  const voiceMode = snapshot?.room.communicationMode === "voice";
-  const [voiceMessagesOpen, setVoiceMessagesOpen] = useState(false);
-  useEffect(() => { if (voiceMode) setHostActionsOpen(false); }, [voiceMode]);
-  useEffect(() => { if (snapshot) voice.sync(snapshot); }, [snapshot]);
   const aiHosted = snapshot?.room.hostMode === "ai";
   const canHumanHost = isHost && !aiHosted && !mysteryMode && !impostorMode && !cardBattleMode;
   const currentMemberMuted = isActiveMute(snapshot?.members.find((member) => member.id === user?.id)?.mutedUntil);
   const canParticipate = Boolean(snapshot && (snapshot.me.role !== "spectator" || cardBattleMode) && snapshot.room.status !== "closed");
-  const canDiscuss = canParticipate && !currentMemberMuted && !voiceMode;
+  const canDiscuss = canParticipate && !currentMemberMuted;
   const questionLimitExhausted = Boolean(
     snapshot
     && snapshot.room.contentType === "soup"
@@ -1166,7 +1156,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
 
   function requestStartGame(mobile = false) {
     if (mobile) setHostActionsOpen(false);
-    if (canHumanHost && !voiceMode && snapshot?.room.contentType === "soup") {
+    if (canHumanHost && snapshot?.room.contentType === "soup") {
       setStartLimitMode("unlimited");
       setStartLimitInput("");
       setStartLimitError("");
@@ -1342,13 +1332,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
 
   async function prepareHumanHonorSelection(bottomIndex: number | null, resolveQuestionLimit: boolean) {
     const expectedRoundId = snapshot?.room.currentRoundId ?? null;
-    if (voiceMode) {
-      const result = await api<{ candidates: Array<{ id: string; nickname: string; avatar: string | null }> }>(`/api/online-soup/rooms/${roomId}/voice/mvp-candidates`, { bypassCache: true });
-      if (!result.candidates.length) throw new Error("本轮暂无在席玩家可评选 MVP，可直接结束本轮");
-      setVoiceMvpCandidates(result.candidates); setPublishOpen(false);
-      setHonorSelection({ bottomIndex, resolveQuestionLimit: false, step: "mvp", questions: [], mvpUserId: "", bestQuestionMessageId: "", submitting: false });
-      return;
-    }
     const questions = await loadAllProgressQuestions(expectedRoundId);
     const questionerIds = new Set(questions.map((question) => question.sender.id).filter(Boolean));
     if (questionerIds.size === 0) throw new Error("本轮暂无提问玩家，无法进行 MVP 结算");
@@ -1407,12 +1390,12 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
 
   async function confirmHumanHonors() {
     if (!honorSelection) return;
-    if (honorSelection.step === "mvp" && !voiceMode) {
+    if (honorSelection.step === "mvp") {
       if (!honorSelection.mvpUserId) return showToast("请选择本场 MVP");
       setHonorSelection((current) => current ? { ...current, step: "question" } : current);
       return;
     }
-    if ((!voiceMode && !honorSelection.bestQuestionMessageId) || !honorSelection.mvpUserId || honorSelection.submitting) return showToast("请选择本场最佳提问");
+    if ((!honorSelection.bestQuestionMessageId) || !honorSelection.mvpUserId || honorSelection.submitting) return showToast("请选择本场最佳提问");
     const soup = snapshot?.room.soup;
     if (!soup) return showToast("当前海龟汤状态已变化，请重新操作");
     const bottomIndex = honorSelection.bottomIndex;
@@ -1426,7 +1409,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
         resolveQuestionLimit: true,
         honors: {
           mvpUserId: honorSelection.mvpUserId,
-          bestQuestionMessageId: voiceMode ? undefined : honorSelection.bestQuestionMessageId,
+          bestQuestionMessageId: honorSelection.bestQuestionMessageId,
         },
       });
       return;
@@ -1441,7 +1424,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
       endsRound: true,
       honors: {
         mvpUserId: honorSelection.mvpUserId,
-        bestQuestionMessageId: voiceMode ? undefined : honorSelection.bestQuestionMessageId,
+        bestQuestionMessageId: honorSelection.bestQuestionMessageId,
       },
     });
   }
@@ -1507,7 +1490,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
   }
 
   async function leaveRoom() {
-    voice.disconnect();
     if (leavingRoomRef.current) return;
     leavingRoomRef.current = true;
     roomReadAbortRef.current.abort();
@@ -1546,7 +1528,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
   }
 
   async function closeRoom() {
-    voice.disconnect();
     try { await hostAction("close"); navigate("/online-soup", { replace: true }); } catch { /* toast above */ }
   }
 
@@ -1629,13 +1610,12 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
     spectators: snapshot?.members.filter((member) => member.role === "spectator") ?? []
   }), [snapshot?.members]);
   const honorMvpCandidates = useMemo(() => {
-    if (voiceMode) return voiceMvpCandidates;
     const byId = new Map<string, ProgressQuestion["sender"] & { id: string }>();
     for (const question of honorSelection?.questions ?? []) {
       if (question.sender.id && !byId.has(question.sender.id)) byId.set(question.sender.id, { ...question.sender, id: question.sender.id });
     }
     return [...byId.values()];
-  }, [honorSelection?.questions, voiceMode, voiceMvpCandidates]);
+  }, [honorSelection?.questions]);
   const managedMember = snapshot?.members.find((member) => member.id === managedMemberId) ?? null;
   const unpublishedSurfaces = (snapshot?.room.soup?.supplementalSurfaces ?? [])
     .map((content, index) => ({ content, index }))
@@ -1888,8 +1868,8 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
       </>}
       {!mysteryMode && <FloatingAction tone="amber" label="关闭本轮" onClick={() => { if (mobile) setHostActionsOpen(false); setConfirmAction("end-round"); }} />}
     </>}
-    {!voiceMode && !mysteryMode && snapshot.room.status !== "playing" && aiHosted && <FloatingAction label="文字玩汤" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("human"); }} />}
-    {!voiceMode && !mysteryMode && snapshot.room.status !== "playing" && !aiHosted && snapshot.room.soup?.enableAiGame && <FloatingAction label="AI玩汤" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("ai"); }} />}
+    {!mysteryMode && snapshot.room.status !== "playing" && aiHosted && <FloatingAction label="文字玩汤" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("human"); }} />}
+    {!mysteryMode && snapshot.room.status !== "playing" && !aiHosted && snapshot.room.soup?.enableAiGame && <FloatingAction label="AI玩汤" onClick={() => { if (mobile) setHostActionsOpen(false); void changeHostMode("ai"); }} />}
     {snapshot.room.status === "ended" && <FloatingAction tone="primary" label={mysteryMode ? "更换谜局" : "更换海龟汤"} onClick={() => { if (mobile) setHostActionsOpen(false); openSoupSelector(); }} />}
     {mysteryMode && snapshot.room.status === "playing" && <FloatingAction tone="amber" label="记录线索" onClick={() => { if (mobile) setHostActionsOpen(false); setClue(""); setClueOpen(true); }} />}
     {snapshot.room.contentType === "soup" && <FloatingAction label={snapshot.room.coverBackgroundEnabled ? "关闭背景" : "开启背景"} disabled={coverBackgroundSaving} onClick={() => void toggleCoverBackground(mobile)} />}
@@ -1903,7 +1883,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
         <div className="mx-auto flex max-w-[1492px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 lg:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <UnifiedBackButton compactOnMobile onClick={requestRoomExit} />
-            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {roomStatusLabel(snapshot.room.status, impostorMode)} · {impostorMode ? <><VenetianMask size={12} />谁是伪人</> : mysteryMode ? <><BookOpen size={12} />谜局</> : voiceMode ? <>语音玩汤</> : aiHosted ? <><Bot size={12} />AI玩汤</> : <><Crown size={12} />文字玩汤</>}</p></div>
+            <div className="min-w-0 flex-1"><h1 className="truncate font-black text-ink">{snapshot.room.name}</h1><p className="flex items-center gap-1 truncate text-xs text-muted">房间号 {snapshot.room.code} · {roomStatusLabel(snapshot.room.status, impostorMode)} · {impostorMode ? <><VenetianMask size={12} />谁是伪人</> : mysteryMode ? <><BookOpen size={12} />谜局</> : aiHosted ? <><Bot size={12} />AI玩汤</> : <><Crown size={12} />文字玩汤</>}</p></div>
             {snapshot.room.backgroundMusic && <div className="relative shrink-0">
               {showMusicMuteGuide && <div className="question-mode-guide absolute right-0 top-[calc(100%+10px)] z-50 w-36 rounded-xl bg-slate-900 px-3 py-2.5 pr-8 text-left text-xs font-bold leading-5 text-white shadow-xl" role="status">
                 点击可静音
@@ -1925,7 +1905,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
             <span className="shrink-0" title={socketConnected ? "实时连接正常" : "正在重新连接"}>{socketConnected ? <Wifi size={18} className="text-emerald-600" /> : <WifiOff size={18} className="text-red-500" />}</span>
           </div>
           <div className="flex shrink-0 items-center justify-end gap-3 lg:max-xl:w-full">
-            {voiceMode && showRoomActions && <button type="button" className="grid h-11 w-11 place-items-center rounded-full border border-line bg-white text-primary lg:hidden" onClick={() => setHostActionsOpen(true)} aria-label="语音房更多操作"><Menu size={20} /></button>}
             <button className="btn btn-secondary !hidden h-10 px-3 text-xs lg:!inline-flex" onClick={minimizeCurrentRoom}><Minimize2 size={16} />收起房间</button>
             <button className="btn !hidden h-10 bg-red-50 px-3 text-xs text-red-600 hover:bg-red-100 lg:!inline-flex" onClick={() => setExitChoiceOpen(true)}><LogOut size={16} />退出</button>
             <button className="btn btn-secondary h-10 w-10 p-0" onClick={() => setMembersOpen(true)} aria-label={`房间成员，共 ${snapshot.members.length} 人`} title={`房间成员 · ${snapshot.members.length} 人`}>
@@ -1984,12 +1963,12 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
                     ["materials", "汤面"],
                     ["clues", "线索"],
                     ["progress", "进度"]
-                  ] as const).filter(([value]) => !voiceMode || value !== "progress").map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={hostPanelTab === value} className={`rounded-md px-2 py-1 text-[11px] font-black transition ${hostPanelTab === value ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setHostPanelTab(value); setSoupExpanded(true); if (value === "clues") void loadClues(); }}>{label}</button>)}
+                  ] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={hostPanelTab === value} className={`rounded-md px-2 py-1 text-[11px] font-black transition ${hostPanelTab === value ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setHostPanelTab(value); setSoupExpanded(true); if (value === "clues") void loadClues(); }}>{label}</button>)}
                 </div>}
                 {!isHost && <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5" role="tablist" aria-label="汤面辅助视图">
                   <button type="button" role="tab" aria-selected={viewerPanelTab === "surface"} className={`rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "surface" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("surface"); setSoupExpanded(true); }}>汤面</button>
                   <button type="button" role="tab" aria-selected={viewerPanelTab === "clues"} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "clues" ? "bg-white text-amber-700 shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("clues"); setSoupExpanded(true); void loadClues(); }}><Lightbulb size={13} />线索</button>
-                  {!voiceMode && <button type="button" role="tab" aria-selected={viewerPanelTab === "progress"} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("progress"); setSoupExpanded(true); }}><ListChecks size={13} />进度</button>}
+                  <button type="button" role="tab" aria-selected={viewerPanelTab === "progress"} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black transition ${viewerPanelTab === "progress" ? "bg-white text-primary shadow-sm" : "text-muted"}`} onClick={() => { setViewerPanelTab("progress"); setSoupExpanded(true); }}><ListChecks size={13} />进度</button>
                 </div>}
                 <button className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink active:scale-95" onClick={() => setSoupExpanded((expanded) => !expanded)} aria-label={soupExpanded ? "收起汤面卡片" : "展开汤面卡片"} title={soupExpanded ? "收起" : "展开"}>{soupExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
               </div>
@@ -2065,10 +2044,10 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
 
         </aside>
 
-        {!voiceMode && <section className="online-soup-room-member-rail hidden min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:flex lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
+        <section className="online-soup-room-member-rail hidden min-w-0 items-center gap-1.5 overflow-x-auto overscroll-contain rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-3 lg:flex lg:min-h-0 lg:flex-col lg:gap-2 lg:overflow-x-hidden lg:overflow-y-auto lg:py-3" aria-label="房间成员头像">
           {snapshot.members.map((member) => { const muted = isActiveMute(member.mutedUntil); const displayName = impostorMemberName(member); const isSelf = member.id === user?.id; return <MentionableAvatarButton key={member.id} canMention={!isSelf && Boolean(canDiscuss)} onMention={() => requestMention(member.id, member.nickname)} onOpen={() => openMemberProfile(member.id)} className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-full ring-2 transition active:scale-95 ${member.isRoomHost ? "ring-amber-400" : member.role === "player" ? "ring-blue-300" : "ring-slate-300"}`} ariaLabel={`${isSelf ? "打开个人中心" : `查看${displayName}的主页`}${muted ? "，已禁言" : ""}${isSelf ? "" : "，长按@他"}`}>{member.avatar ? <img className="h-8 w-8 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-black text-primary">{member.nickname.slice(0, 1)}</span>}{member.isRoomHost && <Crown className="absolute -right-1 -top-1 rounded-full bg-amber-400 p-0.5 text-white ring-1 ring-white" size={13} />}{muted && <MutedAvatarIndicator size="sm" />}</MentionableAvatarButton>; })}
           <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 border-dashed border-blue-300 bg-blue-50/70 text-primary transition hover:border-primary hover:bg-blue-100 active:scale-95" onClick={() => setInviteOpen(true)} aria-label="邀请好友" title="邀请好友"><Plus size={16} strokeWidth={2.5} /></button>
-        </section>}
+        </section>
 
         {showRoomActions && <aside className="online-soup-room-host-actions hidden min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-white/90 p-1.5 shadow-sm lg:order-4 lg:flex lg:py-3" aria-label="房间更多操作">
           <div className="online-soup-room-host-actions-list flex w-full min-h-0 flex-col items-center gap-3 overflow-y-auto overscroll-contain">
@@ -2077,10 +2056,8 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
         </aside>}
 
         <section className={`card relative flex min-h-0 flex-col overflow-hidden lg:order-2 ${impostorNightMode ? "impostor-night-chat" : ""}`}>
-          <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">{voiceMode ? "语音玩汤" : "本轮讨论"}</h2><p className="truncate text-[11px] text-muted">{voiceMode ? "多人同时发言 · 切后台自动断开语音" : impostorMode ? "游戏者自由讨论；旁观者保持只读" : mysteryMode ? "讨论、房主行动和故事回应会实时同步" : "讨论、正式提问、主持人回复和线索会实时同步"}</p></div>
-          {voiceMode && <div className="min-h-0 flex-1 overflow-y-auto"><OnlineSoupVoiceStage snapshot={snapshot} onOpenUser={openMemberProfile} /></div>}
-          {voiceMode && <button type="button" className="min-h-11 shrink-0 border-t border-line px-3 text-left text-xs font-bold text-primary" aria-expanded={voiceMessagesOpen} onClick={() => setVoiceMessagesOpen(open => !open)}>{voiceMessagesOpen ? "收起房间消息" : `查看房间消息（${snapshot.messages.length}）`}</button>}
-          <div className={`relative min-h-0 overflow-hidden ${voiceMode ? voiceMessagesOpen ? "h-40 shrink-0 border-t border-line" : "hidden" : "flex-1"}`}>
+          <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2"><h2 className="shrink-0 text-sm font-black text-ink">本轮讨论</h2><p className="truncate text-[11px] text-muted">{impostorMode ? "游戏者自由讨论；旁观者保持只读" : mysteryMode ? "讨论、房主行动和故事回应会实时同步" : "讨论、正式提问、主持人回复和线索会实时同步"}</p></div>
+          <div className="relative min-h-0 flex-1 overflow-hidden">
             {snapshot.room.contentType === "soup" && snapshot.room.coverBackgroundEnabled && snapshot.room.soup?.coverImage && <img
               src={snapshot.room.soup.coverImage}
               alt=""
@@ -2128,7 +2105,6 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
               <ChevronDown size={24} strokeWidth={2.5} />
             </button>}
           </div>
-          {voiceMode && <div className="shrink-0 border-t border-line pb-[env(safe-area-inset-bottom)]"><OnlineSoupVoiceControls roomId={roomId} /></div>}
           {canDiscuss && <div className="relative z-[60] shrink-0 border-t border-line bg-white/95 p-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur">
             {mentionCandidates.length > 0 && <div className="absolute inset-x-0 bottom-full z-[65] border-b border-line bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"><div className="divide-y divide-line px-3">{mentionCandidates.map((member) => <button key={member.id} type="button" className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100" onPointerDown={(event) => event.preventDefault()} onClick={() => chooseMention(member)}>{member.avatar ? <img className="h-10 w-10 rounded-full object-cover" src={member.avatar} alt="" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-100 text-sm font-black text-primary">{member.nickname.slice(0, 1)}</span>}<span className="min-w-0 flex-1"><VipIdentity nickname={impostorMemberName(member)} vipLevel={member.vipLevel} vipActive={member.vipActive} showUserLevel={false} className="max-w-full" /></span></button>)}</div></div>}
             {replyingTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 px-3 py-2"><Reply size={16} className="shrink-0 text-primary" /><p className="min-w-0 flex-1 truncate text-xs text-muted"><span className="font-bold text-primary">回复 {replyingTo.senderName ?? "已注销用户"}：</span>{onlineMessagePreview(replyingTo)}</p><button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted transition hover:bg-white hover:text-ink" onClick={() => setReplyingTo(null)} aria-label="取消回复"><X size={16} /></button></div>}
@@ -2179,8 +2155,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
         </section>
       </main>
 
-      {voiceMode && hostActionsOpen && <Modal onClose={() => setHostActionsOpen(false)}><h2 className="mb-4 text-lg font-black text-ink">语音房操作</h2><div className="grid grid-cols-3 justify-items-center gap-4">{renderHostActions(true)}</div></Modal>}
-      {showRoomActions && !voiceMode ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition-[opacity] duration-200 lg:hidden ${stickersOpen ? "pointer-events-none opacity-0" : "opacity-100"}`} style={{ transform: `translate3d(${hostMenuOffset.x}px, ${hostMenuOffset.y}px, 0)` }}>
+      {showRoomActions ? <div className={`fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 transition-[opacity] duration-200 lg:hidden ${stickersOpen ? "pointer-events-none opacity-0" : "opacity-100"}`} style={{ transform: `translate3d(${hostMenuOffset.x}px, ${hostMenuOffset.y}px, 0)` }}>
         {hostActionsOpen && <div className="absolute bottom-full right-1/2 mb-2 flex scrollbar-hidden max-h-[calc(100dvh-160px)] translate-x-1/2 flex-col items-center gap-2 overflow-y-auto overscroll-contain">
           {renderHostActions(true)}
         </div>}
@@ -2242,13 +2217,13 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
       {honorSelection && !materialPublishTarget && <Modal onClose={() => { if (!honorSelection.submitting) { if (honorSelection.resolveQuestionLimit) setQuestionLimitResolutionOpen(true); setHonorSelection(null); } }} hideClose={honorSelection.submitting}>
         <div className="space-y-4">
           <div>
-            {!voiceMode && <div className="mb-3 flex items-center gap-2" aria-label={`评选步骤 ${honorSelection.step === "mvp" ? "1" : "2"}/2`}>
+            <div className="mb-3 flex items-center gap-2" aria-label={`评选步骤 ${honorSelection.step === "mvp" ? "1" : "2"}/2`}>
               <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${honorSelection.step === "mvp" ? "bg-primary text-white" : "bg-emerald-500 text-white"}`}>{honorSelection.step === "mvp" ? "1" : <Check size={15} />}</span>
               <span className={`h-1 flex-1 rounded-full ${honorSelection.step === "question" ? "bg-primary" : "bg-slate-200"}`} />
               <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${honorSelection.step === "question" ? "bg-primary text-white" : "bg-slate-100 text-muted"}`}>2</span>
-            </div>}
+            </div>
             <h2 className="flex items-center gap-2 text-xl font-black text-ink">{honorSelection.step === "mvp" ? <Award className="text-amber-500" size={22} /> : <MessageCircleQuestion className="text-violet-600" size={22} />}{honorSelection.step === "mvp" ? "请选择本场 MVP" : "请选择本场最佳提问"}</h2>
-            <p className="mt-1 text-sm leading-6 text-muted">{voiceMode ? "从本轮仍在席的玩家中评选 MVP，不评选提问。" : honorSelection.step === "mvp" ? "候选人为本轮所有至少提出过一次问题的玩家。" : "以下为本轮进度中的全部提问和回答；尚未回答的问题暂不可选择。"}</p>
+            <p className="mt-1 text-sm leading-6 text-muted">{honorSelection.step === "mvp" ? "候选人为本轮所有至少提出过一次问题的玩家。" : "以下为本轮进度中的全部提问和回答；尚未回答的问题暂不可选择。"}</p>
           </div>
 
           {honorSelection.step === "mvp" ? <div className="max-h-[52dvh] space-y-2 overflow-y-auto overscroll-contain pr-1" role="radiogroup" aria-label="本场 MVP 候选人">
@@ -2283,7 +2258,7 @@ function OnlineSoupRoomSession({ roomId }: { roomId: string }) {
           </div>
         </div>
       </Modal>}
-      {publishOpen && snapshot.room.soup && <Modal onClose={() => setPublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">选择要发布的汤底</h2><p className="mt-1 text-sm leading-6 text-muted">汤底可以按任意顺序发布。发布最后一条汤底前，需要先评选本场 MVP{voiceMode ? "" : " 和最佳提问"}；完成后将一并发布主持人手册和本轮高光。</p></div><div className="space-y-2">{[snapshot.room.soup.bottom ?? "", ...(snapshot.room.soup.supplementalBottoms ?? [])].map((bottom, index) => { const published = snapshot.room.soup?.publishedBottomIndices?.includes(index) ?? false; const preparing = preparingHonorBottomIndex === index; return <button key={index} className={`w-full rounded-xl border p-3 text-left transition ${published ? "border-slate-200 bg-slate-50 text-muted" : "border-amber-200 bg-amber-50 hover:border-amber-400"}`} disabled={published || preparingHonorBottomIndex != null} onClick={() => void prepareBottomPublish(index)}><span className="flex items-center gap-2 text-sm font-black">{preparing && <LoaderCircle size={15} className="animate-spin" />}{index === 0 ? "主汤底" : `补充汤底 ${index}`}{published ? " · 已发布" : ""}</span><span className="mt-1 block line-clamp-2 text-xs leading-5">{bottom.replace(/<[^>]*>/g, "")}</span></button>; })}</div><button className="btn btn-secondary w-full" disabled={preparingHonorBottomIndex != null} onClick={() => setPublishOpen(false)}>取消</button></div></Modal>}
+      {publishOpen && snapshot.room.soup && <Modal onClose={() => setPublishOpen(false)}><div className="space-y-4"><div><h2 className="text-xl font-black text-ink">选择要发布的汤底</h2><p className="mt-1 text-sm leading-6 text-muted">汤底可以按任意顺序发布。发布最后一条汤底前，需要先评选本场 MVP 和最佳提问；完成后将一并发布主持人手册和本轮高光。</p></div><div className="space-y-2">{[snapshot.room.soup.bottom ?? "", ...(snapshot.room.soup.supplementalBottoms ?? [])].map((bottom, index) => { const published = snapshot.room.soup?.publishedBottomIndices?.includes(index) ?? false; const preparing = preparingHonorBottomIndex === index; return <button key={index} className={`w-full rounded-xl border p-3 text-left transition ${published ? "border-slate-200 bg-slate-50 text-muted" : "border-amber-200 bg-amber-50 hover:border-amber-400"}`} disabled={published || preparingHonorBottomIndex != null} onClick={() => void prepareBottomPublish(index)}><span className="flex items-center gap-2 text-sm font-black">{preparing && <LoaderCircle size={15} className="animate-spin" />}{index === 0 ? "主汤底" : `补充汤底 ${index}`}{published ? " · 已发布" : ""}</span><span className="mt-1 block line-clamp-2 text-xs leading-5">{bottom.replace(/<[^>]*>/g, "")}</span></button>; })}</div><button className="btn btn-secondary w-full" disabled={preparingHonorBottomIndex != null} onClick={() => setPublishOpen(false)}>取消</button></div></Modal>}
       {materialPublishTarget && <Modal onClose={() => { if (!materialPublishing) { if (materialPublishTarget.resolveQuestionLimit) setQuestionLimitResolutionOpen(true); setMaterialPublishTarget(null); } }} hideClose={materialPublishing}><div className="space-y-4">
         <div className="text-center"><h2 className="text-xl font-black text-ink">确认发布{materialPublishTarget.title}？</h2><p className="mt-2 text-sm leading-6 text-muted">发布后房间内所有成员将立即看到该内容，无法撤回。</p></div>
         <div className={`rounded-xl border p-3 ${materialPublishTarget.kind === "surface" ? "border-blue-200 bg-blue-50" : "border-amber-200 bg-amber-50"}`}><p className="text-xs font-black text-muted">即将发布</p><p className="mt-1 font-black text-ink">{materialPublishTarget.title}</p><p className="mt-2 line-clamp-3 text-sm leading-6 text-muted">{materialPublishTarget.content.replace(/<[^>]*>/g, "")}</p></div>

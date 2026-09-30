@@ -46,10 +46,10 @@ export function AdminPagination({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t border-line pt-4 text-sm sm:flex-row">
-      <div className="flex items-center gap-2 text-muted">
-        <span>共 {total} 条</span>
-        {onPageSizeChange && <label className="flex items-center gap-2">
+    <div className="mt-4 flex min-w-0 flex-col items-center justify-between gap-3 border-t border-line pt-4 text-sm sm:flex-row">
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-muted sm:justify-start">
+        <span className="whitespace-nowrap">共 {total} 条</span>
+        {onPageSizeChange && <label className="flex items-center gap-2 whitespace-nowrap">
           <span>每页</span>
           <select
             className="field h-9 w-20 px-2 text-sm"
@@ -64,13 +64,13 @@ export function AdminPagination({
           <span>条</span>
         </label>}
       </div>
-      <div className="flex items-center gap-2">
-        <button className="btn btn-secondary h-9 px-3 text-xs" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
-          <ChevronLeft size={15} />上一页
+      <div className="flex w-full min-w-0 items-center justify-between gap-1 sm:w-auto sm:gap-2">
+        <button type="button" className="btn btn-secondary h-11 w-11 shrink-0 p-0 text-xs sm:w-auto sm:px-3" aria-label="上一页" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+          <ChevronLeft size={15} /><span className="hidden sm:inline">上一页</span>
         </button>
-        <span className="min-w-20 text-center text-muted">第 {page} / {totalPages} 页</span>
-        <button className="btn btn-secondary h-9 px-3 text-xs" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
-          下一页<ChevronRight size={15} />
+        <span className="min-w-0 whitespace-nowrap text-center text-muted">第 {page} / {totalPages} 页</span>
+        <button type="button" className="btn btn-secondary h-11 w-11 shrink-0 p-0 text-xs sm:w-auto sm:px-3" aria-label="下一页" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+          <span className="hidden sm:inline">下一页</span><ChevronRight size={15} />
         </button>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { FormEvent, useRef, useState } from "react";
 import type { EvalForm } from "../context/AppContext";
+import { useEvalForm } from "../context/AppContext";
 import { Modal } from "./Modal";
 import { ScoreInput } from "./FormWidgets";
 import { useApp } from "../context/AppContext";
@@ -7,7 +8,8 @@ import { api } from "../api";
 import { useNavigate } from "react-router-dom";
 
 export function EvalEditor() {
-  const { evalForm: value, setEvalForm: setValue, soupIdForEval, closeEvalEditor, showToast, checkBadgeUnlocks, triggerRefresh } = useApp();
+  const { soupIdForEval, closeEvalEditor, showToast, checkBadgeUnlocks, triggerRefresh } = useApp();
+  const [value, setValue] = useEvalForm();
   const navigate = useNavigate();
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
