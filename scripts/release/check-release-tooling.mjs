@@ -36,6 +36,7 @@ requireMatch(uploader, /completely clean Git worktree/, "APK upload must reject 
 requireMatch(uploader, /localHash !== manifest\.sha256/, "APK upload must verify the local artifact hash against its manifest.");
 
 const deployWrapper = read("scripts/release/deploy-production.ps1");
+const productionDeploy = read("scripts/release/production-deploy.sh");
 const dockerfile = read("Dockerfile");
 const productionBundle = read("scripts/release/create-production-bundle.ps1");
 const imageBuilder = read("scripts/release/build-production-image.ps1");
@@ -51,6 +52,17 @@ for (const path of ["packages/shared/package.json", "packages/shared/tsconfig.js
 requireMatch(dockerfile, /COPY --from=server-builder \/app\/packages\/shared\/dist \.\/packages\/shared\/dist/, "Production runtime must preserve the shared workspace symlink target.");
 requireMatch(deployWrapper, /production-preflight\.sh/, "Production deployment must run the versioned authentication preflight.");
 forbidMatch(deployWrapper, /\$\([^\r\n]*docker inspect/, "Do not embed remote Bash command substitutions in the PowerShell deployment wrapper.");
+const persistedOssKeys = [
+  "ALIYUN_OSS_ENDPOINT",
+  "ALIYUN_OSS_REGION",
+  "ALIYUN_OSS_BUCKET",
+  "ALIYUN_OSS_KEY_PREFIX",
+  "ALIYUN_OSS_ACCESS_KEY_ID",
+  "ALIYUN_OSS_ACCESS_KEY_SECRET"
+];
+requireMatch(productionDeploy, new RegExp(`oss_keys='${persistedOssKeys.join(" ")}'`), "Production deployment must keep the complete persisted OSS key allowlist.");
+requireMatch(productionDeploy, /grep "\^\$\{key\}=" \/opt\/hgt\/\.env >> "\$runtime_env"/, "Production deployment must import only allowlisted OSS values from the persisted environment.");
+requireMatch(productionDeploy, /test -f \/opt\/hgt\/\.env/, "Production deployment must require the persisted environment file before importing OSS configuration.");
 
 for (const path of [
   "scripts/android/build-android.ps1",

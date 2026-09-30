@@ -131,6 +131,23 @@ test "$(grep -c '^COOKIE_SECURE=' "$old_env")" -eq 1
 test "$(sed -n 's/^COOKIE_DOMAIN=//p' "$old_env")" = .caqis.com
 test "$(sed -n 's/^COOKIE_SECURE=//p' "$old_env")" = false
 cp "$old_env" "$expected_env"
+# The persisted production file is the source of truth for OSS credentials.
+# Unlike JWT, these values are intentionally allowed to change between
+# deployments. Merge only the six audited OSS keys; never source the file or
+# let unrelated persisted values overwrite the running container environment.
+oss_keys='ALIYUN_OSS_ENDPOINT ALIYUN_OSS_REGION ALIYUN_OSS_BUCKET ALIYUN_OSS_KEY_PREFIX ALIYUN_OSS_ACCESS_KEY_ID ALIYUN_OSS_ACCESS_KEY_SECRET'
+test -f /opt/hgt/.env
+grep -Ev '^(ALIYUN_OSS_ENDPOINT|ALIYUN_OSS_REGION|ALIYUN_OSS_BUCKET|ALIYUN_OSS_KEY_PREFIX|ALIYUN_OSS_ACCESS_KEY_ID|ALIYUN_OSS_ACCESS_KEY_SECRET)=' "$expected_env" > "$runtime_env"
+for key in $oss_keys; do
+  test "$(grep -c "^${key}=" /opt/hgt/.env)" -eq 1
+  value=$(sed -n "s/^${key}=//p" /opt/hgt/.env)
+  test -n "$value"
+  grep "^${key}=" /opt/hgt/.env >> "$runtime_env"
+done
+mv "$runtime_env" "$expected_env"
+runtime_env=$(mktemp)
+sort -o "$expected_env" "$expected_env"
+
 # Only the five SMS settings may be added or replaced. Keep the file private
 # and never print its contents or source it as shell code.
 if [ -n "$sms_env" ]; then
